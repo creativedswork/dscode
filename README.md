@@ -1,5 +1,5 @@
 # DSCode
->  模型每强一分，Harness的重心就移一寸，从Angentic Workflow到上下文管理再到记忆系统。目前阶段，远没有成熟稳定的Harness，也没有适配所有模型的万能Agent。 DScode只想做DeepSeek模型的Harness，就像Claude Code是Claude模型的Harness一样。
+> 从Angentic Workflow到上下文管理再到记忆系统，模型每强一分，Harness的重心就移一寸。目前阶段，远没有成熟稳定的Harness，也没有适配所有模型的万能Agent。DScode只想做DeepSeek模型的Harness，就像Claude Code是Claude模型的Harness一样。
 
 基于 DeepSeek 模型的交互式命令行 Coding Agent，对标 [Claude Code](https://docs.anthropic.com/en/docs/claude-code)。
 
