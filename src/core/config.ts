@@ -35,16 +35,26 @@ function loadJsonSafe(path: string): Record<string, unknown> {
 }
 
 export function loadConfig(): HarnessConfig {
-  const projectPath = process.cwd();
+  const projectPath = resolve(process.env.DSCODE_PROJECT_PATH ?? process.cwd());
+  if (projectPath !== process.cwd()) {
+    process.chdir(projectPath);
+  }
   loadEnvFile(projectPath);
 
   const configDir = dsConfigHome();
   const dataDir = join(dsDataHome(), "data");
 
   const userConfig = loadJsonSafe(join(configDir, "config.json"));
+  const projectConfig = loadJsonSafe(join(projectPath, ".dscode", "config.json"));
+  const merged = { ...userConfig, ...projectConfig };
 
-  const provider = (process.env.AGENT_PROVIDER as string) ?? (userConfig.provider as string) ?? "deepseek";
-  const modelId = (process.env.AGENT_MODEL as string) ?? (process.env.DEEPSEEK_MODEL as string) ?? (userConfig.modelId as string) ?? "deepseek-v4-flash";
+  const provider = (process.env.AGENT_PROVIDER as string) ?? (merged.provider as string) ?? "deepseek";
+  const modelId = (process.env.AGENT_MODEL as string) ?? (process.env.DEEPSEEK_MODEL as string) ?? (merged.modelId as string) ?? "deepseek-v4-flash";
+  const maxTokens = Number(process.env.DSCODE_MAX_TOKENS) || (merged.maxTokens as number) || 16384;
+
+  const userDeny = ((userConfig.permissions as any)?.deny as string[]) ?? [];
+  const projectDeny = ((projectConfig.permissions as any)?.deny as string[]) ?? [];
+  const denyPatterns = [...new Set([...userDeny, ...projectDeny])];
 
   const thinkingLevel: ThinkingLevel = modelId.includes("pro") ? "medium" : "off";
 
@@ -52,6 +62,7 @@ export function loadConfig(): HarnessConfig {
     provider,
     modelId,
     thinkingLevel,
+    maxTokens,
     projectPath,
     configDir,
     dataDir,
@@ -69,6 +80,7 @@ export function loadConfig(): HarnessConfig {
     permissions: {
       defaultDecision: "ask",
       rules: [],
+      denyPatterns,
     },
     skills: ["filesystem", "bash", "search"],
   };

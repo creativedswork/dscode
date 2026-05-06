@@ -19,6 +19,7 @@ export class Harness {
   private permissionManager: PermissionManager;
   private renderer: TerminalRenderer;
   private config: HarnessConfig;
+  private _truncated = false;
 
   constructor(config: HarnessConfig) {
     this.config = config;
@@ -27,7 +28,9 @@ export class Harness {
     this.contextManager = new ContextManager(config.context);
     this.memoryManager = new MemoryManager(config.dataDir, config.projectPath, config.memory);
     this.skillRegistry = new SkillRegistry();
-    this.permissionManager = new PermissionManager(config.permissions, promptPermission);
+    this.permissionManager = new PermissionManager(config.permissions, promptPermission, () => {
+      this.renderer.pauseSpinner();
+    });
   }
 
   initialize(): void {
@@ -52,6 +55,7 @@ export class Harness {
     this.contextManager.updateModel(model.contextWindow, model.maxTokens);
 
     // create agent
+    const maxTokens = this.config.maxTokens;
     this.agent = new Agent({
       initialState: {
         systemPrompt,
@@ -59,7 +63,7 @@ export class Harness {
         tools: this.skillRegistry.getTools(),
         thinkingLevel: this.config.thinkingLevel as any,
       },
-      streamFn: streamSimple,
+      streamFn: (m: any, ctx: any, opts?: any) => streamSimple(m, ctx, { ...opts, maxTokens }),
       transformContext: (msgs: any, signal?: AbortSignal) => this.contextManager.transform(msgs, signal) as any,
       beforeToolCall: (ctx: any, signal?: AbortSignal) => this.permissionManager.check(ctx, signal) as any,
     });
@@ -75,6 +79,7 @@ export class Harness {
     const model = getModel(this.config.provider as any, this.config.modelId as any);
     await runRepl({
       agent: this.agent,
+      harness: this,
       sessionManager: this.sessionManager,
       memoryManager: this.memoryManager,
       skillRegistry: this.skillRegistry,
@@ -87,14 +92,28 @@ export class Harness {
   }
 
   private shutdown(): void {
+    this.renderer.stopStreaming();
     this.sessionManager.saveSession(this.agent);
   }
 
-  private buildSystemPrompt(memories: string, skillAdditions: string): string {
-    let prompt = `You are a helpful assistant working in: ${this.config.projectPath}
+  get wasTruncated(): boolean {
+    return this._truncated;
+  }
 
-Use tools when they help accomplish the user's request.
-Answer in the user's language. Be concise and direct.`;
+  resetTruncated(): void {
+    this._truncated = false;
+  }
+
+  private buildSystemPrompt(memories: string, skillAdditions: string): string {
+    let prompt = `You are a coding assistant working in: ${this.config.projectPath}
+
+## Rules
+
+- When the user asks you to create, modify, or delete files, you MUST call the corresponding tool (write_file, bash, etc.) immediately. Never just describe what you plan to do without actually doing it.
+- Do not explain your plan before acting. Act first, then briefly explain what you did.
+- If a task requires multiple tool calls, execute them one by one. Do not stop after planning.
+- Answer in the user's language. Be concise and direct.
+- When writing code, produce complete, working implementations. Do not leave placeholders or TODOs.`;
 
     if (skillAdditions) {
       prompt += "\n\n" + skillAdditions;
@@ -103,6 +122,14 @@ Answer in the user's language. Be concise and direct.`;
       prompt += memories;
     }
     return prompt;
+  }
+
+  startSpinner(): void {
+    this.renderer.startStreaming();
+  }
+
+  stopSpinner(): void {
+    this.renderer.stopStreaming();
   }
 
   private bindEvents(): void {
@@ -128,6 +155,7 @@ Answer in the user's language. Be concise and direct.`;
           break;
         }
         case "tool_execution_start":
+          this.renderer.pauseSpinner();
           this.renderer.renderToolStart((event as any).toolName, (event as any).args);
           break;
         case "tool_execution_end":
@@ -144,6 +172,12 @@ Answer in the user's language. Be concise and direct.`;
     this.agent.subscribe((event) => {
       if (event.type === "agent_end") {
         this.sessionManager.saveSession(this.agent);
+      }
+      if (event.type === "turn_end") {
+        const msg = (event as any).message;
+        if (msg?.stopReason === "length") {
+          this._truncated = true;
+        }
       }
     });
   }
