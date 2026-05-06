@@ -1,11 +1,11 @@
 {
-  "name": "deepseek-pi-agent-demo",
-  "version": "0.1.0",
+  "name": "agent-harness",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "A minimal demo running DeepSeek models via @mariozechner/pi-agent-core.",
+  "description": "A layered CLI Agent Harness built on pi-agent-core and pi-ai.",
   "scripts": {
-    "start": "tsx src/index.ts",
+    "start": "tsx src/core/main.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
