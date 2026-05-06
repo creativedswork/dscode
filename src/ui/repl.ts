@@ -2,6 +2,7 @@ import { createInterface } from "node:readline/promises";
 
 import type { Agent } from "@mariozechner/pi-agent-core";
 
+import type { Harness } from "../core/harness.js";
 import type { SessionManager } from "../session/manager.js";
 import type { MemoryManager } from "../memory/manager.js";
 import type { SkillRegistry } from "../skills/registry.js";
@@ -12,8 +13,11 @@ import { COMMANDS } from "./commands.js";
 
 const { DIM, GREEN, MAGENTA, BOLD, RESET, YELLOW } = colors;
 
+const MAX_AUTO_CONTINUE = 3;
+
 interface ReplDeps {
   agent: Agent;
+  harness: Harness;
   sessionManager: SessionManager;
   memoryManager: MemoryManager;
   skillRegistry: SkillRegistry;
@@ -75,8 +79,26 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
 
       process.stdout.write(`${MAGENTA}agent ›${RESET} `);
       try {
+        deps.harness.startSpinner();
         await agent.prompt(line);
+        deps.harness.stopSpinner();
+        // auto-continue on truncation
+        let retries = 0;
+        while (deps.harness.wasTruncated && retries < MAX_AUTO_CONTINUE) {
+          retries++;
+          deps.harness.resetTruncated();
+          renderer.renderInfo(`\n⚠ Output truncated (hit max_tokens). Auto-continuing (${retries}/${MAX_AUTO_CONTINUE})...`);
+          process.stdout.write(`${MAGENTA}agent ›${RESET} `);
+          deps.harness.startSpinner();
+          await agent.prompt("Continue from where you left off. Do not repeat what was already said.");
+          deps.harness.stopSpinner();
+        }
+        if (deps.harness.wasTruncated) {
+          deps.harness.resetTruncated();
+          renderer.renderInfo(`\n⚠ Output still truncated after ${MAX_AUTO_CONTINUE} retries. Consider increasing DSCODE_MAX_TOKENS.`);
+        }
       } catch (err) {
+        deps.harness.stopSpinner();
         renderer.renderError(err instanceof Error ? err.message : String(err));
       }
       process.stdout.write("\n\n");
@@ -90,7 +112,7 @@ export async function promptPermission(toolName: string, preview: string): Promi
   decision: "allow" | "deny";
   rememberForSession: boolean;
 }> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
   try {
     process.stdout.write(`\n${YELLOW}┌─ Permission ─────────────────────────────${RESET}\n`);
     process.stdout.write(`${YELLOW}│${RESET} Tool: ${BOLD}${toolName}${RESET}\n`);
@@ -98,7 +120,8 @@ export async function promptPermission(toolName: string, preview: string): Promi
       process.stdout.write(`${YELLOW}│${RESET} ${line}\n`);
     }
     process.stdout.write(`${YELLOW}└───────────────────────────────────────────${RESET}\n`);
-    const answer = await rl.question(`  [${GREEN}Y${RESET}]es  [${colors.RED}N${RESET}]o  [${colors.CYAN}A${RESET}]lways > `);
+    process.stdout.write(`  [${GREEN}Y${RESET}]es  [${colors.RED}N${RESET}]o  [${colors.CYAN}A${RESET}]lways > `);
+    const answer = await rl.question("");
     const key = answer.trim().toLowerCase();
 
     switch (key) {

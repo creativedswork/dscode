@@ -9,6 +9,7 @@ export interface HarnessConfig {
   provider: string;
   modelId: string;
   thinkingLevel: ThinkingLevel;
+  maxTokens: number;
   projectPath: string;
   configDir: string;
   dataDir: string;
@@ -34,6 +35,7 @@ export interface MemoryConfig {
 export interface PermissionsConfig {
   defaultDecision: PermissionDecision;
   rules: PermissionRuleConfig[];
+  denyPatterns: string[];
 }
 
 export interface PermissionRuleConfig {

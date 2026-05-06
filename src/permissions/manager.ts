@@ -1,15 +1,28 @@
 import type { PermissionDecision, PermissionRule, PermissionsConfig, PromptUserFn } from "../core/types.js";
 import { DEFAULT_RULES } from "./rules.js";
 
+function globToRegex(pattern: string): RegExp {
+  let re = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, "\0")
+    .replace(/\*/g, "[^/]*")
+    .replace(/\0/g, ".*");
+  return new RegExp(`(^|/)${re}($|/)`);
+}
+
 export class PermissionManager {
   private rules: PermissionRule[];
+  private denyRegexes: { pattern: string; regex: RegExp }[];
   private sessionGrants = new Set<string>();
   private promptUser: PromptUserFn;
   private defaultDecision: PermissionDecision;
+  private onBeforePrompt?: () => void;
 
-  constructor(config: PermissionsConfig, promptUser: PromptUserFn) {
+  constructor(config: PermissionsConfig, promptUser: PromptUserFn, onBeforePrompt?: () => void) {
     this.defaultDecision = config.defaultDecision;
     this.promptUser = promptUser;
+    this.onBeforePrompt = onBeforePrompt;
+    this.denyRegexes = config.denyPatterns.map((p) => ({ pattern: p, regex: globToRegex(p) }));
 
     this.rules = [...DEFAULT_RULES];
     for (const rule of config.rules) {
@@ -31,6 +44,18 @@ export class PermissionManager {
     const toolName = context.toolCall.name;
     const argsStr = JSON.stringify(context.args);
 
+    // check file deny patterns
+    if ((toolName === "read_file" || toolName === "write_file") && this.denyRegexes.length > 0) {
+      const filePath = (context.args as any)?.path as string | undefined;
+      if (filePath) {
+        for (const { pattern, regex } of this.denyRegexes) {
+          if (regex.test(filePath)) {
+            return { block: true, reason: `Denied by file pattern: ${pattern}` };
+          }
+        }
+      }
+    }
+
     if (this.sessionGrants.has(toolName)) {
       return undefined;
     }
@@ -43,6 +68,7 @@ export class PermissionManager {
       case "deny":
         return { block: true, reason: decision.reason ?? "Denied by policy" };
       case "ask": {
+        this.onBeforePrompt?.();
         const preview = this.formatPreview(toolName, context.args);
         const result = await this.promptUser(toolName, preview);
         if (result.rememberForSession) {

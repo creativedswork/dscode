@@ -42,10 +42,12 @@ agent › 当前 src/ 目录包含 7 个模块：core, session, context, memory,
 |------|------|
 | 多轮对话 | 流式输出 + thinking（reasoning 模型） |
 | 内置工具 | read_file, write_file, list_files, bash, grep, glob |
-| 权限控制 | 危险操作需确认，可选 always allow |
+| 权限控制 | 危险操作需确认，可选 always allow；支持 glob 模式禁止读写敏感文件 |
 | 会话持久化 | 自动保存，可恢复历史对话 |
-| 上下文管理 | 自动压缩长对话，防止 token overflow |
+| 上下文管理 | 自动压缩长对话，防止 token overflow；截断自动续写 |
 | 记忆系统 | 跨 session 记住用户偏好和项目上下文 |
+| 等待指示器 | 模型响应空闲 >1s 时显示动画及分段计时统计 |
+| 两级配置 | 用户级 + 项目级配置，灵活覆盖 |
 | Slash 命令 | /help, /reset, /session, /memory, /skills 等 |
 
 ## 模型配置
@@ -83,12 +85,21 @@ DEEPSEEK_MODEL=deepseek-v4-pro npm start
 
 ## 配置
 
-配置文件路径：`~/.dscode/config.json`
+支持两级配置，项目级覆盖用户级：
+
+- 用户级：`~/.dscode/config.json`
+- 项目级：`<project>/.dscode/config.json`
+
+优先级：**环境变量 > 项目级 config.json > 用户级 config.json > 默认值**
 
 ```jsonc
 {
   "provider": "deepseek",   // LLM 提供商（默认 "deepseek"）
-  "modelId": "deepseek-v4-flash"  // 模型 ID（默认 "deepseek-v4-flash"）
+  "modelId": "deepseek-v4-flash",  // 模型 ID（默认 "deepseek-v4-flash"）
+  "maxTokens": 16384,  // 模型最大输出 token 数（默认 16384）
+  "permissions": {
+    "deny": ["**/.env", "**/.env.*", "**/secrets/**"]
+  }
 }
 ```
 
@@ -96,15 +107,41 @@ DEEPSEEK_MODEL=deepseek-v4-pro npm start
 |------|------|--------|------|
 | `provider` | string | `"deepseek"` | LLM 提供商，可选 deepseek / openai / anthropic 等 |
 | `modelId` | string | `"deepseek-v4-flash"` | 模型 ID |
-
-优先级：环境变量 > config.json > 默认值
+| `maxTokens` | number | `16384` | 模型单次输出最大 token 数 |
+| `permissions.deny` | string[] | `[]` | 禁止读写的文件 glob 模式（两级配置取并集） |
 
 | 环境变量 | 对应配置 |
 |----------|----------|
 | `AGENT_PROVIDER` | provider |
 | `AGENT_MODEL` / `DEEPSEEK_MODEL` | modelId |
+| `DSCODE_MAX_TOKENS` | maxTokens（最大输出 token 数） |
+| `DSCODE_PROJECT_PATH` | 工作目录（默认为当前目录） |
 | `DSCODE_CONFIG_HOME` | 自定义配置目录（默认 `~/.dscode`） |
 | `DSCODE_DATA_HOME` | 自定义数据目录（默认 `~/.dscode`） |
+
+### 指定工作目录
+
+默认使用启动时的当前目录作为项目工作目录。通过 `DSCODE_PROJECT_PATH` 可指定不同的目录：
+
+```bash
+DSCODE_PROJECT_PATH=/path/to/project npm start
+```
+
+### 文件权限
+
+通过 `permissions.deny` 配置 glob 模式来阻止 agent 读写特定文件：
+
+```jsonc
+// 项目级 .dscode/config.json
+{
+  "permissions": {
+    "deny": ["**/.env", "**/.env.*", "**/secrets/**"]
+  }
+}
+```
+
+支持的 glob 语法：`*`（匹配单级路径中的任意字符）、`**`（匹配任意层路径）。
+用户级和项目级的 deny 列表会合并（取并集），任一级别配置的模式都会生效。
 
 ## 数据目录
 
