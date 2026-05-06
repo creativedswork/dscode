@@ -1,4 +1,5 @@
 # DSCode
+>  模型每强一分，Harness的重心就移一寸，从Angentic Workflow到上下文管理再到记忆系统。目前阶段，远没有成熟稳定的Harness，也没有适配所有模型的万能Agent。 DScode只想做DeepSeek模型的Harness，就像Claude Code是Claude模型的Harness一样。
 
 基于 DeepSeek 模型的交互式命令行 Coding Agent，对标 [Claude Code](https://docs.anthropic.com/en/docs/claude-code)。
 
@@ -193,8 +194,9 @@ npm run typecheck    # TypeScript 类型检查
 - [@mariozechner/pi-ai](https://www.npmjs.com/package/@mariozechner/pi-ai) — 多模型接入层
 - DeepSeek API
 
-## Roadmap
+> 本着不重复造轮子的原则，本项目基于pi-ai 以及 pi-agent-core 实现Agent Runtime. 虽然借助Claude Code完全实现了基于该Runtime的Coding CLI能力，但我也意识到，Harness是一个前沿的领域，需要匠心不断探索，接下来，我会回到古法编程上来，为DeepSeek模型打造最好的Harness。
 
+## Roadmap
 ### P0 — 核心能力
 
 - [ ] **Diff-based 编辑工具** — 支持 patch/diff 级别的文件修改，替代全文覆写
