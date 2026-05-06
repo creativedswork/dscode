@@ -4,12 +4,12 @@ import { join, resolve } from "node:path";
 
 import type { HarnessConfig, ThinkingLevel } from "./types.js";
 
-function xdgConfigHome(): string {
-  return process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config");
+function dsConfigHome(): string {
+  return process.env.DSCODE_CONFIG_HOME ?? join(homedir(), ".dscode");
 }
 
-function xdgDataHome(): string {
-  return process.env.XDG_DATA_HOME ?? join(homedir(), ".local", "share");
+function dsDataHome(): string {
+  return process.env.DSCODE_DATA_HOME ?? join(homedir(), ".dscode");
 }
 
 function loadEnvFile(projectPath: string): void {
@@ -38,8 +38,8 @@ export function loadConfig(): HarnessConfig {
   const projectPath = process.cwd();
   loadEnvFile(projectPath);
 
-  const configDir = join(xdgConfigHome(), "agent");
-  const dataDir = join(xdgDataHome(), "agent");
+  const configDir = dsConfigHome();
+  const dataDir = join(dsDataHome(), "data");
 
   const userConfig = loadJsonSafe(join(configDir, "config.json"));
 

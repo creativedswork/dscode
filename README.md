@@ -81,6 +81,41 @@ DEEPSEEK_MODEL=deepseek-v4-pro npm start
 
 退出：输入 `exit` 或按 `Ctrl+C` 两次。中断生成：单次 `Ctrl+C`。
 
+## 配置
+
+配置文件路径：`~/.dscode/config.json`
+
+```jsonc
+{
+  "provider": "deepseek",   // LLM 提供商（默认 "deepseek"）
+  "modelId": "deepseek-v4-flash"  // 模型 ID（默认 "deepseek-v4-flash"）
+}
+```
+
+| 字段 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `provider` | string | `"deepseek"` | LLM 提供商，可选 deepseek / openai / anthropic 等 |
+| `modelId` | string | `"deepseek-v4-flash"` | 模型 ID |
+
+优先级：环境变量 > config.json > 默认值
+
+| 环境变量 | 对应配置 |
+|----------|----------|
+| `AGENT_PROVIDER` | provider |
+| `AGENT_MODEL` / `DEEPSEEK_MODEL` | modelId |
+| `DSCODE_CONFIG_HOME` | 自定义配置目录（默认 `~/.dscode`） |
+| `DSCODE_DATA_HOME` | 自定义数据目录（默认 `~/.dscode`） |
+
+## 数据目录
+
+```
+~/.dscode/
+├── config.json           # 用户配置
+└── data/
+    ├── sessions/         # 会话历史
+    └── memory/           # 记忆（全局 + 项目级）
+```
+
 ## 项目结构
 
 ```
@@ -88,19 +123,10 @@ src/
 ├── core/           # 入口、host 组装、配置、共享类型
 ├── session/        # 会话持久化 (JSON, atomic write)
 ├── context/        # token 估算、上下文压缩
-├── memory/         # 跨 session 记忆 (XDG data dir)
+├── memory/         # 跨 session 记忆
 ├── skills/         # 工具注册 + 内置工具 (fs, shell, search)
 ├── permissions/    # 权限拦截 (beforeToolCall hook)
 └── ui/             # REPL、流式渲染、slash commands
-```
-
-数据目录（XDG 规范）：
-
-```
-~/.config/dscode/         # 用户配置
-~/.local/share/dscode/
-├── sessions/             # 会话历史
-└── memory/               # 记忆（全局 + 项目级）
 ```
 
 ## 权限模型
@@ -115,22 +141,6 @@ src/
 - **Y** — 本次放行
 - **N** — 拒绝
 - **A** — 本 session 始终放行该工具
-
-## 架构文档
-
-详见 `docs/` 目录：
-
-- [架构总览](docs/architecture-overview.md)
-- [Layer 0: Agent Loop](docs/layer0-agent-loop.md)
-- [Layer 1: Session](docs/layer1-session.md)
-- [Layer 2: Context](docs/layer2-context.md)
-- [Layer 3: Memory](docs/layer3-memory.md)
-- [Layer 4: Skills](docs/layer4-skills.md)
-- [Layer 5: Permissions](docs/layer5-permissions.md)
-- [Layer 6: UI](docs/layer6-ui.md)
-- [Harness (Host)](docs/harness.md)
-- [编码规范](docs/coding-style.md)
-- [设计决策](docs/design-decisions.md)
 
 ## 开发
 
