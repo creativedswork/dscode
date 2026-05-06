@@ -47,6 +47,7 @@ agent › 当前 src/ 目录包含 7 个模块：core, session, context, memory,
 | 会话持久化 | 自动保存，可恢复历史对话 |
 | 上下文管理 | 自动压缩长对话，防止 token overflow；截断自动续写 |
 | 记忆系统 | 跨 session 记住用户偏好和项目上下文 |
+| Skills 系统 | 内置工具始终可用 + 声明式第三方 Skill 扩展（SKILL.md） |
 | 等待指示器 | 模型响应空闲 >1s 时显示动画及分段计时统计 |
 | 两级配置 | 用户级 + 项目级配置，灵活覆盖 |
 | Slash 命令 | /help, /reset, /session, /memory, /skills 等 |
@@ -77,7 +78,9 @@ DEEPSEEK_MODEL=deepseek-v4-pro npm start
 | `/session load <id>` | 恢复历史会话 |
 | `/memory list` | 查看记忆 |
 | `/memory add <内容>` | 手动添加记忆 |
-| `/skills` | 列出技能及状态 |
+| `/skills` | 列出技能及状态（内置 + 外部） |
+| `/skills activate <name>` | 激活外部技能 |
+| `/skills deactivate <name>` | 停用外部技能 |
 | `/permissions` | 查看当前权限授予 |
 | `/cost` | 显示 token 用量 |
 | `/compact` | 手动压缩上下文 |
@@ -98,6 +101,7 @@ DEEPSEEK_MODEL=deepseek-v4-pro npm start
   "provider": "deepseek",   // LLM 提供商（默认 "deepseek"）
   "modelId": "deepseek-v4-flash",  // 模型 ID（默认 "deepseek-v4-flash"）
   "maxTokens": 16384,  // 模型最大输出 token 数（默认 16384）
+  "skills": ["git-workflow"],  // 启动时自动激活的外部 skill
   "permissions": {
     "deny": ["**/.env", "**/.env.*", "**/secrets/**"]
   }
@@ -109,6 +113,7 @@ DEEPSEEK_MODEL=deepseek-v4-pro npm start
 | `provider` | string | `"deepseek"` | LLM 提供商，可选 deepseek / openai / anthropic 等 |
 | `modelId` | string | `"deepseek-v4-flash"` | 模型 ID |
 | `maxTokens` | number | `16384` | 模型单次输出最大 token 数 |
+| `skills` | string[] | `[]` | 启动时自动激活的外部 skill 名称列表（两级取并集） |
 | `permissions.deny` | string[] | `[]` | 禁止读写的文件 glob 模式（两级配置取并集） |
 
 | 环境变量 | 对应配置 |
@@ -144,11 +149,72 @@ DSCODE_PROJECT_PATH=/path/to/project npm start
 支持的 glob 语法：`*`（匹配单级路径中的任意字符）、`**`（匹配任意层路径）。
 用户级和项目级的 deny 列表会合并（取并集），任一级别配置的模式都会生效。
 
+## Skills 系统
+
+DSCode 的工具分为**内置工具**和**外部 Skill**两层：
+
+- **内置工具**（filesystem, bash, search）始终可用，不可停用
+- **外部 Skill** 通过 `SKILL.md` 声明式定义，支持渐进式加载
+
+### 目录结构
+
+```
+~/.dscode/skills/               # 用户级 Skills
+├── git-workflow/
+│   └── SKILL.md
+└── docker/
+    └── SKILL.md
+
+<project>/.dscode/skills/       # 项目级 Skills（近优先，同名覆盖用户级）
+└── deploy/
+    └── SKILL.md
+```
+
+### SKILL.md 格式
+
+```yaml
+---
+name: git-workflow
+description: Advanced git operations for PR workflows
+tools:
+  - name: create_pr
+    description: Create a pull request on GitHub
+    parameters:
+      title: { type: string, description: "PR title" }
+      body: { type: string, description: "PR body" }
+    command: gh pr create --title {{title}} --body {{body}}
+---
+
+## Instructions
+
+When the user asks about git workflows, use these tools.
+Always push the branch before creating a PR.
+```
+
+- `---` 之间为 YAML frontmatter，声明 name、description、tools
+- `---` 之后为自由 markdown，激活时作为使用指南注入 system prompt
+- `command` 中 `{{param}}` 会自动替换并做 shell escape（防注入）
+- 参数 type 支持：`string`, `number`, `boolean`
+
+### 激活方式
+
+1. **配置自动激活**：在 config.json 中 `"skills": ["git-workflow"]`
+2. **用户手动激活**：`/skills activate <name>`
+3. **模型自主激活**：模型判断需要时自动调用 `activate_skill` 工具
+
+### 渐进式加载
+
+启动时只读取各 SKILL.md 的 name + description 作为索引，system prompt 中仅放一行摘要。
+激活时才解析完整 tools 定义并注入 agent，最小化 context 开销。
+
 ## 数据目录
 
 ```
 ~/.dscode/
 ├── config.json           # 用户配置
+├── skills/               # 用户级第三方 Skills
+│   └── <skill-name>/
+│       └── SKILL.md
 └── data/
     ├── sessions/         # 会话历史
     └── memory/           # 记忆（全局 + 项目级）
@@ -230,7 +296,7 @@ npm run typecheck    # TypeScript 类型检查
 - [ ] **定时任务** — 支持 cron 式定时执行
 - [ ] **IDE 集成** — VS Code / JetBrains 扩展
 - [ ] **实际 token 用量追踪** — 从 API 响应中读取真实 usage，计算成本
-- [ ] **外部 Skill 加载** — 支持从 `~/.dscode/skills/` 动态加载用户自定义技能
+- [x] **外部 Skill 加载** — 支持从 `~/.dscode/skills/` 和项目级目录动态加载声明式技能（SKILL.md）
 
 ## 已知限制
 

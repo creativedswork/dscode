@@ -139,14 +139,41 @@ export const COMMANDS: SlashCommand[] = [
   },
   {
     name: "skills",
-    description: "List skills and their status",
-    execute: async (_args, ctx) => {
-      console.log(`\n${BOLD}Skills:${RESET}`);
-      for (const skill of ctx.skillRegistry.listAll()) {
-        const status = ctx.skillRegistry.isActive(skill.name) ? `${GREEN}active${RESET}` : `${DIM}inactive${RESET}`;
-        console.log(`  ${skill.name} [${status}] ${DIM}— ${skill.description}${RESET}`);
+    description: "Skill management (list|activate|deactivate)",
+    execute: async (args, ctx) => {
+      const [sub, ...rest] = args.split(/\s+/);
+      switch (sub) {
+        case "activate": {
+          const name = rest[0];
+          if (!name) { ctx.renderer.renderError("Usage: /skills activate <name>"); return; }
+          try {
+            const skill = ctx.skillRegistry.activateSkill(name);
+            ctx.agent.state.tools = ctx.skillRegistry.getTools();
+            const toolNames = skill.tools.map((t) => t.name).join(", ");
+            ctx.renderer.renderInfo(`Activated: ${name} (tools: ${toolNames || "none"})`);
+          } catch (err: any) {
+            ctx.renderer.renderError(err.message);
+          }
+          break;
+        }
+        case "deactivate": {
+          const name = rest[0];
+          if (!name) { ctx.renderer.renderError("Usage: /skills deactivate <name>"); return; }
+          ctx.skillRegistry.deactivateSkill(name);
+          ctx.agent.state.tools = ctx.skillRegistry.getTools();
+          ctx.renderer.renderInfo(`Deactivated: ${name}`);
+          break;
+        }
+        default: {
+          console.log(`\n${BOLD}Skills:${RESET}`);
+          for (const { skill, active } of ctx.skillRegistry.listAll()) {
+            const status = active ? `${GREEN}active${RESET}` : `${DIM}inactive${RESET}`;
+            const source = `${DIM}(${skill.source})${RESET}`;
+            console.log(`  ${skill.name} [${status}] ${source} ${DIM}— ${skill.description}${RESET}`);
+          }
+          console.log();
+        }
       }
-      console.log();
     },
   },
   {

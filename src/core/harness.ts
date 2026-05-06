@@ -27,14 +27,14 @@ export class Harness {
     this.sessionManager = new SessionManager(config.dataDir);
     this.contextManager = new ContextManager(config.context);
     this.memoryManager = new MemoryManager(config.dataDir, config.projectPath, config.memory);
-    this.skillRegistry = new SkillRegistry();
+    this.skillRegistry = new SkillRegistry(config.userSkillsDir, config.projectSkillsDir);
     this.permissionManager = new PermissionManager(config.permissions, promptPermission, () => {
       this.renderer.pauseSpinner();
     });
   }
 
   initialize(): void {
-    // activate configured skills
+    // activate configured external skills
     for (const name of this.config.skills) {
       try {
         this.skillRegistry.activateSkill(name);
@@ -45,8 +45,8 @@ export class Harness {
 
     // build system prompt
     const memories = this.memoryManager.getRelevantMemories();
-    const skillAdditions = this.skillRegistry.getSystemPromptAdditions();
-    const systemPrompt = this.buildSystemPrompt(memories, skillAdditions);
+    const skillSection = this.skillRegistry.getSystemPromptSection();
+    const systemPrompt = this.buildSystemPrompt(memories, skillSection);
 
     // get model
     const model = getModel(this.config.provider as any, this.config.modelId as any);
@@ -104,7 +104,7 @@ export class Harness {
     this._truncated = false;
   }
 
-  private buildSystemPrompt(memories: string, skillAdditions: string): string {
+  private buildSystemPrompt(memories: string, skillSection: string): string {
     let prompt = `You are a coding assistant working in: ${this.config.projectPath}
 
 ## Rules
@@ -115,8 +115,8 @@ export class Harness {
 - Answer in the user's language. Be concise and direct.
 - When writing code, produce complete, working implementations. Do not leave placeholders or TODOs.`;
 
-    if (skillAdditions) {
-      prompt += "\n\n" + skillAdditions;
+    if (skillSection) {
+      prompt += "\n\n" + skillSection;
     }
     if (memories) {
       prompt += memories;
