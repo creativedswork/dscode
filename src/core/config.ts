@@ -56,6 +56,13 @@ export function loadConfig(): HarnessConfig {
   const projectDeny = ((projectConfig.permissions as any)?.deny as string[]) ?? [];
   const denyPatterns = [...new Set([...userDeny, ...projectDeny])];
 
+  const userSkills = ((userConfig.skills as string[]) ?? []);
+  const projectSkills = ((projectConfig.skills as string[]) ?? []);
+  const skills = [...new Set([...userSkills, ...projectSkills])];
+
+  const userSkillsDir = join(configDir, "skills");
+  const projectSkillsDir = join(projectPath, ".dscode", "skills");
+
   const thinkingLevel: ThinkingLevel = modelId.includes("pro") ? "medium" : "off";
 
   return {
@@ -66,6 +73,8 @@ export function loadConfig(): HarnessConfig {
     projectPath,
     configDir,
     dataDir,
+    userSkillsDir,
+    projectSkillsDir,
     context: {
       strategy: "sliding-window",
       targetUtilization: 0.85,
@@ -82,6 +91,6 @@ export function loadConfig(): HarnessConfig {
       rules: [],
       denyPatterns,
     },
-    skills: ["filesystem", "bash", "search"],
+    skills,
   };
 }

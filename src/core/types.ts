@@ -13,6 +13,8 @@ export interface HarnessConfig {
   projectPath: string;
   configDir: string;
   dataDir: string;
+  userSkillsDir: string;
+  projectSkillsDir: string;
   context: ContextConfig;
   memory: MemoryConfig;
   permissions: PermissionsConfig;
@@ -93,7 +95,24 @@ export interface Skill {
   name: string;
   description: string;
   tools: AgentTool<any>[];
-  systemPromptAddition?: string;
+  instructions?: string;
+  source: "builtin" | "user" | "project";
+}
+
+export interface SkillManifest {
+  name: string;
+  description: string;
+  tools?: SkillToolDef[];
+  instructions?: string;
+  source: "user" | "project";
+  path: string;
+}
+
+export interface SkillToolDef {
+  name: string;
+  description: string;
+  parameters: Record<string, { type: string; description?: string }>;
+  command: string;
 }
 
 // --- UI ---
