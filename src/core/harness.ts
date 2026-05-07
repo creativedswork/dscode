@@ -10,11 +10,10 @@ import { DriverRegistry } from "../drivers/registry.js";
 import { SkillManager } from "../skills/manager.js";
 import { PermissionManager } from "../permissions/manager.js";
 import { MCPManager } from "../mcp/manager.js";
-import { TerminalRenderer } from "../ui/render.js";
-import { runRepl, promptPermission } from "../ui/repl.js";
+import { TuiApp } from "../ui/tui-app.js";
 
 export class Harness {
-  private agent!: Agent;
+  agent!: Agent;
   private sessionManager: SessionManager;
   private contextManager: ContextManager;
   private memoryManager: MemoryManager;
@@ -22,21 +21,21 @@ export class Harness {
   private skillManager: SkillManager;
   private permissionManager: PermissionManager;
   private mcpManager?: MCPManager;
-  private renderer: TerminalRenderer;
   private config: HarnessConfig;
-  private _truncated = false;
+  private tui!: TuiApp;
 
   constructor(config: HarnessConfig) {
     this.config = config;
-    this.renderer = new TerminalRenderer();
     this.sessionManager = new SessionManager(config.dataDir);
     this.contextManager = new ContextManager(config.context);
     this.memoryManager = new MemoryManager(config.dataDir, config.projectPath, config.memory);
     this.driverRegistry = new DriverRegistry();
     this.skillManager = new SkillManager(config.userSkillsDir, config.projectSkillsDir);
-    this.permissionManager = new PermissionManager(config.permissions, promptPermission, () => {
-      this.renderer.pauseSpinner();
-    });
+    this.permissionManager = new PermissionManager(
+      config.permissions,
+      (toolName, preview) => this.tui.getPromptPermission()(toolName, preview),
+      () => {},
+    );
   }
 
   async initialize(): Promise<void> {
@@ -105,35 +104,27 @@ export class Harness {
 
   async run(): Promise<void> {
     const model = getModel(this.config.provider as any, this.config.modelId as any);
-    await runRepl({
+    this.tui = new TuiApp({
       agent: this.agent,
-      harness: this,
       sessionManager: this.sessionManager,
       memoryManager: this.memoryManager,
       driverRegistry: this.driverRegistry,
       skillManager: this.skillManager,
       permissionManager: this.permissionManager,
       contextManager: this.contextManager,
-      renderer: this.renderer,
       modelName: model.name,
+      projectPath: this.config.projectPath,
     });
+
+    await this.tui.start();
     await this.shutdown();
   }
 
   private async shutdown(): Promise<void> {
-    this.renderer.stopStreaming();
     this.sessionManager.saveSession(this.agent);
     if (this.mcpManager) {
       await this.mcpManager.shutdown();
     }
-  }
-
-  get wasTruncated(): boolean {
-    return this._truncated;
-  }
-
-  resetTruncated(): void {
-    this._truncated = false;
   }
 
   private buildSystemPrompt(memories: string, skillSection: string): string {
@@ -209,14 +200,6 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
 
 
 
-  startSpinner(): void {
-    this.renderer.startStreaming();
-  }
-
-  stopSpinner(): void {
-    this.renderer.stopStreaming();
-  }
-
   private bindEvents(): void {
     this.agent.subscribe((event) => {
       switch (event.type) {
@@ -224,27 +207,20 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
           const ev = (event as any).assistantMessageEvent;
           if (!ev) break;
           switch (ev.type) {
-            case "thinking_start":
-              this.renderer.renderThinkingStart();
-              break;
             case "thinking_delta":
-              this.renderer.renderThinkingDelta(ev.delta);
-              break;
-            case "thinking_end":
-              this.renderer.renderThinkingEnd();
+              this.tui.thinkingDelta(ev.delta);
               break;
             case "text_delta":
-              this.renderer.renderTextDelta(ev.delta);
+              this.tui.textDelta(ev.delta);
               break;
           }
           break;
         }
         case "tool_execution_start":
-          this.renderer.pauseSpinner();
-          this.renderer.renderToolStart((event as any).toolName, (event as any).args);
+          this.tui.toolStart((event as any).toolName, (event as any).args);
           break;
         case "tool_execution_end":
-          this.renderer.renderToolEnd(
+          this.tui.toolEnd(
             (event as any).toolName,
             (event as any).result,
             (event as any).isError,
@@ -253,20 +229,24 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
       }
     });
 
-    // auto-save session on agent_end
     this.agent.subscribe(async (event) => {
       try {
         if (event.type === "agent_end") {
+          this.tui.setProcessing(false);
           this.sessionManager.saveSession(this.agent);
         }
+        if (event.type === "agent_start") {
+          this.tui.startAssistantMessage();
+        }
         if (event.type === "turn_end") {
+          this.tui.finishAssistantMessage();
           const msg = (event as any).message;
           if (msg?.stopReason === "length") {
-            this._truncated = true;
+            this.tui.addInfo("Output truncated (hit max_tokens). Continue from where you left off.");
           }
         }
       } catch (err) {
-        console.error("[harness] agent_end listener error:", err);
+        this.tui.addError(`agent_end listener error: ${err}`);
       }
     });
   }

@@ -123,17 +123,6 @@ export interface SkillManifest {
 
 // --- UI ---
 
-export interface Renderer {
-  renderTextDelta(delta: string): void;
-  renderThinkingStart(): void;
-  renderThinkingDelta(delta: string): void;
-  renderThinkingEnd(): void;
-  renderToolStart(name: string, args: unknown): void;
-  renderToolEnd(name: string, result: unknown, isError: boolean): void;
-  renderError(message: string): void;
-  renderInfo(message: string): void;
-}
-
 export type PromptUserFn = (toolName: string, preview: string) => Promise<{
   decision: "allow" | "deny";
   rememberForSession: boolean;

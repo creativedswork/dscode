@@ -1,4 +1,5 @@
 import type { Agent } from "@mariozechner/pi-agent-core";
+import type { SlashCommand as AutocompleteSlashCommand } from "@earendil-works/pi-tui";
 
 import type { SessionManager } from "../session/manager.js";
 import type { MemoryManager } from "../memory/manager.js";
@@ -6,9 +7,7 @@ import type { DriverRegistry } from "../drivers/registry.js";
 import type { SkillManager } from "../skills/manager.js";
 import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
-import { TerminalRenderer, colors } from "./render.js";
-
-const { DIM, GREEN, YELLOW, CYAN, BOLD, RESET } = colors;
+import type { TuiApp } from "./tui-app.js";
 
 interface CommandContext {
   agent: Agent;
@@ -18,25 +17,25 @@ interface CommandContext {
   skillManager: SkillManager;
   permissionManager: PermissionManager;
   contextManager: ContextManager;
-  renderer: TerminalRenderer;
+  tui: TuiApp;
 }
 
-interface SlashCommand {
+interface SlashCommandDef {
   name: string;
   description: string;
-  execute(args: string, ctx: CommandContext): Promise<void>;
+  execute(args: string, ctx: CommandContext): void | Promise<void>;
 }
 
-export const COMMANDS: SlashCommand[] = [
+const COMMANDS: SlashCommandDef[] = [
   {
     name: "help",
     description: "Show available commands",
     execute: async (_args, ctx) => {
-      console.log(`\n${BOLD}Available commands:${RESET}`);
+      const lines: string[] = [];
       for (const cmd of COMMANDS) {
-        console.log(`  ${GREEN}/${cmd.name}${RESET}  ${DIM}${cmd.description}${RESET}`);
+        lines.push(`  /${cmd.name}  ${cmd.description}`);
       }
-      console.log();
+      ctx.tui.addInfo("Available commands:\n" + lines.join("\n"));
     },
   },
   {
@@ -44,7 +43,7 @@ export const COMMANDS: SlashCommand[] = [
     description: "Clear conversation history",
     execute: async (_args, ctx) => {
       ctx.agent.reset();
-      ctx.renderer.renderInfo("(conversation reset)");
+      ctx.tui.addInfo("(conversation reset)");
     },
   },
   {
@@ -56,40 +55,39 @@ export const COMMANDS: SlashCommand[] = [
         case "list": {
           const sessions = ctx.sessionManager.listSessions();
           if (sessions.length === 0) {
-            ctx.renderer.renderInfo("No saved sessions.");
+            ctx.tui.addInfo("No saved sessions.");
             return;
           }
-          console.log(`\n${BOLD}Sessions:${RESET}`);
-          for (const s of sessions.slice(0, 20)) {
+          const lines = sessions.slice(0, 20).map((s) => {
             const date = new Date(s.updatedAt).toLocaleDateString();
-            console.log(`  ${DIM}${s.id.slice(0, 8)}${RESET} ${s.title} ${DIM}(${date}, ${s.messageCount} msgs)${RESET}`);
-          }
-          console.log();
+            return `  ${s.id.slice(0, 8)} ${s.title} (${date}, ${s.messageCount} msgs)`;
+          });
+          ctx.tui.addInfo("Sessions:\n" + lines.join("\n"));
           break;
         }
         case "save":
           ctx.sessionManager.saveSession(ctx.agent);
-          ctx.renderer.renderInfo("Session saved.");
+          ctx.tui.addInfo("Session saved.");
           break;
         case "load": {
           const id = rest[0];
-          if (!id) { ctx.renderer.renderError("Usage: /session load <id>"); return; }
+          if (!id) { ctx.tui.addError("Usage: /session load <id>"); return; }
           const sessions = ctx.sessionManager.listSessions();
           const match = sessions.find((s) => s.id.startsWith(id));
-          if (!match) { ctx.renderer.renderError(`Session not found: ${id}`); return; }
+          if (!match) { ctx.tui.addError(`Session not found: ${id}`); return; }
           ctx.sessionManager.loadSession(match.id, ctx.agent);
-          ctx.renderer.renderInfo(`Loaded session: ${match.title}`);
+          ctx.tui.addInfo(`Loaded session: ${match.title}`);
           break;
         }
         case "delete": {
           const id = rest[0];
-          if (!id) { ctx.renderer.renderError("Usage: /session delete <id>"); return; }
+          if (!id) { ctx.tui.addError("Usage: /session delete <id>"); return; }
           ctx.sessionManager.deleteSession(id);
-          ctx.renderer.renderInfo("Session deleted.");
+          ctx.tui.addInfo("Session deleted.");
           break;
         }
         default:
-          ctx.renderer.renderError("Usage: /session [list|save|load|delete]");
+          ctx.tui.addError("Usage: /session [list|save|load|delete]");
       }
     },
   },
@@ -104,38 +102,35 @@ export const COMMANDS: SlashCommand[] = [
           const scope = rest[0] as "global" | "project" | undefined;
           const entries = ctx.memoryManager.listMemories(scope);
           if (entries.length === 0) {
-            ctx.renderer.renderInfo("No memories stored.");
+            ctx.tui.addInfo("No memories stored.");
             return;
           }
-          console.log(`\n${BOLD}Memories:${RESET}`);
-          for (const m of entries) {
-            console.log(`  ${DIM}[${m.scope}]${RESET} ${m.content} ${DIM}(${m.id})${RESET}`);
-          }
-          console.log();
+          const lines = entries.map((m) => `  [${m.scope}] ${m.content} (${m.id})`);
+          ctx.tui.addInfo("Memories:\n" + lines.join("\n"));
           break;
         }
         case "add": {
           const content = rest.join(" ");
-          if (!content) { ctx.renderer.renderError("Usage: /memory add <content>"); return; }
+          if (!content) { ctx.tui.addError("Usage: /memory add <content>"); return; }
           ctx.memoryManager.addMemory(content, "project", sessionId);
-          ctx.renderer.renderInfo("Memory added.");
+          ctx.tui.addInfo("Memory added.");
           break;
         }
         case "remove": {
           const id = rest[0];
-          if (!id) { ctx.renderer.renderError("Usage: /memory remove <id>"); return; }
+          if (!id) { ctx.tui.addError("Usage: /memory remove <id>"); return; }
           ctx.memoryManager.removeMemory(id);
-          ctx.renderer.renderInfo("Memory removed.");
+          ctx.tui.addInfo("Memory removed.");
           break;
         }
         case "clear": {
           const scope = rest[0] as "global" | "project" | undefined;
           ctx.memoryManager.clearMemories(scope);
-          ctx.renderer.renderInfo("Memories cleared.");
+          ctx.tui.addInfo("Memories cleared.");
           break;
         }
         default:
-          ctx.renderer.renderError("Usage: /memory [list|add|remove|clear]");
+          ctx.tui.addError("Usage: /memory [list|add|remove|clear]");
       }
     },
   },
@@ -147,7 +142,7 @@ export const COMMANDS: SlashCommand[] = [
       switch (sub) {
         case "activate": {
           const name = rest[0];
-          if (!name) { ctx.renderer.renderError("Usage: /skills activate <name>"); return; }
+          if (!name) { ctx.tui.addError("Usage: /skills activate <name>"); return; }
           try {
             const skill = ctx.skillManager.activate(name, ctx.driverRegistry);
             ctx.agent.state.tools = [
@@ -155,31 +150,30 @@ export const COMMANDS: SlashCommand[] = [
               ...ctx.skillManager.getTools(),
             ];
             const toolNames = skill.tools.map((t) => t.name).join(", ");
-            ctx.renderer.renderInfo(`Activated: ${name} (allowed tools: ${toolNames || "none"})`);
+            ctx.tui.addInfo(`Activated: ${name} (allowed tools: ${toolNames || "none"})`);
           } catch (err: any) {
-            ctx.renderer.renderError(err.message);
+            ctx.tui.addError(err.message);
           }
           break;
         }
         case "deactivate": {
           const name = rest[0];
-          if (!name) { ctx.renderer.renderError("Usage: /skills deactivate <name>"); return; }
+          if (!name) { ctx.tui.addError("Usage: /skills deactivate <name>"); return; }
           ctx.skillManager.deactivate(name);
           ctx.agent.state.tools = [
             ...ctx.driverRegistry.getAllTools(),
             ...ctx.skillManager.getTools(),
           ];
-          ctx.renderer.renderInfo(`Deactivated: ${name}`);
+          ctx.tui.addInfo(`Deactivated: ${name}`);
           break;
         }
         default: {
-          console.log(`\n${BOLD}Skills:${RESET}`);
+          const lines: string[] = [];
           for (const { skill, active } of ctx.skillManager.listAll()) {
-            const status = active ? `${GREEN}active${RESET}` : `${DIM}inactive${RESET}`;
-            const source = `${DIM}(${skill.source})${RESET}`;
-            console.log(`  ${skill.name} [${status}] ${source} ${DIM}— ${skill.description}${RESET}`);
+            const status = active ? "active" : "inactive";
+            lines.push(`  ${skill.name} [${status}] (${skill.source}) — ${skill.description}`);
           }
-          console.log();
+          ctx.tui.addInfo("Skills:\n" + lines.join("\n"));
         }
       }
     },
@@ -188,14 +182,13 @@ export const COMMANDS: SlashCommand[] = [
     name: "drivers",
     description: "List loaded drivers",
     execute: async (_args, ctx) => {
-      console.log(`\n${BOLD}Drivers:${RESET}`);
+      const lines: string[] = [];
       for (const d of ctx.driverRegistry.listAll()) {
-        const source = `${DIM}(${d.source})${RESET}`;
         const toolNames = d.tools.map((t) => t.name).join(", ");
-        console.log(`  ${d.name} ${source} ${DIM}— ${d.description}${RESET}`);
-        console.log(`    ${DIM}tools: ${toolNames}${RESET}`);
+        lines.push(`  ${d.name} (${d.source}) — ${d.description}`);
+        lines.push(`    tools: ${toolNames}`);
       }
-      console.log();
+      ctx.tui.addInfo("Drivers:\n" + lines.join("\n"));
     },
   },
   {
@@ -204,14 +197,11 @@ export const COMMANDS: SlashCommand[] = [
     execute: async (_args, ctx) => {
       const grants = ctx.permissionManager.getSessionGrants();
       if (grants.length === 0) {
-        ctx.renderer.renderInfo("No session-level grants.");
+        ctx.tui.addInfo("No session-level grants.");
         return;
       }
-      console.log(`\n${BOLD}Session grants:${RESET}`);
-      for (const g of grants) {
-        console.log(`  ${GREEN}✓${RESET} ${g}`);
-      }
-      console.log();
+      const lines = grants.map((g) => `  ✓ ${g}`);
+      ctx.tui.addInfo("Session grants:\n" + lines.join("\n"));
     },
   },
   {
@@ -220,7 +210,7 @@ export const COMMANDS: SlashCommand[] = [
     execute: async (_args, ctx) => {
       const msgs = ctx.agent.state.messages;
       const tokens = ctx.contextManager.getEstimatedTokens(msgs);
-      console.log(`\n${BOLD}Estimated context:${RESET} ~${tokens} tokens (${msgs.length} messages)\n`);
+      ctx.tui.addInfo(`Estimated context: ~${tokens} tokens (${msgs.length} messages)`);
     },
   },
   {
@@ -231,7 +221,30 @@ export const COMMANDS: SlashCommand[] = [
       const compacted = await ctx.contextManager.transform(ctx.agent.state.messages);
       ctx.agent.state.messages = compacted as any;
       const after = ctx.agent.state.messages.length;
-      ctx.renderer.renderInfo(`Compacted: ${before} → ${after} messages`);
+      ctx.tui.addInfo(`Compacted: ${before} → ${after} messages`);
     },
   },
 ];
+
+export function getSlashCommandAutocomplete(): AutocompleteSlashCommand[] {
+  return COMMANDS.map((c) => ({ name: c.name, description: c.description }));
+}
+
+export type { CommandContext };
+
+export function executeSlashCommand(
+  raw: string,
+  ctx: Omit<CommandContext, "tui">,
+  tui: TuiApp,
+): void {
+  const [cmdName, ...argParts] = raw.slice(1).split(/\s+/);
+  const cmd = COMMANDS.find((c) => c.name === cmdName);
+  if (!cmd) {
+    tui.addError(`Unknown command: /${cmdName}. Type /help`);
+    return;
+  }
+  const fullCtx: CommandContext = { ...ctx, tui };
+  Promise.resolve(cmd.execute(argParts.join(" "), fullCtx)).catch((err) => {
+    tui.addError(err instanceof Error ? err.message : String(err));
+  });
+}
