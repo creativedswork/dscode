@@ -67,15 +67,29 @@ export function loadConfig(): HarnessConfig {
 
   const thinkingLevel: ThinkingLevel = modelId.includes("pro") ? "medium" : "off";
 
-  // load MCP server configs
+  // load MCP server configs from both formats:
+  // 1) { mcp: { servers: [{name, command, args, cwd, ...}] } }  (legacy array)
+  // 2) { mcpServers: { "name": {command, args, cwd, ...} } }    (object with named keys)
+  let mcpServersRaw: unknown[] = [];
   const mcpConfig = (merged.mcp as Record<string, unknown>) ?? {};
-  const mcpServersRaw = (mcpConfig.servers as unknown[]) ?? [];
+  const mcpObj = merged.mcpServers as Record<string, Record<string, unknown>> | undefined;
+
+  if (Array.isArray(mcpConfig.servers)) {
+    mcpServersRaw = mcpConfig.servers as unknown[];
+  } else if (mcpObj && typeof mcpObj === "object") {
+    mcpServersRaw = Object.entries(mcpObj).map(([name, cfg]) => ({
+      name,
+      ...cfg,
+    }));
+  }
+
   const mcp: MCPServerConfig[] = mcpServersRaw.map((s: any) => ({
     name: s.name,
     description: s.description,
     transport: s.transport ?? "stdio",
     command: s.command,
     args: s.args,
+    cwd: s.cwd,
     url: s.url,
     env: s.env,
   }));
