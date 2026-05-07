@@ -205,12 +205,12 @@ export class TuiApp {
     this.conversation.textDelta(delta);
   }
 
-  toolStart(name: string, args: string): void {
+  toolStart(name: string, args: unknown): void {
     this.markActivity();
     this.conversation.toolStart(name, args);
   }
 
-  toolEnd(name: string, result: string, isError: boolean): void {
+  toolEnd(name: string, result: unknown, isError: boolean): void {
     this.markActivity();
     this.conversation.toolEnd(name, result, isError);
   }
