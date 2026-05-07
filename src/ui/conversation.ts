@@ -10,29 +10,29 @@ interface ToolEntry {
 }
 
 function toolArgsPreview(args: unknown): string {
-  if (typeof args === "string") return args.slice(0, 120);
+  if (typeof args === "string") return args.slice(0, 80);
   try {
-    return JSON.stringify(args).slice(0, 120);
+    return JSON.stringify(args).slice(0, 80);
   } catch {
-    return String(args).slice(0, 120);
+    return String(args).slice(0, 80);
   }
 }
 
 function toolResultPreview(result: unknown): string {
-  if (typeof result === "string") return result.slice(0, 300);
+  if (typeof result === "string") return result.slice(0, 120);
   if (result && typeof result === "object") {
     const r = result as Record<string, unknown>;
     if (Array.isArray(r.content)) {
       const first = r.content[0];
       if (first && typeof first === "object" && "text" in first) {
-        return String(first.text).slice(0, 300);
+        return String(first.text).slice(0, 120);
       }
     }
   }
   try {
-    return JSON.stringify(result).slice(0, 300);
+    return JSON.stringify(result).slice(0, 120);
   } catch {
-    return String(result).slice(0, 300);
+    return String(result).slice(0, 120);
   }
 }
 
@@ -87,7 +87,6 @@ export class ConversationView {
 
   toolStart(name: string, args: unknown): void {
     this.toolEntries.push({ name, args, result: "" as unknown, isError: false });
-    this.render();
   }
 
   toolEnd(_name: string, result: unknown, isError: boolean): void {
@@ -96,7 +95,6 @@ export class ConversationView {
       entry.result = result;
       entry.isError = isError;
     }
-    this.render();
   }
 
   finishAssistantMessage(): void {
@@ -105,19 +103,22 @@ export class ConversationView {
         c.dim("[thinking] ") + c.dim(this.thinkingBuffer.slice(0, 500)),
       );
     }
-    for (const t of this.toolEntries) {
-      this.segments.push(
-        c.cyan("\n[tool] ") + c.cyan(`${t.name}: ${toolArgsPreview(t.args)}`),
-      );
-      const text = toolResultPreview(t.result);
-      this.segments.push(
-        (t.isError ? c.red : c.cyan)(`[result] ${text}`),
-      );
-    }
     if (this.currentAssistantText) {
       this.segments.push(
         c.magenta.bold("agent ›") + "\n" + this.currentAssistantText,
       );
+    }
+    if (this.toolEntries.length > 0) {
+      this.segments.push("");
+      this.segments.push(c.dim("──── ⚙ Tools ────────────────────────"));
+      for (const t of this.toolEntries) {
+        const icon = t.isError ? c.red("✗") : c.cyan("✓");
+        const preview = toolResultPreview(t.result);
+        this.segments.push(
+          ` ${icon} ${c.cyan(t.name)} ${c.dim(toolArgsPreview(t.args))}${preview ? c.dim(" → ") + preview : ""}`,
+        );
+      }
+      this.segments.push("");
     }
     this.segments.push("");
     this.currentAssistantText = "";
@@ -166,13 +167,6 @@ export class ConversationView {
 
     if (this.thinkingBuffer) {
       lines.push(c.dim("[thinking] " + this.thinkingBuffer.slice(0, 500)));
-    }
-
-    for (const t of this.toolEntries) {
-      lines.push(c.cyan(`\n[tool] ${t.name}: ${toolArgsPreview(t.args)}`));
-      if (t.result !== undefined && t.result !== "") {
-        lines.push((t.isError ? c.red : c.cyan)(`[result] ${toolResultPreview(t.result)}`));
-      }
     }
 
     if (this.currentAssistantText) {
