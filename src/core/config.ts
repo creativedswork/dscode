@@ -86,10 +86,9 @@ export function loadConfig(): HarnessConfig {
   const mcp: MCPServerConfig[] = mcpServersRaw.map((s: any) => ({
     name: s.name,
     description: s.description,
-    transport: s.transport ?? "stdio",
+    transport: s.transport ?? s.type ?? "stdio",
     command: s.command,
     args: s.args,
-    cwd: s.cwd,
     url: s.url,
     env: s.env,
   }));
