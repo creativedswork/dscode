@@ -366,4 +366,8 @@ export class TuiApp {
     this.tui.stop();
     this.exitResolve();
   }
+
+  focusEditor(): void {
+    this.tui.setFocus(this.editor);
+  }
 }
