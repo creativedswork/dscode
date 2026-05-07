@@ -54,7 +54,7 @@ export const TIPS = [
   "Tip: Use /cost to check token usage.",
   "Tip: Use /compact to force context compaction.",
   "Tip: Press Ctrl+C or Tab to abort the current response.",
-  "Tip: Type exit or quit to leave the REPL.",
+  "Tip: Type exit or quit to leave.",
   "Tip: Use /drivers to list all loaded drivers.",
   "Tip: Use /permissions to see session permission grants.",
   "Tip: Use /session load <id> to restore a previous session.",
@@ -62,3 +62,7 @@ export const TIPS = [
   "Tip: Use /skills activate <name> to enable a skill.",
   "Tip: Use /skills deactivate <name> to disable a skill.",
 ];
+
+export function randomTip(): string {
+  return TIPS[Math.floor(Math.random() * TIPS.length)];
+}
