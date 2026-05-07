@@ -23,7 +23,6 @@ export interface HarnessConfig {
   mcp: MCPServerConfig[];
 }
 
-
 export interface ContextConfig {
   strategy: CompactionStrategy;
   targetUtilization: number;
@@ -92,31 +91,34 @@ export interface PermissionRule {
   priority: number;
 }
 
-// --- Skills ---
+// --- Drivers (kernel modules, always loaded) ---
+
+export interface Driver {
+  name: string;
+  description: string;
+  tools: AgentTool<any>[];
+  source: "builtin" | "mcp";
+}
+
+// --- Skills (user-space programs, on-demand activation, SKILL.md) ---
 
 export interface Skill {
   name: string;
   description: string;
   tools: AgentTool<any>[];
   instructions?: string;
-  source: "builtin" | "user" | "project" | "mcp";
-
+  source: "user" | "project";
 }
 
 export interface SkillManifest {
   name: string;
   description: string;
-  tools?: SkillToolDef[];
+  // Tool names this skill is allowed to use (from DriverRegistry).
+  // If empty/undefined, defaults to safe read-only tools.
+  tools?: string[];
   instructions?: string;
   source: "user" | "project";
   path: string;
-}
-
-export interface SkillToolDef {
-  name: string;
-  description: string;
-  parameters: Record<string, { type: string; description?: string }>;
-  command: string;
 }
 
 // --- UI ---

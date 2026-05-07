@@ -1,6 +1,11 @@
 import { loadConfig } from "./config.js";
 import { Harness } from "./harness.js";
 
+// Prevent unhandled rejections from crashing the process
+process.on("unhandledRejection", (reason) => {
+  console.error("[unhandledRejection]", reason);
+});
+
 async function main(): Promise<void> {
   const config = loadConfig();
 

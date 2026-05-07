@@ -6,7 +6,9 @@
   "description": "A layered CLI Agent Harness built on pi-agent-core and pi-ai.",
   "scripts": {
     "start": "tsx src/core/main.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@mariozechner/pi-agent-core": "^0.70.2",
@@ -15,6 +17,7 @@
   "devDependencies": {
     "@types/node": "^22.9.0",
     "tsx": "^4.19.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vitest": "^4.1.5"
   }
 }

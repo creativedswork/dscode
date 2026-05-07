@@ -6,12 +6,16 @@
 
 基于 `@mariozechner/pi-agent-core` + `@mariozechner/pi-ai` 的分层 CLI Agent Harness。
 
+采用 **Agent as OS** 设计理念：
+
 ```
 UI (REPL + 渲染)
   ↓ 事件订阅
 Permissions (beforeToolCall)
   ↓
-Skills (工具注册)
+Skills (用户态程序，按需激活)
+  ↓
+Drivers (内核模块，始终加载)
   ↓
 Memory (system prompt 注入)
   ↓
@@ -22,6 +26,10 @@ Session (持久化)
 Agent Loop (pi-agent-core，已有)
 ```
 
+- **Agent = Kernel** — 核心调度循环
+- **Drivers = 内核模块** — 始终加载，与硬件/环境交互（fs, shell, search, mcp）
+- **Skills = 用户态程序** — 按需激活，SKILL.md 声明式定义
+
 ## 模块清单
 
 | 目录 | 职责 | 关键文件 |
@@ -30,22 +38,21 @@ Agent Loop (pi-agent-core，已有)
 | `src/session/` | 会话持久化（JSON + atomic write） | `manager.ts`, `store.ts` |
 | `src/context/` | token 估算、上下文压缩 | `manager.ts`, `estimator.ts`, `compaction.ts` |
 | `src/memory/` | 跨 session 记忆（XDG data dir） | `manager.ts`, `store.ts` |
-| `src/skills/` | 工具注册 + 内置 6 个工具 | `registry.ts`, `fs.ts`, `shell.ts`, `search.ts` |
+| `src/drivers/` | 驱动注册 + 内置 3 个驱动 | `registry.ts`, `fs.ts`, `shell.ts`, `search.ts` |
+| `src/skills/` | Skill 管理器 + SKILL.md 加载器 | `manager.ts`, `loader.ts` |
 | `src/mcp/` | MCP 客户端（stdio/SSE）+ 管理器 | `client.ts`, `manager.ts`, `types.ts` |
 | `src/permissions/` | 权限拦截（deny/ask/allow） | `manager.ts`, `rules.ts` |
 | `src/ui/` | REPL、流式渲染、slash commands | `repl.ts`, `render.ts`, `commands.ts` |
 
+## 内置驱动 (Drivers)
 
-## 内置工具
+| 驱动名 | 来源 | 工具 | 权限 |
+|--------|------|------|------|
+| `fs` | builtin | `read_file`, `write_file`, `list_files` | always-allow (read/list), ask (write) |
+| `shell` | builtin | `bash` | ask (deny dangerous patterns) |
+| `search` | builtin | `grep`, `glob` | always-allow |
 
-| 工具名 | 来源 | 权限 |
-|--------|------|------|
-| `read_file` | skills/fs.ts | always-allow |
-| `write_file` | skills/fs.ts | ask |
-| `list_files` | skills/fs.ts | always-allow |
-| `bash` | skills/shell.ts | ask (deny dangerous patterns) |
-| `grep` | skills/search.ts | always-allow |
-| `glob` | skills/search.ts | always-allow |
+MCP 服务器连接后也会注册为驱动，source 为 `"mcp"`。
 
 ## 关键 Hook 接线
 

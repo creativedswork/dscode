@@ -5,7 +5,8 @@ import type { Agent } from "@mariozechner/pi-agent-core";
 import type { Harness } from "../core/harness.js";
 import type { SessionManager } from "../session/manager.js";
 import type { MemoryManager } from "../memory/manager.js";
-import type { SkillRegistry } from "../skills/registry.js";
+import type { DriverRegistry } from "../drivers/registry.js";
+import type { SkillManager } from "../skills/manager.js";
 import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
 import { TerminalRenderer, colors } from "./render.js";
@@ -20,7 +21,8 @@ interface ReplDeps {
   harness: Harness;
   sessionManager: SessionManager;
   memoryManager: MemoryManager;
-  skillRegistry: SkillRegistry;
+  driverRegistry: DriverRegistry;
+  skillManager: SkillManager;
   permissionManager: PermissionManager;
   contextManager: ContextManager;
   renderer: TerminalRenderer;
@@ -112,27 +114,47 @@ export async function promptPermission(toolName: string, preview: string): Promi
   decision: "allow" | "deny";
   rememberForSession: boolean;
 }> {
-  const rl = createInterface({ input: process.stdin, output: process.stdout, terminal: false });
-  try {
-    process.stdout.write(`\n${YELLOW}┌─ Permission ─────────────────────────────${RESET}\n`);
-    process.stdout.write(`${YELLOW}│${RESET} Tool: ${BOLD}${toolName}${RESET}\n`);
-    for (const line of preview.split("\n")) {
-      process.stdout.write(`${YELLOW}│${RESET} ${line}\n`);
-    }
-    process.stdout.write(`${YELLOW}└───────────────────────────────────────────${RESET}\n`);
-    process.stdout.write(`  [${GREEN}Y${RESET}]es  [${colors.RED}N${RESET}]o  [${colors.CYAN}A${RESET}]lways > `);
-    const answer = await rl.question("");
-    const key = answer.trim().toLowerCase();
-
-    switch (key) {
-      case "a": case "always":
-        return { decision: "allow", rememberForSession: true };
-      case "n": case "no":
-        return { decision: "deny", rememberForSession: false };
-      default:
-        return { decision: "allow", rememberForSession: false };
-    }
-  } finally {
-    rl.close();
+  process.stdout.write(`\n${YELLOW}┌─ Permission ─────────────────────────────${RESET}\n`);
+  process.stdout.write(`${YELLOW}│${RESET} Tool: ${BOLD}${toolName}${RESET}\n`);
+  for (const line of preview.split("\n")) {
+    process.stdout.write(`${YELLOW}│${RESET} ${line}\n`);
   }
+  process.stdout.write(`${YELLOW}└───────────────────────────────────────────${RESET}\n`);
+  process.stdout.write(`  [${GREEN}Y${RESET}]es  [${colors.RED}N${RESET}]o  [${colors.CYAN}A${RESET}]lways > `);
+
+  // Use raw mode to read a single keypress without creating a secondary readline
+  // that could interfere with the main REPL readline on process.stdin
+  return new Promise((resolve) => {
+    const stdin = process.stdin;
+    const isRaw = stdin.isRaw;
+    const resume = stdin.isPaused();
+
+    if (resume) stdin.resume();
+    stdin.setRawMode?.(true);
+    stdin.setEncoding("utf8");
+
+    const onData = (data: string) => {
+      const key = data.trim().toLowerCase();
+      stdin.removeListener("data", onData);
+      stdin.setRawMode?.(isRaw ? true : false);
+      if (resume) stdin.pause();
+
+      // Echo the key
+      process.stdout.write(key + "\n");
+
+      switch (key) {
+        case "a":
+          resolve({ decision: "allow", rememberForSession: true });
+          break;
+        case "n":
+          resolve({ decision: "deny", rememberForSession: false });
+          break;
+        default:
+          resolve({ decision: "allow", rememberForSession: false });
+          break;
+      }
+    };
+
+    stdin.on("data", onData);
+  });
 }
