@@ -98,7 +98,12 @@ export class SkillRegistry {
     this.activeExternal.delete(name);
   }
 
+  registerMCPSkill(skill: Skill): void {
+    this.activeExternal.set(skill.name, skill);
+  }
+
   getTools(): AgentTool<any>[] {
+
     const tools: AgentTool<any>[] = [];
     for (const s of this.builtinSkills) {
       tools.push(...s.tools);

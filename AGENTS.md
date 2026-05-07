@@ -31,8 +31,10 @@ Agent Loop (pi-agent-core，已有)
 | `src/context/` | token 估算、上下文压缩 | `manager.ts`, `estimator.ts`, `compaction.ts` |
 | `src/memory/` | 跨 session 记忆（XDG data dir） | `manager.ts`, `store.ts` |
 | `src/skills/` | 工具注册 + 内置 6 个工具 | `registry.ts`, `fs.ts`, `shell.ts`, `search.ts` |
+| `src/mcp/` | MCP 客户端（stdio/SSE）+ 管理器 | `client.ts`, `manager.ts`, `types.ts` |
 | `src/permissions/` | 权限拦截（deny/ask/allow） | `manager.ts`, `rules.ts` |
 | `src/ui/` | REPL、流式渲染、slash commands | `repl.ts`, `render.ts`, `commands.ts` |
+
 
 ## 内置工具
 

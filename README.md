@@ -260,7 +260,7 @@ npm run typecheck    # TypeScript 类型检查
 - [@mariozechner/pi-ai](https://www.npmjs.com/package/@mariozechner/pi-ai) — 多模型接入层
 - DeepSeek API
 
-> 本着不重复造轮子的原则，本项目基于pi-ai 以及 pi-agent-core 实现Agent Runtime. 虽然借助Claude Code完全实现了基于该Runtime的Coding CLI能力，但我也意识到，Harness是一个前沿的领域，需要匠心不断探索，接下来，我会回到古法编程上来，为DeepSeek模型打造最好的Harness。
+> 本着不重复造轮子的原则，本项目基于pi-ai 以及 pi-agent-core 实现Agent Runtime. 虽然借助Claude Code完全实现了基于该Runtime的Coding CLI能力，但我也意识到，Harness是一个前沿的领域，需要匠心不断探索，为DeepSeek模型打造最好的Harness。
 
 ## Roadmap
 ### P0 — 核心能力
