@@ -60,7 +60,7 @@ export class TuiApp {
     this.tui = new TUI(this.terminal, true);
     this.conversation = new ConversationView(this.tui);
 
-    this.loader = new CancellableLoader(this.tui, c.cyan, c.dim, "Thinking...");
+    this.loader = new CancellableLoader(this.tui, c.cyan, c.dim, "Waiting...");
 
     const autocomplete = new CombinedAutocompleteProvider(
       getSlashCommandAutocomplete(),
@@ -226,6 +226,8 @@ export class TuiApp {
       this.totalWaitMs = 0;
       this.idleTimer = setInterval(() => {
         if (!this.processing) return;
+        const elapsed = Date.now() - this.lastActivityTime;
+        this.loader.setMessage(`Waiting... ${this.formatElapsed(elapsed)}`);
         const idleDuration = Date.now() - this.lastActivityTime;
         if (idleDuration >= 1000 && !this.idleStartTime) {
           this.idleStartTime = this.lastActivityTime;
@@ -271,7 +273,7 @@ export class TuiApp {
   private formatElapsed(ms: number): string {
     const totalSeconds = Math.floor(ms / 1000);
     if (totalSeconds < 60) {
-      return `${(ms / 1000).toFixed(1)}s`;
+      return `${totalSeconds}s`;
     }
     const minutes = Math.floor(totalSeconds / 60);
     const seconds = totalSeconds % 60;
