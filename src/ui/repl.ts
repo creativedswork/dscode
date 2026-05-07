@@ -125,13 +125,28 @@ export async function promptPermission(toolName: string, preview: string): Promi
     process.stdout.write(`${YELLOW}│${RESET} ${line}\n`);
   }
   process.stdout.write(`${YELLOW}└───────────────────────────────────────────${RESET}\n`);
-  process.stdout.write(`  [${GREEN}Y${RESET}]es  [${colors.RED}N${RESET}]o  [${colors.CYAN}A${RESET}]lways > `);
 
-  // Pause the REPL readline so its internal stdin handler doesn't interfere
-  // with raw mode single-keypress reading. Resume after we're done.
+  // Use the REPL readline to ask for confirmation (Y/N/A + Enter).
+  // This avoids raw mode stdin conflicts and prevents accidental input.
   const rl = replReadline;
-  rl?.pause();
+  if (rl) {
+    while (true) {
+      const answer = (await rl.question(`  [${GREEN}Y${RESET}]es  [${colors.RED}N${RESET}]o  [${colors.CYAN}A${RESET}]lways > `)).trim().toLowerCase();
+      if (answer === "y") {
+        return { decision: "allow", rememberForSession: false };
+      }
+      if (answer === "n") {
+        return { decision: "deny", rememberForSession: false };
+      }
+      if (answer === "a") {
+        return { decision: "allow", rememberForSession: true };
+      }
+      // Invalid input, prompt again
+      process.stdout.write(`  ${YELLOW}(enter Y, N, or A)${RESET}\n`);
+    }
+  }
 
+  // Fallback: no readline available, use raw mode
   return new Promise((resolve) => {
     const stdin = process.stdin;
     const isRaw = stdin.isRaw;
@@ -150,9 +165,6 @@ export async function promptPermission(toolName: string, preview: string): Promi
       stdin.removeListener("data", onData);
       stdin.setRawMode?.(isRaw ? true : false);
       if (resume) stdin.pause();
-
-      // Resume the REPL readline now that raw mode is done
-      rl?.resume();
 
       process.stdout.write(">\n");
 

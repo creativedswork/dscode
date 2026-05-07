@@ -83,6 +83,11 @@ export class MCPClient {
       env: { ...process.env, ...this.config.env },
     });
 
+    // Suppress EPIPE errors on stdin when the child process exits unexpectedly
+    // (e.g. during Ctrl+C shutdown). Node throws unhandled 'error' events on
+    // the stdin Writable if the pipe breaks while we're writing to it.
+    this.process.stdin!.on("error", () => {});
+
     // capture stderr for error diagnostics
     let stderrBuf = "";
     this.process.stderr!.on("data", (data: Buffer) => {
