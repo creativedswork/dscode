@@ -64,7 +64,6 @@ export class MCPManager {
     const results = await Promise.allSettled(
       this.configs.map(async (cfg) => {
         const client = new MCPClient(cfg);
-        console.error(`[mcp] Connecting "${cfg.name}"...`);
         await client.connect();
         this.clients.set(cfg.name, client);
         this.states.set(cfg.name, {
@@ -72,7 +71,6 @@ export class MCPManager {
           status: "connected",
           toolCount: 0,
         });
-        console.error(`[mcp] Connected "${cfg.name}"`);
       }),
     );
 
@@ -86,7 +84,6 @@ export class MCPManager {
           error: result.reason?.message ?? "Unknown error",
           toolCount: 0,
         });
-        console.error(`[mcp] Failed to connect "${cfg.name}": ${result.reason?.message}`);
       }
     }
   }
@@ -110,8 +107,7 @@ export class MCPManager {
         };
 
         registry.register(driver);
-      } catch (err: any) {
-        console.error(`[mcp] Failed to list tools from "${name}": ${err.message}`);
+      } catch {
       }
     }
   }
@@ -127,12 +123,6 @@ export class MCPManager {
         });
       }),
     );
-
-    for (const result of results) {
-      if (result.status === "rejected") {
-        console.error(`[mcp] Shutdown error: ${result.reason?.message}`);
-      }
-    }
 
     this.clients.clear();
   }
