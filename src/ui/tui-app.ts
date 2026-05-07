@@ -53,6 +53,8 @@ export class TuiApp {
   private waitSegments: number[] = [];
   private totalWaitMs = 0;
   private idleTimer?: ReturnType<typeof setInterval>;
+  private tipDuration = 0;
+  private showTip = false;
 
   constructor(deps: TuiDeps) {
     this.deps = deps;
@@ -227,7 +229,23 @@ export class TuiApp {
       this.idleTimer = setInterval(() => {
         if (!this.processing) return;
         const elapsed = Date.now() - this.lastActivityTime;
-        this.loader.setMessage(`Waiting... ${this.formatElapsed(elapsed)}`);
+        this.tipDuration += 500;
+        if (this.tipDuration >= 4000) {
+          this.showTip = !this.showTip;
+          this.tipDuration = 0;
+        }
+        if (this.showTip) {
+          const tips = [
+            "Esc or Tab to abort",
+            "Type exit to quit",
+            "Ctrl+C twice to exit",
+            "/help for commands",
+          ];
+          const tip = tips[Math.floor(Date.now() / 4000) % tips.length];
+          this.loader.setMessage(`${tip}  ${c.dim(`(${this.formatElapsed(elapsed)})`)}`);
+        } else {
+          this.loader.setMessage(`Waiting... ${this.formatElapsed(elapsed)}`);
+        }
         const idleDuration = Date.now() - this.lastActivityTime;
         if (idleDuration >= 1000 && !this.idleStartTime) {
           this.idleStartTime = this.lastActivityTime;
