@@ -64,6 +64,7 @@ export class MCPManager {
     const results = await Promise.allSettled(
       this.configs.map(async (cfg) => {
         const client = new MCPClient(cfg);
+        console.error(`[mcp] Connecting "${cfg.name}"...`);
         await client.connect();
         this.clients.set(cfg.name, client);
         this.states.set(cfg.name, {
@@ -71,6 +72,7 @@ export class MCPManager {
           status: "connected",
           toolCount: 0,
         });
+        console.error(`[mcp] Connected "${cfg.name}"`);
       }),
     );
 
@@ -85,8 +87,6 @@ export class MCPManager {
           toolCount: 0,
         });
         console.error(`[mcp] Failed to connect "${cfg.name}": ${result.reason?.message}`);
-      } else {
-        console.log(`[mcp] Connected "${cfg.name}"`);
       }
     }
   }
