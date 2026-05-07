@@ -107,7 +107,10 @@ export class MCPManager {
         };
 
         registry.register(driver);
-      } catch {
+      } catch (err: any) {
+        const state = this.states.get(name)!;
+        state.status = "error";
+        state.error = err.message ?? "Unknown error";
       }
     }
   }

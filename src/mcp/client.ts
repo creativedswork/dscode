@@ -277,6 +277,10 @@ export class MCPClient {
   }
 
   private request(method: string, params?: unknown, timeout = REQUEST_TIMEOUT): Promise<unknown> {
+    if (this.closed) {
+      return Promise.reject(new Error(`MCP request "${method}" rejected: client closed`));
+    }
+
     return new Promise((resolve, reject) => {
       const id = ++this.requestId;
       const msg = JSON.stringify({ jsonrpc: "2.0", id, method, params });
@@ -321,6 +325,8 @@ export class MCPClient {
   }
 
   private sendNotification(method: string, params?: unknown): void {
+    if (this.closed) return;
+
     const msg = JSON.stringify({ jsonrpc: "2.0", method, params });
 
     if (this.config.transport === "stdio") {

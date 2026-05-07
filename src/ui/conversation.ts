@@ -36,6 +36,19 @@ function toolResultPreview(result: unknown): string {
   }
 }
 
+interface PermOption {
+  value: "allow" | "always_allow" | "deny";
+  label: string;
+  key: string;
+  color: (s: string) => string;
+}
+
+const PERM_OPTIONS: PermOption[] = [
+  { value: "allow", label: "Allow", key: "enter", color: c.green },
+  { value: "deny", label: "Deny", key: "esc", color: c.red },
+  { value: "always_allow", label: "Always Allow", key: "a", color: c.cyan },
+];
+
 export class ConversationView {
   private box: Box;
   private textComponent: Text;
@@ -43,7 +56,12 @@ export class ConversationView {
   private thinkingBuffer = "";
   private currentAssistantText = "";
   private toolEntries: ToolEntry[] = [];
+  private renderedToolCount = 0;
   private tui: TUI;
+
+  private permToolName = "";
+  private permPreview = "";
+  private permSelected = 0;
 
   constructor(tui: TUI) {
     this.tui = tui;
@@ -61,6 +79,10 @@ export class ConversationView {
     this.thinkingBuffer = "";
     this.currentAssistantText = "";
     this.toolEntries = [];
+    this.renderedToolCount = 0;
+    this.permToolName = "";
+    this.permPreview = "";
+    this.permSelected = 0;
     this.render();
   }
 
@@ -73,6 +95,7 @@ export class ConversationView {
     this.currentAssistantText = "";
     this.thinkingBuffer = "";
     this.toolEntries = [];
+    this.renderedToolCount = 0;
   }
 
   thinkingDelta(delta: string): void {
@@ -87,6 +110,7 @@ export class ConversationView {
 
   toolStart(name: string, args: unknown): void {
     this.toolEntries.push({ name, args, result: "" as unknown, isError: false });
+    this.render();
   }
 
   toolEnd(_name: string, result: unknown, isError: boolean): void {
@@ -95,6 +119,7 @@ export class ConversationView {
       entry.result = result;
       entry.isError = isError;
     }
+    this.render();
   }
 
   finishAssistantMessage(): void {
@@ -114,8 +139,9 @@ export class ConversationView {
       for (const t of this.toolEntries) {
         const icon = t.isError ? c.red("✗") : c.cyan("✓");
         const preview = toolResultPreview(t.result);
+        const argsStr = toolArgsPreview(t.args);
         this.segments.push(
-          ` ${icon} ${c.cyan(t.name)} ${c.dim(toolArgsPreview(t.args))}${preview ? c.dim(" → ") + preview : ""}`,
+          ` ${icon} ${c.cyan(t.name)} ${c.dim(argsStr)}${preview ? c.dim(" → ") + preview : ""}`,
         );
       }
       this.segments.push("");
@@ -124,6 +150,7 @@ export class ConversationView {
     this.currentAssistantText = "";
     this.thinkingBuffer = "";
     this.toolEntries = [];
+    this.renderedToolCount = 0;
     this.render();
   }
 
@@ -137,25 +164,53 @@ export class ConversationView {
     this.render();
   }
 
-  addPermissionPrompt(toolName: string, preview: string): void {
-    const maxLen = 50;
-    const trimmed = preview.length > maxLen ? preview.slice(0, maxLen) + "..." : preview;
-    this.segments.push(
-      c.yellow.bold("⚡ Permission: ") + c.yellow(toolName) + "\n" +
-      c.dim(trimmed || "(no preview)") + "\n" +
-      c.dim("──────────────────────────────") + "\n" +
-      c.green("[y]") + " Allow  " +
-      c.red("[n]") + " Deny  " +
-      c.cyan("[a]") + " Always",
-    );
+  showPermissionPrompt(toolName: string, preview: string): void {
+    this.permToolName = toolName;
+    this.permPreview = preview;
+    this.permSelected = 0;
     this.render();
   }
 
-  removePermissionPrompt(): void {
-    if (this.segments.length > 0) {
-      this.segments.pop();
-    }
+  permNavigate(direction: -1 | 1): void {
+    const max = PERM_OPTIONS.length - 1;
+    this.permSelected = Math.max(0, Math.min(max, this.permSelected + direction));
     this.render();
+  }
+
+  permSelect(): PermOption | null {
+    return this.permToolName ? PERM_OPTIONS[this.permSelected] : null;
+  }
+
+  clearPermissionPrompt(): void {
+    this.permToolName = "";
+    this.permPreview = "";
+    this.permSelected = 0;
+  }
+
+  private renderPermPrompt(): string[] {
+    const lines: string[] = [];
+    const maxLineLen = 60;
+
+    lines.push("");
+    lines.push(c.yellow.bold(" Permissions ────────────────────────────────────"));
+    lines.push(c.yellow(` Tool: ${this.permToolName}`));
+    if (this.permPreview) {
+      for (const pl of this.permPreview.split("\n").slice(0, 6)) {
+        lines.push(c.dim(`   ${pl.slice(0, maxLineLen)}`));
+      }
+    }
+    lines.push(c.dim(" ──────────────────────────────────────────────────"));
+    for (let i = 0; i < PERM_OPTIONS.length; i++) {
+      const opt = PERM_OPTIONS[i];
+      const selected = i === this.permSelected;
+      const prefix = selected ? c.cyan(" ▶") : "  ";
+      const label = selected ? c.bold(opt.color(opt.label)) : c.dim(opt.label);
+      const hint = c.dim(`[${opt.key}]`);
+      lines.push(`${prefix} ${label}  ${hint}`);
+    }
+    lines.push(c.dim(" ──────────────────────────────────────────────────"));
+    lines.push(c.dim(" ↑↓ to navigate  Enter to confirm  Esc to deny"));
+    return lines;
   }
 
   private render(): void {
@@ -171,6 +226,36 @@ export class ConversationView {
 
     if (this.currentAssistantText) {
       lines.push(c.magenta.bold("agent ›") + "\n" + this.currentAssistantText);
+    }
+
+    if (this.toolEntries.length > this.renderedToolCount) {
+      if (this.renderedToolCount === 0) {
+        lines.push("");
+        lines.push(c.dim("──── ⚙ Tools ────────────────────────"));
+      }
+      for (let i = this.renderedToolCount; i < this.toolEntries.length; i++) {
+        const t = this.toolEntries[i];
+        const hasResult = t.result !== ("" as unknown);
+        if (hasResult) {
+          const icon = t.isError ? c.red("✗") : c.cyan("✓");
+          const preview = toolResultPreview(t.result);
+          const argsStr = toolArgsPreview(t.args);
+          lines.push(
+            ` ${icon} ${c.cyan(t.name)} ${c.dim(argsStr)}${preview ? c.dim(" → ") + preview : ""}`,
+          );
+        } else {
+          lines.push(
+            ` ${c.yellow("⟳")} ${c.cyan(t.name)} ${c.dim(toolArgsPreview(t.args))} ${c.dim("...")}`,
+          );
+        }
+      }
+      this.renderedToolCount = this.toolEntries.filter(
+        (t) => t.result !== ("" as unknown),
+      ).length;
+    }
+
+    if (this.permToolName) {
+      lines.push(...this.renderPermPrompt());
     }
 
     this.textComponent.setText(lines.join("\n"));
