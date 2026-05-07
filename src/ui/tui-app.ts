@@ -44,10 +44,10 @@ export class TuiApp {
   private loader: CancellableLoader;
   private loaderOverlayHandle: ReturnType<TUI["showOverlay"]> | null = null;
   private processing = false;
+  private lastCtrlC = 0;
   private resolvePermission:
     | ((result: { decision: "allow" | "deny"; rememberForSession: boolean }) => void)
     | null = null;
-  private lastCtrlC = 0;
   private idleStartTime = 0;
   private lastActivityTime = 0;
   private waitSegments: number[] = [];
@@ -84,13 +84,13 @@ export class TuiApp {
     });
 
     process.on("SIGINT", () => {
+      if (this.resolvePermission) {
+        this.resolvePermissionChoice("deny");
+        return;
+      }
       if (this.processing) {
         this.deps.agent.abort();
         this.conversation.addInfo("(aborted)");
-        return;
-      }
-      if (this.resolvePermission) {
-        this.resolvePermissionChoice("deny");
         return;
       }
       const now = Date.now();
@@ -124,13 +124,13 @@ export class TuiApp {
     return (toolName, preview) => this.showPermissionPrompt(toolName, preview);
   }
 
-  private showPermissionPrompt(
+  private async showPermissionPrompt(
     toolName: string,
     preview: string,
   ): Promise<{ decision: "allow" | "deny"; rememberForSession: boolean }> {
+    this.conversation.showPermissionPrompt(toolName, preview);
     return new Promise((resolve) => {
       this.resolvePermission = resolve;
-      this.conversation.addPermissionPrompt(toolName, preview);
     });
   }
 
@@ -139,36 +139,43 @@ export class TuiApp {
       this.resolvePermission({ decision, rememberForSession });
       this.resolvePermission = null;
     }
-    this.conversation.removePermissionPrompt();
+    this.conversation.clearPermissionPrompt();
     this.conversation.addInfo(
-      decision === "allow"
-        ? c.dim(`Permission: ${c.green("allowed")}${rememberForSession ? c.dim(" (always)") : ""}`)
-        : c.dim(`Permission: ${c.red("denied")}`),
+      c.dim(`Permission: ${decision === "allow" ? c.green("allowed") : c.red("denied")}${rememberForSession ? c.dim(" (always)") : ""}`),
     );
     this.tui.requestRender(true);
   }
 
   private handleInput(data: string): boolean {
     if (this.resolvePermission) {
+      if (matchesKey(data, Key.up)) {
+        this.conversation.permNavigate(-1);
+        return true;
+      }
+      if (matchesKey(data, Key.down)) {
+        this.conversation.permNavigate(1);
+        return true;
+      }
+      if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
+        const sel = this.conversation.permSelect();
+        if (sel) {
+          if (sel.value === "deny") {
+            this.resolvePermissionChoice("deny");
+          } else {
+            this.resolvePermissionChoice("allow", sel.value === "always_allow");
+          }
+        }
+        return true;
+      }
       if (matchesKey(data, Key.escape) || matchesKey(data, "ctrl+c") || data === "\x03") {
         this.resolvePermissionChoice("deny");
         return true;
       }
-      const ch = decodeKittyPrintable(data)?.[0] ?? data[0];
-      if (!ch) return true;
-      switch (ch.toLowerCase()) {
-        case "y":
-          this.resolvePermissionChoice("allow");
-          return true;
-        case "n":
-          this.resolvePermissionChoice("deny");
-          return true;
-        case "a":
-          this.resolvePermissionChoice("allow", true);
-          return true;
-        default:
-          return true;
+      if (data === "a" || data === "A") {
+        this.resolvePermissionChoice("allow", true);
+        return true;
       }
+      return true;
     }
 
     if (this.processing) {

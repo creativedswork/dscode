@@ -103,7 +103,14 @@ export class Harness {
         this.makeSkillTool(),
       ];
       const connected = this.mcpManager.getStates().filter((s) => s.status === "connected").length;
-      this.tui.addInfo(`MCP: ${connected}/${this.config.mcp.length} connected`);
+      const total = this.config.mcp.length;
+      this.tui.addInfo(`MCP: ${connected}/${total} connected`);
+      if (connected < total) {
+        const errors = this.mcpManager.getStates().filter((s) => s.status === "error");
+        for (const err of errors) {
+          this.tui.addInfo(`MCP '${err.config.name}' failed: ${err.error ?? "unknown"}`);
+        }
+      }
       this.tui.focusEditor();
     } else {
       this.agent.state.tools = [
