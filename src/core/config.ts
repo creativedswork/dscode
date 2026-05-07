@@ -3,6 +3,8 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import type { HarnessConfig, ThinkingLevel } from "./types.js";
+import type { MCPServerConfig } from "../mcp/types.js";
+
 
 function dsConfigHome(): string {
   return process.env.DSCODE_CONFIG_HOME ?? join(homedir(), ".dscode");
@@ -65,6 +67,19 @@ export function loadConfig(): HarnessConfig {
 
   const thinkingLevel: ThinkingLevel = modelId.includes("pro") ? "medium" : "off";
 
+  // load MCP server configs
+  const mcpConfig = (merged.mcp as Record<string, unknown>) ?? {};
+  const mcpServersRaw = (mcpConfig.servers as unknown[]) ?? [];
+  const mcp: MCPServerConfig[] = mcpServersRaw.map((s: any) => ({
+    name: s.name,
+    description: s.description,
+    transport: s.transport ?? "stdio",
+    command: s.command,
+    args: s.args,
+    url: s.url,
+    env: s.env,
+  }));
+
   return {
     provider,
     modelId,
@@ -92,5 +107,7 @@ export function loadConfig(): HarnessConfig {
       denyPatterns,
     },
     skills,
+    mcp,
   };
+
 }

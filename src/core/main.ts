@@ -10,8 +10,9 @@ async function main(): Promise<void> {
   }
 
   const harness = new Harness(config);
-  harness.initialize();
+  await harness.initialize();
   await harness.run();
+
 }
 
 main();

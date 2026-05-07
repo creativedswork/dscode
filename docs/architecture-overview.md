@@ -94,6 +94,11 @@ src/
 │   ├── shell.ts            # bash 工具
 │   └── search.ts           # grep, glob
 │
+├── mcp/
+│   ├── client.ts           # MCP 客户端 (stdio/SSE)
+│   ├── manager.ts          # MCP 多 Server 生命周期管理
+│   └── types.ts            # MCP 协议类型定义
+│
 ├── permissions/
 │   ├── manager.ts          # beforeToolCall hook 实现
 │   └── rules.ts            # 默认规则集
@@ -102,6 +107,7 @@ src/
     ├── repl.ts             # readline REPL 循环
     ├── render.ts           # AgentEvent → 终端输出
     └── commands.ts         # slash commands 注册与分发
+
 ```
 
 运行时数据目录：

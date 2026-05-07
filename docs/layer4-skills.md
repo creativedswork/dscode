@@ -255,6 +255,65 @@ async activateSkill(name: string): Promise<void> {
 }
 ```
 
+## MCP (Model Context Protocol) 集成
+
+MCP 是一种标准化的工具/资源协议，支持通过子进程（stdio）或网络（SSE）提供工具。
+
+### 架构
+
+```
+MCP Server (stdio/SSE)
+  ↓ JSON-RPC (tools/list, tools/call)
+MCPClient (src/mcp/client.ts)
+  ↓
+MCPManager (src/mcp/manager.ts)
+  ↓ registerMCPSkill()
+SkillRegistry
+  ↓ getTools()
+Agent
+```
+
+### 配置方式
+
+在 `~/.dscode/config.json` 或 `<project>/.dscode/config.json` 中配置：
+
+```json
+{
+  "mcp": {
+    "servers": [
+      {
+        "name": "playwright",
+        "description": "Browser automation",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["@anthropic/mcp-playwright"]
+      },
+      {
+        "name": "remote-api",
+        "description": "Remote API server",
+        "transport": "sse",
+        "url": "http://localhost:3001/mcp"
+      }
+    ]
+  }
+}
+```
+
+### 工具命名
+
+MCP 工具注册到 Agent 时使用 `mcp_<server>_<tool>` 格式，避免命名冲突。
+
+### 生命周期
+
+- 启动时：`MCPManager.initialize()` → 连接所有 Server → `registerTools()` → 注册到 SkillRegistry
+- 退出时：`MCPManager.shutdown()` → 发送 shutdown → kill 子进程 / 关闭 SSE
+
+### 错误处理
+
+- 连接失败不阻止启动，仅打印警告
+- 工具调用超时默认 60s
+- 子进程异常退出时自动拒绝所有 pending 请求
+
 ## Slash Commands
 
 | 命令 | 说明 |
@@ -262,3 +321,4 @@ async activateSkill(name: string): Promise<void> {
 | `/skills` | 列出所有 skill 及其状态 |
 | `/skills activate <name>` | 激活技能 |
 | `/skills deactivate <name>` | 停用技能 |
+

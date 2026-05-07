@@ -7,6 +7,7 @@ import { ContextManager } from "../context/manager.js";
 import { MemoryManager } from "../memory/manager.js";
 import { SkillRegistry } from "../skills/registry.js";
 import { PermissionManager } from "../permissions/manager.js";
+import { MCPManager } from "../mcp/manager.js";
 import { TerminalRenderer } from "../ui/render.js";
 import { runRepl, promptPermission } from "../ui/repl.js";
 
@@ -17,6 +18,7 @@ export class Harness {
   private memoryManager: MemoryManager;
   private skillRegistry: SkillRegistry;
   private permissionManager: PermissionManager;
+  private mcpManager?: MCPManager;
   private renderer: TerminalRenderer;
   private config: HarnessConfig;
   private _truncated = false;
@@ -33,7 +35,7 @@ export class Harness {
     });
   }
 
-  initialize(): void {
+  async initialize(): Promise<void> {
     // activate configured external skills
     for (const name of this.config.skills) {
       try {
@@ -41,6 +43,13 @@ export class Harness {
       } catch {
         // skip unknown skills silently
       }
+    }
+
+    // initialize MCP servers
+    if (this.config.mcp.length > 0) {
+      this.mcpManager = new MCPManager(this.config.mcp);
+      await this.mcpManager.initialize();
+      await this.mcpManager.registerTools(this.skillRegistry);
     }
 
     // build system prompt
@@ -75,6 +84,7 @@ export class Harness {
     this.sessionManager.createSession(this.config.provider, this.config.modelId);
   }
 
+
   async run(): Promise<void> {
     const model = getModel(this.config.provider as any, this.config.modelId as any);
     await runRepl({
@@ -88,13 +98,18 @@ export class Harness {
       renderer: this.renderer,
       modelName: model.name,
     });
-    this.shutdown();
+    await this.shutdown();
   }
 
-  private shutdown(): void {
+  private async shutdown(): Promise<void> {
+
     this.renderer.stopStreaming();
     this.sessionManager.saveSession(this.agent);
+    if (this.mcpManager) {
+      await this.mcpManager.shutdown();
+    }
   }
+
 
   get wasTruncated(): boolean {
     return this._truncated;

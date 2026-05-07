@@ -1,4 +1,5 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { MCPServerConfig } from "../mcp/types.js";
 
 // --- Config ---
 
@@ -19,7 +20,9 @@ export interface HarnessConfig {
   memory: MemoryConfig;
   permissions: PermissionsConfig;
   skills: string[];
+  mcp: MCPServerConfig[];
 }
+
 
 export interface ContextConfig {
   strategy: CompactionStrategy;
@@ -96,7 +99,8 @@ export interface Skill {
   description: string;
   tools: AgentTool<any>[];
   instructions?: string;
-  source: "builtin" | "user" | "project";
+  source: "builtin" | "user" | "project" | "mcp";
+
 }
 
 export interface SkillManifest {
