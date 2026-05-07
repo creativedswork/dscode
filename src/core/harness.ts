@@ -104,6 +104,7 @@ export class Harness {
       ];
       const connected = this.mcpManager.getStates().filter((s) => s.status === "connected").length;
       this.tui.addInfo(`MCP: ${connected}/${this.config.mcp.length} connected`);
+      this.tui.focusEditor();
     } else {
       this.agent.state.tools = [
         ...this.driverRegistry.getAllTools(),
@@ -111,6 +112,7 @@ export class Harness {
       ];
     }
 
+    this.tui.focusEditor();
     await this.tui.waitForExit();
     await this.shutdown();
   }
