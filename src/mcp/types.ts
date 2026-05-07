@@ -28,6 +28,7 @@ export interface MCPServerConfig {
   transport: "stdio" | "sse";
   command?: string;
   args?: string[];
+  cwd?: string;
   url?: string;
   env?: Record<string, string>;
 }
