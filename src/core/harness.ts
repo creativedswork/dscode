@@ -1,7 +1,8 @@
 import { Agent } from "@mariozechner/pi-agent-core";
-import { getModel, streamSimple } from "@mariozechner/pi-ai";
+import { getModel, streamSimple, Type } from "@mariozechner/pi-ai";
 
 import type { HarnessConfig } from "./types.js";
+import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { SessionManager } from "../session/manager.js";
 import { ContextManager } from "../context/manager.js";
 import { MemoryManager } from "../memory/manager.js";
@@ -75,8 +76,11 @@ export class Harness {
     // update context manager with model limits
     this.contextManager.updateModel(model.contextWindow, model.maxTokens);
 
-    // combine all tools from drivers (skills just filter driver tools by whitelist)
-    const allTools = this.driverRegistry.getAllTools();
+    // combine all tools from drivers + skill introspection tool
+    const allTools = [
+      ...this.driverRegistry.getAllTools(),
+      this.makeSkillTool(),
+    ];
 
     // create agent
     const maxTokens = this.config.maxTokens;
@@ -99,7 +103,6 @@ export class Harness {
     this.sessionManager.createSession(this.config.provider, this.config.modelId);
   }
 
-
   async run(): Promise<void> {
     const model = getModel(this.config.provider as any, this.config.modelId as any);
     await runRepl({
@@ -118,14 +121,12 @@ export class Harness {
   }
 
   private async shutdown(): Promise<void> {
-
     this.renderer.stopStreaming();
     this.sessionManager.saveSession(this.agent);
     if (this.mcpManager) {
       await this.mcpManager.shutdown();
     }
   }
-
 
   get wasTruncated(): boolean {
     return this._truncated;
@@ -149,11 +150,64 @@ export class Harness {
     if (skillSection) {
       prompt += "\n\n" + skillSection;
     }
+
+    prompt += `\n\n## Using Skills
+
+You have a \`skill\` tool available. When you decide to use a skill from the list above, call \`skill\` with the skill name to load its full instructions and allowed tools. Read the instructions, then follow them.`;
+
     if (memories) {
       prompt += memories;
     }
     return prompt;
   }
+
+
+  private makeSkillTool(): AgentTool<typeof skillParams> {
+    const skillManager = this.skillManager;
+
+    const skillParams = Type.Object({
+      name: Type.String({ description: "Name of the skill to load" }),
+    });
+
+    return {
+      name: "skill",
+      label: "Load skill",
+      description: "Load and display the full SKILL.md content (frontmatter + instructions) for a given skill. Call this first before using a skill to understand its instructions and allowed tools.",
+      parameters: skillParams,
+      execute: async (_id, params) => {
+        const manifest = skillManager.getManifest(params.name);
+        if (!manifest) {
+          return {
+            content: [{ type: "text", text: `Error: skill not found: ${params.name}` }],
+            details: { error: "not_found" },
+          };
+        }
+
+        const lines: string[] = [];
+        lines.push(`# ${manifest.name}`);
+        lines.push(`Description: ${manifest.description}`);
+        lines.push(`Source: ${manifest.source}`);
+        if (manifest.tools && manifest.tools.length > 0) {
+          lines.push(`Allowed tools: ${manifest.tools.join(", ")}`);
+        } else {
+          lines.push("Allowed tools: all driver tools");
+        }
+        if (manifest.instructions) {
+          lines.push("");
+          lines.push("## Instructions");
+          lines.push(manifest.instructions);
+        }
+
+        return {
+          content: [{ type: "text", text: lines.join("\n") }],
+          details: { name: manifest.name },
+        };
+      },
+    };
+  }
+
+
+
 
   startSpinner(): void {
     this.renderer.startStreaming();

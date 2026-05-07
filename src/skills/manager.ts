@@ -4,15 +4,6 @@ import type { DriverRegistry } from "../drivers/registry.js";
 import type { Skill, SkillManifest } from "../core/types.js";
 import { scanSkillDirs } from "./loader.js";
 
-// Default safe tools for skills that don't specify a tools whitelist.
-// Read-only operations that are safe in any context.
-const DEFAULT_ALLOWED_TOOLS = [
-  "read_file",
-  "list_files",
-  "grep",
-  "glob",
-];
-
 export class SkillManager {
   private manifests = new Map<string, SkillManifest>();
   private activeSkills = new Map<string, Skill>();
@@ -24,6 +15,10 @@ export class SkillManager {
     }
   }
 
+  getManifest(name: string): SkillManifest | undefined {
+    return this.manifests.get(name);
+  }
+
   listManifests(): SkillManifest[] {
     return Array.from(this.manifests.values());
   }
@@ -31,6 +26,7 @@ export class SkillManager {
   listAllSkillNames(): string[] {
     return Array.from(this.manifests.keys());
   }
+
 
   listAll(): { skill: Skill | SkillManifest; active: boolean }[] {
     const result: { skill: Skill | SkillManifest; active: boolean }[] = [];
@@ -54,14 +50,12 @@ export class SkillManager {
       throw new Error(`Skill not found: ${name}`);
     }
 
-    // Resolve allowed tools from the skill's tools whitelist
-    const allowedToolNames = manifest.tools && manifest.tools.length > 0
-      ? manifest.tools
-      : DEFAULT_ALLOWED_TOOLS;
-
-    // Filter driver tools by the whitelist
+    // If skill specifies a tools whitelist, filter by it.
+    // Otherwise, allow all driver tools.
     const allDriverTools = driverRegistry.getAllTools();
-    const tools = allDriverTools.filter((t) => allowedToolNames.includes(t.name));
+    const tools = manifest.tools && manifest.tools.length > 0
+      ? allDriverTools.filter((t) => manifest.tools!.includes(t.name))
+      : allDriverTools;
 
     const skill: Skill = {
       name: manifest.name,

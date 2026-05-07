@@ -88,21 +88,22 @@ Instructions.
     expect(toolNames).toEqual(["bash", "read_file"]);
   });
 
-  it("should use default safe tools when skill has no tools whitelist", () => {
-    createSkillDir(userSkillsDir, "safe-skill", `---
-name: safe-skill
-description: Safe skill
+  it("should use all driver tools when skill has no tools whitelist", () => {
+    createSkillDir(userSkillsDir, "full-access-skill", `---
+name: full-access-skill
+description: Full access skill
 ---
 Instructions.
 `);
     const manager = new SkillManager(userSkillsDir, projectSkillsDir);
-    const skill = manager.activate("safe-skill", driverRegistry);
+    const skill = manager.activate("full-access-skill", driverRegistry);
 
-    const toolNames = skill.tools.map((t) => t.name).sort();
-    expect(toolNames).toEqual(["glob", "grep", "list_files", "read_file"]);
+    const allDriverToolNames = driverRegistry.getAllTools().map((t) => t.name).sort();
+    const skillToolNames = skill.tools.map((t) => t.name).sort();
+    expect(skillToolNames).toEqual(allDriverToolNames);
   });
 
-  it("should use default safe tools when skill has empty tools list", () => {
+  it("should use all driver tools when skill has empty tools list", () => {
     createSkillDir(userSkillsDir, "empty-tools-skill", `---
 name: empty-tools-skill
 description: Empty tools
@@ -113,8 +114,9 @@ Instructions.
     const manager = new SkillManager(userSkillsDir, projectSkillsDir);
     const skill = manager.activate("empty-tools-skill", driverRegistry);
 
-    const toolNames = skill.tools.map((t) => t.name).sort();
-    expect(toolNames).toEqual(["glob", "grep", "list_files", "read_file"]);
+    const allDriverToolNames = driverRegistry.getAllTools().map((t) => t.name).sort();
+    const skillToolNames = skill.tools.map((t) => t.name).sort();
+    expect(skillToolNames).toEqual(allDriverToolNames);
   });
 
   it("should throw when activating unknown skill", () => {

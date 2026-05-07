@@ -9,12 +9,15 @@ import type { DriverRegistry } from "../drivers/registry.js";
 import type { SkillManager } from "../skills/manager.js";
 import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
-import { TerminalRenderer, colors } from "./render.js";
+import { TerminalRenderer, colors, randomTip } from "./render.js";
 import { COMMANDS } from "./commands.js";
 
-const { DIM, GREEN, MAGENTA, BOLD, RESET, YELLOW } = colors;
+const { DIM, GREEN, MAGENTA, BOLD, RESET, YELLOW, CYAN } = colors;
 
 const MAX_AUTO_CONTINUE = 3;
+
+
+
 
 interface ReplDeps {
   agent: Agent;
@@ -57,14 +60,31 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
     renderer.renderInfo("\nPress Ctrl+C again to exit");
   });
 
+  // Tab key handling: abort streaming and return to prompt
+  const stdin = process.stdin;
+  if (stdin.isTTY) {
+    stdin.setRawMode?.(true);
+    stdin.on("data", (data: Buffer) => {
+      // Tab key = 0x09
+      if (data.length === 1 && data[0] === 0x09 && agent.state.isStreaming) {
+        agent.abort();
+        renderer.renderInfo("\n(aborted)");
+      }
+    });
+    stdin.setRawMode?.(false);
+  }
+
   try {
     while (true) {
       let raw: string;
       try {
+        console.log(`${DIM}${randomTip()}${RESET}`);
         raw = await rl.question(`${GREEN}you ›${RESET} `);
+
       } catch {
         break; // EOF or readline closed
       }
+
       const line = raw.trim();
       if (!line) continue;
       if (line === "exit" || line === "quit") break;
@@ -109,6 +129,7 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
   } finally {
     rl.close();
   }
+
 }
 
 // Module-level reference to the REPL readline interface, set by runRepl.
