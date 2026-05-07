@@ -12,7 +12,6 @@ export const c = {
   white: chalk.white,
   blue: chalk.blue,
   reset: chalk.reset,
-  bgBlack: chalk.bgBlack,
 };
 
 export const markdownTheme: MarkdownTheme = {
