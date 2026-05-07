@@ -133,6 +133,7 @@ export class ConversationView {
     }
 
     this.textComponent.setText(lines.join("\n"));
-    this.tui.requestRender();
+    this.box.invalidate();
+    this.tui.requestRender(true);
   }
 }

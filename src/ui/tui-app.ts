@@ -42,7 +42,6 @@ export class TuiApp {
   private conversation: ConversationView;
   private editor: Editor;
   private loader: CancellableLoader;
-  private loaderBox: Box;
   private loaderOverlayHandle: ReturnType<TUI["showOverlay"]> | null = null;
   private processing = false;
   private resolvePermission:
@@ -63,8 +62,6 @@ export class TuiApp {
     this.conversation = new ConversationView(this.tui);
 
     this.loader = new CancellableLoader(this.tui, c.cyan, c.dim, "Thinking...");
-    this.loaderBox = new Box(0, 0, c.dim);
-    this.loaderBox.addChild(this.loader);
 
     const autocomplete = new CombinedAutocompleteProvider(
       getSlashCommandAutocomplete(),
@@ -253,10 +250,10 @@ export class TuiApp {
         }
       }, 500);
       this.loader.start();
-      this.loaderOverlayHandle = this.tui.showOverlay(this.loaderBox, {
-        anchor: "top-right",
-        offsetX: -2,
-        offsetY: 1,
+      this.loaderOverlayHandle = this.tui.showOverlay(this.loader, {
+        anchor: "bottom-left",
+        offsetX: 2,
+        offsetY: -3,
         nonCapturing: true,
       });
     } else {
@@ -271,7 +268,7 @@ export class TuiApp {
         this.loaderOverlayHandle = null;
       }
     }
-    this.tui.requestRender();
+    this.tui.requestRender(true);
   }
 
   private markActivity(): void {
