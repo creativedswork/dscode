@@ -122,26 +122,41 @@ export async function promptPermission(toolName: string, preview: string): Promi
   process.stdout.write(`${YELLOW}└───────────────────────────────────────────${RESET}\n`);
   process.stdout.write(`  [${GREEN}Y${RESET}]es  [${colors.RED}N${RESET}]o  [${colors.CYAN}A${RESET}]lways > `);
 
-  // Use raw mode to read a single keypress without creating a secondary readline
-  // that could interfere with the main REPL readline on process.stdin
+  // Use raw mode to read a single keypress.
+  // We must temporarily remove all other stdin listeners (e.g. readline's internal
+  // handler) to prevent them from echoing or double-processing the keypress.
   return new Promise((resolve) => {
     const stdin = process.stdin;
     const isRaw = stdin.isRaw;
     const resume = stdin.isPaused();
 
+    // Remove all existing listeners so readline doesn't interfere
+    const otherListeners = stdin.listeners("data") as ((data: Buffer) => void)[];
+    for (const listener of otherListeners) {
+      stdin.removeListener("data", listener);
+    }
+
     if (resume) stdin.resume();
     stdin.setRawMode?.(true);
     stdin.setEncoding("utf8");
 
+    let handled = false;
     const onData = (data: string) => {
-      // Only take the first character, ignore any trailing garbage
+      if (handled) return;
+      handled = true;
+
       const key = data.trim().toLowerCase()[0] ?? "";
       stdin.removeListener("data", onData);
       stdin.setRawMode?.(isRaw ? true : false);
+
+      // Re-attach the original listeners that were removed
+      for (const listener of otherListeners) {
+        stdin.on("data", listener);
+      }
+
       if (resume) stdin.pause();
 
-      // Echo the key
-      process.stdout.write(key + "\n");
+      process.stdout.write(">\n");
 
       switch (key) {
         case "a":
