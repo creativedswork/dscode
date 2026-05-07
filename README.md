@@ -48,6 +48,7 @@ agent › 当前 src/ 目录包含 7 个模块：core, session, context, memory,
 | 上下文管理 | 自动压缩长对话，防止 token overflow；截断自动续写 |
 | 记忆系统 | 跨 session 记住用户偏好和项目上下文 |
 | Skills 系统 | 内置工具始终可用 + 声明式第三方 Skill 扩展（SKILL.md） |
+| MCP 协议支持 | 作为 MCP client 连接外部工具服务器（stdio/SSE），动态扩展能力 |
 | 等待指示器 | 模型响应空闲 >1s 时显示动画及分段计时统计 |
 | 两级配置 | 用户级 + 项目级配置，灵活覆盖 |
 | Slash 命令 | /help, /reset, /session, /memory, /skills 等 |
@@ -207,6 +208,56 @@ Always push the branch before creating a PR.
 启动时只读取各 SKILL.md 的 name + description 作为索引，system prompt 中仅放一行摘要。
 激活时才解析完整 tools 定义并注入 agent，最小化 context 开销。
 
+## MCP 配置
+
+DSCode 支持通过 [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) 连接外部工具服务器，动态扩展 agent 能力。MCP server 通过配置文件声明，支持 stdio 和 SSE 两种传输方式。
+
+### 配置方式
+
+在项目级或用户级 `config.json` 中添加 `mcp.servers` 数组：
+
+```jsonc
+{
+  "mcp": {
+    "servers": [
+      {
+        "name": "playwright",
+        "description": "Browser automation via Playwright",
+        "transport": "stdio",
+        "command": "npx",
+        "args": ["@anthropic/mcp-playwright"]
+      },
+      {
+        "name": "custom-api",
+        "description": "Custom API server",
+        "transport": "sse",
+        "url": "http://localhost:3000/mcp"
+      }
+    ]
+  }
+}
+```
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `name` | string | 是 | Server 唯一标识 |
+| `description` | string | 否 | 描述信息 |
+| `transport` | "stdio" \| "sse" | 是 | 传输方式 |
+| `command` | string | stdio 必填 | 启动命令 |
+| `args` | string[] | 否 | 命令参数 |
+| `url` | string | SSE 必填 | SSE 服务端 URL |
+| `env` | object | 否 | 自定义环境变量 |
+
+### 工具命名
+
+MCP 工具注册为 Skill，命名格式为 `mcp_<server>_<tool>`，避免命名冲突。例如 `mcp_playwright_browser_navigate`。
+
+### 错误处理
+
+- MCP server 连接失败不会阻止启动，错误信息会打印到控制台
+- 连接失败时显示详细的 stderr 输出（如 npm 404 错误）
+- 工具调用失败时返回错误信息，不会影响其他工具
+
 ## 数据目录
 
 ```
@@ -274,11 +325,10 @@ npm run typecheck    # TypeScript 类型检查
 ### P1 — 开发者体验
 
 - [ ] **Git 感知** — 自动检测 git 状态、分支信息注入上下文；结构化 git 工具（commit、diff、PR）
-- [ ] **MCP 协议支持** — 作为 MCP client 连接外部工具服务器，动态扩展能力
+- [x] **MCP 协议支持** — 作为 MCP client 连接外部工具服务器，动态扩展能力
 - [ ] **外部 Hooks 系统** — 支持在 config 中配置 before/after tool call 的外部脚本
 - [ ] **Plan 模式** — 复杂任务先生成计划并经用户确认后再执行
 - [ ] **任务追踪** — 内置 task list，支持多步骤进度跟踪和依赖管理
-- [ ] **LLM 摘要压缩** — 实现 `summarize-prefix` 策略，通过 LLM 调用压缩长上下文
 
 ### P2 — 自进化机制
 
