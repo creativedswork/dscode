@@ -32,6 +32,7 @@ interface ReplDeps {
 export async function runRepl(deps: ReplDeps): Promise<void> {
   const { agent, renderer, modelName } = deps;
   const rl = createInterface({ input: process.stdin, output: process.stdout });
+  replReadline = rl;
 
   const commandMap = new Map(COMMANDS.map((c) => [c.name, c]));
 
@@ -110,6 +111,10 @@ export async function runRepl(deps: ReplDeps): Promise<void> {
   }
 }
 
+// Module-level reference to the REPL readline interface, set by runRepl.
+// Used by promptPermission to pause/resume readline during raw mode input.
+let replReadline: ReturnType<typeof createInterface> | null = null;
+
 export async function promptPermission(toolName: string, preview: string): Promise<{
   decision: "allow" | "deny";
   rememberForSession: boolean;
@@ -122,19 +127,15 @@ export async function promptPermission(toolName: string, preview: string): Promi
   process.stdout.write(`${YELLOW}└───────────────────────────────────────────${RESET}\n`);
   process.stdout.write(`  [${GREEN}Y${RESET}]es  [${colors.RED}N${RESET}]o  [${colors.CYAN}A${RESET}]lways > `);
 
-  // Use raw mode to read a single keypress.
-  // We must temporarily remove all other stdin listeners (e.g. readline's internal
-  // handler) to prevent them from echoing or double-processing the keypress.
+  // Pause the REPL readline so its internal stdin handler doesn't interfere
+  // with raw mode single-keypress reading. Resume after we're done.
+  const rl = replReadline;
+  rl?.pause();
+
   return new Promise((resolve) => {
     const stdin = process.stdin;
     const isRaw = stdin.isRaw;
     const resume = stdin.isPaused();
-
-    // Remove all existing listeners so readline doesn't interfere
-    const otherListeners = stdin.listeners("data") as ((data: Buffer) => void)[];
-    for (const listener of otherListeners) {
-      stdin.removeListener("data", listener);
-    }
 
     if (resume) stdin.resume();
     stdin.setRawMode?.(true);
@@ -148,13 +149,10 @@ export async function promptPermission(toolName: string, preview: string): Promi
       const key = data.trim().toLowerCase()[0] ?? "";
       stdin.removeListener("data", onData);
       stdin.setRawMode?.(isRaw ? true : false);
-
-      // Re-attach the original listeners that were removed
-      for (const listener of otherListeners) {
-        stdin.on("data", listener);
-      }
-
       if (resume) stdin.pause();
+
+      // Resume the REPL readline now that raw mode is done
+      rl?.resume();
 
       process.stdout.write(">\n");
 
