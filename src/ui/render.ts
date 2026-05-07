@@ -11,6 +11,30 @@ const RESET = "\x1b[0m";
 
 export const colors = { DIM, CYAN, GREEN, RED, YELLOW, MAGENTA, BOLD, RESET };
 
+const TIPS = [
+  "Tip: Use /help to see all available commands.",
+  "Tip: Use /reset to clear conversation history.",
+  "Tip: Use /session save to save your current session.",
+  "Tip: Use /session list to see all saved sessions.",
+  "Tip: Use /memory add <content> to store a memory.",
+  "Tip: Use /skills list to see available skills.",
+  "Tip: Use /cost to check token usage.",
+  "Tip: Use /compact to force context compaction.",
+  "Tip: Press Ctrl+C or Tab to abort the current response.",
+  "Tip: Type exit or quit to leave the REPL.",
+  "Tip: Use /drivers to list all loaded drivers.",
+  "Tip: Use /permissions to see session permission grants.",
+  "Tip: Use /session load <id> to restore a previous session.",
+  "Tip: Use /memory list to see all stored memories.",
+  "Tip: Use /skills activate <name> to enable a skill.",
+  "Tip: Use /skills deactivate <name> to disable a skill.",
+];
+
+export function randomTip(): string {
+  return TIPS[Math.floor(Math.random() * TIPS.length)];
+}
+
+
 export class TerminalRenderer implements Renderer {
   private spinnerTimer?: ReturnType<typeof setInterval>;
   private spinnerFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -23,6 +47,8 @@ export class TerminalRenderer implements Renderer {
   private idleThresholdMs = 1000;
   private waitSegments: number[] = [];
   private totalWaitMs = 0;
+  private tipTimer?: ReturnType<typeof setInterval>;
+  private currentTip = "";
 
   startStreaming(): void {
     this.streaming = true;
@@ -31,6 +57,7 @@ export class TerminalRenderer implements Renderer {
     this.idleStartTime = 0;
     this.waitSegments = [];
     this.totalWaitMs = 0;
+    this.currentTip = randomTip();
     this.spinnerTimer = setInterval(() => {
       if (!this.streaming || this.paused) return;
       const idleDuration = Date.now() - this.lastActivityTime;
@@ -41,6 +68,14 @@ export class TerminalRenderer implements Renderer {
         this.showSpinner();
       }
     }, 80);
+    // Rotate tip every 8 seconds during streaming
+    this.tipTimer = setInterval(() => {
+      if (!this.streaming || this.paused) return;
+      this.currentTip = randomTip();
+      if (this.spinnerVisible) {
+        this.showSpinner();
+      }
+    }, 8000);
   }
 
   stopStreaming(): void {
@@ -50,6 +85,10 @@ export class TerminalRenderer implements Renderer {
     if (this.spinnerTimer) {
       clearInterval(this.spinnerTimer);
       this.spinnerTimer = undefined;
+    }
+    if (this.tipTimer) {
+      clearInterval(this.tipTimer);
+      this.tipTimer = undefined;
     }
     if (this.totalWaitMs >= 1000) {
       process.stdout.write(`\n${DIM}⏱ total wait: ${this.formatElapsed(this.totalWaitMs)} (${this.waitSegments.length} segment${this.waitSegments.length > 1 ? "s" : ""})${RESET}\n`);
@@ -92,8 +131,9 @@ export class TerminalRenderer implements Renderer {
     this.spinnerIndex++;
     this.spinnerVisible = true;
     const elapsed = this.formatElapsed(Date.now() - this.idleStartTime);
-    process.stdout.write(`\r${DIM}${frame} waiting... ${elapsed}${RESET}\x1b[K`);
+    process.stdout.write(`\r${DIM}${frame} ${this.currentTip} (${elapsed})${RESET}\x1b[K`);
   }
+
 
   private hideSpinner(): void {
     this.finalizeIdleSegment();
