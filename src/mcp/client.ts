@@ -80,7 +80,6 @@ export class MCPClient {
 
     this.process = spawn(cmd, this.config.args ?? [], {
       stdio: ["pipe", "pipe", "pipe"],
-      cwd: this.config.cwd,
       env: { ...process.env, ...this.config.env },
     });
 
