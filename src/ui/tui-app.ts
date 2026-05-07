@@ -82,7 +82,15 @@ export class TuiApp {
     });
 
     process.on("SIGINT", () => {
-      if (this.processing) return;
+      if (this.processing) {
+        this.deps.agent.abort();
+        this.conversation.addInfo("(aborted)");
+        return;
+      }
+      if (this.resolvePermission) {
+        this.resolvePermissionChoice("deny");
+        return;
+      }
       const now = Date.now();
       if (now - this.lastCtrlC < 500) {
         this.stop();
@@ -140,7 +148,7 @@ export class TuiApp {
 
   private handleInput(data: string): boolean {
     if (this.resolvePermission) {
-      if (matchesKey(data, Key.escape)) {
+      if (matchesKey(data, Key.escape) || matchesKey(data, "ctrl+c") || data === "\x03") {
         this.resolvePermissionChoice("deny");
         return true;
       }
@@ -162,7 +170,7 @@ export class TuiApp {
     }
 
     if (this.processing) {
-      if (matchesKey(data, Key.escape) || matchesKey(data, Key.tab)) {
+      if (matchesKey(data, Key.escape) || matchesKey(data, Key.tab) || matchesKey(data, "ctrl+c") || data === "\x03") {
         this.deps.agent.abort();
         this.conversation.addInfo("(aborted)");
         return true;
