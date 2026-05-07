@@ -81,6 +81,17 @@ export class TuiApp {
       return undefined;
     });
 
+    process.on("SIGINT", () => {
+      if (this.processing) return;
+      const now = Date.now();
+      if (now - this.lastCtrlC < 500) {
+        this.stop();
+        return;
+      }
+      this.lastCtrlC = now;
+      this.conversation.addInfo("Press Ctrl+C again to exit");
+    });
+
     this.loader.onAbort = () => {
       deps.agent.abort();
     };
@@ -157,7 +168,7 @@ export class TuiApp {
         return true;
       }
     } else {
-      if (matchesKey(data, "ctrl+c")) {
+      if (matchesKey(data, "ctrl+c") || data === "\x03") {
         const now = Date.now();
         if (now - this.lastCtrlC < 500) {
           this.stop();
