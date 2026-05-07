@@ -134,7 +134,8 @@ export async function promptPermission(toolName: string, preview: string): Promi
     stdin.setEncoding("utf8");
 
     const onData = (data: string) => {
-      const key = data.trim().toLowerCase();
+      // Only take the first character, ignore any trailing garbage
+      const key = data.trim().toLowerCase()[0] ?? "";
       stdin.removeListener("data", onData);
       stdin.setRawMode?.(isRaw ? true : false);
       if (resume) stdin.pause();
