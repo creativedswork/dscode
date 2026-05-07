@@ -109,25 +109,34 @@ export class TuiApp {
     return new Promise((resolve) => {
       this.resolvePermission = resolve;
 
-      const lines: string[] = [];
-      lines.push(c.yellow("┌─ Permission ─────────────────────────────"));
-      lines.push(c.yellow("│") + " Tool: " + c.bold(toolName));
-      for (const line of preview.split("\n")) {
-        lines.push(c.yellow("│") + " " + line);
-      }
-      lines.push(c.yellow("└───────────────────────────────────────────"));
-      lines.push(
-        "  [" + c.green("Y") + "]es  [" + c.red("N") + "]o  [" + c.cyan("A") + "]lways  " + c.dim("(Esc to deny)"),
-      );
+      const maxLen = 50;
+      const trimmed = preview.length > maxLen ? preview.slice(0, maxLen) + "..." : preview;
 
-      const box = new Box(1, 1);
+      const lines: string[] = [];
+      lines.push("");
+      lines.push(c.yellow.bold("  ⚡ Permission Required"));
+      lines.push("");
+      lines.push("  " + c.bold("Tool: ") + toolName);
+      if (trimmed) {
+        lines.push("  " + c.dim(trimmed));
+      }
+      lines.push("");
+      lines.push(c.dim("  ─────────────────────────────────────────────────"));
+      lines.push(
+        "  " + c.green.bold("[Y]") + " Allow  " +
+        c.red.bold("[N]") + " Deny  " +
+        c.cyan.bold("[A]") + " Always  " +
+        c.dim("[Esc] deny"),
+      );
+      lines.push("");
+
+      const box = new Box(2, 1, c.bgBlack);
       box.addChild(new Text(lines.join("\n"), 0, 0));
 
       this.permissionOverlayHandle = this.tui.showOverlay(box, {
-        anchor: "top-center",
-        offsetY: 2,
+        anchor: "center",
         width: "60%",
-        minWidth: 40,
+        minWidth: 50,
       });
     });
   }
@@ -141,6 +150,7 @@ export class TuiApp {
       this.permissionOverlayHandle.hide();
       this.permissionOverlayHandle = null;
     }
+    this.tui.requestRender(true);
   }
 
   private handleInput(data: string): boolean {
