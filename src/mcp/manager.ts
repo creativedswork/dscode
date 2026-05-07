@@ -3,8 +3,8 @@ import { Type } from "@mariozechner/pi-ai";
 
 import type { MCPServerConfig, MCPServerState, MCPToolDefinition } from "./types.js";
 import { MCPClient } from "./client.js";
-import type { SkillRegistry } from "../skills/registry.js";
-import type { Skill } from "../core/types.js";
+import type { DriverRegistry } from "../drivers/registry.js";
+import type { Driver } from "../core/types.js";
 
 function convertJsonSchema(inputSchema: Record<string, unknown>): any {
   const props = (inputSchema as any)?.properties;
@@ -92,7 +92,7 @@ export class MCPManager {
   }
 
 
-  async registerTools(registry: SkillRegistry): Promise<void> {
+  async registerDrivers(registry: DriverRegistry): Promise<void> {
     for (const [name, client] of this.clients) {
       try {
         const tools = await client.listTools();
@@ -102,14 +102,14 @@ export class MCPManager {
         const agentTools = tools.map((t) => this.buildAgentTool(name, t, client));
         const description = this.configs.find((c) => c.name === name)?.description ?? "";
 
-        const skill: Skill = {
+        const driver: Driver = {
           name: `mcp_${name}`,
           description: `MCP: ${description || name}`,
           tools: agentTools,
           source: "mcp",
         };
 
-        registry.registerMCPSkill(skill);
+        registry.register(driver);
       } catch (err: any) {
         console.error(`[mcp] Failed to list tools from "${name}": ${err.message}`);
       }

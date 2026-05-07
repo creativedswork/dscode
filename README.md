@@ -42,16 +42,16 @@ agent › 当前 src/ 目录包含 7 个模块：core, session, context, memory,
 | 功能 | 说明 |
 |------|------|
 | 多轮对话 | 流式输出 + thinking（reasoning 模型） |
-| 内置工具 | read_file, write_file, list_files, bash, grep, glob |
+| 内置驱动 | fs（文件读写）、shell（命令执行）、search（搜索），始终可用 |
 | 权限控制 | 危险操作需确认，可选 always allow；支持 glob 模式禁止读写敏感文件 |
 | 会话持久化 | 自动保存，可恢复历史对话 |
 | 上下文管理 | 自动压缩长对话，防止 token overflow；截断自动续写 |
 | 记忆系统 | 跨 session 记住用户偏好和项目上下文 |
-| Skills 系统 | 内置工具始终可用 + 声明式第三方 Skill 扩展（SKILL.md） |
-| MCP 协议支持 | 作为 MCP client 连接外部工具服务器（stdio/SSE），动态扩展能力 |
+| Skills 系统 | 声明式第三方 Skill 扩展（SKILL.md），按需激活 |
+| MCP 协议支持 | 作为 MCP client 连接外部工具服务器（stdio/SSE），注册为驱动 |
 | 等待指示器 | 模型响应空闲 >1s 时显示动画及分段计时统计 |
 | 两级配置 | 用户级 + 项目级配置，灵活覆盖 |
-| Slash 命令 | /help, /reset, /session, /memory, /skills 等 |
+| Slash 命令 | /help, /reset, /session, /memory, /skills, /drivers 等 |
 
 ## 模型配置
 
@@ -79,9 +79,10 @@ DEEPSEEK_MODEL=deepseek-v4-pro npm start
 | `/session load <id>` | 恢复历史会话 |
 | `/memory list` | 查看记忆 |
 | `/memory add <内容>` | 手动添加记忆 |
-| `/skills` | 列出技能及状态（内置 + 外部） |
-| `/skills activate <name>` | 激活外部技能 |
-| `/skills deactivate <name>` | 停用外部技能 |
+| `/skills` | 列出 Skills 及状态 |
+| `/skills activate <name>` | 激活外部 Skill |
+| `/skills deactivate <name>` | 停用外部 Skill |
+| `/drivers` | 列出已加载的驱动 |
 | `/permissions` | 查看当前权限授予 |
 | `/cost` | 显示 token 用量 |
 | `/compact` | 手动压缩上下文 |
@@ -102,7 +103,7 @@ DEEPSEEK_MODEL=deepseek-v4-pro npm start
   "provider": "deepseek",   // LLM 提供商（默认 "deepseek"）
   "modelId": "deepseek-v4-flash",  // 模型 ID（默认 "deepseek-v4-flash"）
   "maxTokens": 16384,  // 模型最大输出 token 数（默认 16384）
-  "skills": ["git-workflow"],  // 启动时自动激活的外部 skill
+  "skills": ["git-workflow"],  // 启动时自动激活的外部 Skill
   "permissions": {
     "deny": ["**/.env", "**/.env.*", "**/secrets/**"]
   }
@@ -114,7 +115,7 @@ DEEPSEEK_MODEL=deepseek-v4-pro npm start
 | `provider` | string | `"deepseek"` | LLM 提供商，可选 deepseek / openai / anthropic 等 |
 | `modelId` | string | `"deepseek-v4-flash"` | 模型 ID |
 | `maxTokens` | number | `16384` | 模型单次输出最大 token 数 |
-| `skills` | string[] | `[]` | 启动时自动激活的外部 skill 名称列表（两级取并集） |
+| `skills` | string[] | `[]` | 启动时自动激活的外部 Skill 名称列表（两级取并集） |
 | `permissions.deny` | string[] | `[]` | 禁止读写的文件 glob 模式（两级配置取并集） |
 
 | 环境变量 | 对应配置 |
@@ -152,21 +153,21 @@ DSCODE_PROJECT_PATH=/path/to/project npm start
 
 ## Skills 系统
 
-DSCode 的工具分为**内置工具**和**外部 Skill**两层：
+DSCode 采用 **Agent as OS** 架构设计。工具分为两层：
 
-- **内置工具**（filesystem, bash, search）始终可用，不可停用
-- **外部 Skill** 通过 `SKILL.md` 声明式定义，支持渐进式加载
+- **Drivers（驱动）** — 内核模块，始终加载（fs, shell, search, MCP）
+- **Skills（技能）** — 用户态程序，按需激活，通过 `SKILL.md` 声明式定义
 
 ### 目录结构
 
 ```
-~/.dscode/skills/               # 用户级 Skills
+~/.dscode/skills/                 # 用户级 Skills
 ├── git-workflow/
 │   └── SKILL.md
 └── docker/
     └── SKILL.md
 
-<project>/.dscode/skills/       # 项目级 Skills（近优先，同名覆盖用户级）
+<project>/.dscode/skills/         # 项目级 Skills（近优先，同名覆盖用户级）
 └── deploy/
     └── SKILL.md
 ```
@@ -178,12 +179,11 @@ DSCode 的工具分为**内置工具**和**外部 Skill**两层：
 name: git-workflow
 description: Advanced git operations for PR workflows
 tools:
-  - name: create_pr
-    description: Create a pull request on GitHub
-    parameters:
-      title: { type: string, description: "PR title" }
-      body: { type: string, description: "PR body" }
-    command: gh pr create --title {{title}} --body {{body}}
+  - read_file
+  - list_files
+  - grep
+  - glob
+  - bash
 ---
 
 ## Instructions
@@ -194,19 +194,20 @@ Always push the branch before creating a PR.
 
 - `---` 之间为 YAML frontmatter，声明 name、description、tools
 - `---` 之后为自由 markdown，激活时作为使用指南注入 system prompt
-- `command` 中 `{{param}}` 会自动替换并做 shell escape（防注入）
-- 参数 type 支持：`string`, `number`, `boolean`
+- `tools` 是**允许调用的 Driver 工具名称白名单**，非自定义工具定义
+- 如果 `tools` 为空或未定义，默认允许安全只读工具：`read_file`, `list_files`, `grep`, `glob`
+- 激活时，系统根据白名单从已加载的 Driver 中筛选对应工具注入 agent
 
 ### 激活方式
 
-1. **配置自动激活**：在 config.json 中 `"skills": ["git-workflow"]`
-2. **用户手动激活**：`/skills activate <name>`
-3. **模型自主激活**：模型判断需要时自动调用 `activate_skill` 工具
+1. **自动激活**：`~/.dscode/skills/` 和 `<project>/.dscode/skills/` 下的所有 Skill 在启动时自动激活
+2. **配置激活**：在 config.json 中 `"skills": ["git-workflow"]` 可额外激活指定 Skill
+3. **用户手动激活**：`/skills activate <name>`
 
 ### 渐进式加载
 
-启动时只读取各 SKILL.md 的 name + description 作为索引，system prompt 中仅放一行摘要。
-激活时才解析完整 tools 定义并注入 agent，最小化 context 开销。
+启动时自动激活所有扫描到的 Skill，其 instructions 注入 system prompt 作为模型使用指南。
+激活时根据 tools 白名单从已加载的 Driver 中筛选对应工具注入 agent，最小化 context 开销。
 
 ## MCP 配置
 
@@ -250,7 +251,7 @@ DSCode 支持通过 [MCP (Model Context Protocol)](https://modelcontextprotocol.
 
 ### 工具命名
 
-MCP 工具注册为 Skill，命名格式为 `mcp_<server>_<tool>`，避免命名冲突。例如 `mcp_playwright_browser_navigate`。
+MCP 工具注册为 Driver，命名格式为 `mcp_<server>_<tool>`，避免命名冲突。例如 `mcp_playwright_browser_navigate`。
 
 ### 错误处理
 
@@ -279,7 +280,9 @@ src/
 ├── session/        # 会话持久化 (JSON, atomic write)
 ├── context/        # token 估算、上下文压缩
 ├── memory/         # 跨 session 记忆
-├── skills/         # 工具注册 + 内置工具 (fs, shell, search)
+├── drivers/        # 驱动注册 + 内置驱动 (fs, shell, search)
+├── skills/         # Skill 管理器 + SKILL.md 加载器
+├── mcp/            # MCP 客户端（stdio/SSE）+ 管理器
 ├── permissions/    # 权限拦截 (beforeToolCall hook)
 └── ui/             # REPL、流式渲染、slash commands
 ```

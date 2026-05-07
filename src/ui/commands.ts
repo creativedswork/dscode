@@ -2,7 +2,8 @@ import type { Agent } from "@mariozechner/pi-agent-core";
 
 import type { SessionManager } from "../session/manager.js";
 import type { MemoryManager } from "../memory/manager.js";
-import type { SkillRegistry } from "../skills/registry.js";
+import type { DriverRegistry } from "../drivers/registry.js";
+import type { SkillManager } from "../skills/manager.js";
 import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
 import { TerminalRenderer, colors } from "./render.js";
@@ -13,7 +14,8 @@ interface CommandContext {
   agent: Agent;
   sessionManager: SessionManager;
   memoryManager: MemoryManager;
-  skillRegistry: SkillRegistry;
+  driverRegistry: DriverRegistry;
+  skillManager: SkillManager;
   permissionManager: PermissionManager;
   contextManager: ContextManager;
   renderer: TerminalRenderer;
@@ -147,10 +149,13 @@ export const COMMANDS: SlashCommand[] = [
           const name = rest[0];
           if (!name) { ctx.renderer.renderError("Usage: /skills activate <name>"); return; }
           try {
-            const skill = ctx.skillRegistry.activateSkill(name);
-            ctx.agent.state.tools = ctx.skillRegistry.getTools();
+            const skill = ctx.skillManager.activate(name, ctx.driverRegistry);
+            ctx.agent.state.tools = [
+              ...ctx.driverRegistry.getAllTools(),
+              ...ctx.skillManager.getTools(),
+            ];
             const toolNames = skill.tools.map((t) => t.name).join(", ");
-            ctx.renderer.renderInfo(`Activated: ${name} (tools: ${toolNames || "none"})`);
+            ctx.renderer.renderInfo(`Activated: ${name} (allowed tools: ${toolNames || "none"})`);
           } catch (err: any) {
             ctx.renderer.renderError(err.message);
           }
@@ -159,14 +164,17 @@ export const COMMANDS: SlashCommand[] = [
         case "deactivate": {
           const name = rest[0];
           if (!name) { ctx.renderer.renderError("Usage: /skills deactivate <name>"); return; }
-          ctx.skillRegistry.deactivateSkill(name);
-          ctx.agent.state.tools = ctx.skillRegistry.getTools();
+          ctx.skillManager.deactivate(name);
+          ctx.agent.state.tools = [
+            ...ctx.driverRegistry.getAllTools(),
+            ...ctx.skillManager.getTools(),
+          ];
           ctx.renderer.renderInfo(`Deactivated: ${name}`);
           break;
         }
         default: {
           console.log(`\n${BOLD}Skills:${RESET}`);
-          for (const { skill, active } of ctx.skillRegistry.listAll()) {
+          for (const { skill, active } of ctx.skillManager.listAll()) {
             const status = active ? `${GREEN}active${RESET}` : `${DIM}inactive${RESET}`;
             const source = `${DIM}(${skill.source})${RESET}`;
             console.log(`  ${skill.name} [${status}] ${source} ${DIM}— ${skill.description}${RESET}`);
@@ -174,6 +182,20 @@ export const COMMANDS: SlashCommand[] = [
           console.log();
         }
       }
+    },
+  },
+  {
+    name: "drivers",
+    description: "List loaded drivers",
+    execute: async (_args, ctx) => {
+      console.log(`\n${BOLD}Drivers:${RESET}`);
+      for (const d of ctx.driverRegistry.listAll()) {
+        const source = `${DIM}(${d.source})${RESET}`;
+        const toolNames = d.tools.map((t) => t.name).join(", ");
+        console.log(`  ${d.name} ${source} ${DIM}— ${d.description}${RESET}`);
+        console.log(`    ${DIM}tools: ${toolNames}${RESET}`);
+      }
+      console.log();
     },
   },
   {

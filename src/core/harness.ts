@@ -5,7 +5,8 @@ import type { HarnessConfig } from "./types.js";
 import { SessionManager } from "../session/manager.js";
 import { ContextManager } from "../context/manager.js";
 import { MemoryManager } from "../memory/manager.js";
-import { SkillRegistry } from "../skills/registry.js";
+import { DriverRegistry } from "../drivers/registry.js";
+import { SkillManager } from "../skills/manager.js";
 import { PermissionManager } from "../permissions/manager.js";
 import { MCPManager } from "../mcp/manager.js";
 import { TerminalRenderer } from "../ui/render.js";
@@ -16,7 +17,8 @@ export class Harness {
   private sessionManager: SessionManager;
   private contextManager: ContextManager;
   private memoryManager: MemoryManager;
-  private skillRegistry: SkillRegistry;
+  private driverRegistry: DriverRegistry;
+  private skillManager: SkillManager;
   private permissionManager: PermissionManager;
   private mcpManager?: MCPManager;
   private renderer: TerminalRenderer;
@@ -29,32 +31,42 @@ export class Harness {
     this.sessionManager = new SessionManager(config.dataDir);
     this.contextManager = new ContextManager(config.context);
     this.memoryManager = new MemoryManager(config.dataDir, config.projectPath, config.memory);
-    this.skillRegistry = new SkillRegistry(config.userSkillsDir, config.projectSkillsDir);
+    this.driverRegistry = new DriverRegistry();
+    this.skillManager = new SkillManager(config.userSkillsDir, config.projectSkillsDir);
     this.permissionManager = new PermissionManager(config.permissions, promptPermission, () => {
       this.renderer.pauseSpinner();
     });
   }
 
   async initialize(): Promise<void> {
-    // activate configured external skills
+    // Auto-activate all scanned skills from both ~/.dscode/skills/ and <project>/.dscode/skills/
+    for (const name of this.skillManager.listAllSkillNames()) {
+      try {
+        this.skillManager.activate(name, this.driverRegistry);
+      } catch {
+        // skip silently
+      }
+    }
+
+    // Activate additional skills listed in config.skills
     for (const name of this.config.skills) {
       try {
-        this.skillRegistry.activateSkill(name);
+        this.skillManager.activate(name, this.driverRegistry);
       } catch {
         // skip unknown skills silently
       }
     }
 
-    // initialize MCP servers
+    // initialize MCP servers and register as drivers
     if (this.config.mcp.length > 0) {
       this.mcpManager = new MCPManager(this.config.mcp);
       await this.mcpManager.initialize();
-      await this.mcpManager.registerTools(this.skillRegistry);
+      await this.mcpManager.registerDrivers(this.driverRegistry);
     }
 
     // build system prompt
     const memories = this.memoryManager.getRelevantMemories();
-    const skillSection = this.skillRegistry.getSystemPromptSection();
+    const skillSection = this.skillManager.getSystemPromptSection();
     const systemPrompt = this.buildSystemPrompt(memories, skillSection);
 
     // get model
@@ -63,13 +75,16 @@ export class Harness {
     // update context manager with model limits
     this.contextManager.updateModel(model.contextWindow, model.maxTokens);
 
+    // combine all tools from drivers (skills just filter driver tools by whitelist)
+    const allTools = this.driverRegistry.getAllTools();
+
     // create agent
     const maxTokens = this.config.maxTokens;
     this.agent = new Agent({
       initialState: {
         systemPrompt,
         model,
-        tools: this.skillRegistry.getTools(),
+        tools: allTools,
         thinkingLevel: this.config.thinkingLevel as any,
       },
       streamFn: (m: any, ctx: any, opts?: any) => streamSimple(m, ctx, { ...opts, maxTokens }),
@@ -92,7 +107,8 @@ export class Harness {
       harness: this,
       sessionManager: this.sessionManager,
       memoryManager: this.memoryManager,
-      skillRegistry: this.skillRegistry,
+      driverRegistry: this.driverRegistry,
+      skillManager: this.skillManager,
       permissionManager: this.permissionManager,
       contextManager: this.contextManager,
       renderer: this.renderer,
@@ -184,15 +200,19 @@ export class Harness {
     });
 
     // auto-save session on agent_end
-    this.agent.subscribe((event) => {
-      if (event.type === "agent_end") {
-        this.sessionManager.saveSession(this.agent);
-      }
-      if (event.type === "turn_end") {
-        const msg = (event as any).message;
-        if (msg?.stopReason === "length") {
-          this._truncated = true;
+    this.agent.subscribe(async (event) => {
+      try {
+        if (event.type === "agent_end") {
+          this.sessionManager.saveSession(this.agent);
         }
+        if (event.type === "turn_end") {
+          const msg = (event as any).message;
+          if (msg?.stopReason === "length") {
+            this._truncated = true;
+          }
+        }
+      } catch (err) {
+        console.error("[harness] agent_end listener error:", err);
       }
     });
   }
