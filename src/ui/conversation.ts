@@ -4,9 +4,36 @@ import { c } from "./theme.js";
 
 interface ToolEntry {
   name: string;
-  args: string;
-  result: string;
+  args: unknown;
+  result: unknown;
   isError: boolean;
+}
+
+function toolArgsPreview(args: unknown): string {
+  if (typeof args === "string") return args.slice(0, 120);
+  try {
+    return JSON.stringify(args).slice(0, 120);
+  } catch {
+    return String(args).slice(0, 120);
+  }
+}
+
+function toolResultPreview(result: unknown): string {
+  if (typeof result === "string") return result.slice(0, 300);
+  if (result && typeof result === "object") {
+    const r = result as Record<string, unknown>;
+    if (Array.isArray(r.content)) {
+      const first = r.content[0];
+      if (first && typeof first === "object" && "text" in first) {
+        return String(first.text).slice(0, 300);
+      }
+    }
+  }
+  try {
+    return JSON.stringify(result).slice(0, 300);
+  } catch {
+    return String(result).slice(0, 300);
+  }
 }
 
 export class ConversationView {
@@ -58,12 +85,12 @@ export class ConversationView {
     this.render();
   }
 
-  toolStart(name: string, args: string): void {
-    this.toolEntries.push({ name, args, result: "", isError: false });
+  toolStart(name: string, args: unknown): void {
+    this.toolEntries.push({ name, args, result: "" as unknown, isError: false });
     this.render();
   }
 
-  toolEnd(_name: string, result: string, isError: boolean): void {
+  toolEnd(_name: string, result: unknown, isError: boolean): void {
     const entry = this.toolEntries[this.toolEntries.length - 1];
     if (entry) {
       entry.result = result;
@@ -80,11 +107,11 @@ export class ConversationView {
     }
     for (const t of this.toolEntries) {
       this.segments.push(
-        c.cyan("\n[tool] ") + c.cyan(`${t.name}: ${t.args.slice(0, 120)}`),
+        c.cyan("\n[tool] ") + c.cyan(`${t.name}: ${toolArgsPreview(t.args)}`),
       );
-      const firstLine = t.result.slice(0, 300);
+      const text = toolResultPreview(t.result);
       this.segments.push(
-        (t.isError ? c.red : c.cyan)(`[result] ${firstLine}`),
+        (t.isError ? c.red : c.cyan)(`[result] ${text}`),
       );
     }
     if (this.currentAssistantText) {
@@ -121,10 +148,9 @@ export class ConversationView {
     }
 
     for (const t of this.toolEntries) {
-      lines.push(c.cyan(`\n[tool] ${t.name}: ${t.args.slice(0, 120)}`));
-      if (t.result) {
-        const firstLine = t.result.slice(0, 300);
-        lines.push((t.isError ? c.red : c.cyan)(`[result] ${firstLine}`));
+      lines.push(c.cyan(`\n[tool] ${t.name}: ${toolArgsPreview(t.args)}`));
+      if (t.result !== undefined && t.result !== "") {
+        lines.push((t.isError ? c.red : c.cyan)(`[result] ${toolResultPreview(t.result)}`));
       }
     }
 
