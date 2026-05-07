@@ -55,6 +55,8 @@ export class TuiApp {
   private idleTimer?: ReturnType<typeof setInterval>;
   private tipDuration = 0;
   private showTip = false;
+  private exitPromise!: Promise<void>;
+  private exitResolve!: () => void;
 
   constructor(deps: TuiDeps) {
     this.deps = deps;
@@ -347,13 +349,21 @@ export class TuiApp {
   }
 
   async start(): Promise<void> {
+    this.exitPromise = new Promise<void>((resolve) => {
+      this.exitResolve = resolve;
+    });
     this.terminal.setTitle("DSCode");
     this.tui.start();
     this.tui.setFocus(this.editor);
   }
 
+  waitForExit(): Promise<void> {
+    return this.exitPromise;
+  }
+
   stop(): void {
     this.terminal.write("\n" + c.dim("Goodbye.\n"));
     this.tui.stop();
+    this.exitResolve();
   }
 }

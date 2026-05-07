@@ -39,55 +39,33 @@ export class Harness {
   }
 
   async initialize(): Promise<void> {
-    // Auto-activate all scanned skills from both ~/.dscode/skills/ and <project>/.dscode/skills/
     for (const name of this.skillManager.listAllSkillNames()) {
       try {
         this.skillManager.activate(name, this.driverRegistry);
       } catch {
-        // skip silently
       }
     }
 
-    // Activate additional skills listed in config.skills
     for (const name of this.config.skills) {
       try {
         this.skillManager.activate(name, this.driverRegistry);
       } catch {
-        // skip unknown skills silently
       }
     }
 
-    // initialize MCP servers and register as drivers
-    if (this.config.mcp.length > 0) {
-      this.mcpManager = new MCPManager(this.config.mcp);
-      await this.mcpManager.initialize();
-      await this.mcpManager.registerDrivers(this.driverRegistry);
-    }
-
-    // build system prompt
     const memories = this.memoryManager.getRelevantMemories();
     const skillSection = this.skillManager.getSystemPromptSection();
     const systemPrompt = this.buildSystemPrompt(memories, skillSection);
 
-    // get model
     const model = getModel(this.config.provider as any, this.config.modelId as any);
-
-    // update context manager with model limits
     this.contextManager.updateModel(model.contextWindow, model.maxTokens);
 
-    // combine all tools from drivers + skill introspection tool
-    const allTools = [
-      ...this.driverRegistry.getAllTools(),
-      this.makeSkillTool(),
-    ];
-
-    // create agent
     const maxTokens = this.config.maxTokens;
     this.agent = new Agent({
       initialState: {
         systemPrompt,
         model,
-        tools: allTools,
+        tools: [this.makeSkillTool()],
         thinkingLevel: this.config.thinkingLevel as any,
       },
       streamFn: (m: any, ctx: any, opts?: any) => streamSimple(m, ctx, { ...opts, maxTokens }),
@@ -95,10 +73,7 @@ export class Harness {
       beforeToolCall: (ctx: any, signal?: AbortSignal) => this.permissionManager.check(ctx, signal) as any,
     });
 
-    // bind event rendering
     this.bindEvents();
-
-    // create session
     this.sessionManager.createSession(this.config.provider, this.config.modelId);
   }
 
@@ -117,6 +92,26 @@ export class Harness {
     });
 
     await this.tui.start();
+
+    if (this.config.mcp.length > 0) {
+      this.tui.addInfo(`Connecting ${this.config.mcp.length} MCP server(s)...`);
+      this.mcpManager = new MCPManager(this.config.mcp);
+      await this.mcpManager.initialize();
+      await this.mcpManager.registerDrivers(this.driverRegistry);
+      this.agent.state.tools = [
+        ...this.driverRegistry.getAllTools(),
+        this.makeSkillTool(),
+      ];
+      const connected = this.mcpManager.getStates().filter((s) => s.status === "connected").length;
+      this.tui.addInfo(`MCP: ${connected}/${this.config.mcp.length} connected`);
+    } else {
+      this.agent.state.tools = [
+        ...this.driverRegistry.getAllTools(),
+        this.makeSkillTool(),
+      ];
+    }
+
+    await this.tui.waitForExit();
     await this.shutdown();
   }
 
