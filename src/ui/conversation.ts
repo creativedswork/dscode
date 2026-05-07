@@ -136,6 +136,27 @@ export class ConversationView {
     this.render();
   }
 
+  addPermissionPrompt(toolName: string, preview: string): void {
+    const maxLen = 50;
+    const trimmed = preview.length > maxLen ? preview.slice(0, maxLen) + "..." : preview;
+    this.segments.push(
+      c.yellow.bold("⚡ Permission: ") + c.yellow(toolName) + "\n" +
+      c.dim(trimmed || "(no preview)") + "\n" +
+      c.dim("──────────────────────────────") + "\n" +
+      c.green("[y]") + " Allow  " +
+      c.red("[n]") + " Deny  " +
+      c.cyan("[a]") + " Always",
+    );
+    this.render();
+  }
+
+  removePermissionPrompt(): void {
+    if (this.segments.length > 0) {
+      this.segments.pop();
+    }
+    this.render();
+  }
+
   private render(): void {
     const lines: string[] = [];
 

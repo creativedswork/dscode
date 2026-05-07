@@ -47,7 +47,6 @@ export class TuiApp {
   private resolvePermission:
     | ((result: { decision: "allow" | "deny"; rememberForSession: boolean }) => void)
     | null = null;
-  private permissionOverlayHandle: ReturnType<TUI["showOverlay"]> | null = null;
   private lastCtrlC = 0;
   private idleStartTime = 0;
   private lastActivityTime = 0;
@@ -108,36 +107,7 @@ export class TuiApp {
   ): Promise<{ decision: "allow" | "deny"; rememberForSession: boolean }> {
     return new Promise((resolve) => {
       this.resolvePermission = resolve;
-
-      const maxLen = 50;
-      const trimmed = preview.length > maxLen ? preview.slice(0, maxLen) + "..." : preview;
-
-      const lines: string[] = [];
-      lines.push("");
-      lines.push(c.yellow.bold("  ⚡ Permission Required"));
-      lines.push("");
-      lines.push("  " + c.bold("Tool: ") + toolName);
-      if (trimmed) {
-        lines.push("  " + c.dim(trimmed));
-      }
-      lines.push("");
-      lines.push(c.dim("  ─────────────────────────────────────────────────"));
-      lines.push(
-        "  " + c.green.bold("[Y]") + " Allow  " +
-        c.red.bold("[N]") + " Deny  " +
-        c.cyan.bold("[A]") + " Always  " +
-        c.dim("[Esc] deny"),
-      );
-      lines.push("");
-
-      const box = new Box(2, 1, c.bgBlack);
-      box.addChild(new Text(lines.join("\n"), 0, 0));
-
-      this.permissionOverlayHandle = this.tui.showOverlay(box, {
-        anchor: "center",
-        width: "60%",
-        minWidth: 50,
-      });
+      this.conversation.addPermissionPrompt(toolName, preview);
     });
   }
 
@@ -146,10 +116,12 @@ export class TuiApp {
       this.resolvePermission({ decision, rememberForSession });
       this.resolvePermission = null;
     }
-    if (this.permissionOverlayHandle) {
-      this.permissionOverlayHandle.hide();
-      this.permissionOverlayHandle = null;
-    }
+    this.conversation.removePermissionPrompt();
+    this.conversation.addInfo(
+      decision === "allow"
+        ? c.dim(`Permission: ${c.green("allowed")}${rememberForSession ? c.dim(" (always)") : ""}`)
+        : c.dim(`Permission: ${c.red("denied")}`),
+    );
     this.tui.requestRender(true);
   }
 
