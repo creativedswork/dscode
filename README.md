@@ -64,7 +64,7 @@ DEEPSEEK_MODEL=deepseek-v4-pro npm start
 | 模型 | 特点 |
 |------|------|
 | `deepseek-v4-flash` | 默认，快速，适合日常编码和工具调用 |
-| `deepseek-v4-pro` | 支持 reasoning/thinking，复杂任务更强 |
+| `deepseek-v4-pro` | 支持 reasoning/thinking，复杂任务更强，支持图片输入（OCR） |
 
 > **上下文窗口：** DeepSeek V4 系列均支持 **100 万 token** 上下文窗口（`contextWindow: 1000000`），最大输出 384000 token。底层 pi-ai 框架自动处理 1M 上下文的滑动窗口管理。
 
@@ -96,7 +96,21 @@ AGENT_THINKING_LEVEL=xhigh npm start
 
 
 
-## 命令参考
+## 图片输入（OCR）
+
+DeepSeek API 不支持原生图片输入（`image_url`），DSCode 通过 [tesseract.js](https://github.com/naptha/tesseract.js) 提供 OCR 方式的图片支持：
+
+- **使用方式**：在输入框中粘贴图片（macOS 下 `Cmd+V`），图片会自动经 OCR 提取文字后发送给模型
+- **支持语言**：英文 + 简体中文（`eng+chi_sim`）
+- **适用模型**：当前对所有 DeepSeek 模型生效（`provider: "deepseek"` 且模型不原生支持图片时自动启用）
+
+### 限制
+
+- OCR 仅能提取图片中的**文字内容**，无法理解图表、布局、颜色等视觉信息
+- 首次使用时 tesseract.js 需下载语言包（~15MB），后续使用缓存加速
+- 对于手写体、低分辨率或复杂排版的图片，识别准确率可能下降
+- 如需完整的视觉理解能力，建议切换到支持原生图片输入的模型（如 `gpt-4o`、`claude-sonnet-4-6`）
+
 
 | 命令 | 说明 |
 |------|------|
@@ -373,7 +387,7 @@ npm run typecheck    # TypeScript 类型检查
 ### P3 — 扩展功能
 
 - [ ] **Web 搜索/抓取** — 内置 web search 和 URL fetch 工具
-- [ ] **图片/PDF 读取** — 多模态输入支持
+- [x] **图片/PDF 读取** — 多模态输入支持（OCR 方式，基于 tesseract.js）
 - [ ] **通知系统** — 长任务完成后桌面通知
 - [ ] **定时任务** — 支持 cron 式定时执行
 - [ ] **IDE 集成** — VS Code / JetBrains 扩展
@@ -385,6 +399,7 @@ npm run typecheck    # TypeScript 类型检查
 - 上下文压缩的 `summarize-prefix` 策略当前回退为 `sliding-window`（需额外 LLM 调用）
 - 记忆自动提取（`autoExtract`）默认关闭，需手动 `/memory add`
 - 首次启动若无输出，通常是 API Key 无效或网络问题
+- 图片输入基于 OCR，仅提取文字，不具备视觉理解能力；首次使用需下载语言包
 
 ## License
 

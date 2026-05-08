@@ -13,6 +13,7 @@ import {
 } from "@earendil-works/pi-tui";
 
 import type { Agent } from "@mariozechner/pi-agent-core";
+import type { ImageContent } from "@mariozechner/pi-ai";
 import type { SessionManager } from "../session/manager.js";
 import type { MemoryManager } from "../memory/manager.js";
 import type { DriverRegistry } from "../drivers/registry.js";
@@ -22,6 +23,9 @@ import type { ContextManager } from "../context/manager.js";
 import { c, editorTheme, TIPS, randomTip } from "./theme.js";
 import { ConversationView } from "./conversation.js";
 import { getSlashCommandAutocomplete, executeSlashCommand } from "./commands.js";
+import { readClipboardImageNonBlocking } from "../utils/image.js";
+import { ocrImages } from "../utils/ocr.js";
+import type { OcrResult } from "../utils/ocr.js";
 
 export interface TuiDeps {
   agent: Agent;
@@ -32,6 +36,8 @@ export interface TuiDeps {
   permissionManager: PermissionManager;
   contextManager: ContextManager;
   modelName: string;
+  modelSupportsImages: boolean;
+  modelNeedsOcr?: boolean;
   projectPath: string;
 }
 
@@ -41,10 +47,12 @@ export class TuiApp {
   private tui: TUI;
   private conversation: ConversationView;
   private editor: Editor;
+  private imageStatus: Text;
   private loader: CancellableLoader;
   private loaderOverlayHandle: ReturnType<TUI["showOverlay"]> | null = null;
   private processing = false;
-  private lastCtrlC = 0;
+  private lastCtrlCPress = 0;
+  private ctrlCDebounceUntil = 0;
   private resolvePermission:
     | ((result: { decision: "allow" | "deny"; rememberForSession: boolean }) => void)
     | null = null;
@@ -58,12 +66,14 @@ export class TuiApp {
   private exitPromise!: Promise<void>;
   private exitResolve!: () => void;
   private stopping = false;
+  private pendingImages: ImageContent[] = [];
 
   constructor(deps: TuiDeps) {
     this.deps = deps;
     this.terminal = new ProcessTerminal();
     this.tui = new TUI(this.terminal, true);
     this.conversation = new ConversationView(this.tui);
+    this.imageStatus = new Text("");
 
     this.loader = new CancellableLoader(this.tui, c.cyan, c.dim, "Waiting...");
 
@@ -76,32 +86,24 @@ export class TuiApp {
     this.editor = new Editor(this.tui, editorTheme, { paddingX: 1 });
     this.editor.setAutocompleteProvider(autocomplete);
     this.editor.onSubmit = (text) => this.handleSubmit(text.trim());
+    this.editor.onChange = (text) => {
+      const match = text.match(/\[paste #\d+ (\+[\d]+ lines|[\d]+ chars)\]/);
+      if (match) {
+        this.conversation.addInfo(c.dim(`Large paste accepted — ${match[0]}. Press Enter to submit full content.`));
+      }
+    };
 
     this.tui.addInputListener((data) => {
+      if (this.handlePasteImage(data)) {
+        return { consume: true };
+      }
       if (this.handleInput(data)) {
         return { consume: true };
       }
       return undefined;
     });
 
-    process.on("SIGINT", () => {
-      if (this.resolvePermission) {
-        this.resolvePermissionChoice("deny");
-        return;
-      }
-      if (this.processing) {
-        this.deps.agent.abort();
-        this.conversation.addInfo("(aborted)");
-        return;
-      }
-      const now = Date.now();
-      if (now - this.lastCtrlC < 500) {
-        this.stop();
-        return;
-      }
-      this.lastCtrlC = now;
-      this.conversation.addInfo("Press Ctrl+C again to exit");
-    });
+    process.on("SIGINT", () => this.handleCtrlC());
 
     this.loader.onAbort = () => {
       deps.agent.abort();
@@ -115,6 +117,7 @@ export class TuiApp {
     root.addChild(new TruncatedText(c.bold("DSCode ") + c.dim(`· ${this.deps.modelName}`), 1));
     root.addChild(this.conversation.component);
     this.tui.addChild(root);
+    this.tui.addChild(this.imageStatus);
     this.tui.addChild(this.editor);
   }
 
@@ -180,25 +183,75 @@ export class TuiApp {
     }
 
     if (this.processing) {
-      if (matchesKey(data, Key.escape) || matchesKey(data, Key.tab) || matchesKey(data, "ctrl+c") || data === "\x03") {
+      if (matchesKey(data, Key.escape) || matchesKey(data, Key.tab)) {
         this.deps.agent.abort();
         this.conversation.addInfo("(aborted)");
         return true;
       }
+      if (matchesKey(data, "ctrl+c") || data === "\x03") {
+        this.handleCtrlC();
+        return true;
+      }
     } else {
       if (matchesKey(data, "ctrl+c") || data === "\x03") {
-        const now = Date.now();
-        if (now - this.lastCtrlC < 500) {
-          this.stop();
-          return true;
-        }
-        this.lastCtrlC = now;
-        this.conversation.addInfo("Press Ctrl+C again to exit");
+        this.handleCtrlC();
         return true;
       }
     }
 
     return false;
+  }
+
+  private handlePasteImage(data: string): boolean {
+    // Detect empty bracketed paste (possible image paste)
+    const m = data.match(/^\x1b\[200~([\s\S]*?)\x1b\[201~$/);
+    if (!m) return false;
+
+    const pasteContent = m[1];
+    // Only intercept if paste content is empty or contains non-printable data
+    if (pasteContent.trim() !== "" && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/.test(pasteContent)) {
+      return false;
+    }
+
+    readClipboardImageNonBlocking().then((img) => {
+      if (img) {
+        this.pendingImages.push(img);
+        this.updateImageStatus();
+        this.conversation.addInlineImage(img.data, img.mimeType);
+        if (!this.deps.modelSupportsImages) {
+          this.conversation.addInfo(
+            c.yellow(`${this.deps.modelName} does not support image input.`),
+          );
+        }
+      }
+    });
+
+    return true;
+  }
+
+  private handleCtrlC(): void {
+    if (this.resolvePermission) {
+      this.resolvePermissionChoice("deny");
+      return;
+    }
+
+    if (this.processing) {
+      this.deps.agent.abort();
+      this.conversation.addInfo("(aborted)");
+      return;
+    }
+
+    const now = Date.now();
+    if (now < this.ctrlCDebounceUntil) return;
+
+    if (now - this.lastCtrlCPress < 600) {
+      this.stop();
+      return;
+    }
+
+    this.lastCtrlCPress = now;
+    this.ctrlCDebounceUntil = now + 150;
+    this.conversation.addInfo("Press Ctrl+C again to exit");
   }
 
   addUserMessage(text: string): void {
@@ -343,17 +396,60 @@ export class TuiApp {
       return;
     }
 
-    this.addUserMessage(text);
+    if (this.pendingImages.length > 0 && !this.deps.modelSupportsImages) {
+      this.conversation.addInfo(
+        c.yellow(`${this.deps.modelName} does not support image input. Image will be omitted.`),
+      );
+    }
+
+    const imageIndicator = this.pendingImages.length > 0
+      ? "\n" + c.dim(`[${this.pendingImages.length} image(s) attached]`)
+      : "";
+    this.addUserMessage(text + imageIndicator);
     this.setProcessing(true);
-    this.deps.agent.prompt(text).then(
-      () => {
-        this.setProcessing(false);
-      },
-      (err) => {
-        this.setProcessing(false);
-        this.addError(err instanceof Error ? err.message : String(err));
-      },
-    );
+
+    const images = this.pendingImages.length > 0 ? [...this.pendingImages] : undefined;
+    this.pendingImages = [];
+    this.updateImageStatus();
+
+    if (images && this.deps.modelNeedsOcr) {
+      ocrImages(images).then(
+        (result: OcrResult) => {
+          let promptText: string;
+          if (result.hasText) {
+            promptText = `${text}\n\n<image_text>\n${result.content}\n</image_text>`;
+          } else {
+            promptText = `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`;
+          }
+          this.deps.agent.prompt(promptText).then(
+            () => this.setProcessing(false),
+            (err) => {
+              this.setProcessing(false);
+              this.addError(err instanceof Error ? err.message : String(err));
+            },
+          );
+        },
+        (err) => {
+          this.deps.agent.prompt(text).then(
+            () => this.setProcessing(false),
+            (e) => {
+              this.setProcessing(false);
+              this.addError(e instanceof Error ? e.message : String(e));
+            },
+          );
+        },
+      );
+    } else {
+      this.deps.agent.prompt(text, images).then(
+        () => {
+          this.setProcessing(false);
+        },
+        (err) => {
+          this.setProcessing(false);
+          this.addError(err instanceof Error ? err.message : String(err));
+        },
+      );
+    }
   }
 
   async start(): Promise<void> {
@@ -379,5 +475,24 @@ export class TuiApp {
 
   focusEditor(): void {
     this.tui.setFocus(this.editor);
+  }
+
+  addPendingImage(image: ImageContent): void {
+    this.pendingImages.push(image);
+    this.updateImageStatus();
+  }
+
+  private updateImageStatus(): void {
+    if (this.pendingImages.length > 0) {
+      const totalKB = Math.round(
+        this.pendingImages.reduce((sum, img) => sum + img.data.length * 0.75, 0) / 1024,
+      );
+      this.imageStatus.setText(
+        c.dim(` ${this.pendingImages.length} image(s) attached (${totalKB} KB)`),
+      );
+    } else {
+      this.imageStatus.setText("");
+    }
+    this.tui.requestRender(true);
   }
 }

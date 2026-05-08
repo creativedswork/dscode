@@ -68,7 +68,12 @@ export class Harness {
         tools: [this.makeSkillTool()],
         thinkingLevel: this.config.thinkingLevel as any,
       },
-      streamFn: (m: any, ctx: any, opts?: any) => streamSimple(m, ctx, { ...opts, maxTokens }),
+      streamFn: (m: any, ctx: any, opts?: any) => streamSimple(m, ctx, {
+        ...opts,
+        maxTokens,
+        timeoutMs: 120_000,
+        maxRetries: 0,
+      }),
       transformContext: (msgs: any, signal?: AbortSignal) => this.contextManager.transform(msgs, signal) as any,
       beforeToolCall: (ctx: any, signal?: AbortSignal) => this.permissionManager.check(ctx, signal) as any,
     });
@@ -79,6 +84,8 @@ export class Harness {
 
   async run(): Promise<void> {
     const model = getModel(this.config.provider as any, this.config.modelId as any);
+    const nativeImageSupport = model.input.includes("image");
+    const needsOcr = !nativeImageSupport && this.config.provider === "deepseek";
     this.tui = new TuiApp({
       agent: this.agent,
       sessionManager: this.sessionManager,
@@ -88,6 +95,8 @@ export class Harness {
       permissionManager: this.permissionManager,
       contextManager: this.contextManager,
       modelName: model.name,
+      modelSupportsImages: nativeImageSupport || needsOcr,
+      modelNeedsOcr: needsOcr,
       projectPath: this.config.projectPath,
     });
 
@@ -247,6 +256,9 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
           const msg = (event as any).message;
           if (msg?.stopReason === "length") {
             this.tui.addInfo("Output truncated (hit max_tokens). Continue from where you left off.");
+          }
+          if (msg?.stopReason === "error" && msg?.errorMessage) {
+            this.tui.addError(`Model error: ${msg.errorMessage}`);
           }
         }
       } catch (err) {

@@ -17,7 +17,7 @@ async function main(): Promise<void> {
   const harness = new Harness(config);
   await harness.initialize();
   await harness.run();
-
+  process.exit(0);
 }
 
 main();
