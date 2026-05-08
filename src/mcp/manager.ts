@@ -6,6 +6,44 @@ import { MCPClient } from "./client.js";
 import type { DriverRegistry } from "../drivers/registry.js";
 import type { Driver } from "../core/types.js";
 
+interface MCPContent {
+  type: string;
+  text?: string;
+  data?: string;
+  mimeType?: string;
+  resource?: { uri: string; mimeType?: string };
+}
+
+function extractToolResultText(result: unknown): string {
+  if (typeof result === "string") return result;
+
+  if (result && typeof result === "object") {
+    const obj = result as any;
+    if (Array.isArray(obj.content)) {
+      const parts: string[] = [];
+      const nonText: string[] = [];
+
+      for (const item of obj.content as MCPContent[]) {
+        if (item.type === "text" && item.text) {
+          parts.push(item.text);
+        } else if (item.type === "image") {
+          nonText.push(`[Image: ${item.mimeType ?? "unknown"}]`);
+        } else if (item.type === "resource") {
+          nonText.push(`[Resource: ${item.resource?.uri ?? "unknown"}]`);
+        }
+      }
+
+      if (nonText.length > 0) {
+        parts.push(`\nAlso received: ${nonText.join(", ")}`);
+      }
+
+      return parts.length > 0 ? parts.join("\n") : JSON.stringify(obj.content);
+    }
+  }
+
+  return JSON.stringify(result, null, 2);
+}
+
 function convertJsonSchema(inputSchema: Record<string, unknown>): any {
   const props = (inputSchema as any)?.properties;
   if (!props || typeof props !== "object") {
@@ -141,7 +179,7 @@ export class MCPManager {
       execute: async (_id: string, args: any) => {
         try {
           const result = await client.callTool(def.name, args);
-          const text = typeof result === "string" ? result : JSON.stringify(result, null, 2);
+          const text = extractToolResultText(result);
           return {
             content: [{ type: "text", text: text.slice(0, 50000) }],
             details: { server: serverName, tool: def.name },

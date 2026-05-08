@@ -76,27 +76,34 @@ export function loadConfig(): HarnessConfig {
   // 1) { mcp: { servers: [{name, command, args, cwd, ...}] } }  (legacy array)
   // 2) { mcpServers: { "name": {command, args, cwd, ...} } }    (object with named keys)
   let mcpServersRaw: unknown[] = [];
-  const mcpConfig = (merged.mcp as Record<string, unknown>) ?? {};
-  const mcpObj = merged.mcpServers as Record<string, Record<string, unknown>> | undefined;
 
+  const mcpConfig = (merged.mcp as Record<string, unknown>) ?? {};
   if (Array.isArray(mcpConfig.servers)) {
-    mcpServersRaw = mcpConfig.servers as unknown[];
-  } else if (mcpObj && typeof mcpObj === "object") {
-    mcpServersRaw = Object.entries(mcpObj).map(([name, cfg]) => ({
-      name,
-      ...cfg,
-    }));
+    mcpServersRaw.push(...(mcpConfig.servers as unknown[]));
   }
 
-  const mcp: MCPServerConfig[] = mcpServersRaw.map((s: any) => ({
-    name: s.name,
-    description: s.description,
-    transport: s.transport ?? s.type ?? "stdio",
-    command: s.command,
-    args: s.args,
-    url: s.url,
-    env: s.env,
-  }));
+  const mcpObj = merged.mcpServers as Record<string, Record<string, unknown>> | undefined;
+  if (mcpObj && typeof mcpObj === "object" && !Array.isArray(mcpObj)) {
+    for (const [name, cfg] of Object.entries(mcpObj)) {
+      mcpServersRaw.push({ name, ...cfg });
+    }
+  }
+
+  const mcp: MCPServerConfig[] = mcpServersRaw.map((s: any) => {
+    const hasCommand = typeof s.command === "string" && s.command.length > 0;
+    const hasUrl = typeof s.url === "string" && s.url.length > 0;
+    const transport = (s.transport ?? s.type ?? (hasUrl && !hasCommand ? "sse" : "stdio")) as "stdio" | "sse";
+
+    return {
+      name: s.name,
+      description: s.description,
+      transport,
+      command: s.command,
+      args: s.args,
+      url: s.url,
+      env: s.env,
+    };
+  });
 
   return {
     provider,

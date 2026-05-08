@@ -260,38 +260,33 @@ DSCode 支持通过 [MCP (Model Context Protocol)](https://modelcontextprotocol.
 
 ### 配置方式
 
-在项目级或用户级 `config.json` 中添加 `mcp.servers` 数组：
+在项目级或用户级 `config.json` 中通过 `mcpServers` 配置（兼容 Claude Desktop 格式）：
 
 ```jsonc
 {
-  "mcp": {
-    "servers": [
-      {
-        "name": "playwright",
-        "description": "Browser automation via Playwright",
-        "transport": "stdio",
-        "command": "npx",
-        "args": ["@anthropic/mcp-playwright"]
-      },
-      {
-        "name": "custom-api",
-        "description": "Custom API server",
-        "transport": "sse",
-        "url": "http://localhost:3000/mcp"
-      }
-    ]
+  "mcpServers": {
+    "playwright": {
+      "description": "Browser automation via Playwright",
+      "command": "npx",
+      "args": ["@anthropic/mcp-playwright"]
+    },
+    "custom-api": {
+      "description": "Custom API server",
+      "url": "http://localhost:3000/mcp"
+    }
   }
 }
 ```
 
+transport 根据字段自动推断：有 `command` → stdio，仅 `url` → SSE。也可通过 `transport` 或 `type` 显式指定。
+
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `name` | string | 是 | Server 唯一标识 |
-| `description` | string | 否 | 描述信息 |
-| `transport` | "stdio" \| "sse" | 是 | 传输方式 |
 | `command` | string | stdio 必填 | 启动命令 |
 | `args` | string[] | 否 | 命令参数 |
 | `url` | string | SSE 必填 | SSE 服务端 URL |
+| `transport` | "stdio" \| "sse" | 否 | 传输方式（自动推断） |
+| `description` | string | 否 | 描述信息 |
 | `env` | object | 否 | 自定义环境变量 |
 
 ### 工具命名
