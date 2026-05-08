@@ -279,25 +279,21 @@ Agent
 
 ```json
 {
-  "mcp": {
-    "servers": [
-      {
-        "name": "playwright",
-        "description": "Browser automation",
-        "transport": "stdio",
-        "command": "npx",
-        "args": ["@anthropic/mcp-playwright"]
-      },
-      {
-        "name": "remote-api",
-        "description": "Remote API server",
-        "transport": "sse",
-        "url": "http://localhost:3001/mcp"
-      }
-    ]
+  "mcpServers": {
+    "playwright": {
+      "description": "Browser automation",
+      "command": "npx",
+      "args": ["@anthropic/mcp-playwright"]
+    },
+    "remote-api": {
+      "description": "Remote API server",
+      "url": "http://localhost:3001/mcp"
+    }
   }
 }
 ```
+
+transport 根据字段自动推断：有 `command` → stdio，仅 `url` → SSE。也可通过 `transport` 或 `type` 显式指定。
 
 ### 工具命名
 
