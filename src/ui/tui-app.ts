@@ -57,6 +57,7 @@ export class TuiApp {
   private showTip = false;
   private exitPromise!: Promise<void>;
   private exitResolve!: () => void;
+  private stopping = false;
 
   constructor(deps: TuiDeps) {
     this.deps = deps;
@@ -369,6 +370,8 @@ export class TuiApp {
   }
 
   stop(): void {
+    if (this.stopping) return;
+    this.stopping = true;
     this.terminal.write("\n" + c.dim("Goodbye.\n"));
     this.tui.stop();
     this.exitResolve();
