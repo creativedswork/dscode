@@ -1,5 +1,9 @@
-import type { TUI } from "@earendil-works/pi-tui";
-import { Text, Box } from "@earendil-works/pi-tui";
+import type { TUI, Component } from "@earendil-works/pi-tui";
+import { Text, Box, Image, getCapabilities, hyperlink } from "@earendil-works/pi-tui";
+import type { ImageTheme } from "@earendil-works/pi-tui";
+import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+import { homedir } from "node:os";
 import { c } from "./theme.js";
 
 interface ToolEntry {
@@ -58,10 +62,15 @@ export class ConversationView {
   private toolEntries: ToolEntry[] = [];
   private renderedToolCount = 0;
   private tui: TUI;
+  private inlineImages: Component[] = [];
 
   private permToolName = "";
   private permPreview = "";
   private permSelected = 0;
+
+  private imageTheme: ImageTheme = {
+    fallbackColor: c.dim,
+  };
 
   constructor(tui: TUI) {
     this.tui = tui;
@@ -156,6 +165,30 @@ export class ConversationView {
 
   addInfo(text: string): void {
     this.segments.push(c.dim(text));
+    this.render();
+  }
+
+  addInlineImage(base64Data: string, mimeType: string): void {
+    const caps = getCapabilities();
+    if (caps.images) {
+      const img = new Image(base64Data, mimeType, this.imageTheme, {
+        maxHeightCells: 12,
+        maxWidthCells: 40,
+      });
+      this.inlineImages.push(img);
+      this.box.removeChild(this.textComponent);
+      this.box.addChild(img);
+      this.box.addChild(this.textComponent);
+    } else {
+      const cacheDir = join(homedir(), ".dscode", "image-cache");
+      mkdirSync(cacheDir, { recursive: true });
+      const ext = mimeType.split("/")[1] || "png";
+      const filename = `${Date.now()}.${ext}`;
+      const filePath = join(cacheDir, filename);
+      writeFileSync(filePath, Buffer.from(base64Data, "base64"));
+      const linkText = c.dim(`[image: ${filePath}]`);
+      this.segments.push(hyperlink(linkText, `file://${filePath}`));
+    }
     this.render();
   }
 

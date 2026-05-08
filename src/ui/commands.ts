@@ -8,6 +8,7 @@ import type { SkillManager } from "../skills/manager.js";
 import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
 import type { TuiApp } from "./tui-app.js";
+import { readImageFile, readClipboardImage } from "../utils/image.js";
 
 interface CommandContext {
   agent: Agent;
@@ -222,6 +223,38 @@ const COMMANDS: SlashCommandDef[] = [
       ctx.agent.state.messages = compacted as any;
       const after = ctx.agent.state.messages.length;
       ctx.tui.addInfo(`Compacted: ${before} → ${after} messages`);
+    },
+  },
+  {
+    name: "image",
+    description: "Attach an image (file path or 'clipboard')",
+    execute: async (args, ctx) => {
+      const target = args.trim();
+      if (!target) {
+        ctx.tui.addError("Usage: /image <filepath> or /image clipboard");
+        return;
+      }
+      if (target === "clipboard") {
+        const img = await readClipboardImage();
+        if (!img) {
+          ctx.tui.addError("No image found in clipboard (macOS only)");
+          return;
+        }
+        ctx.tui.addPendingImage(img);
+        ctx.tui.addInfo(
+          `Image attached from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
+        );
+        return;
+      }
+      try {
+        const img = await readImageFile(target);
+        ctx.tui.addPendingImage(img);
+        ctx.tui.addInfo(
+          `Image attached: ${target} (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
+        );
+      } catch {
+        ctx.tui.addError(`Cannot read image: ${target}`);
+      }
     },
   },
 ];
