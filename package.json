@@ -1,9 +1,9 @@
 {
-  "name": "agent-harness",
+  "name": "dscode",
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "description": "A layered CLI Agent Harness built on pi-agent-core and pi-ai.",
+  "description": "DeepSeek-native terminal AI coding agent — a DeepSeek model harness analogous to Claude Code for Claude models.",
   "scripts": {
     "start": "tsx src/core/main.ts",
     "typecheck": "tsc --noEmit",

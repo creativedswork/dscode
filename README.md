@@ -66,7 +66,35 @@ DEEPSEEK_MODEL=deepseek-v4-pro npm start
 | `deepseek-v4-flash` | 默认，快速，适合日常编码和工具调用 |
 | `deepseek-v4-pro` | 支持 reasoning/thinking，复杂任务更强 |
 
+> **上下文窗口：** DeepSeek V4 系列均支持 **100 万 token** 上下文窗口（`contextWindow: 1000000`），最大输出 384000 token。底层 pi-ai 框架自动处理 1M 上下文的滑动窗口管理。
+
 底层基于 `pi-ai`，可扩展接入 OpenAI、Anthropic、Google 等 25+ 提供商。
+
+### 思考模式配置
+
+DeepSeek 的 reasoning 模型支持思考模式，通过 `thinking` + `reasoning_effort` 两个 API 参数控制：
+
+| thinkingLevel | DeepSeek API 映射 | 说明 |
+|---------------|-------------------|------|
+| `off` | `thinking: { type: "disabled" }` | 关闭思考，直接输出 |
+| `minimal` / `low` / `medium` / `high` | `thinking: { type: "enabled" }` + `reasoning_effort: "high"` | 启用思考，强度为 high |
+| `xhigh` | `thinking: { type: "enabled" }` + `reasoning_effort: "max"` | 最大思考强度 |
+
+DeepSeek **仅支持四级 reasoning_effort：不传（关闭）、low、high、max**。当前内部映射将所有非 off 的中间级别统一映射为 `high`，仅 `xhigh` 映射为 `max`。
+
+**配置方式（优先级从高到低）：**
+
+```bash
+# 1. 环境变量（最高优先级）
+AGENT_THINKING_LEVEL=xhigh npm start
+
+# 2. config.json（项目级或用户级）
+# { "thinkingLevel": "high" }
+
+# 3. 默认值：pro 模型自动启用 medium，其他模型关闭
+```
+
+
 
 ## 命令参考
 
@@ -103,6 +131,7 @@ DEEPSEEK_MODEL=deepseek-v4-pro npm start
   "provider": "deepseek",   // LLM 提供商（默认 "deepseek"）
   "modelId": "deepseek-v4-flash",  // 模型 ID（默认 "deepseek-v4-flash"）
   "maxTokens": 16384,  // 模型最大输出 token 数（默认 16384）
+  "thinkingLevel": "high",  // 思考强度（默认 pro 模型 "medium"，其他 "off"）
   "skills": ["git-workflow"],  // 启动时自动激活的外部 Skill
   "permissions": {
     "deny": ["**/.env", "**/.env.*", "**/secrets/**"]
@@ -117,11 +146,13 @@ DEEPSEEK_MODEL=deepseek-v4-pro npm start
 | `maxTokens` | number | `16384` | 模型单次输出最大 token 数 |
 | `skills` | string[] | `[]` | 启动时自动激活的外部 Skill 名称列表（两级取并集） |
 | `permissions.deny` | string[] | `[]` | 禁止读写的文件 glob 模式（两级配置取并集） |
+| `thinkingLevel` | string | pro: `"medium"`, 其他: `"off"` | 思考强度，见下方[思考模式配置](#思考模式配置) |
 
 | 环境变量 | 对应配置 |
 |----------|----------|
 | `AGENT_PROVIDER` | provider |
 | `AGENT_MODEL` / `DEEPSEEK_MODEL` | modelId |
+| `AGENT_THINKING_LEVEL` | thinkingLevel（思考强度，可选值见下方） |
 | `DSCODE_MAX_TOKENS` | maxTokens（最大输出 token 数） |
 | `DSCODE_PROJECT_PATH` | 工作目录（默认为当前目录） |
 | `DSCODE_CONFIG_HOME` | 自定义配置目录（默认 `~/.dscode`） |

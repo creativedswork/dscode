@@ -65,7 +65,12 @@ export function loadConfig(): HarnessConfig {
   const userSkillsDir = join(configDir, "skills");
   const projectSkillsDir = join(projectPath, ".dscode", "skills");
 
-  const thinkingLevel: ThinkingLevel = modelId.includes("pro") ? "medium" : "off";
+  const validThinkingLevels = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+  const defaultThinkingLevel: ThinkingLevel = modelId.includes("pro") ? "medium" : "off";
+  const rawThinkingLevel = process.env.AGENT_THINKING_LEVEL ?? merged.thinkingLevel;
+  const thinkingLevel: ThinkingLevel = rawThinkingLevel !== undefined && validThinkingLevels.has(rawThinkingLevel as string)
+    ? (rawThinkingLevel as ThinkingLevel)
+    : defaultThinkingLevel;
 
   // load MCP server configs from both formats:
   // 1) { mcp: { servers: [{name, command, args, cwd, ...}] } }  (legacy array)
