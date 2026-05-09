@@ -19,7 +19,7 @@ DSCode 通过 **MCP (Model Context Protocol)** 连接外部工具，将 DeepSeek
 
 <table>
 <tr>
-<td width="50%"><img src="docs/screen_shots/blender_show.png" alt="Blender 展示" width="100%"></td>
+<td width="50%"><img src="docs/screen_shots/blender_show.jpg" alt="Blender 展示" width="100%"></td>
 <td width="50%"><img src="docs/screen_shots/blender_mcp.gif" alt="Blender MCP 演示" width="100%"></td>
 </tr>
 </table>
@@ -28,28 +28,28 @@ DSCode 通过 **MCP (Model Context Protocol)** 连接外部工具，将 DeepSeek
 
 ### MCP Connector 能力
 
-| 能力 | 说明 |
-|------|------|
-| **Stdio 传输** | 启动本地进程作为 MCP Server，零网络开销 |
-| **SSE 传输** | 连接远程 MCP Server，支持分布式工具调用 |
+| 能力                    | 说明                                         |
+| ----------------------- | -------------------------------------------- |
+| **Stdio 传输**          | 启动本地进程作为 MCP Server，零网络开销      |
+| **SSE 传输**            | 连接远程 MCP Server，支持分布式工具调用      |
 | **自动 Transport 推断** | 有 `command` → stdio，仅 `url` → SSE，零配置 |
-| **工具命名空间** | `mcp_<server>_<tool>` 格式，避免冲突 |
-| **容错降级** | Server 连接失败不阻塞启动，错误信息可观测 |
+| **工具命名空间**        | `mcp_<server>_<tool>` 格式，避免冲突         |
+| **容错降级**            | Server 连接失败不阻塞启动，错误信息可观测    |
 
 ## 核心功能
 
-| 功能 | 说明 |
-|------|------|
-| 多轮对话 | 流式输出 + thinking（reasoning 模型） |
-| 内置驱动 | fs、shell、search，始终可用 |
-| 权限控制 | 危险操作需确认，支持 glob 模式禁止读写敏感文件 |
-| 会话持久化 | 自动保存，可恢复历史对话 |
-| 上下文管理 | 自动压缩长对话，防止 token overflow；1M token 窗口 |
-| 记忆系统 | 跨 session 记住用户偏好和项目上下文 |
-| Skills 系统 | 声明式第三方 Skill 扩展（SKILL.md），按需激活 |
-| MCP 协议 | 作为 MCP Client 连接外部工具服务器（stdio/SSE） |
-| 图片 OCR | 基于 tesseract.js 的文字提取，支持中英文 |
-| 两级配置 | 用户级 + 项目级配置，环境变量覆盖 |
+| 功能        | 说明                                               |
+| ----------- | -------------------------------------------------- |
+| 多轮对话    | 流式输出 + thinking（reasoning 模型）              |
+| 内置驱动    | fs、shell、search，始终可用                        |
+| 权限控制    | 危险操作需确认，支持 glob 模式禁止读写敏感文件     |
+| 会话持久化  | 自动保存，可恢复历史对话                           |
+| 上下文管理  | 自动压缩长对话，防止 token overflow；1M token 窗口 |
+| 记忆系统    | 跨 session 记住用户偏好和项目上下文                |
+| Skills 系统 | 声明式第三方 Skill 扩展（SKILL.md），按需激活      |
+| MCP 协议    | 作为 MCP Client 连接外部工具服务器（stdio/SSE）    |
+| 图片 OCR    | 基于 tesseract.js 的文字提取，支持中英文           |
+| 两级配置    | 用户级 + 项目级配置，环境变量覆盖                  |
 
 ## 模型配置
 
@@ -59,10 +59,10 @@ DSCode 通过 **MCP (Model Context Protocol)** 连接外部工具，将 DeepSeek
 DEEPSEEK_MODEL=deepseek-v4-pro npm start
 ```
 
-| 模型 | 特点 |
-|------|------|
-| `deepseek-v4-flash` | 默认，快速，适合日常编码 |
-| `deepseek-v4-pro` | 支持 reasoning/thinking，复杂任务更强，支持图片 OCR |
+| 模型                | 特点                                                |
+| ------------------- | --------------------------------------------------- |
+| `deepseek-v4-flash` | 默认，快速，适合日常编码                            |
+| `deepseek-v4-pro`   | 支持 reasoning/thinking，复杂任务更强，支持图片 OCR |
 
 > DeepSeek V4 系列均支持 **100 万 token** 上下文窗口，最大输出 384K token。
 
@@ -72,11 +72,11 @@ DEEPSEEK_MODEL=deepseek-v4-pro npm start
 
 DeepSeek reasoning 模型通过 `thinkingLevel` 控制思考强度：
 
-| thinkingLevel | 行为 |
-|---------------|------|
-| `off` | 关闭思考，直接输出 |
-| `minimal` / `low` / `medium` / `high` | 启用思考，映射为 `reasoning_effort: "high"` |
-| `xhigh` | 最大思考强度，映射为 `reasoning_effort: "max"` |
+| thinkingLevel                         | 行为                                           |
+| ------------------------------------- | ---------------------------------------------- |
+| `off`                                 | 关闭思考，直接输出                             |
+| `minimal` / `low` / `medium` / `high` | 启用思考，映射为 `reasoning_effort: "high"`    |
+| `xhigh`                               | 最大思考强度，映射为 `reasoning_effort: "max"` |
 
 ```bash
 # 环境变量（最高优先级）
@@ -93,29 +93,29 @@ DSCode 支持通过 [MCP](https://modelcontextprotocol.io/) 连接外部工具�
     "blender": {
       "description": "Blender 3D modeling via MCP",
       "command": "uvx",
-      "args": ["blender-mcp"]
+      "args": ["blender-mcp"],
     },
     "playwright": {
       "description": "Browser automation",
       "command": "npx",
-      "args": ["@anthropic/mcp-playwright"]
+      "args": ["@anthropic/mcp-playwright"],
     },
     "custom-api": {
       "description": "Remote API server",
-      "url": "http://localhost:3000/mcp"
-    }
-  }
+      "url": "http://localhost:3000/mcp",
+    },
+  },
 }
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `command` | string | stdio 必填 | 启动命令 |
-| `args` | string[] | 否 | 命令参数 |
-| `url` | string | SSE 必填 | SSE 服务端 URL |
-| `transport` | "stdio" \| "sse" | 否 | 传输方式（自动推断） |
-| `description` | string | 否 | 描述信息 |
-| `env` | object | 否 | 自定义环境变量 |
+| 字段          | 类型             | 必填       | 说明                 |
+| ------------- | ---------------- | ---------- | -------------------- |
+| `command`     | string           | stdio 必填 | 启动命令             |
+| `args`        | string[]         | 否         | 命令参数             |
+| `url`         | string           | SSE 必填   | SSE 服务端 URL       |
+| `transport`   | "stdio" \| "sse" | 否         | 传输方式（自动推断） |
+| `description` | string           | 否         | 描述信息             |
+| `env`         | object           | 否         | 自定义环境变量       |
 
 MCP 工具注册为 Driver，命名格式 `mcp_<server>_<tool>`，例如 `mcp_blender_get_scene_info`。连接失败不阻塞启动，错误信息输出到控制台。
 
@@ -143,7 +143,6 @@ tools:
   - grep
   - bash
 ---
-
 ## Instructions
 When the user asks about git workflows, use these tools.
 Always push the branch before creating a PR.
@@ -168,36 +167,36 @@ Always push the branch before creating a PR.
   "thinkingLevel": "high",
   "skills": ["git-workflow"],
   "permissions": {
-    "deny": ["**/.env", "**/.env.*", "**/secrets/**"]
-  }
+    "deny": ["**/.env", "**/.env.*", "**/secrets/**"],
+  },
 }
 ```
 
 ### 环境变量
 
-| 环境变量 | 对应配置 |
-|----------|----------|
-| `AGENT_PROVIDER` | provider |
-| `AGENT_MODEL` / `DEEPSEEK_MODEL` | modelId |
-| `AGENT_THINKING_LEVEL` | thinkingLevel |
-| `DSCODE_MAX_TOKENS` | maxTokens |
-| `DSCODE_PROJECT_PATH` | 工作目录（默认当前目录） |
-| `DSCODE_CONFIG_HOME` | 自定义配置目录（默认 `~/.dscode`） |
-| `DSCODE_DATA_HOME` | 自定义数据目录（默认 `~/.dscode`） |
+| 环境变量                         | 对应配置                           |
+| -------------------------------- | ---------------------------------- |
+| `AGENT_PROVIDER`                 | provider                           |
+| `AGENT_MODEL` / `DEEPSEEK_MODEL` | modelId                            |
+| `AGENT_THINKING_LEVEL`           | thinkingLevel                      |
+| `DSCODE_MAX_TOKENS`              | maxTokens                          |
+| `DSCODE_PROJECT_PATH`            | 工作目录（默认当前目录）           |
+| `DSCODE_CONFIG_HOME`             | 自定义配置目录（默认 `~/.dscode`） |
+| `DSCODE_DATA_HOME`               | 自定义数据目录（默认 `~/.dscode`） |
 
 ## Slash 命令
 
-| 命令 | 说明 |
-|------|------|
-| `/help` | 显示所有命令 |
-| `/reset` | 清空对话历史 |
-| `/session list/save/load` | 会话管理 |
-| `/memory list/add` | 记忆管理 |
-| `/skills` | 列出 Skills 及状态 |
-| `/drivers` | 列出已加载的驱动 |
-| `/permissions` | 查看当前权限授予 |
-| `/cost` | 显示 token 用量 |
-| `/compact` | 手动压缩上下文 |
+| 命令                      | 说明               |
+| ------------------------- | ------------------ |
+| `/help`                   | 显示所有命令       |
+| `/reset`                  | 清空对话历史       |
+| `/session list/save/load` | 会话管理           |
+| `/memory list/add`        | 记忆管理           |
+| `/skills`                 | 列出 Skills 及状态 |
+| `/drivers`                | 列出已加载的驱动   |
+| `/permissions`            | 查看当前权限授予   |
+| `/cost`                   | 显示 token 用量    |
+| `/compact`                | 手动压缩上下文     |
 
 退出：输入 `exit` 或按 `Ctrl+C` 两次。中断生成：单次 `Ctrl+C`。
 
@@ -218,11 +217,11 @@ src/
 
 ## 权限模型
 
-| 工具 | 默认策略 |
-|------|----------|
-| read_file, list_files, grep, glob | 自动放行 |
-| write_file | 需确认 |
-| bash | 需确认；`sudo`, `rm -rf` 等直接拒绝 |
+| 工具                              | 默认策略                            |
+| --------------------------------- | ----------------------------------- |
+| read_file, list_files, grep, glob | 自动放行                            |
+| write_file                        | 需确认                              |
+| bash                              | 需确认；`sudo`, `rm -rf` 等直接拒绝 |
 
 确认时可选择：**Y**（放行本次）、**N**（拒绝）、**A**（本 session 始终放行该工具）。
 
