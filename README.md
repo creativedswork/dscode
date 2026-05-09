@@ -17,7 +17,12 @@ npm start              # 看到 you › 即可开始对话
 
 DSCode 通过 **MCP (Model Context Protocol)** 连接外部工具，将 DeepSeek 的能力延伸到创意工作流——从 Blender 3D 建模到浏览器自动化，从 Figma 设计到音乐创作。
 
-![Blender MCP 演示](docs/screen_shots/blender_mcp.gif)
+<table>
+<tr>
+<td width="50%"><img src="docs/screen_shots/blender_show.png" alt="Blender 展示" width="100%"></td>
+<td width="50%"><img src="docs/screen_shots/blender_mcp.gif" alt="Blender MCP 演示" width="100%"></td>
+</tr>
+</table>
 
 上图演示了通过 `blender-mcp` 连接 Blender，用自然语言操控 3D 场景——这正是 [Claude for Creative Work](https://www.anthropic.com/news/claude-for-creative-work) 中展示的核心范式。DSCode 通过标准 MCP 协议，让 DeepSeek 模型同样能接入这类创意工具链。
 
