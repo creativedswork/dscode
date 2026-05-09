@@ -1,8 +1,9 @@
 import { Agent } from "@mariozechner/pi-agent-core";
+import type { AgentMessage, AgentTool, BeforeToolCallContext } from "@mariozechner/pi-agent-core";
 import { getModel, streamSimple, Type } from "@mariozechner/pi-ai";
+import type { Api, AssistantMessage, Context, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
 
 import type { HarnessConfig } from "./types.js";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { SessionManager } from "../session/manager.js";
 import { ContextManager } from "../context/manager.js";
 import { MemoryManager } from "../memory/manager.js";
@@ -57,7 +58,7 @@ export class Harness {
     const skillSection = this.skillManager.getSystemPromptSection();
     const systemPrompt = this.buildSystemPrompt(memories, skillSection);
 
-    const model = getModel(this.config.provider as any, this.config.modelId as any);
+    const model = (getModel as (p: string, m: string) => Model<Api>)(this.config.provider, this.config.modelId);
     this.contextManager.updateModel(model.contextWindow, model.maxTokens);
 
     const maxTokens = this.config.maxTokens;
@@ -66,16 +67,18 @@ export class Harness {
         systemPrompt,
         model,
         tools: [this.makeSkillTool()],
-        thinkingLevel: this.config.thinkingLevel as any,
+        thinkingLevel: this.config.thinkingLevel,
       },
-      streamFn: (m: any, ctx: any, opts?: any) => streamSimple(m, ctx, {
+      streamFn: (m: Model<Api>, ctx: Context, opts?: SimpleStreamOptions) => streamSimple(m, ctx, {
         ...opts,
         maxTokens,
         timeoutMs: 120_000,
         maxRetries: 0,
       }),
-      transformContext: (msgs: any, signal?: AbortSignal) => this.contextManager.transform(msgs, signal) as any,
-      beforeToolCall: (ctx: any, signal?: AbortSignal) => this.permissionManager.check(ctx, signal) as any,
+      transformContext: (msgs: AgentMessage[], signal?: AbortSignal) =>
+        this.contextManager.transform(msgs, signal) as Promise<AgentMessage[]>,
+      beforeToolCall: (ctx: BeforeToolCallContext, signal?: AbortSignal) =>
+        this.permissionManager.check(ctx, signal),
     });
 
     this.bindEvents();
@@ -83,7 +86,7 @@ export class Harness {
   }
 
   async run(): Promise<void> {
-    const model = getModel(this.config.provider as any, this.config.modelId as any);
+    const model = (getModel as (p: string, m: string) => Model<Api>)(this.config.provider, this.config.modelId);
     const nativeImageSupport = model.input.includes("image");
     const needsOcr = !nativeImageSupport && this.config.provider === "deepseek";
     this.tui = new TuiApp({
@@ -217,7 +220,7 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
     this.agent.subscribe((event) => {
       switch (event.type) {
         case "message_update": {
-          const ev = (event as any).assistantMessageEvent;
+          const ev = event.assistantMessageEvent;
           if (!ev) break;
           switch (ev.type) {
             case "thinking_delta":
@@ -230,13 +233,13 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
           break;
         }
         case "tool_execution_start":
-          this.tui.toolStart((event as any).toolName, (event as any).args);
+          this.tui.toolStart(event.toolName, event.args);
           break;
         case "tool_execution_end":
           this.tui.toolEnd(
-            (event as any).toolName,
-            (event as any).result,
-            (event as any).isError,
+            event.toolName,
+            event.result,
+            event.isError,
           );
           break;
       }
@@ -253,7 +256,7 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
         }
         if (event.type === "turn_end") {
           this.tui.finishAssistantMessage();
-          const msg = (event as any).message;
+          const msg = event.message as AssistantMessage;
           if (msg?.stopReason === "length") {
             this.tui.addInfo("Output truncated (hit max_tokens). Continue from where you left off.");
           }
