@@ -1,6 +1,6 @@
-# DSCode
+# dscode
 
-> DeepSeek 模型的交互式命令行 Coding Agent。从 Agentic Workflow 到上下文管理再到记忆系统——模型每强一分，Harness 的重心就移一寸。DSCode 只做 DeepSeek 模型的 Harness，就像 Claude Code 是 Claude 模型的 Harness。
+> DeepSeek 模型的交互式命令行 Coding Agent。从 Agentic Workflow 到上下文管理再到记忆系统——模型每强一分，Harness 的重心就移一寸。dscode 只做 DeepSeek 模型的 Harness，就像 Claude Code 是 Claude 模型的 Harness。如果你想了解 dscode 的设计理念，[点击这里](docs/Introduction.md)。
 
 具备文件操作、Shell 执行、代码搜索、权限控制、会话持久化、上下文管理和记忆系统，让 DeepSeek 成为你终端里的编程搭档。
 
@@ -15,7 +15,7 @@ npm start              # 看到 you › 即可开始对话
 
 ## 创意工作支持
 
-DSCode 通过 **MCP (Model Context Protocol)** 连接外部工具，将 DeepSeek 的能力延伸到创意工作流——从 Blender 3D 建模到浏览器自动化，从 Figma 设计到音乐创作。
+dscode 通过 **MCP (Model Context Protocol)** 连接外部工具，将 DeepSeek 的能力延伸到创意工作流——从 Blender 3D 建模到浏览器自动化，从 Figma 设计到音乐创作。
 
 <table>
 <tr>
@@ -24,7 +24,7 @@ DSCode 通过 **MCP (Model Context Protocol)** 连接外部工具，将 DeepSeek
 </tr>
 </table>
 
-上图演示了通过 `blender-mcp` 连接 Blender，用自然语言操控 3D 场景——这正是 [Claude for Creative Work](https://www.anthropic.com/news/claude-for-creative-work) 中展示的核心范式。DSCode 通过标准 MCP 协议，让 DeepSeek 模型同样能接入这类创意工具链。
+上图演示了通过 `blender-mcp` 连接 Blender，用自然语言操控 3D 场景——这正是 [Claude for Creative Work](https://www.anthropic.com/news/claude-for-creative-work) 中展示的核心范式。dscode 通过标准 MCP 协议，让 DeepSeek 模型同样能接入这类创意工具链。
 
 ### MCP Connector 能力
 
@@ -85,7 +85,7 @@ AGENT_THINKING_LEVEL=xhigh npm start
 
 ## MCP 配置
 
-DSCode 支持通过 [MCP](https://modelcontextprotocol.io/) 连接外部工具服务器，动态扩展 agent 能力。在 `config.json` 中通过 `mcpServers` 字段配置（兼容 Claude Desktop 格式）：
+dscode 支持通过 [MCP](https://modelcontextprotocol.io/) 连接外部工具服务器，动态扩展 agent 能力。在 `config.json` 中通过 `mcpServers` 字段配置（兼容 Claude Desktop 格式）：
 
 ```jsonc
 {
@@ -121,7 +121,7 @@ MCP 工具注册为 Driver，命名格式 `mcp_<server>_<tool>`，例如 `mcp_bl
 
 ## Skills 系统
 
-DSCode 采用 **Agent as OS** 架构：Drivers（内核模块，始终加载）和 Skills（用户态程序，按需激活）。
+dscode 采用 **Agent as OS** 架构：Drivers（内核模块，始终加载）和 Skills（用户态程序，按需激活）。
 
 ```
 ~/.dscode/skills/                 # 用户级 Skills
@@ -179,10 +179,10 @@ Always push the branch before creating a PR.
 | `AGENT_PROVIDER`                 | provider                           |
 | `AGENT_MODEL` / `DEEPSEEK_MODEL` | modelId                            |
 | `AGENT_THINKING_LEVEL`           | thinkingLevel                      |
-| `DSCODE_MAX_TOKENS`              | maxTokens                          |
-| `DSCODE_PROJECT_PATH`            | 工作目录（默认当前目录）           |
-| `DSCODE_CONFIG_HOME`             | 自定义配置目录（默认 `~/.dscode`） |
-| `DSCODE_DATA_HOME`               | 自定义数据目录（默认 `~/.dscode`） |
+| `dscode_MAX_TOKENS`              | maxTokens                          |
+| `dscode_PROJECT_PATH`            | 工作目录（默认当前目录）           |
+| `dscode_CONFIG_HOME`             | 自定义配置目录（默认 `~/.dscode`） |
+| `dscode_DATA_HOME`               | 自定义数据目录（默认 `~/.dscode`） |
 
 ## Slash 命令
 
@@ -232,9 +232,12 @@ src/
 ```bash
 npm start            # 启动 Agent REPL
 npm run typecheck    # TypeScript 类型检查
+npm test             # 运行单元测试
 ```
 
 **技术栈：** TypeScript + tsx · [pi-agent-core](https://www.npmjs.com/package/@mariozechner/pi-agent-core) · [pi-ai](https://www.npmjs.com/package/@mariozechner/pi-ai) · DeepSeek API
+
+欢迎贡献！请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 了解理念对齐和 PR 流程。
 
 ## 已知限制
 
