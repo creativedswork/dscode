@@ -2,12 +2,20 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
+import { homedir } from "node:os";
 
 import type { MCPServerConfig, MCPToolDefinition } from "./types.js";
 
 const MCP_PROTOCOL_VERSION = "2024-11-05";
 const REQUEST_TIMEOUT = 30_000;
 const TOOL_CALL_TIMEOUT = 60_000;
+
+function expandTilde(p: string): string {
+  if (p.startsWith("~")) {
+    return homedir() + p.slice(1);
+  }
+  return p;
+}
 
 export class MCPClient {
   private process: ChildProcess | null = null;
@@ -75,10 +83,11 @@ export class MCPClient {
   }
 
   private async connectStdio(): Promise<void> {
-    const cmd = this.config.command;
-    if (!cmd) throw new Error(`MCP server "${this.config.name}" has no command`);
-
-    this.process = spawn(cmd, this.config.args ?? [], {
+    const rawCmd = this.config.command;
+    if (!rawCmd) throw new Error(`MCP server "${this.config.name}" has no command`);
+    const cmd = expandTilde(rawCmd);
+    const expandedArgs = (this.config.args ?? []).map(expandTilde);
+    this.process = spawn(cmd, expandedArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...this.config.env },
     });
