@@ -1,5 +1,5 @@
 import { Agent } from "@mariozechner/pi-agent-core";
-import type { AgentMessage, AgentTool, BeforeToolCallContext } from "@mariozechner/pi-agent-core";
+import type { AfterToolCallContext, AfterToolCallResult, AgentMessage, AgentTool, BeforeToolCallContext } from "@mariozechner/pi-agent-core";
 import { getModel, streamSimple, Type } from "@mariozechner/pi-ai";
 import type { Api, AssistantMessage, Context, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
 
@@ -8,6 +8,8 @@ import { SessionManager } from "../session/manager.js";
 import { ContextManager } from "../context/manager.js";
 import { MemoryManager } from "../memory/manager.js";
 import { DriverRegistry } from "../drivers/registry.js";
+import { ToolRegistry } from "../drivers/tool-registry.js";
+import { makeDiscoveryDriver } from "../drivers/discovery.js";
 import { SkillManager } from "../skills/manager.js";
 import { PermissionManager } from "../permissions/manager.js";
 import { MCPManager } from "../mcp/manager.js";
@@ -19,11 +21,13 @@ export class Harness {
   private contextManager: ContextManager;
   private memoryManager: MemoryManager;
   private driverRegistry: DriverRegistry;
+  private toolRegistry: ToolRegistry;
   private skillManager: SkillManager;
   private permissionManager: PermissionManager;
   private mcpManager?: MCPManager;
   private config: HarnessConfig;
   private tui!: TuiApp;
+  private baseSystemPrompt = "";
 
   constructor(config: HarnessConfig) {
     this.config = config;
@@ -31,6 +35,7 @@ export class Harness {
     this.contextManager = new ContextManager(config.context);
     this.memoryManager = new MemoryManager(config.dataDir, config.projectPath, config.memory);
     this.driverRegistry = new DriverRegistry();
+    this.toolRegistry = new ToolRegistry(this.driverRegistry);
     this.skillManager = new SkillManager(config.userSkillsDir, config.projectSkillsDir);
     this.permissionManager = new PermissionManager(
       config.permissions,
@@ -54,14 +59,19 @@ export class Harness {
       }
     }
 
+    // Register discovery driver so search_tools is available
+    this.driverRegistry.register(makeDiscoveryDriver(this.toolRegistry));
+
     const memories = this.memoryManager.getRelevantMemories();
     const skillSection = this.skillManager.getSystemPromptSection();
-    const systemPrompt = this.buildSystemPrompt(memories, skillSection);
+    this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection);
+    const systemPrompt = this.baseSystemPrompt;
 
     const model = (getModel as (p: string, m: string) => Model<Api>)(this.config.provider, this.config.modelId);
     this.contextManager.updateModel(model.contextWindow, model.maxTokens);
 
     const maxTokens = this.config.maxTokens;
+    const self = this;
     this.agent = new Agent({
       initialState: {
         systemPrompt,
@@ -75,10 +85,24 @@ export class Harness {
         timeoutMs: 120_000,
         maxRetries: 0,
       }),
-      transformContext: (msgs: AgentMessage[], signal?: AbortSignal) =>
-        this.contextManager.transform(msgs, signal) as Promise<AgentMessage[]>,
+      transformContext: (msgs: AgentMessage[], signal?: AbortSignal) => {
+        // Update tools based on current discovery state
+        self.agent.state.tools = self.toolRegistry.buildToolsForRequest();
+        // Update system prompt with current deferred tools hint
+        const deferredHint = self.toolRegistry.buildDeferredToolsHint();
+        self.agent.state.systemPrompt = self.baseSystemPrompt + deferredHint;
+        return self.contextManager.transform(msgs, signal) as Promise<AgentMessage[]>;
+      },
       beforeToolCall: (ctx: BeforeToolCallContext, signal?: AbortSignal) =>
         this.permissionManager.check(ctx, signal),
+      afterToolCall: async (ctx: AfterToolCallContext, _signal?: AbortSignal) => {
+        if (ctx.toolCall.name === "search_tools" && ctx.context.tools) {
+          ctx.context.tools = self.toolRegistry.buildToolsForRequest();
+          const deferredHint = self.toolRegistry.buildDeferredToolsHint();
+          ctx.context.systemPrompt = self.baseSystemPrompt + deferredHint;
+        }
+        return undefined as AfterToolCallResult | undefined;
+      },
     });
 
     this.bindEvents();
@@ -110,10 +134,11 @@ export class Harness {
       this.mcpManager = new MCPManager(this.config.mcp);
       await this.mcpManager.initialize();
       await this.mcpManager.registerDrivers(this.driverRegistry);
-      this.agent.state.tools = [
-        ...this.driverRegistry.getAllTools(),
+      this.toolRegistry.initialize(
         this.makeSkillTool(),
-      ];
+        this.mcpManager.getAlwaysLoadToolNames(),
+      );
+      this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
       const connected = this.mcpManager.getStates().filter((s) => s.status === "connected").length;
       const total = this.config.mcp.length;
       this.tui.addInfo(`MCP: ${connected}/${total} connected`);
@@ -125,10 +150,8 @@ export class Harness {
       }
       this.tui.focusEditor();
     } else {
-      this.agent.state.tools = [
-        ...this.driverRegistry.getAllTools(),
-        this.makeSkillTool(),
-      ];
+      this.toolRegistry.initialize(this.makeSkillTool());
+      this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
     }
 
     this.tui.focusEditor();
@@ -160,7 +183,18 @@ export class Harness {
 
     prompt += `\n\n## Using Skills
 
-You have a \`skill\` tool available. When you decide to use a skill from the list above, call \`skill\` with the skill name to load its full instructions and allowed tools. Read the instructions, then follow them.`;
+You have a \`skill\` tool available. When you decide to use a skill from the list above, call \`skill\` with the skill name to load its full instructions and allowed tools. Read the instructions, then follow them.
+
+## Tool Search
+
+You have a \`search_tools\` tool for discovering additional tools. Some tools (especially MCP tools from connected servers) are not loaded by default to save context. These tools are listed in the "Discoverable Tools" section below.
+
+When you need a tool that is listed as discoverable but not yet in your tool list:
+1. Call \`search_tools\` with keywords describing what you need
+2. The matching tools will become available in your next message
+3. Then call the newly loaded tools directly
+
+You can also load tools by exact name using \`select:\`: for example \`search_tools\` with query \`select:ToolA,ToolB\`.`;
 
     if (memories) {
       prompt += memories;

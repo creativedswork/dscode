@@ -54,4 +54,8 @@ export class DriverRegistry {
     }
     return tools;
   }
+
+  getDriversBySource(source: "builtin" | "mcp"): Driver[] {
+    return [...this.drivers.values()].filter((d) => d.source === source);
+  }
 }

@@ -1,6 +1,7 @@
 import type { PermissionRule } from "../core/types.js";
 
 export const DEFAULT_RULES: PermissionRule[] = [
+  { tool: "search_tools", decision: "allow", priority: 10 },
   { tool: "read_file", decision: "allow", priority: 10 },
   { tool: "list_files", decision: "allow", priority: 10 },
   { tool: "grep", decision: "allow", priority: 10 },

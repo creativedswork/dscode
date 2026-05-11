@@ -44,6 +44,7 @@ export interface MCPToolDefinition {
   name: string;
   description?: string;
   inputSchema: Record<string, unknown>;
+  alwaysLoad?: boolean;
 }
 
 // --- MCP Server Status ---
