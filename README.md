@@ -6,10 +6,22 @@
 
 ## 快速开始
 
+**方式一：安装已发布包**
+
 ```bash
 # 前置条件：Node.js ≥ 20.6
+npm install -g @wangcan26/dscode
+dscode
+```
+
+npm 包名为 `@wangcan26/dscode`，安装后仍然使用 `dscode` 命令启动。
+
+**方式二：本地编译运行**
+
+```bash
 npm install
-npm start
+npm run build
+node dist/dscode.mjs
 ```
 
 首次启动时会看到欢迎引导，在 TUI 中输入以下命令完成配置：
