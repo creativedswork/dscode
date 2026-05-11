@@ -179,10 +179,10 @@ Always push the branch before creating a PR.
 | `AGENT_PROVIDER`                 | provider                           |
 | `AGENT_MODEL` / `DEEPSEEK_MODEL` | modelId                            |
 | `AGENT_THINKING_LEVEL`           | thinkingLevel                      |
-| `dscode_MAX_TOKENS`              | maxTokens                          |
-| `dscode_PROJECT_PATH`            | 工作目录（默认当前目录）           |
-| `dscode_CONFIG_HOME`             | 自定义配置目录（默认 `~/.dscode`） |
-| `dscode_DATA_HOME`               | 自定义数据目录（默认 `~/.dscode`） |
+| `DSCODE_MAX_TOKENS`              | maxTokens                          |
+| `DSCODE_PROJECT_PATH`            | 工作目录（默认当前目录）           |
+| `DSCODE_CONFIG_HOME`             | 自定义配置目录（默认 `~/.dscode`） |
+| `DSCODE_DATA_HOME`               | 自定义数据目录（默认 `~/.dscode`） |
 
 ## Slash 命令
 
