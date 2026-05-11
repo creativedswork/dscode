@@ -1,6 +1,6 @@
 import { execSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
-import { cp } from "node:fs/promises";
+import { cp, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
@@ -39,7 +39,12 @@ async function main() {
   mkdirSync(resolve(standalone, "dist"), { recursive: true });
 
   await cp(resolve(rootDir, "dist"), resolve(standalone, "dist"), { recursive: true });
-  await cp(resolve(rootDir, "package.json"), resolve(standalone, "package.json"));
+
+  const packageJson = JSON.parse(await readFile(resolve(rootDir, "package.json"), "utf8"));
+  delete packageJson.scripts;
+  delete packageJson.devDependencies;
+  await writeFile(resolve(standalone, "package.json"), `${JSON.stringify(packageJson, null, 2)}\n`);
+
   await cp(resolve(rootDir, "README.md"), resolve(standalone, "README.md"));
 
   const license = resolve(rootDir, "LICENSE");
