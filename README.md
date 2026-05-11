@@ -7,11 +7,19 @@
 ## 快速开始
 
 ```bash
-# 前置条件：Node.js ≥ 20.6，DeepSeek API Key
+# 前置条件：Node.js ≥ 20.6
 npm install
-cp .env.example .env   # 编辑 .env，填入 DEEPSEEK_API_KEY
-npm start              # 看到 you › 即可开始对话
+npm start
 ```
+
+首次启动时会看到欢迎引导，在 TUI 中输入以下命令完成配置：
+
+```
+/config key sk-your-deepseek-api-key
+/config model deepseek-v4-pro
+```
+
+配置会持久化到 `~/.dscode/config.json`，后续启动无需重复配置。
 
 ## 创意工作支持
 
@@ -53,11 +61,18 @@ dscode 通过 **MCP (Model Context Protocol)** 连接外部工具，将 DeepSeek
 
 ## 模型配置
 
-默认使用 `deepseek-v4-flash`，通过环境变量切换：
+在 TUI 中使用 `/config` 命令管理所有配置，无需编辑文件或设置环境变量：
 
-```bash
-DEEPSEEK_MODEL=deepseek-v4-pro npm start
 ```
+/config                     # 查看当前配置
+/config model <id>          # 切换模型（即时生效，热切换）
+/config thinking <level>    # 设置思考强度
+/config key <api-key>       # 设置 API Key
+/config cwd <path>          # 设置工作目录（重启生效）
+/config help                # 查看帮助
+```
+
+默认使用 `deepseek-v4-flash`，推荐切换为 `deepseek-v4-pro` 获得 reasoning/thinking 能力：
 
 | 模型                | 特点                                                |
 | ------------------- | --------------------------------------------------- |
@@ -70,17 +85,16 @@ DEEPSEEK_MODEL=deepseek-v4-pro npm start
 
 ### 思考模式
 
-DeepSeek reasoning 模型通过 `thinkingLevel` 控制思考强度：
+DeepSeek reasoning 模型通过 `thinkingLevel` 控制思考强度，切换模型时自动匹配默认值（pro → `medium`，其他 → `off`），也可手动覆盖：
 
-| thinkingLevel                         | 行为                                           |
-| ------------------------------------- | ---------------------------------------------- |
-| `off`                                 | 关闭思考，直接输出                             |
+| Level                                | 行为                                           |
+| ------------------------------------ | ---------------------------------------------- |
+| `off`                                | 关闭思考，直接输出                             |
 | `minimal` / `low` / `medium` / `high` | 启用思考，映射为 `reasoning_effort: "high"`    |
-| `xhigh`                               | 最大思考强度，映射为 `reasoning_effort: "max"` |
+| `xhigh`                              | 最大思考强度，映射为 `reasoning_effort: "max"` |
 
-```bash
-# 环境变量（最高优先级）
-AGENT_THINKING_LEVEL=xhigh npm start
+```
+/config thinking xhigh    # 最大推理深度
 ```
 
 ## MCP 配置
@@ -154,7 +168,7 @@ Always push the branch before creating a PR.
 
 ## 配置参考
 
-两级配置，项目级覆盖用户级。优先级：**环境变量 > 项目级 > 用户级 > 默认值**。
+推荐使用 `/config` 命令在 TUI 中管理配置。配置持久化到 JSON 文件，项目级覆盖用户级：
 
 - 用户级：`~/.dscode/config.json`
 - 项目级：`<project>/.dscode/config.json`
@@ -174,9 +188,11 @@ Always push the branch before creating a PR.
 
 ### 环境变量
 
+环境变量作为备选方案，优先级高于配置文件（适合 CI/CD 等自动化场景）：
+
 | 环境变量                         | 对应配置                           |
 | -------------------------------- | ---------------------------------- |
-| `AGENT_PROVIDER`                 | provider                           |
+| `DEEPSEEK_API_KEY`               | API Key                            |
 | `AGENT_MODEL` / `DEEPSEEK_MODEL` | modelId                            |
 | `AGENT_THINKING_LEVEL`           | thinkingLevel                      |
 | `DSCODE_MAX_TOKENS`              | maxTokens                          |
@@ -186,17 +202,18 @@ Always push the branch before creating a PR.
 
 ## Slash 命令
 
-| 命令                      | 说明               |
-| ------------------------- | ------------------ |
-| `/help`                   | 显示所有命令       |
-| `/reset`                  | 清空对话历史       |
-| `/session list/save/load` | 会话管理           |
-| `/memory list/add`        | 记忆管理           |
-| `/skills`                 | 列出 Skills 及状态 |
-| `/drivers`                | 列出已加载的驱动   |
-| `/permissions`            | 查看当前权限授予   |
-| `/cost`                   | 显示 token 用量    |
-| `/compact`                | 手动压缩上下文     |
+| 命令                           | 说明                         |
+| ------------------------------ | ---------------------------- |
+| `/help`                        | 显示所有命令                 |
+| `/config`                      | 查看或修改配置（模型/Key/思考） |
+| `/reset`                       | 清空对话历史                 |
+| `/session list/save/load/delete` | 会话管理                   |
+| `/memory list/add/remove/clear`  | 记忆管理                   |
+| `/skills`                      | 列出 Skills 及状态           |
+| `/drivers`                     | 列出已加载的驱动             |
+| `/permissions`                 | 查看当前权限授予             |
+| `/cost`                        | 显示 token 用量              |
+| `/compact`                     | 手动压缩上下文               |
 
 退出：输入 `exit` 或按 `Ctrl+C` 两次。中断生成：单次 `Ctrl+C`。
 

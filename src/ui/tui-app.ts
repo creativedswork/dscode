@@ -20,6 +20,7 @@ import type { DriverRegistry } from "../drivers/registry.js";
 import type { SkillManager } from "../skills/manager.js";
 import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
+import type { HarnessConfig } from "../core/types.js";
 import { c, editorTheme, TIPS, randomTip } from "./theme.js";
 import { ConversationView } from "./conversation.js";
 import { getSlashCommandAutocomplete, executeSlashCommand } from "./commands.js";
@@ -39,6 +40,9 @@ export interface TuiDeps {
   modelSupportsImages: boolean;
   modelNeedsOcr?: boolean;
   projectPath: string;
+  config: HarnessConfig;
+  onSetModel: (modelId: string) => void;
+  onSetThinking: (level: string) => void;
 }
 
 export class TuiApp {

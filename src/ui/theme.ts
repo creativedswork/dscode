@@ -51,6 +51,7 @@ export const TIPS = [
   "Tip: Use /session list to see all saved sessions.",
   "Tip: Use /memory add <content> to store a memory.",
   "Tip: Use /skills list to see available skills.",
+  "Tip: Use /config to view and change model, key, or cwd.",
   "Tip: Use /cost to check token usage.",
   "Tip: Use /compact to force context compaction.",
   "Tip: Press Ctrl+C or Tab to abort the current response.",
