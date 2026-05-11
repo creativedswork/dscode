@@ -17,8 +17,11 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: "npm"
 
-      - run: npm install --ignore-scripts --no-audit --no-fund || npm install --ignore-scripts --no-audit --no-fund
+      - run: npm ci
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - run: node scripts/build.mjs
 
