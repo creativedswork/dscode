@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: "22"
 
-      - run: npm install --no-audit --no-fund
+      - run: npm install --ignore-scripts --no-audit --no-fund || npm install --ignore-scripts --no-audit --no-fund
 
       - run: node scripts/build.mjs
 
