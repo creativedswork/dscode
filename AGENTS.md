@@ -82,12 +82,19 @@ new Agent({
 ## 运行
 
 ```bash
-npm start          # 启动交互式 REPL
+npm start          # 本地开发：启动交互式 REPL
 npm run typecheck  # 类型检查
 npm test           # 运行测试
 ```
 
-首次启动若无 API Key，TUI 会显示欢迎引导，使用 `/config key <key>` 和 `/config model <id>` 完成配置。配置持久化到 `~/.dscode/config.json`。
+全局安装后直接使用 `dscode` 命令：
+
+```bash
+npm install -g dscode
+dscode              # 启动交互式 REPL
+```
+
+首次启动若无 API Key，TUI 会显示欢迎引导，使用 `/config key <key>` 和 `/config model <id>` 完成配置。
 
 ## 测试方式
 

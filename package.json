@@ -1,25 +1,51 @@
 {
   "name": "dscode",
   "version": "0.2.0",
-  "private": true,
   "type": "module",
-  "description": "DeepSeek-native terminal AI coding agent — a DeepSeek model harness analogous to Claude Code for Claude models.",
+  "description": "DeepSeek-native terminal AI coding agent — DeepSeek model harness analogous to Claude Code for Claude models.",
+  "bin": {
+    "dscode": "bin/dscode.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "package.json",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "start": "tsx src/core/main.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest"
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/user/dscode"
+  },
+  "keywords": [
+    "deepseek",
+    "ai",
+    "coding-agent",
+    "cli",
+    "terminal",
+    "llm",
+    "code-assistant"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.6.0"
+  },
   "dependencies": {
     "@earendil-works/pi-tui": "^0.74.0",
     "@mariozechner/pi-agent-core": "^0.70.2",
     "@mariozechner/pi-ai": "^0.70.2",
     "chalk": "^5.5.0",
-    "tesseract.js": "^7.0.0"
+    "tesseract.js": "^7.0.0",
+    "tsx": "^4.19.2"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
-    "tsx": "^4.19.2",
     "typescript": "^5.6.3",
     "vitest": "^4.1.5"
   }
