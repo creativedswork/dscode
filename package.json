@@ -1,5 +1,5 @@
 {
-  "name": "dscode",
+  "name": "@harness/dscode",
   "version": "0.0.1",
   "type": "module",
   "description": "DeepSeek-native terminal AI coding agent — DeepSeek model harness analogous to Claude Code for Claude models.",
