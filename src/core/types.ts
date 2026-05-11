@@ -9,6 +9,7 @@ export type CompactionStrategy = "drop-oldest" | "sliding-window" | "summarize-p
 export interface HarnessConfig {
   provider: string;
   modelId: string;
+  apiKey?: string;
   thinkingLevel: ThinkingLevel;
   maxTokens: number;
   projectPath: string;

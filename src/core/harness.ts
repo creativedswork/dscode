@@ -4,6 +4,7 @@ import { getModel, streamSimple, Type } from "@mariozechner/pi-ai";
 import type { Api, AssistantMessage, Context, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
 
 import type { HarnessConfig } from "./types.js";
+import { saveProjectConfig } from "./config.js";
 import { SessionManager } from "../session/manager.js";
 import { ContextManager } from "../context/manager.js";
 import { MemoryManager } from "../memory/manager.js";
@@ -125,6 +126,9 @@ export class Harness {
       modelSupportsImages: nativeImageSupport || needsOcr,
       modelNeedsOcr: needsOcr,
       projectPath: this.config.projectPath,
+      config: this.config,
+      onSetModel: (id: string) => this.setModel(id),
+      onSetThinking: (level: string) => this.setThinking(level),
     });
 
     await this.tui.start();
@@ -154,9 +158,43 @@ export class Harness {
       this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
     }
 
+    if (!this.config.apiKey) {
+      this.tui.addInfo([
+        "Welcome to DSCode! To get started, configure your API key:",
+        "",
+        "  /config key sk-your-deepseek-api-key",
+        "",
+        "Then set your preferred model:",
+        "",
+        "  /config model deepseek-v4-pro",
+        "",
+        "Type /config to see all settings.",
+      ].join("\n"));
+    }
+
     this.tui.focusEditor();
     await this.tui.waitForExit();
     await this.shutdown();
+  }
+
+  setModel(modelId: string): void {
+    const model = (getModel as (p: string, m: string) => Model<Api>)(this.config.provider, modelId);
+    this.config.modelId = modelId;
+    this.agent.state.model = model;
+    this.contextManager.updateModel(model.contextWindow, model.maxTokens);
+
+    // Auto-adjust thinking level: "medium" for pro models, "off" otherwise
+    const thinkingLevel = modelId.includes("pro") ? "medium" : "off";
+    this.config.thinkingLevel = thinkingLevel;
+    this.agent.state.thinkingLevel = thinkingLevel;
+
+    saveProjectConfig({ modelId, thinkingLevel }, this.config.projectPath);
+  }
+
+  setThinking(level: string): void {
+    this.config.thinkingLevel = level as any;
+    this.agent.state.thinkingLevel = level as any;
+    saveProjectConfig({ thinkingLevel: level }, this.config.projectPath);
   }
 
   private async shutdown(): Promise<void> {

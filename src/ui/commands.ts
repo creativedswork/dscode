@@ -1,6 +1,7 @@
 import type { Agent } from "@mariozechner/pi-agent-core";
 import type { SlashCommand as AutocompleteSlashCommand } from "@earendil-works/pi-tui";
 
+import type { HarnessConfig } from "../core/types.js";
 import type { SessionManager } from "../session/manager.js";
 import type { MemoryManager } from "../memory/manager.js";
 import type { DriverRegistry } from "../drivers/registry.js";
@@ -8,6 +9,7 @@ import type { SkillManager } from "../skills/manager.js";
 import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
 import type { TuiApp } from "./tui-app.js";
+import { saveUserConfig, saveProjectConfig, maskApiKey } from "../core/config.js";
 import { readImageFile, readClipboardImage } from "../utils/image.js";
 
 interface CommandContext {
@@ -18,6 +20,9 @@ interface CommandContext {
   skillManager: SkillManager;
   permissionManager: PermissionManager;
   contextManager: ContextManager;
+  config: HarnessConfig;
+  onSetModel: (modelId: string) => void;
+  onSetThinking: (level: string) => void;
   tui: TuiApp;
 }
 
@@ -223,6 +228,81 @@ const COMMANDS: SlashCommandDef[] = [
       ctx.agent.state.messages = compacted as any;
       const after = ctx.agent.state.messages.length;
       ctx.tui.addInfo(`Compacted: ${before} → ${after} messages`);
+    },
+  },
+  {
+    name: "config",
+    description: "Show or change configuration (model|cwd|key)",
+    execute: async (args, ctx) => {
+      const [sub, ...rest] = args.split(/\s+/);
+      switch (sub) {
+        case "help": {
+          ctx.tui.addInfo([
+            "/config                  Show current settings",
+            "/config model <id>       Switch model (e.g., deepseek-v4-pro, deepseek-chat)",
+            "/config thinking <level> Set thinking level (off|minimal|low|medium|high|xhigh)",
+            "/config key <api-key>    Set your DeepSeek API key",
+            "/config cwd <path>       Set working directory (restart to apply)",
+            "/config help             Show this help",
+          ].join("\n"));
+          break;
+        }
+        case "model": {
+          const modelId = rest[0];
+          if (!modelId) {
+            ctx.tui.addError("Usage: /config model <model-id>");
+            return;
+          }
+          ctx.onSetModel(modelId);
+          ctx.tui.addInfo(`Model switched to: ${modelId}`);
+          break;
+        }
+        case "cwd": {
+          const cwd = rest.join(" ");
+          if (!cwd) {
+            ctx.tui.addError("Usage: /config cwd <path>");
+            return;
+          }
+          saveProjectConfig({ cwd }, ctx.config.projectPath);
+          ctx.tui.addInfo(`CWD set to: ${cwd} (restart required to take effect)`);
+          break;
+        }
+        case "key": {
+          const key = rest.join(" ");
+          if (!key) {
+            ctx.tui.addError("Usage: /config key <api-key>");
+            return;
+          }
+          saveUserConfig({ apiKey: key });
+          process.env.DEEPSEEK_API_KEY = key;
+          ctx.tui.addInfo(`API key saved: ${maskApiKey(key)}`);
+          break;
+        }
+        case "thinking": {
+          const level = rest[0];
+          const valid = ["off", "minimal", "low", "medium", "high", "xhigh"];
+          if (!level || !valid.includes(level)) {
+            ctx.tui.addError(`Usage: /config thinking <${valid.join("|")}>`);
+            return;
+          }
+          ctx.onSetThinking(level);
+          ctx.tui.addInfo(`Thinking level set to: ${level}`);
+          break;
+        }
+        default: {
+          const lines = [
+            `  provider     ${ctx.config.provider}`,
+            `  model        ${ctx.config.modelId}`,
+            `  apiKey       ${maskApiKey(ctx.config.apiKey)}`,
+            `  cwd          ${ctx.config.projectPath}`,
+            `  maxTokens    ${ctx.config.maxTokens}`,
+            `  thinking     ${ctx.config.thinkingLevel}`,
+            "",
+            "Type /config help for usage.",
+          ];
+          ctx.tui.addInfo("Configuration:\n" + lines.join("\n"));
+        }
+      }
     },
   },
   {

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -14,19 +14,6 @@ function dsDataHome(): string {
   return process.env.DSCODE_DATA_HOME ?? join(homedir(), ".dscode");
 }
 
-function loadEnvFile(projectPath: string): void {
-  const envPath = join(projectPath, ".env");
-  if (!existsSync(envPath)) return;
-
-  for (const line of readFileSync(envPath, "utf8").split(/\r?\n/)) {
-    const match = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
-    if (!match || line.trim().startsWith("#")) continue;
-    const [, key, rawValue] = match;
-    if (process.env[key] !== undefined) continue;
-    process.env[key] = rawValue.replace(/^['"]|['"]$/g, "");
-  }
-}
-
 function loadJsonSafe(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {};
   try {
@@ -36,12 +23,34 @@ function loadJsonSafe(path: string): Record<string, unknown> {
   }
 }
 
+function saveJsonSafe(path: string, data: Record<string, unknown>): void {
+  const dir = resolve(path, "..");
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  writeFileSync(path, JSON.stringify(data, null, 2) + "\n", "utf8");
+}
+
+export function maskApiKey(key: string | undefined): string {
+  if (!key || key.length < 12) return "(not set)";
+  return key.slice(0, 3) + "****" + key.slice(-4);
+}
+
+export function saveUserConfig(partial: Record<string, unknown>): void {
+  const path = join(dsConfigHome(), "config.json");
+  const existing = loadJsonSafe(path);
+  saveJsonSafe(path, { ...existing, ...partial });
+}
+
+export function saveProjectConfig(partial: Record<string, unknown>, projectPath: string): void {
+  const path = join(projectPath, ".dscode", "config.json");
+  const existing = loadJsonSafe(path);
+  saveJsonSafe(path, { ...existing, ...partial });
+}
+
 export function loadConfig(): HarnessConfig {
   const projectPath = resolve(process.env.DSCODE_PROJECT_PATH ?? process.cwd());
   if (projectPath !== process.cwd()) {
     process.chdir(projectPath);
   }
-  loadEnvFile(projectPath);
 
   const configDir = dsConfigHome();
   const dataDir = join(dsDataHome(), "data");
@@ -53,6 +62,9 @@ export function loadConfig(): HarnessConfig {
   const provider = (process.env.AGENT_PROVIDER as string) ?? (merged.provider as string) ?? "deepseek";
   const modelId = (process.env.AGENT_MODEL as string) ?? (process.env.DEEPSEEK_MODEL as string) ?? (merged.modelId as string) ?? "deepseek-v4-flash";
   const maxTokens = Number(process.env.DSCODE_MAX_TOKENS) || (merged.maxTokens as number) || 16384;
+
+  // API key: env var > user config (never project config for security)
+  const apiKey = process.env.DEEPSEEK_API_KEY ?? (userConfig.apiKey as string | undefined);
 
   const userDeny = ((userConfig.permissions as any)?.deny as string[]) ?? [];
   const projectDeny = ((projectConfig.permissions as any)?.deny as string[]) ?? [];
@@ -108,6 +120,7 @@ export function loadConfig(): HarnessConfig {
   return {
     provider,
     modelId,
+    apiKey,
     thinkingLevel,
     maxTokens,
     projectPath,

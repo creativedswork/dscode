@@ -42,7 +42,7 @@ Agent Loop (pi-agent-core，已有)
 | `src/skills/` | Skill 管理器 + SKILL.md 加载器 | `manager.ts`, `loader.ts` |
 | `src/mcp/` | MCP 客户端（stdio/SSE）+ 管理器 | `client.ts`, `manager.ts`, `types.ts` |
 | `src/permissions/` | 权限拦截（deny/ask/allow） | `manager.ts`, `rules.ts` |
-| `src/ui/` | REPL、流式渲染、slash commands | `repl.ts`, `render.ts`, `commands.ts` |
+| `src/ui/` | REPL、流式渲染、slash commands | `tui-app.ts`, `conversation.ts`, `commands.ts` |
 
 ## 内置驱动 (Drivers)
 
@@ -66,8 +66,8 @@ new Agent({
 
 ## 数据位置
 
-- 配置: `$XDG_CONFIG_HOME/agent/config.json` (默认 `~/.config/agent/`)
-- 数据: `$XDG_DATA_HOME/agent/` (默认 `~/.local/share/agent/`)
+- 配置: `~/.dscode/config.json` (用户级) + `<project>/.dscode/config.json` (项目级)
+- 数据: `~/.dscode/data/`
   - `sessions/` — 会话历史
   - `memory/` — 全局 + 项目记忆
 
@@ -84,12 +84,15 @@ new Agent({
 ```bash
 npm start          # 启动交互式 REPL
 npm run typecheck  # 类型检查
+npm test           # 运行测试
 ```
+
+首次启动若无 API Key，TUI 会显示欢迎引导，使用 `/config key <key>` 和 `/config model <id>` 完成配置。配置持久化到 `~/.dscode/config.json`。
 
 ## 测试方式
 
-目前无自动化测试。验证方法：
 1. `npm run typecheck` — 零错误
 2. `npm start` — 启动后输入消息测试 LLM 对话
 3. 输入 `/help` 验证 slash commands
-4. 让 agent 调用工具（如 "列出当前目录文件"）验证工具链路
+4. 输入 `/config` 验证配置管理
+5. 让 agent 调用工具（如 "列出当前目录文件"）验证工具链路
