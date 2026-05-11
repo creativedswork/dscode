@@ -79,6 +79,7 @@ function convertJsonSchema(inputSchema: Record<string, unknown>): any {
 export class MCPManager {
   private clients = new Map<string, MCPClient>();
   private states = new Map<string, MCPServerState>();
+  private alwaysLoadToolNames = new Set<string>();
 
   constructor(private configs: MCPServerConfig[]) {
     for (const cfg of configs) {
@@ -96,6 +97,10 @@ export class MCPManager {
 
   getState(name: string): MCPServerState | undefined {
     return this.states.get(name);
+  }
+
+  getAlwaysLoadToolNames(): Set<string> {
+    return this.alwaysLoadToolNames;
   }
 
   async initialize(): Promise<void> {
@@ -170,6 +175,9 @@ export class MCPManager {
 
   private buildAgentTool(serverName: string, def: MCPToolDefinition, client: MCPClient): AgentTool<any> {
     const toolName = `mcp_${serverName}_${def.name}`;
+    if (def.alwaysLoad) {
+      this.alwaysLoadToolNames.add(toolName);
+    }
 
     return {
       name: toolName,
