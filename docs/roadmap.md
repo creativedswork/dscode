@@ -37,9 +37,9 @@ Agent as OS 中，Sub Agent 就是进程。OS 的进程分为 Worker、Explorer�
 
 MCP Server 多了以后，工具数量爆炸会导致上下文溢出。需要建设 Tool Search Tool，让模型按需检索工具，而非把所有工具塞进 System Prompt——参考 Anthropic 的 [Advanced Tool Use](https://www.anthropic.com/engineering/advanced-tool-use)。
 
-- [ ] **工具索引注册** — MCP Server 启动时，工具描述和参数 schema 写入本地索引，不直接注入 context
-- [ ] **工具语义搜索** — 模型根据任务意图搜索匹配的工具，按语义相关性排序返回 Top-N
-- [ ] **按需动态加载** — 搜索结果只注入 Top-N 工具到当前对话，其余工具按需二次查询
+- [x] **工具索引注册** — MCP Server 启动时，ToolRegistry 扫描所有 driver，将 MCP 工具标记为 deferred，builtin 工具始终发送
+- [x] **工具语义搜索** — `search_tools` 支持关键词评分搜索（名称精确匹配 +10，部分匹配 +5，searchHint +4，描述 +2）和 `select:` 精确选择
+- [x] **按需动态加载** — `buildToolsForRequest()` 仅包含已发现的工具；`afterToolCall` 钩子在 search_tools 执行后更新 loop 上下文，下一轮即可调用
 - [ ] **工具使用统计** — 记录每个工具的调用频率、成功率、平均耗时，反馈到搜索排序和 Prompt 构建
 
 ---
