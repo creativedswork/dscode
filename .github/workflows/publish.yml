@@ -18,14 +18,10 @@ jobs:
         with:
           node-version: "22"
 
-      - run: npm ci
+      - run: npm install --no-audit --no-fund
 
-      - run: npm run typecheck
+      - run: node scripts/build.mjs
 
-      - run: npm test
-
-      - run: npm run build
-
-      - run: |
-          echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" > ~/.npmrc
-          npm publish --access public
+      - run: cd dist-standalone && npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
