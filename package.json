@@ -9,6 +9,8 @@
   "main": "dist/dscode.mjs",
   "files": [
     "dist/",
+    "docs/assets/",
+    "docs/screen_shots/",
     "package.json",
     "README.md",
     "LICENSE"
