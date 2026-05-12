@@ -6,15 +6,15 @@
 
 最初想叫 "DeepSeek Code"，但怕太官方；后来考虑 "DeepCode"，发现同名项目太多。最终取 "ds" 前缀 + "code" 后缀，定了 dscode。
 
-之所以带 "code"，是因为在数字世界里，编程是模型最擅长的技能，也是模型产生真实生产力的最强武器。一个围绕模型构建的 Harness，离不开 coding 能力。
+之所以带 "code"，是因为编程仍然是模型在数字世界里最稳定、最可迁移的基础能力之一。dscode 以 coding 为起点，但目标不是停留在写代码，而是把这种能力延展为处理各类数字工作的通用 Agent Harness。
 
 ## 定位
 
 市面上的 Coding Agent 琳琅满目：从早期的 GitHub Copilot、Cline、Windsurf、Cursor，到后来的 Trae、Claude Code，以及各种 CLI——Codex CLI、Gemini CLI……那为什么还需要 dscode？
 
-虽然名字带 "code"，但 dscode 不想走传统 AI Coding Agent 的路。那些 Agent 主要服务**开发者**，帮他们构建个人或企业项目，因此你会发现它们都构建了 Explore、LSP 等代码感知的功能，即本地仓库作为唯一的感知来源——**repo as the source of truth**。
+虽然名字带 "code"，但 dscode 不想停留在传统 AI Coding Agent 的边界。那些 Agent 主要服务**开发者**，帮他们构建个人或企业项目，因此你会发现它们都构建了 Explore、LSP 等代码感知的功能，即本地仓库作为主要的感知来源——**repo as the source of truth**。
 
-dscode 的主要服务对象是**创作者**。这决定了功能设计上的不同重心：核心是通过 MCP 连接各种创作工具，由 MCP Server 提供感知能力——**MCP apps as the sources of truth**。
+dscode 的目标是成为处理**数字工作**的通用 Agent。代码仓库只是其中一种环境；浏览器、文档、设计工具、表格、自动化脚本乃至任何 MCP 应用，都可以成为 Agent 感知与执行的入口——**digital tools as the sources of truth**。
 
 ## 理念
 

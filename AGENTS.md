@@ -1,6 +1,6 @@
 # AGENTS.md
 
-本文件描述项目的 Agent 架构，供 AI 编程助手（Claude Code、Cursor 等）快速理解代码结构。
+本文件描述项目的 Agent 架构，供 AI Agent（Claude Code、Cursor 等）快速理解代码结构与项目定位。
 
 ## 架构概述
 
