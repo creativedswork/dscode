@@ -1,6 +1,6 @@
 {
   "name": "@wangcan26/dscode",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "type": "module",
   "description": "DeepSeek-native terminal AI agent for digital work — DeepSeek model harness analogous to Claude Code for Claude models.",
   "bin": {
