@@ -1,8 +1,8 @@
 # dscode
 
-> DeepSeek 模型的交互式命令行 Coding Agent。从 Agentic Workflow 到上下文管理再到记忆系统——模型每强一分，Harness 的重心就移一寸。dscode 只做 DeepSeek 模型的 Harness，就像 Claude Code 是 Claude 模型的 Harness。如果你想了解 dscode 的设计理念，[点击这里](docs/Introduction.md)。
+> 面向数字工作的 DeepSeek 交互式命令行 Agent Harness。从 Agentic Workflow 到上下文管理再到记忆系统——模型每强一分，Harness 的重心就移一寸。dscode 只做 DeepSeek 模型的 Harness，就像 Claude Code 是 Claude 模型的 Harness。如果你想了解 dscode 的设计理念，[点击这里](docs/Introduction.md)。
 
-具备文件操作、Shell 执行、代码搜索、权限控制、会话持久化、上下文管理和记忆系统，让 DeepSeek 成为你终端里的编程搭档。
+具备文件操作、Shell 执行、代码搜索、权限控制、会话持久化、上下文管理和记忆系统，让 DeepSeek 成为你终端里的数字工作搭档。
 
 ## 快速开始
 
@@ -33,9 +33,9 @@ node dist/dscode.mjs
 
 配置会持久化到 `~/.dscode/config.json`，后续启动无需重复配置。
 
-## 创意工作支持
+## 数字工作支持
 
-dscode 通过 **MCP (Model Context Protocol)** 连接外部工具，将 DeepSeek 的能力延伸到创意工作流——从 Blender 3D 建模到浏览器自动化，从 Figma 设计到音乐创作。
+dscode 通过 **MCP (Model Context Protocol)** 连接外部工具，将 DeepSeek 的能力延伸到更广义的数字工作流——从 Blender 3D 建模到浏览器自动化，从文档与表格处理到设计与内容生产。
 
 <table>
 <tr>
@@ -44,7 +44,7 @@ dscode 通过 **MCP (Model Context Protocol)** 连接外部工具，将 DeepSeek
 </tr>
 </table>
 
-上图演示了通过 `blender-mcp` 连接 Blender，用自然语言操控 3D 场景——这正是 [Claude for Creative Work](https://www.anthropic.com/news/claude-for-creative-work) 中展示的核心范式。dscode 通过标准 MCP 协议，让 DeepSeek 模型同样能接入这类创意工具链。
+上图演示了通过 `blender-mcp` 连接 Blender，用自然语言操控 3D 场景。这类创意工具链只是数字工作的一种场景；dscode 通过标准 MCP 协议，让 DeepSeek 模型同样能接入更广泛的数字工具生态。
 
 ### MCP Connector 能力
 
