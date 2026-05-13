@@ -1,3 +1,5 @@
+import { resolve } from "node:path";
+
 import type { Agent } from "@mariozechner/pi-agent-core";
 import type { SlashCommand as AutocompleteSlashCommand } from "@earendil-works/pi-tui";
 
@@ -5,9 +7,11 @@ import type { HarnessConfig } from "../core/types.js";
 import type { SessionManager } from "../session/manager.js";
 import type { MemoryManager } from "../memory/manager.js";
 import type { DriverRegistry } from "../drivers/registry.js";
+import type { ToolRegistry } from "../drivers/tool-registry.js";
 import type { SkillManager } from "../skills/manager.js";
 import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
+import type { MCPManager } from "../mcp/manager.js";
 import type { TuiApp } from "./tui-app.js";
 import { saveUserConfig, saveProjectConfig, maskApiKey } from "../core/config.js";
 import { readImageFile, readClipboardImage } from "../utils/image.js";
@@ -17,9 +21,11 @@ interface CommandContext {
   sessionManager: SessionManager;
   memoryManager: MemoryManager;
   driverRegistry: DriverRegistry;
+  toolRegistry: ToolRegistry;
   skillManager: SkillManager;
   permissionManager: PermissionManager;
   contextManager: ContextManager;
+  mcpManager?: MCPManager;
   config: HarnessConfig;
   onSetModel: (modelId: string) => void;
   onSetThinking: (level: string) => void;
@@ -151,10 +157,7 @@ const COMMANDS: SlashCommandDef[] = [
           if (!name) { ctx.tui.addError("Usage: /skills activate <name>"); return; }
           try {
             const skill = ctx.skillManager.activate(name, ctx.driverRegistry);
-            ctx.agent.state.tools = [
-              ...ctx.driverRegistry.getAllTools(),
-              ...ctx.skillManager.getTools(),
-            ];
+            ctx.agent.state.tools = ctx.toolRegistry.buildToolsForRequest();
             const toolNames = skill.tools.map((t) => t.name).join(", ");
             ctx.tui.addInfo(`Activated: ${name} (allowed tools: ${toolNames || "none"})`);
           } catch (err: any) {
@@ -166,10 +169,7 @@ const COMMANDS: SlashCommandDef[] = [
           const name = rest[0];
           if (!name) { ctx.tui.addError("Usage: /skills deactivate <name>"); return; }
           ctx.skillManager.deactivate(name);
-          ctx.agent.state.tools = [
-            ...ctx.driverRegistry.getAllTools(),
-            ...ctx.skillManager.getTools(),
-          ];
+          ctx.agent.state.tools = ctx.toolRegistry.buildToolsForRequest();
           ctx.tui.addInfo(`Deactivated: ${name}`);
           break;
         }
@@ -195,6 +195,17 @@ const COMMANDS: SlashCommandDef[] = [
         lines.push(`    tools: ${toolNames}`);
       }
       ctx.tui.addInfo("Drivers:\n" + lines.join("\n"));
+    },
+  },
+  {
+    name: "mcp",
+    description: "Browse MCP servers and tools",
+    execute: async (_args, ctx) => {
+      if (!ctx.mcpManager || ctx.mcpManager.getStates().length === 0) {
+        ctx.tui.addInfo("No MCP servers configured.");
+        return;
+      }
+      ctx.tui.openMcpBrowser();
     },
   },
   {
@@ -263,8 +274,9 @@ const COMMANDS: SlashCommandDef[] = [
             ctx.tui.addError("Usage: /config cwd <path>");
             return;
           }
-          saveProjectConfig({ cwd }, ctx.config.projectPath);
-          ctx.tui.addInfo(`CWD set to: ${cwd} (restart required to take effect)`);
+          const resolvedCwd = resolve(cwd);
+          saveProjectConfig({ cwd: resolvedCwd }, ctx.config.projectPath);
+          ctx.tui.addInfo(`CWD set to: ${resolvedCwd} (restart required to take effect)`);
           break;
         }
         case "key": {
