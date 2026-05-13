@@ -1,9 +1,16 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
+import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 import type { DriverRegistry } from "../drivers/registry.js";
 import type { ToolRegistry } from "../drivers/tool-registry.js";
 import type { MCPServerState } from "../mcp/types.js";
 import { c } from "./theme.js";
+
+const MIN_VISIBLE_ROWS = 6;
+const MAX_VISIBLE_ROWS = 8;
+const PREVIEW_LINES = 3;
+const PANEL_WIDTH = 78;
+const SHORT_RULE = "────────────────────────────────────────";
 
 export interface McpToolViewModel {
   name: string;
@@ -73,54 +80,124 @@ function renderToolState(state: McpToolViewModel["state"]): string {
   return state === "loaded" ? c.green("Loaded") : c.yellow("Discoverable");
 }
 
-function trimLine(text: string, max = 72): string {
-  if (text.length <= max) return text;
-  return `${text.slice(0, max - 1)}…`;
+function truncateAnsi(text: string, max = PANEL_WIDTH): string {
+  return truncateToWidth(text, max, "…", false);
 }
 
-export function renderMcpServerList(servers: McpServerViewModel[], selectedIndex: number): string {
+function wrapPreview(text: string, width: number, lines: number): string[] {
+  const wrapped = wrapTextWithAnsi(text || "", width).slice(0, lines);
+  while (wrapped.length < lines) {
+    wrapped.push("");
+  }
+  return wrapped.map((line) => truncateToWidth(line, width, "…", false));
+}
+
+export function getMcpVisibleRows(total: number): number {
+  if (total <= 0) return 0;
+  if (total <= MIN_VISIBLE_ROWS) return total;
+  if (total <= MAX_VISIBLE_ROWS) return total;
+  return MAX_VISIBLE_ROWS;
+}
+
+function getWindow(total: number, start: number, visibleRows: number): { start: number; end: number } {
+  if (total <= visibleRows) {
+    return { start: 0, end: total };
+  }
+  const safeStart = Math.max(0, Math.min(start, total - visibleRows));
+  return { start: safeStart, end: safeStart + visibleRows };
+}
+
+function renderRange(start: number, end: number, total: number): string {
+  if (total === 0) return "0 total";
+  return `${start + 1}-${end}/${total}`;
+}
+
+function padRows(lines: string[], rowCount: number): void {
+  while (lines.length < rowCount) {
+    lines.push("");
+  }
+}
+
+function renderListRow(prefix: string, primary: string, suffix?: string): string {
+  const suffixText = suffix ? ` ${suffix}` : "";
+  return truncateAnsi(`${prefix} ${primary}${suffixText}`, PANEL_WIDTH);
+}
+
+function renderListFooter(current: number, total: number, hint: string): string {
+  return c.dim(`${current}/${total}  ${hint}`);
+}
+
+function renderSelectedLabel(label: string, selected: boolean): string {
+  return selected ? c.bgBlue(c.white(label)) : c.gray(label);
+}
+
+export function renderMcpServerList(servers: McpServerViewModel[], selectedIndex: number, startIndex: number): string {
   const lines: string[] = [];
-  lines.push(c.cyan.bold(" MCP servers "));
-  lines.push(c.dim(" ──────────────────────────────────────────────────"));
+  lines.push(c.cyan.bold("Browse MCP server"));
+
+  const visibleRows = getMcpVisibleRows(servers.length);
+  const { start, end } = getWindow(servers.length, startIndex, visibleRows || 1);
+  lines.push(c.dim(`servers · ${renderRange(start, end, servers.length)}`));
+  lines.push(c.dim(SHORT_RULE));
 
   if (servers.length === 0) {
-    lines.push(" No MCP servers configured.");
+    lines.push("No MCP servers configured.");
   } else {
-    servers.forEach((server, index) => {
-      const prefix = index === selectedIndex ? c.cyan(" ▶") : "  ";
-      const desc = server.description ? c.dim(` — ${trimLine(server.description, 44)}`) : "";
-      lines.push(`${prefix} ${c.bold(server.name)} [${renderStatus(server.status)}] ${c.dim(`(${server.toolCount} tools)`)}${desc}`);
-      if (server.status === "error" && server.error) {
-        lines.push(c.dim(`    ${trimLine(server.error, 84)}`));
-      }
+    const rowLines = servers.slice(start, end).map((server, offset) => {
+      const index = start + offset;
+      const selected = index === selectedIndex;
+      const prefix = selected ? c.cyan("▶") : c.dim(" ");
+      return renderListRow(prefix, renderSelectedLabel(server.name, selected), c.dim(`(${server.toolCount} tools)`));
     });
+    padRows(rowLines, visibleRows);
+    lines.push(...rowLines);
   }
 
-  lines.push(c.dim(" ──────────────────────────────────────────────────"));
-  lines.push(c.dim(" ↑↓ navigate  Enter view tools  Esc close"));
+  lines.push(c.dim(SHORT_RULE));
+  if (servers.length > 0) {
+    const server = servers[Math.max(0, Math.min(selectedIndex, servers.length - 1))];
+    lines.push(truncateAnsi(`${c.dim("tools:")} ${server.toolCount}  ${c.dim("status:")} ${renderStatus(server.status)}`, PANEL_WIDTH));
+    const preview = wrapPreview(c.white(server.description || "No description."), PANEL_WIDTH, PREVIEW_LINES - 2);
+    lines.push(...preview);
+    lines.push(truncateAnsi(server.error ?? c.dim(`Press Enter to browse ${server.name} tools.`), PANEL_WIDTH));
+  } else {
+    lines.push(...wrapPreview(c.dim("No server selected."), PANEL_WIDTH, PREVIEW_LINES));
+  }
+  lines.push(renderListFooter(Math.min(selectedIndex + 1, Math.max(servers.length, 1)), servers.length, "↑↓ navigate  Enter browse server  Esc close"));
   return lines.join("\n");
 }
 
-export function renderMcpToolList(server: McpServerViewModel, selectedIndex: number): string {
+export function renderMcpToolList(server: McpServerViewModel, selectedIndex: number, startIndex: number): string {
   const lines: string[] = [];
-  lines.push(c.cyan.bold(` ${server.name} tools `));
-  lines.push(c.dim(` status: ${server.status} · ${server.toolCount} total`));
-  lines.push(c.dim(" ──────────────────────────────────────────────────"));
+  lines.push(c.cyan.bold(`${server.name} · tools`));
+
+  const visibleRows = getMcpVisibleRows(server.tools.length);
+  const { start, end } = getWindow(server.tools.length, startIndex, visibleRows || 1);
+  lines.push(c.dim(`tools · ${renderRange(start, end, server.tools.length)}`));
+  lines.push(c.dim(SHORT_RULE));
 
   if (server.tools.length === 0) {
-    lines.push(" No registered tools for this MCP server.");
+    lines.push("No registered tools for this MCP server.");
   } else {
-    server.tools.forEach((tool, index) => {
-      const prefix = index === selectedIndex ? c.cyan(" ▶") : "  ";
-      lines.push(`${prefix} ${tool.label} ${c.dim(`[${renderToolState(tool.state)}]`)}`);
-      if (tool.description) {
-        lines.push(c.dim(`    ${trimLine(tool.description, 84)}`));
-      }
-      lines.push(c.dim(`    ${tool.name}`));
+    const rowLines = server.tools.slice(start, end).map((tool, offset) => {
+      const index = start + offset;
+      const selected = index === selectedIndex;
+      const prefix = selected ? c.cyan("▶") : c.dim(" ");
+      return renderListRow(prefix, renderSelectedLabel(tool.label, selected), c.dim(`[${renderToolState(tool.state)}]`));
     });
+    padRows(rowLines, visibleRows);
+    lines.push(...rowLines);
   }
 
-  lines.push(c.dim(" ──────────────────────────────────────────────────"));
-  lines.push(c.dim(" ↑↓ navigate  Esc back  Enter stay"));
+  lines.push(c.dim(SHORT_RULE));
+  if (server.tools.length > 0) {
+    const tool = server.tools[Math.max(0, Math.min(selectedIndex, server.tools.length - 1))];
+    const preview = wrapPreview(c.white(tool.description || "No description."), PANEL_WIDTH, PREVIEW_LINES - 1);
+    lines.push(...preview);
+    lines.push(c.dim(truncateAnsi(tool.name, PANEL_WIDTH)));
+  } else {
+    lines.push(...wrapPreview(c.dim("No tool selected."), PANEL_WIDTH, PREVIEW_LINES));
+  }
+  lines.push(renderListFooter(Math.min(selectedIndex + 1, Math.max(server.tools.length, 1)), server.tools.length, "↑↓ navigate  Esc back to servers"));
   return lines.join("\n");
 }

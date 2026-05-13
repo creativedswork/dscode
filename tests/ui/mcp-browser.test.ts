@@ -4,7 +4,7 @@ import { Type } from "@mariozechner/pi-ai";
 import { DriverRegistry } from "../../src/drivers/registry.js";
 import { ToolRegistry } from "../../src/drivers/tool-registry.js";
 import { makeDiscoveryDriver } from "../../src/drivers/discovery.js";
-import { buildMcpServers } from "../../src/ui/mcp-browser.js";
+import { buildMcpServers, getMcpVisibleRows, renderMcpServerList, renderMcpToolList } from "../../src/ui/mcp-browser.js";
 import type { MCPServerState } from "../../src/mcp/types.js";
 
 function makeSkillTool() {
@@ -105,5 +105,51 @@ describe("buildMcpServers", () => {
         tools: [],
       }),
     ]);
+  });
+
+  it("renders a fixed-height tool window and keeps the selected row visible", () => {
+    const server = {
+      name: "demo",
+      description: "Demo server",
+      status: "connected",
+      toolCount: 12,
+      tools: Array.from({ length: 12 }, (_, index) => ({
+        name: `mcp_demo_tool_${index}`,
+        label: `demo: tool_${index}`,
+        description: `Description ${index}`,
+        state: "discoverable" as const,
+      })),
+    };
+
+    const output = renderMcpToolList(server, 6, 6);
+    const lines = output.split("\n");
+    const visibleRows = lines.filter((line) => line.includes("demo: tool_")).length;
+
+    expect(output).toContain("demo: tool_6");
+    expect(output).toContain("demo: tool_11");
+    expect(output).toContain("7/12");
+    expect(output).not.toContain("demo: tool_0 [");
+    expect(visibleRows).toBe(getMcpVisibleRows(server.tools.length));
+  });
+
+  it("renders the server list before opening a tool list", () => {
+    const servers = Array.from({ length: 10 }, (_, index) => ({
+      name: `server_${index}`,
+      description: `Server ${index}`,
+      status: "connected" as const,
+      toolCount: index + 1,
+      tools: [],
+    }));
+
+    const output = renderMcpServerList(servers, 4, 4);
+    const lines = output.split("\n");
+    const visibleRows = lines.filter((line) => line.includes("tools)")).length;
+
+    expect(output).toContain("server_4");
+    expect(output).toContain("server_9");
+    expect(output).not.toContain("server_0\n");
+    expect(output).toContain("browse server");
+    expect(output).toContain("5/10");
+    expect(visibleRows).toBe(getMcpVisibleRows(servers.length));
   });
 });

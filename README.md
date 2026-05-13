@@ -198,6 +198,8 @@ DeepSeek reasoning 模型通过 `thinkingLevel` 控制思考强度，切换模�
 
 MCP 工具注册为 Driver，命名格式 `mcp_<server>_<tool>`，例如 `mcp_blender_get_scene_info`。连接失败不阻塞启动，错误信息输出到控制台。
 
+可在 TUI 中输入 `/mcp` 打开交互式浏览器：先选择 MCP server，再查看该 server 的 tool 列表与加载状态。
+
 ## Skills system
 
 dscode 采用 **Agent as OS** 架构：Drivers（内核模块，始终加载）和 Skills（用户态程序，按需激活）。
@@ -242,6 +244,7 @@ Always push the branch before creating a PR.
 | `/memory list/add/remove/clear` | 记忆管理 |
 | `/skills` | 列出 Skills 及状态 |
 | `/drivers` | 列出已加载的驱动 |
+| `/mcp` | 交互式浏览 MCP server 与 tools |
 | `/permissions` | 查看当前权限授予 |
 | `/cost` | 显示 token 用量 |
 | `/compact` | 手动压缩上下文 |
