@@ -1,9 +1,18 @@
 import { describe, it, expect } from "vitest";
+import { Type } from "@mariozechner/pi-ai";
 import { DriverRegistry } from "../../src/drivers/registry.js";
-import { SkillManager } from "../../src/skills/manager.js";
-import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
+import { ToolRegistry } from "../../src/drivers/tool-registry.js";
+import { makeDiscoveryDriver } from "../../src/drivers/discovery.js";
+
+function makeSkillTool() {
+  return {
+    name: "skill",
+    label: "Skill",
+    description: "Load a skill",
+    parameters: Type.Object({ name: Type.String() }),
+    execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
+  };
+}
 
 /**
  * Critical regression test: agent tool list should not have duplicate tool names.
@@ -16,7 +25,6 @@ describe("Harness tool list regression", () => {
   it("should not have duplicate tool names when skills are active", () => {
     const registry = new DriverRegistry();
     const allDriverTools = registry.getAllTools();
-    const driverToolNames = allDriverTools.map((t) => t.name);
 
     // Simulate what SkillManager.activate does: filter driver tools by whitelist
     const skillToolNames = ["read_file", "bash"];
@@ -119,5 +127,34 @@ describe("Harness tool list regression", () => {
     const fixedNames = fixedAllTools.map((t) => t.name);
     const fixedUnique = new Set(fixedNames);
     expect(fixedNames.length).toBe(fixedUnique.size);
+  });
+
+  it("should keep undiscovered deferred tools out of the refreshed tool list", () => {
+    const registry = new DriverRegistry();
+    registry.register({
+      name: "mcp_github",
+      description: "GitHub MCP server",
+      source: "mcp",
+      tools: [
+        {
+          name: "mcp_github_list_issues",
+          label: "List issues",
+          description: "List GitHub issues",
+          parameters: Type.Object({}),
+          execute: async () => ({ content: [] }),
+        },
+      ],
+    });
+
+    const toolRegistry = new ToolRegistry(registry);
+    registry.register(makeDiscoveryDriver(toolRegistry));
+    toolRegistry.initialize(makeSkillTool());
+
+    const rawNames = registry.getAllTools().map((t) => t.name);
+    const refreshedNames = toolRegistry.buildToolsForRequest().map((t) => t.name);
+
+    expect(rawNames).toContain("mcp_github_list_issues");
+    expect(refreshedNames).not.toContain("mcp_github_list_issues");
+    expect(refreshedNames.length).toBe(new Set(refreshedNames).size);
   });
 });

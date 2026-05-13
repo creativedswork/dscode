@@ -17,13 +17,16 @@ import type { ImageContent } from "@mariozechner/pi-ai";
 import type { SessionManager } from "../session/manager.js";
 import type { MemoryManager } from "../memory/manager.js";
 import type { DriverRegistry } from "../drivers/registry.js";
+import type { ToolRegistry } from "../drivers/tool-registry.js";
 import type { SkillManager } from "../skills/manager.js";
 import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
 import type { HarnessConfig } from "../core/types.js";
+import type { MCPManager } from "../mcp/manager.js";
 import { c, editorTheme, TIPS, randomTip } from "./theme.js";
 import { ConversationView } from "./conversation.js";
 import { getSlashCommandAutocomplete, executeSlashCommand } from "./commands.js";
+import { buildMcpServers, renderMcpServerList, renderMcpToolList } from "./mcp-browser.js";
 import { readClipboardImageNonBlocking } from "../utils/image.js";
 import { ocrImages } from "../utils/ocr.js";
 import type { OcrResult } from "../utils/ocr.js";
@@ -33,9 +36,11 @@ export interface TuiDeps {
   sessionManager: SessionManager;
   memoryManager: MemoryManager;
   driverRegistry: DriverRegistry;
+  toolRegistry: ToolRegistry;
   skillManager: SkillManager;
   permissionManager: PermissionManager;
   contextManager: ContextManager;
+  mcpManager?: MCPManager;
   modelName: string;
   modelSupportsImages: boolean;
   modelNeedsOcr?: boolean;
@@ -54,6 +59,11 @@ export class TuiApp {
   private imageStatus: Text;
   private loader: CancellableLoader;
   private loaderOverlayHandle: ReturnType<TUI["showOverlay"]> | null = null;
+  private mcpOverlay = new Text("");
+  private mcpOverlayHandle: ReturnType<TUI["showOverlay"]> | null = null;
+  private mcpSelectedServerIndex: number | null = null;
+  private mcpServerSelection = 0;
+  private mcpToolSelection = 0;
   private processing = false;
   private lastCtrlCPress = 0;
   private ctrlCDebounceUntil = 0;
@@ -132,6 +142,13 @@ export class TuiApp {
     return (toolName, preview) => this.showPermissionPrompt(toolName, preview);
   }
 
+  setMcpManager(mcpManager?: MCPManager): void {
+    this.deps.mcpManager = mcpManager;
+    if (this.mcpOverlayHandle) {
+      this.updateMcpOverlay();
+    }
+  }
+
   private async showPermissionPrompt(
     toolName: string,
     preview: string,
@@ -186,6 +203,10 @@ export class TuiApp {
       return true;
     }
 
+    if (this.mcpOverlayHandle) {
+      return this.handleMcpBrowserInput(data);
+    }
+
     if (this.processing) {
       if (matchesKey(data, Key.escape) || matchesKey(data, Key.tab)) {
         this.deps.agent.abort();
@@ -204,6 +225,133 @@ export class TuiApp {
     }
 
     return false;
+  }
+
+  openMcpBrowser(): void {
+    if (!this.deps.mcpManager) {
+      this.addInfo("No MCP servers configured.");
+      return;
+    }
+
+    const servers = this.getMcpServers();
+    if (servers.length === 0) {
+      this.addInfo("No MCP servers configured.");
+      return;
+    }
+
+    this.mcpSelectedServerIndex = null;
+    this.mcpServerSelection = 0;
+    this.mcpToolSelection = 0;
+    this.updateMcpOverlay();
+
+    if (!this.mcpOverlayHandle) {
+      this.mcpOverlayHandle = this.tui.showOverlay(this.mcpOverlay, {
+        anchor: "center",
+        width: "85%",
+        maxHeight: "70%",
+        margin: 2,
+        nonCapturing: true,
+      });
+    } else {
+      this.mcpOverlayHandle.setHidden(false);
+    }
+
+    this.tui.requestRender(true);
+  }
+
+  private closeMcpBrowser(): void {
+    if (!this.mcpOverlayHandle) return;
+    this.mcpOverlayHandle.hide();
+    this.mcpOverlayHandle = null;
+    this.mcpSelectedServerIndex = null;
+    this.mcpServerSelection = 0;
+    this.mcpToolSelection = 0;
+    this.tui.requestRender(true);
+  }
+
+  private getMcpServers() {
+    if (!this.deps.mcpManager) return [];
+    return buildMcpServers(
+      this.deps.mcpManager.getStates(),
+      this.deps.driverRegistry,
+      this.deps.toolRegistry,
+    );
+  }
+
+  private updateMcpOverlay(): void {
+    const servers = this.getMcpServers();
+    if (servers.length === 0) {
+      this.mcpOverlay.setText(renderMcpServerList([], 0));
+      return;
+    }
+
+    if (this.mcpSelectedServerIndex == null) {
+      this.mcpServerSelection = Math.max(0, Math.min(this.mcpServerSelection, servers.length - 1));
+      this.mcpOverlay.setText(renderMcpServerList(servers, this.mcpServerSelection));
+      return;
+    }
+
+    const serverIndex = Math.max(0, Math.min(this.mcpSelectedServerIndex, servers.length - 1));
+    const server = servers[serverIndex];
+    const maxToolIndex = Math.max(0, server.tools.length - 1);
+    this.mcpToolSelection = Math.max(0, Math.min(this.mcpToolSelection, maxToolIndex));
+    this.mcpOverlay.setText(renderMcpToolList(server, this.mcpToolSelection));
+  }
+
+  private handleMcpBrowserInput(data: string): boolean {
+    const servers = this.getMcpServers();
+
+    if (matchesKey(data, Key.escape)) {
+      if (this.mcpSelectedServerIndex == null) {
+        this.closeMcpBrowser();
+      } else {
+        this.mcpSelectedServerIndex = null;
+        this.mcpToolSelection = 0;
+        this.updateMcpOverlay();
+      }
+      return true;
+    }
+
+    if (matchesKey(data, Key.up)) {
+      if (this.mcpSelectedServerIndex == null) {
+        this.mcpServerSelection = Math.max(0, this.mcpServerSelection - 1);
+      } else {
+        this.mcpToolSelection = Math.max(0, this.mcpToolSelection - 1);
+      }
+      this.updateMcpOverlay();
+      return true;
+    }
+
+    if (matchesKey(data, Key.down)) {
+      if (this.mcpSelectedServerIndex == null) {
+        this.mcpServerSelection = Math.min(Math.max(servers.length - 1, 0), this.mcpServerSelection + 1);
+      } else {
+        const toolCount = servers[this.mcpSelectedServerIndex]?.tools.length ?? 0;
+        this.mcpToolSelection = Math.min(Math.max(toolCount - 1, 0), this.mcpToolSelection + 1);
+      }
+      this.updateMcpOverlay();
+      return true;
+    }
+
+    if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
+      if (this.mcpSelectedServerIndex == null) {
+        if (servers.length === 0) {
+          this.closeMcpBrowser();
+        } else {
+          this.mcpSelectedServerIndex = this.mcpServerSelection;
+          this.mcpToolSelection = 0;
+          this.updateMcpOverlay();
+        }
+      }
+      return true;
+    }
+
+    if (matchesKey(data, "ctrl+c") || data === "\x03") {
+      this.closeMcpBrowser();
+      return true;
+    }
+
+    return true;
   }
 
   private handlePasteImage(data: string): boolean {
