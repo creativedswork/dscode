@@ -72,7 +72,7 @@ src/
 ├── core/
 │   ├── main.ts             # 入口
 │   ├── harness.ts          # host / composition root
-│   ├── config.ts           # 配置加载 (env + ~/.dscode + project .dscode)
+│   ├── config.ts           # 配置加载 (env + config.json + settings.json)
 │   └── types.ts            # 跨模块共享类型
 │
 ├── session/
@@ -114,7 +114,8 @@ src/
 
 ```
 ~/.dscode/
-├── config.json             # 用户配置 (模型, 权限规则)
+├── config.json             # `/config` 写入的用户命令配置（model / thinking / cwd / apiKey）
+├── settings.json           # 用户级声明式 settings（permissions / mcp / skills）
 └── data/
     ├── sessions/
     │   ├── <ulid>.json     # 单个 session 完整数据
@@ -129,7 +130,7 @@ src/
 
 ```
 <project>/.dscode/
-└── config.json             # 项目级配置（覆盖用户级）
+└── settings.json           # 项目级声明式 settings（覆盖用户级 settings）
 ```
 
 环境变量：

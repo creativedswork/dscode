@@ -66,7 +66,8 @@ new Agent({
 
 ## 数据位置
 
-- 配置: `~/.dscode/config.json` (用户级) + `<project>/.dscode/config.json` (项目级)
+- 命令配置: `~/.dscode/config.json`（`/config` 写入）
+- 声明式 settings: `~/.dscode/settings.json`（用户级） + `<project>/.dscode/settings.json`（项目级）
 - 数据: `~/.dscode/data/`
   - `sessions/` — 会话历史
   - `memory/` — 全局 + 项目记忆

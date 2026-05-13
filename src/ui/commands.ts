@@ -13,7 +13,7 @@ import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
 import type { MCPManager } from "../mcp/manager.js";
 import type { TuiApp } from "./tui-app.js";
-import { saveUserConfig, saveProjectConfig, maskApiKey } from "../core/config.js";
+import { saveUserConfig, maskApiKey } from "../core/config.js";
 import { readImageFile, readClipboardImage } from "../utils/image.js";
 
 interface CommandContext {
@@ -243,17 +243,17 @@ const COMMANDS: SlashCommandDef[] = [
   },
   {
     name: "config",
-    description: "Show or change configuration (model|cwd|key)",
+    description: "Show or change user command config",
     execute: async (args, ctx) => {
       const [sub, ...rest] = args.split(/\s+/);
       switch (sub) {
         case "help": {
           ctx.tui.addInfo([
-            "/config                  Show current settings",
-            "/config model <id>       Switch model (e.g., deepseek-v4-pro, deepseek-chat)",
-            "/config thinking <level> Set thinking level (off|minimal|low|medium|high|xhigh)",
+            "/config                  Show current user command config",
+            "/config model <id>       Switch model (saved to ~/.dscode/config.json)",
+            "/config thinking <level> Set thinking level (saved to ~/.dscode/config.json)",
             "/config key <api-key>    Set your DeepSeek API key",
-            "/config cwd <path>       Set working directory (restart to apply)",
+            "/config cwd <path>       Set working directory (saved to ~/.dscode/config.json)",
             "/config help             Show this help",
           ].join("\n"));
           break;
@@ -275,8 +275,8 @@ const COMMANDS: SlashCommandDef[] = [
             return;
           }
           const resolvedCwd = resolve(cwd);
-          saveProjectConfig({ cwd: resolvedCwd }, ctx.config.projectPath);
-          ctx.tui.addInfo(`CWD set to: ${resolvedCwd} (restart required to take effect)`);
+          saveUserConfig({ cwd: resolvedCwd });
+          ctx.tui.addInfo(`CWD set to: ${resolvedCwd} (saved to ~/.dscode/config.json, restart required)`);
           break;
         }
         case "key": {
@@ -287,7 +287,7 @@ const COMMANDS: SlashCommandDef[] = [
           }
           saveUserConfig({ apiKey: key });
           process.env.DEEPSEEK_API_KEY = key;
-          ctx.tui.addInfo(`API key saved: ${maskApiKey(key)}`);
+          ctx.tui.addInfo(`API key saved to ~/.dscode/config.json: ${maskApiKey(key)}`);
           break;
         }
         case "thinking": {
@@ -303,12 +303,16 @@ const COMMANDS: SlashCommandDef[] = [
         }
         default: {
           const lines = [
-            `  provider     ${ctx.config.provider}`,
-            `  model        ${ctx.config.modelId}`,
-            `  apiKey       ${maskApiKey(ctx.config.apiKey)}`,
-            `  cwd          ${ctx.config.projectPath}`,
-            `  maxTokens    ${ctx.config.maxTokens}`,
-            `  thinking     ${ctx.config.thinkingLevel}`,
+            `  provider      ${ctx.config.provider}`,
+            `  model         ${ctx.config.modelId}`,
+            `  apiKey        ${maskApiKey(ctx.config.apiKey)}`,
+            `  cwd           ${ctx.config.projectPath}`,
+            `  maxTokens     ${ctx.config.maxTokens}`,
+            `  thinking      ${ctx.config.thinkingLevel}`,
+            "",
+            "  command file  ~/.dscode/config.json",
+            "  settings      ~/.dscode/settings.json",
+            "  project       <project>/.dscode/settings.json",
             "",
             "Type /config help for usage.",
           ];

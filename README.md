@@ -83,7 +83,8 @@ node dist/dscode.mjs
 /config model deepseek-v4-pro
 ```
 
-配置会持久化到 `~/.dscode/config.json`，后续启动无需重复设置。
+`/config` 命令写入的配置会持久化到 `~/.dscode/config.json`，后续启动无需重复设置。
+声明式配置单独放在 `settings.json`：用户级 `~/.dscode/settings.json`，项目级 `<project>/.dscode/settings.json`。
 
 ## What you get
 
@@ -163,6 +164,8 @@ DeepSeek reasoning 模型通过 `thinkingLevel` 控制思考强度，切换模�
 
 ### MCP 配置示例
 
+将 MCP 写在 `~/.dscode/settings.json` 或 `<project>/.dscode/settings.json` 中，而不是 `/config` 写入的 `config.json`。
+
 ```jsonc
 {
   "mcpServers": {
@@ -233,7 +236,7 @@ Always push the branch before creating a PR.
 | 命令 | 说明 |
 | --- | --- |
 | `/help` | 显示所有命令 |
-| `/config` | 查看或修改配置（模型 / Key / 思考） |
+| `/config` | 查看或修改用户命令配置（模型 / Key / 思考 / cwd） |
 | `/reset` | 清空对话历史 |
 | `/session list/save/load/delete` | 会话管理 |
 | `/memory list/add/remove/clear` | 记忆管理 |
@@ -247,20 +250,38 @@ Always push the branch before creating a PR.
 
 ## Configuration reference
 
-推荐使用 `/config` 在 TUI 中管理配置。配置持久化到 JSON 文件，项目级覆盖用户级：
+推荐把配置分成两类：
 
-- 用户级：`~/.dscode/config.json`
-- 项目级：`<project>/.dscode/config.json`
+- `/config` 命令写入的用户命令配置：`~/.dscode/config.json`
+- 声明式 settings：
+  - 用户级：`~/.dscode/settings.json`
+  - 项目级：`<project>/.dscode/settings.json`
+
+项目级配置统一使用 `<project>/.dscode/settings.json`。
+
+### `/config` command config
 
 ```jsonc
 {
-  "provider": "deepseek",
   "modelId": "deepseek-v4-flash",
-  "maxTokens": 16384,
   "thinkingLevel": "high",
+  "cwd": "/absolute/path/to/project"
+}
+```
+
+### `settings.json`
+
+```jsonc
+{
   "skills": ["git-workflow"],
   "permissions": {
     "deny": ["**/.env", "**/.env.*", "**/secrets/**"]
+  },
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["@anthropic/mcp-playwright"]
+    }
   }
 }
 ```

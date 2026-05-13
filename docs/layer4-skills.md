@@ -275,7 +275,7 @@ Agent
 
 ### 配置方式
 
-在 `~/.dscode/config.json` 或 `<project>/.dscode/config.json` 中配置：
+在 `~/.dscode/settings.json` 或 `<project>/.dscode/settings.json` 中配置：
 
 ```json
 {

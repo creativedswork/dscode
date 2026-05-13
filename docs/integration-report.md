@@ -20,7 +20,7 @@ Submitted DSCode as a new integration guide to [awesome-deepseek-agent](https://
 Both guides cover:
 - Prerequisites (Node.js 20.6+, DeepSeek API Key)
 - Installation (git clone + npm install)
-- Configuration (`.env`, two-level `config.json`)
+- Configuration (`.env`, user `config.json`, and user/project `settings.json`)
 - Model and thinking mode setup (`modelId`, `thinkingLevel`, `maxTokens`)
 - 1M context window note
 - Running and slash commands reference
