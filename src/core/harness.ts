@@ -99,8 +99,6 @@ export class Harness {
       afterToolCall: async (ctx: AfterToolCallContext, _signal?: AbortSignal) => {
         if (ctx.toolCall.name === "search_tools" && ctx.context.tools) {
           ctx.context.tools = self.toolRegistry.buildToolsForRequest();
-          const deferredHint = self.toolRegistry.buildDeferredToolsHint();
-          ctx.context.systemPrompt = self.baseSystemPrompt + deferredHint;
         }
         return undefined as AfterToolCallResult | undefined;
       },
@@ -119,9 +117,11 @@ export class Harness {
       sessionManager: this.sessionManager,
       memoryManager: this.memoryManager,
       driverRegistry: this.driverRegistry,
+      toolRegistry: this.toolRegistry,
       skillManager: this.skillManager,
       permissionManager: this.permissionManager,
       contextManager: this.contextManager,
+      mcpManager: this.mcpManager,
       modelName: model.name,
       modelSupportsImages: nativeImageSupport || needsOcr,
       modelNeedsOcr: needsOcr,
@@ -136,6 +136,7 @@ export class Harness {
     if (this.config.mcp.length > 0) {
       this.tui.addInfo(`Connecting ${this.config.mcp.length} MCP server(s)...`);
       this.mcpManager = new MCPManager(this.config.mcp);
+      this.tui.setMcpManager(this.mcpManager);
       await this.mcpManager.initialize();
       await this.mcpManager.registerDrivers(this.driverRegistry);
       this.toolRegistry.initialize(

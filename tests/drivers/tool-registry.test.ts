@@ -127,18 +127,38 @@ describe("ToolRegistry", () => {
       expect(names).not.toContain("mcp_slack_send_message");
     });
 
-    it("should build deferred tools hint with undiscovered tools", () => {
+    it("should append discovered MCP tools in stable order", () => {
       toolRegistry.markAsDiscovered(["mcp_github_list_issues"]);
+      const firstNames = toolRegistry.buildToolsForRequest().map((t) => t.name);
 
-      const hint = toolRegistry.buildDeferredToolsHint();
-      expect(hint).toContain("Discoverable Tools");
-      expect(hint).toContain("mcp_github_create_pr");
-      expect(hint).toContain("mcp_github_get_issue");
-      expect(hint).not.toContain("mcp_github_list_issues"); // already discovered
-      expect(hint).toContain("mcp_slack_");
+      toolRegistry.markAsDiscovered(["mcp_slack_send_message"]);
+      const secondNames = toolRegistry.buildToolsForRequest().map((t) => t.name);
+
+      expect(firstNames).toContain("mcp_github_list_issues");
+      expect(firstNames).not.toContain("mcp_slack_send_message");
+      expect(secondNames).toContain("mcp_github_list_issues");
+      expect(secondNames).toContain("mcp_slack_send_message");
+      expect(secondNames.indexOf("mcp_github_list_issues")).toBeLessThan(
+        secondNames.indexOf("mcp_slack_send_message"),
+      );
     });
 
-    it("should return empty hint when all tools discovered", () => {
+    it("should keep deferred tools hint stable after discovery", () => {
+      const before = toolRegistry.buildDeferredToolsHint();
+
+      toolRegistry.markAsDiscovered(["mcp_github_list_issues"]);
+
+      const after = toolRegistry.buildDeferredToolsHint();
+      expect(after).toBe(before);
+      expect(after).toContain("Discoverable Tools");
+      expect(after).toContain("deferred catalog");
+      expect(after).toContain("mcp_github_create_pr");
+      expect(after).toContain("mcp_github_get_issue");
+      expect(after).toContain("mcp_github_list_issues");
+      expect(after).toContain("mcp_slack_");
+    });
+
+    it("should keep deferred tools hint visible when all tools discovered", () => {
       toolRegistry.markAsDiscovered([
         "mcp_github_list_issues",
         "mcp_github_create_pr",
@@ -146,7 +166,9 @@ describe("ToolRegistry", () => {
         "mcp_slack_send_message",
         "mcp_slack_list_channels",
       ]);
-      expect(toolRegistry.buildDeferredToolsHint()).toBe("");
+      const hint = toolRegistry.buildDeferredToolsHint();
+      expect(hint).toContain("mcp_github_list_issues");
+      expect(hint).toContain("mcp_slack_send_message");
     });
   });
 
