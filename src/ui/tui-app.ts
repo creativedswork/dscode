@@ -26,7 +26,7 @@ import type { MCPManager } from "../mcp/manager.js";
 import { c, editorTheme, TIPS, randomTip } from "./theme.js";
 import { ConversationView } from "./conversation.js";
 import { getSlashCommandAutocomplete, executeSlashCommand } from "./commands.js";
-import { buildMcpServers, renderMcpServerList, renderMcpToolList } from "./mcp-browser.js";
+import { buildMcpServers, getMcpVisibleRows, renderMcpServerList, renderMcpToolList } from "./mcp-browser.js";
 import { readClipboardImageNonBlocking } from "../utils/image.js";
 import { ocrImages } from "../utils/ocr.js";
 import type { OcrResult } from "../utils/ocr.js";
@@ -59,11 +59,13 @@ export class TuiApp {
   private imageStatus: Text;
   private loader: CancellableLoader;
   private loaderOverlayHandle: ReturnType<TUI["showOverlay"]> | null = null;
-  private mcpOverlay = new Text("");
-  private mcpOverlayHandle: ReturnType<TUI["showOverlay"]> | null = null;
+  private mcpPanel = new Text("", 1, 0);
+  private mcpPanelVisible = false;
   private mcpSelectedServerIndex: number | null = null;
   private mcpServerSelection = 0;
+  private mcpServerWindowStart = 0;
   private mcpToolSelection = 0;
+  private mcpToolWindowStart = 0;
   private processing = false;
   private lastCtrlCPress = 0;
   private ctrlCDebounceUntil = 0;
@@ -133,6 +135,7 @@ export class TuiApp {
     this.tui.addChild(root);
     this.tui.addChild(this.imageStatus);
     this.tui.addChild(this.editor);
+    this.tui.addChild(this.mcpPanel);
   }
 
   getPromptPermission(): (
@@ -144,8 +147,8 @@ export class TuiApp {
 
   setMcpManager(mcpManager?: MCPManager): void {
     this.deps.mcpManager = mcpManager;
-    if (this.mcpOverlayHandle) {
-      this.updateMcpOverlay();
+    if (this.mcpPanelVisible) {
+      this.updateMcpPanel();
     }
   }
 
@@ -203,7 +206,7 @@ export class TuiApp {
       return true;
     }
 
-    if (this.mcpOverlayHandle) {
+    if (this.mcpPanelVisible) {
       return this.handleMcpBrowserInput(data);
     }
 
@@ -241,31 +244,22 @@ export class TuiApp {
 
     this.mcpSelectedServerIndex = null;
     this.mcpServerSelection = 0;
+    this.mcpServerWindowStart = 0;
     this.mcpToolSelection = 0;
-    this.updateMcpOverlay();
-
-    if (!this.mcpOverlayHandle) {
-      this.mcpOverlayHandle = this.tui.showOverlay(this.mcpOverlay, {
-        anchor: "center",
-        width: "85%",
-        maxHeight: "70%",
-        margin: 2,
-        nonCapturing: true,
-      });
-    } else {
-      this.mcpOverlayHandle.setHidden(false);
-    }
-
+    this.mcpToolWindowStart = 0;
+    this.mcpPanelVisible = true;
+    this.updateMcpPanel();
     this.tui.requestRender(true);
   }
 
   private closeMcpBrowser(): void {
-    if (!this.mcpOverlayHandle) return;
-    this.mcpOverlayHandle.hide();
-    this.mcpOverlayHandle = null;
+    this.mcpPanelVisible = false;
+    this.mcpPanel.setText("");
     this.mcpSelectedServerIndex = null;
     this.mcpServerSelection = 0;
+    this.mcpServerWindowStart = 0;
     this.mcpToolSelection = 0;
+    this.mcpToolWindowStart = 0;
     this.tui.requestRender(true);
   }
 
@@ -278,16 +272,25 @@ export class TuiApp {
     );
   }
 
-  private updateMcpOverlay(): void {
+  private updateMcpPanel(): void {
     const servers = this.getMcpServers();
+    if (!this.mcpPanelVisible) {
+      this.mcpPanel.setText("");
+      return;
+    }
     if (servers.length === 0) {
-      this.mcpOverlay.setText(renderMcpServerList([], 0));
+      this.mcpPanel.setText(renderMcpServerList([], 0, 0));
       return;
     }
 
     if (this.mcpSelectedServerIndex == null) {
       this.mcpServerSelection = Math.max(0, Math.min(this.mcpServerSelection, servers.length - 1));
-      this.mcpOverlay.setText(renderMcpServerList(servers, this.mcpServerSelection));
+      const visibleRows = getMcpVisibleRows(servers.length);
+      this.mcpServerWindowStart = Math.max(
+        0,
+        Math.min(this.mcpServerWindowStart, Math.max(servers.length - visibleRows, 0)),
+      );
+      this.mcpPanel.setText(renderMcpServerList(servers, this.mcpServerSelection, this.mcpServerWindowStart));
       return;
     }
 
@@ -295,7 +298,12 @@ export class TuiApp {
     const server = servers[serverIndex];
     const maxToolIndex = Math.max(0, server.tools.length - 1);
     this.mcpToolSelection = Math.max(0, Math.min(this.mcpToolSelection, maxToolIndex));
-    this.mcpOverlay.setText(renderMcpToolList(server, this.mcpToolSelection));
+    const visibleRows = getMcpVisibleRows(server.tools.length);
+    this.mcpToolWindowStart = Math.max(
+      0,
+      Math.min(this.mcpToolWindowStart, Math.max(server.tools.length - visibleRows, 0)),
+    );
+    this.mcpPanel.setText(renderMcpToolList(server, this.mcpToolSelection, this.mcpToolWindowStart));
   }
 
   private handleMcpBrowserInput(data: string): boolean {
@@ -307,29 +315,49 @@ export class TuiApp {
       } else {
         this.mcpSelectedServerIndex = null;
         this.mcpToolSelection = 0;
-        this.updateMcpOverlay();
+        this.mcpToolWindowStart = 0;
+        this.updateMcpPanel();
       }
       return true;
     }
 
     if (matchesKey(data, Key.up)) {
       if (this.mcpSelectedServerIndex == null) {
+        const prev = this.mcpServerSelection;
         this.mcpServerSelection = Math.max(0, this.mcpServerSelection - 1);
+        if (this.mcpServerSelection < prev) {
+          this.mcpServerWindowStart = this.mcpServerSelection;
+        }
       } else {
+        const prev = this.mcpToolSelection;
         this.mcpToolSelection = Math.max(0, this.mcpToolSelection - 1);
+        if (this.mcpToolSelection < prev) {
+          this.mcpToolWindowStart = this.mcpToolSelection;
+        }
       }
-      this.updateMcpOverlay();
+      this.updateMcpPanel();
       return true;
     }
 
     if (matchesKey(data, Key.down)) {
       if (this.mcpSelectedServerIndex == null) {
-        this.mcpServerSelection = Math.min(Math.max(servers.length - 1, 0), this.mcpServerSelection + 1);
+        const toolCount = servers.length;
+        const visibleRows = getMcpVisibleRows(toolCount);
+        const prev = this.mcpServerSelection;
+        this.mcpServerSelection = Math.min(Math.max(toolCount - 1, 0), this.mcpServerSelection + 1);
+        if (this.mcpServerSelection > prev && this.mcpServerSelection >= this.mcpServerWindowStart + visibleRows) {
+          this.mcpServerWindowStart = this.mcpServerSelection - visibleRows + 1;
+        }
       } else {
         const toolCount = servers[this.mcpSelectedServerIndex]?.tools.length ?? 0;
+        const visibleRows = getMcpVisibleRows(toolCount);
+        const prev = this.mcpToolSelection;
         this.mcpToolSelection = Math.min(Math.max(toolCount - 1, 0), this.mcpToolSelection + 1);
+        if (this.mcpToolSelection > prev && this.mcpToolSelection >= this.mcpToolWindowStart + visibleRows) {
+          this.mcpToolWindowStart = this.mcpToolSelection - visibleRows + 1;
+        }
       }
-      this.updateMcpOverlay();
+      this.updateMcpPanel();
       return true;
     }
 
@@ -340,7 +368,8 @@ export class TuiApp {
         } else {
           this.mcpSelectedServerIndex = this.mcpServerSelection;
           this.mcpToolSelection = 0;
-          this.updateMcpOverlay();
+          this.mcpToolWindowStart = 0;
+          this.updateMcpPanel();
         }
       }
       return true;

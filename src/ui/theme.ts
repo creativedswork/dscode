@@ -10,6 +10,8 @@ export const c = {
   magenta: chalk.magenta,
   bold: chalk.bold,
   white: chalk.white,
+  gray: chalk.gray,
+  bgBlue: chalk.bgBlue,
   blue: chalk.blue,
   reset: chalk.reset,
 };
