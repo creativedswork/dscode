@@ -106,15 +106,12 @@ export class ToolRegistry {
     return tools;
   }
 
-  /** Build the system prompt hint listing undiscovered tools. */
+  /** Build the system prompt hint listing the stable deferred catalog. */
   buildDeferredToolsHint(): string {
-    const undiscovered = [...this.deferredToolNames].filter(
-      (n) => !this.discoveredToolNames.has(n),
-    );
-    if (undiscovered.length === 0) return "";
+    if (this.deferredToolNames.size === 0) return "";
 
     const grouped = new Map<string, string[]>();
-    for (const name of undiscovered) {
+    for (const name of this.deferredToolNames) {
       const prefix = name.startsWith("mcp_")
         ? name.split("_").slice(0, 2).join("_")
         : "other";
@@ -127,7 +124,10 @@ export class ToolRegistry {
     lines.push("## Discoverable Tools");
     lines.push("");
     lines.push(
-      "The following tools are available but not yet loaded. Call `search_tools` to search and load them:",
+      "The following tools belong to the deferred catalog. Call `search_tools` to search and load them by keyword or exact name.",
+    );
+    lines.push(
+      "Some of them may already be loaded in this session.",
     );
     lines.push("");
 

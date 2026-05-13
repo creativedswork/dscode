@@ -583,3 +583,80 @@ interface ExpansionStrategy {
 class ServerSideExpansion implements ExpansionStrategy { /* Anthropic API */ }
 class ClientSideExpansion implements ExpansionStrategy { /* DeepSeek / OpenAI */ }
 ```
+
+## 十三、服务端 Prompt Cache 友好模式（推荐）
+
+如果底层模型服务对请求前缀做缓存（通常会把 `system`、`tools` 和历史消息前缀一起纳入 cache key），那么“客户端按需展开”会天然影响命中率：
+
+- **`tools` 数组变化**：新发现的工具会在下一轮请求中携带完整 schema
+- **`system prompt` 变化**：如果提示词中的“可发现工具列表”会随着 discovered 集合变化而增减，那么每次搜索后前缀都会变化一次
+
+其中第二点其实是**可避免的额外抖动**。因此推荐采用下面这种 cache-friendly 变体。
+
+### 13.1 设计目标
+
+不是“完全不打断 cache”——只要顶层 `tools` 真的增加了新 schema，服务端 cache 大概率还是会断一次；而是把影响收敛为：
+
+- **首次发现一批新工具时**：允许发生一次 cache miss
+- **其后的稳定轮次**：前缀重新稳定，继续积累新的 cache
+- **避免每次搜索都同时改动 system prompt 和 tools**
+
+### 13.2 推荐规则
+
+1. **让 deferred tools 提示在一个 session 内保持稳定**
+
+   `buildDeferredToolsHint()` 不要只列出“尚未发现”的工具，也不要在工具被发现后把它从列表中移除；应改为输出一个**稳定的 deferred catalog**（完整列表或稳定分组摘要）。
+
+   也就是说，system prompt 中应表达：
+
+   - “这些工具可以通过 SearchTool 加载”
+   - 而不是“这些工具当前尚未加载”
+
+   这样模型搜索过一次后，system prompt 不会因为 discovered 集合变化而改写。
+
+2. **`tools` 列表保持 append-only 且顺序确定**
+
+   基础工具顺序固定；延迟工具一旦被发现，就在后续请求中持续携带，不再移除，也不要因为重新排序导致前缀波动。这样至少能保证：
+
+   - 稳定前缀尽可能长
+   - provider 如果支持前缀分段/块级缓存，命中机会更高
+
+3. **尽量按领域批量发现，而不是一次发现一个工具**
+
+   比如模型要做 GitHub 操作时，SearchTool 可以一次返回并加载同域的 2～5 个高相关工具，而不是只加载一个。这样一次 cache miss 能换来后续多个回合的稳定前缀。
+
+4. **高频工具继续走 always-load**
+
+   对于高频、基础、几乎每个会话都会用到的 MCP 工具，仍然推荐在初始化时直接发送，避免中途触发 schema 扩容。
+
+5. **如果 provider 支持显式 cache breakpoint，可把动态部分放到非缓存尾部**
+
+   这是可选增强：对支持 prompt caching 分段控制的 provider，可以把可发现工具目录或其他高波动信息放进不参与缓存的尾部区块，进一步减小对稳定前缀的影响。
+
+### 13.3 推荐的提示词形式
+
+不要再用会随 discovered 状态变化的文案：
+
+```text
+以下工具需要先通过 SearchTool 搜索加载，之后即可直接调用：
+```
+
+改为稳定语义：
+
+```text
+以下工具属于 deferred catalog，可通过 SearchTool 按名称或关键词加载。
+其中部分工具在当前会话中可能已经被加载；若已加载，可直接调用。
+```
+
+### 13.4 对比：原方案 vs cache-friendly 方案
+
+| | 原方案 | Cache-friendly 方案 |
+|---|---|---|
+| system prompt 中的工具目录 | 只列 undiscovered 工具 | 列完整 deferred catalog 或稳定摘要 |
+| 每次 search 后 system prompt | 会变化 | 不变化 |
+| 每次 search 后 tools | 可能变化 | 可能变化 |
+| 服务端 cache 抖动 | `system` + `tools` 同时波动 | 只在 schema 真扩容时波动 |
+
+### 13.5 结论
+
+客户端按需展开**无法完全避免**服务端 prompt cache 在“首次加载新工具”时失效；但通过“**稳定 system prompt + append-only tools + 批量发现**”三条原则，可以把 cache miss 从“几乎每次 search 都触发”降到“每个新工具域首次展开时触发一次”。

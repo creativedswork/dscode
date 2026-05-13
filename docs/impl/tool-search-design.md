@@ -163,20 +163,25 @@ for each tool in allTools:
 
 **buildDeferredToolsHint() 逻辑**：
 
+推荐采用 **cache-friendly 模式**：不要只输出 deferred 且 NOT discovered 的工具，而是输出一个在会话内保持稳定的 deferred catalog。
+
 ```
-获取所有 deferred 但 NOT discovered 的工具
+获取所有 deferred 工具（不区分 discovered 状态）
 按 MCP 服务器前缀分组（如 mcp_github, mcp_slack）
 生成：
   ## Discoverable Tools
 
-  The following tools are available but not yet loaded.
-  Call `search_tools` to search and load them:
+  The following tools belong to the deferred catalog.
+  Call `search_tools` to load them by keyword or exact name.
+  Some of them may already be loaded in this session.
 
   **mcp_github** (3 tools)
     - mcp_github_list_issues — List GitHub issues
     - mcp_github_create_pr — Create a pull request
     - mcp_github_get_issue — Get issue details
 ```
+
+这样 `discoveredToolNames` 的变化不会改写 system prompt，从而减少服务端 prompt cache 抖动。只有 `tools` 数组在首次发现新工具后发生真实扩容时，才会触发一次新的前缀。
 
 **搜索评分算法**（与 Anthropic 方案一致）：
 
@@ -286,7 +291,9 @@ function makeSearchToolsTool(registry: ToolRegistry): AgentTool<typeof searchPar
 
 ### 4.2 transformContext 包装
 
-`transformContext` 在每次 API 请求前被调用。我们在此更新工具列表和 system prompt：
+`transformContext` 在每次 API 请求前被调用。我们在此更新工具列表和 system prompt。
+
+**Prompt cache 注意事项**：这里推荐只让 `buildToolsForRequest()` 反映 discovered 状态，而让 `buildDeferredToolsHint()` 在一个 session 内尽量保持稳定。否则每次 `search_tools` 后，`system prompt` 和 `tools` 会同时变化，服务端 prompt cache 更容易失效。
 
 ```typescript
 // harness.ts — transformContext 增强
@@ -325,6 +332,8 @@ You can also load tools by exact name: `search_tools` with `select:ToolA,ToolB`
 ```
 
 ### 4.4 完整多轮交互时序
+
+**推荐行为**：`search_tools` 触发后，下一轮只让 `tools` 扩容；不要同时把 system prompt 里的 Discoverable Tools 列表改写成“扣除已发现工具后的剩余列表”。后者虽然更精确，但会无谓打断服务端 prompt cache。
 
 ```
 第 1 轮请求：
