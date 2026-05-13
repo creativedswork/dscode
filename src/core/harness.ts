@@ -4,7 +4,7 @@ import { getModel, streamSimple, Type } from "@mariozechner/pi-ai";
 import type { Api, AssistantMessage, Context, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
 
 import type { HarnessConfig } from "./types.js";
-import { saveProjectConfig } from "./config.js";
+import { saveUserConfig } from "./config.js";
 import { SessionManager } from "../session/manager.js";
 import { ContextManager } from "../context/manager.js";
 import { MemoryManager } from "../memory/manager.js";
@@ -189,13 +189,13 @@ export class Harness {
     this.config.thinkingLevel = thinkingLevel;
     this.agent.state.thinkingLevel = thinkingLevel;
 
-    saveProjectConfig({ modelId, thinkingLevel }, this.config.projectPath);
+    saveUserConfig({ modelId, thinkingLevel });
   }
 
   setThinking(level: string): void {
     this.config.thinkingLevel = level as any;
     this.agent.state.thinkingLevel = level as any;
-    saveProjectConfig({ thinkingLevel: level }, this.config.projectPath);
+    saveUserConfig({ thinkingLevel: level });
   }
 
   private async shutdown(): Promise<void> {

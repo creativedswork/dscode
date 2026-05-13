@@ -14,6 +14,18 @@ function dsDataHome(): string {
   return process.env.DSCODE_DATA_HOME ?? join(homedir(), ".dscode");
 }
 
+function userConfigPath(): string {
+  return join(dsConfigHome(), "config.json");
+}
+
+function userSettingsPath(): string {
+  return join(dsConfigHome(), "settings.json");
+}
+
+function projectSettingsPath(projectPath: string): string {
+  return join(projectPath, ".dscode", "settings.json");
+}
+
 function loadJsonSafe(path: string): Record<string, unknown> {
   if (!existsSync(path)) return {};
   try {
@@ -34,44 +46,57 @@ export function maskApiKey(key: string | undefined): string {
   return key.slice(0, 3) + "****" + key.slice(-4);
 }
 
-export function saveUserConfig(partial: Record<string, unknown>): void {
-  const path = join(dsConfigHome(), "config.json");
-  const existing = loadJsonSafe(path);
-  saveJsonSafe(path, { ...existing, ...partial });
+function loadUserCommandConfig(): Record<string, unknown> {
+  return loadJsonSafe(userConfigPath());
 }
 
-export function saveProjectConfig(partial: Record<string, unknown>, projectPath: string): void {
-  const path = join(projectPath, ".dscode", "config.json");
-  const existing = loadJsonSafe(path);
+function loadScopedSettings(settingsPath: string): Record<string, unknown> {
+  return loadJsonSafe(settingsPath);
+}
+
+export function saveUserConfig(partial: Record<string, unknown>): void {
+  const path = userConfigPath();
+  const existing = loadUserCommandConfig();
   saveJsonSafe(path, { ...existing, ...partial });
 }
 
 export function loadConfig(): HarnessConfig {
-  const projectPath = resolve(process.env.DSCODE_PROJECT_PATH ?? process.cwd());
+  const startupPath = resolve(process.env.DSCODE_PROJECT_PATH ?? process.cwd());
+  const configDir = dsConfigHome();
+  const dataDir = join(dsDataHome(), "data");
+
+  const userConfig = loadUserCommandConfig();
+  const userSettings = loadScopedSettings(userSettingsPath());
+
+  let projectPath = startupPath;
+  const configuredCwd = userConfig.cwd;
+  if (typeof configuredCwd === "string" && configuredCwd.trim() !== "") {
+    const nextProjectPath = resolve(configuredCwd);
+    if (existsSync(nextProjectPath)) {
+      projectPath = nextProjectPath;
+    }
+  }
+
   if (projectPath !== process.cwd()) {
     process.chdir(projectPath);
   }
 
-  const configDir = dsConfigHome();
-  const dataDir = join(dsDataHome(), "data");
-
-  const userConfig = loadJsonSafe(join(configDir, "config.json"));
-  const projectConfig = loadJsonSafe(join(projectPath, ".dscode", "config.json"));
-  const merged = { ...userConfig, ...projectConfig };
+  const projectSettings = loadScopedSettings(projectSettingsPath(projectPath));
+  const merged = { ...userSettings, ...projectSettings };
 
   const provider = (process.env.AGENT_PROVIDER as string) ?? (merged.provider as string) ?? "deepseek";
-  const modelId = (process.env.AGENT_MODEL as string) ?? (process.env.DEEPSEEK_MODEL as string) ?? (merged.modelId as string) ?? "deepseek-v4-flash";
+  const modelId = (process.env.AGENT_MODEL as string) ?? (process.env.DEEPSEEK_MODEL as string) ?? (userConfig.modelId as string) ?? (merged.modelId as string) ?? "deepseek-v4-flash";
   const maxTokens = Number(process.env.DSCODE_MAX_TOKENS) || (merged.maxTokens as number) || 16384;
 
   // API key: env var > user config (never project config for security)
   const apiKey = process.env.DEEPSEEK_API_KEY ?? (userConfig.apiKey as string | undefined);
 
-  const userDeny = ((userConfig.permissions as any)?.deny as string[]) ?? [];
-  const projectDeny = ((projectConfig.permissions as any)?.deny as string[]) ?? [];
+  const userDeny = ((userSettings.permissions as any)?.deny as string[]) ?? [];
+  const projectDeny = ((projectSettings.permissions as any)?.deny as string[]) ?? [];
   const denyPatterns = [...new Set([...userDeny, ...projectDeny])];
 
-  const userSkills = ((userConfig.skills as string[]) ?? []);
-  const projectSkills = ((projectConfig.skills as string[]) ?? []);
+  const userSkills = ((userSettings.skills as string[]) ?? []);
+  const projectSkills = ((projectSettings.skills as string[]) ?? []);
   const skills = [...new Set([...userSkills, ...projectSkills])];
 
   const userSkillsDir = join(configDir, "skills");
@@ -79,7 +104,7 @@ export function loadConfig(): HarnessConfig {
 
   const validThinkingLevels = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
   const defaultThinkingLevel: ThinkingLevel = modelId.includes("pro") ? "medium" : "off";
-  const rawThinkingLevel = process.env.AGENT_THINKING_LEVEL ?? merged.thinkingLevel;
+  const rawThinkingLevel = process.env.AGENT_THINKING_LEVEL ?? userConfig.thinkingLevel ?? merged.thinkingLevel;
   const thinkingLevel: ThinkingLevel = rawThinkingLevel !== undefined && validThinkingLevels.has(rawThinkingLevel as string)
     ? (rawThinkingLevel as ThinkingLevel)
     : defaultThinkingLevel;

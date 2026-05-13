@@ -218,28 +218,25 @@ main();
 ```typescript
 // src/config.ts
 function loadConfig(): HarnessConfig {
-  // 1. 确定项目路径
-  const projectPath = resolve(process.env.DSCODE_PROJECT_PATH ?? process.cwd());
+  const startupPath = resolve(process.env.DSCODE_PROJECT_PATH ?? process.cwd());
+  const userCommandConfig = loadJsonSafe(join(dsConfigHome(), "config.json"));
+  const userSettings = loadJsonSafe(join(dsConfigHome(), "settings.json"));
 
-  // 2. 加载 .env (项目目录)
-  loadEnvFile(projectPath);
+  const projectPath = existsSync(userCommandConfig.cwd)
+    ? resolve(userCommandConfig.cwd)
+    : startupPath;
 
-  // 3. 加载两级配置
-  const userConfig = loadJsonSafe(join(dsConfigHome(), "config.json"));
-  const projectConfig = loadJsonSafe(join(projectPath, ".dscode", "config.json"));
-  const merged = { ...userConfig, ...projectConfig };
+  const projectSettings = loadJsonSafe(join(projectPath, ".dscode", "settings.json"));
 
-  // 4. 环境变量覆盖
+  const merged = { ...userSettings, ...projectSettings };
+
   const provider = process.env.AGENT_PROVIDER ?? merged.provider ?? "deepseek";
-  const modelId = process.env.AGENT_MODEL ?? process.env.DEEPSEEK_MODEL ?? merged.modelId ?? "deepseek-v4-flash";
-  const maxTokens = Number(process.env.DSCODE_MAX_TOKENS) || merged.maxTokens || 16384;
-
-  // 5. permissions.deny 两级取并集
-  const denyPatterns = [...new Set([...userDeny, ...projectDeny])];
-
-  // 合并优先级: 默认值 < 用户级 < 项目级 < 环境变量
+  const modelId = process.env.AGENT_MODEL ?? process.env.DEEPSEEK_MODEL ?? userCommandConfig.modelId ?? "deepseek-v4-flash";
 }
 ```
+
+`/config` 命令写入的字段（如 `modelId` / `thinkingLevel` / `cwd` / `apiKey`）来自用户级 `~/.dscode/config.json`。
+`permissions` / `mcp` / `skills` 等声明式配置来自 `settings.json`，其中项目级 `settings.json` 覆盖用户级 `settings.json`。
 
 ## 模型切换
 
