@@ -1,9 +1,9 @@
 name: Publish to npm
 
 on:
-  release:
-    types: [created]
-  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
 
 jobs:
   build:
@@ -16,6 +16,26 @@ jobs:
           registry-url: "https://registry.npmjs.org"
           cache: "npm"
       - run: npm ci
+      - name: Derive version from tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid tag version: $GITHUB_REF_NAME"
+            exit 1
+          fi
+          VERSION="$VERSION" node --eval '
+            const fs = require("fs");
+            const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+            pkg.version = process.env.VERSION;
+            fs.writeFileSync("package.json", JSON.stringify(pkg, null, 2) + "\n");
+          '
+      - name: Ensure npm version is unpublished
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if npm view "@wangcan26/dscode@$VERSION" version >/dev/null 2>&1; then
+            echo "Version $VERSION already exists on npm"
+            exit 1
+          fi
       - run: node scripts/build.mjs
       - uses: actions/upload-artifact@v4
         with:
