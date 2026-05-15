@@ -752,6 +752,23 @@ export class TuiApp {
     this.tui.setFocus(this.editor);
   }
 
+  clearConversationView(): void {
+    this.conversation.clear();
+    this.permissionExplainMode = false;
+    this.pendingPermissionContext = null;
+    this.menuNavDebounceUntil = 0;
+    this.pendingImages = [];
+    if (this.mcpPanelVisible) {
+      this.closeMcpBrowser();
+    } else {
+      this.updateImageStatus();
+    }
+    this.editor.setText("");
+    this.editor.disableSubmit = this.processing && !this.permissionExplainMode;
+    this.focusEditor();
+    this.tui.requestRender(true);
+  }
+
   addPendingImage(image: ImageContent): void {
     this.pendingImages.push(image);
     this.updateImageStatus();
