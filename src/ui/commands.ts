@@ -55,7 +55,7 @@ const COMMANDS: SlashCommandDef[] = [
     description: "Clear conversation history",
     execute: async (_args, ctx) => {
       ctx.agent.reset();
-      ctx.tui.addInfo("(conversation reset)");
+      ctx.tui.clearConversationView();
     },
   },
   {

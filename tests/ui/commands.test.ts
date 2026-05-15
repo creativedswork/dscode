@@ -19,7 +19,7 @@ function makeContext(overrides: Record<string, unknown> = {}) {
   } as any;
 }
 
-describe("/mcp command", () => {
+describe("slash commands", () => {
   it("opens the MCP browser when MCP servers are available", async () => {
     const openMcpBrowser = vi.fn();
     const addInfo = vi.fn();
@@ -62,5 +62,23 @@ describe("/mcp command", () => {
     expect(openMcpBrowser).not.toHaveBeenCalled();
     expect(addInfo).toHaveBeenCalledWith("No MCP servers configured.");
     expect(addError).not.toHaveBeenCalled();
+  });
+
+  it("clears the visible conversation on /reset", async () => {
+    const reset = vi.fn();
+    const clearConversationView = vi.fn();
+    const addInfo = vi.fn();
+
+    executeSlashCommand(
+      "/reset",
+      makeContext({ agent: { reset, state: { messages: [] } } }),
+      { clearConversationView, addInfo } as any,
+    );
+
+    await Promise.resolve();
+
+    expect(reset).toHaveBeenCalledOnce();
+    expect(clearConversationView).toHaveBeenCalledOnce();
+    expect(addInfo).not.toHaveBeenCalledWith("(conversation reset)");
   });
 });
