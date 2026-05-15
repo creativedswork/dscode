@@ -76,6 +76,8 @@ node dist/dscode.mjs
 </tr>
 </table>
 
+> 欢迎大家在 GitHub 给项目点个 Star、Watch，顺手点赞支持。
+
 ### 首次启动
 
 ```bash
