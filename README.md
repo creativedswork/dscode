@@ -54,6 +54,7 @@
 ```bash
 # Node.js >= 20
 npm install -g @wangcan26/dscode
+dscode --version
 dscode
 ```
 
