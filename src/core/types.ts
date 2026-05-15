@@ -12,6 +12,7 @@ export interface HarnessConfig {
   apiKey?: string;
   thinkingLevel: ThinkingLevel;
   maxTokens: number;
+  startupPath: string;
   projectPath: string;
   configDir: string;
   dataDir: string;

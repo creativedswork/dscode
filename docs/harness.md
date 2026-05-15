@@ -235,7 +235,7 @@ function loadConfig(): HarnessConfig {
 }
 ```
 
-`/config` 命令写入的字段（如 `modelId` / `thinkingLevel` / `cwd` / `apiKey`）来自用户级 `~/.dscode/config.json`。
+`/config` 命令写入的字段（如 `modelId` / `thinkingLevel` / `cwd` / `cwdProjectPath` / `apiKey`）来自用户级 `~/.dscode/config.json`；其中 `cwd` 只会在启动项目与 `cwdProjectPath` 匹配时复用。
 `permissions` / `mcp` / `skills` 等声明式配置来自 `settings.json`，其中项目级 `settings.json` 覆盖用户级 `settings.json`。
 
 ## 模型切换

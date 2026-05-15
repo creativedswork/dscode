@@ -13,7 +13,7 @@ import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
 import type { MCPManager } from "../mcp/manager.js";
 import type { TuiApp } from "./tui-app.js";
-import { saveUserConfig, maskApiKey } from "../core/config.js";
+import { saveUserConfig, saveUserProjectCwd, maskApiKey } from "../core/config.js";
 import { readImageFile, readClipboardImage } from "../utils/image.js";
 
 interface CommandContext {
@@ -253,7 +253,7 @@ const COMMANDS: SlashCommandDef[] = [
             "/config model <id>       Switch model (saved to ~/.dscode/config.json)",
             "/config thinking <level> Set thinking level (saved to ~/.dscode/config.json)",
             "/config key <api-key>    Set your DeepSeek API key",
-            "/config cwd <path>       Set working directory (saved to ~/.dscode/config.json)",
+            "/config cwd <path>       Set working directory for this project (saved to ~/.dscode/config.json)",
             "/config help             Show this help",
           ].join("\n"));
           break;
@@ -275,8 +275,8 @@ const COMMANDS: SlashCommandDef[] = [
             return;
           }
           const resolvedCwd = resolve(cwd);
-          saveUserConfig({ cwd: resolvedCwd });
-          ctx.tui.addInfo(`CWD set to: ${resolvedCwd} (saved to ~/.dscode/config.json, restart required)`);
+          saveUserProjectCwd(ctx.config.startupPath, resolvedCwd);
+          ctx.tui.addInfo(`CWD set to: ${resolvedCwd} (saved to ~/.dscode/config.json for this project, restart required)`);
           break;
         }
         case "key": {
