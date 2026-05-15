@@ -60,6 +60,13 @@ export function saveUserConfig(partial: Record<string, unknown>): void {
   saveJsonSafe(path, { ...existing, ...partial });
 }
 
+export function saveUserProjectCwd(startupPath: string, cwd: string): void {
+  saveUserConfig({
+    cwd: resolve(cwd),
+    cwdProjectPath: resolve(startupPath),
+  });
+}
+
 export function loadConfig(): HarnessConfig {
   const startupPath = resolve(process.env.DSCODE_PROJECT_PATH ?? process.cwd());
   const configDir = dsConfigHome();
@@ -70,12 +77,20 @@ export function loadConfig(): HarnessConfig {
 
   let projectPath = startupPath;
   const configuredCwd = userConfig.cwd;
-  if (typeof configuredCwd === "string" && configuredCwd.trim() !== "") {
+  const configuredCwdProjectPath = userConfig.cwdProjectPath;
+  if (
+    typeof configuredCwd === "string" &&
+    configuredCwd.trim() !== "" &&
+    typeof configuredCwdProjectPath === "string" &&
+    resolve(configuredCwdProjectPath) === startupPath
+  ) {
     const nextProjectPath = resolve(configuredCwd);
     if (existsSync(nextProjectPath)) {
       projectPath = nextProjectPath;
     }
   }
+
+  saveUserProjectCwd(startupPath, projectPath);
 
   if (projectPath !== process.cwd()) {
     process.chdir(projectPath);
@@ -148,6 +163,7 @@ export function loadConfig(): HarnessConfig {
     apiKey,
     thinkingLevel,
     maxTokens,
+    startupPath,
     projectPath,
     configDir,
     dataDir,

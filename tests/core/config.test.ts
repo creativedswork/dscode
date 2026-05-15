@@ -21,7 +21,29 @@ describe("config and settings loading", () => {
     else process.env.DSCODE_DATA_HOME = originalDataHome;
   });
 
-  it("switches projectPath using user config cwd on restart", () => {
+  it("defaults to startup path and records it in user config", () => {
+    const root = mkdtempSync(join(tmpdir(), "dscode-config-"));
+    const configHome = join(root, "home");
+    const workspace = join(root, "workspace");
+
+    mkdirSync(configHome, { recursive: true });
+    mkdirSync(workspace, { recursive: true });
+
+    process.env.DSCODE_PROJECT_PATH = workspace;
+    process.env.DSCODE_CONFIG_HOME = configHome;
+    process.env.DSCODE_DATA_HOME = configHome;
+
+    const config = loadConfig();
+    const saved = JSON.parse(readFileSync(join(configHome, "config.json"), "utf8"));
+
+    expect(realpathSync(config.projectPath)).toBe(realpathSync(workspace));
+    expect(realpathSync(process.cwd())).toBe(realpathSync(workspace));
+    expect(saved).toMatchObject({ cwd: workspace, cwdProjectPath: workspace });
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("switches projectPath using persisted cwd for the same startup project", () => {
     const root = mkdtempSync(join(tmpdir(), "dscode-config-"));
     const configHome = join(root, "home");
     const workspace = join(root, "workspace");
@@ -31,7 +53,7 @@ describe("config and settings loading", () => {
     mkdirSync(target, { recursive: true });
     writeFileSync(
       join(configHome, "config.json"),
-      JSON.stringify({ cwd: target, modelId: "deepseek-v4-pro" }) + "\n",
+      JSON.stringify({ cwd: target, cwdProjectPath: workspace, modelId: "deepseek-v4-pro" }) + "\n",
       "utf8",
     );
 
@@ -48,7 +70,36 @@ describe("config and settings loading", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("keeps startup path when user config cwd does not exist", () => {
+  it("keeps startup path when persisted cwd belongs to another startup project", () => {
+    const root = mkdtempSync(join(tmpdir(), "dscode-config-"));
+    const configHome = join(root, "home");
+    const workspace = join(root, "workspace");
+    const otherWorkspace = join(root, "other-workspace");
+    const target = join(workspace, "nested-project");
+
+    mkdirSync(configHome, { recursive: true });
+    mkdirSync(workspace, { recursive: true });
+    mkdirSync(otherWorkspace, { recursive: true });
+    mkdirSync(target, { recursive: true });
+    writeFileSync(
+      join(configHome, "config.json"),
+      JSON.stringify({ cwd: target, cwdProjectPath: workspace }) + "\n",
+      "utf8",
+    );
+
+    process.env.DSCODE_PROJECT_PATH = otherWorkspace;
+    process.env.DSCODE_CONFIG_HOME = configHome;
+    process.env.DSCODE_DATA_HOME = configHome;
+
+    const config = loadConfig();
+
+    expect(realpathSync(config.projectPath)).toBe(realpathSync(otherWorkspace));
+    expect(realpathSync(process.cwd())).toBe(realpathSync(otherWorkspace));
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("keeps startup path when persisted cwd does not exist", () => {
     const root = mkdtempSync(join(tmpdir(), "dscode-config-"));
     const configHome = join(root, "home");
     const workspace = join(root, "workspace");
@@ -57,7 +108,7 @@ describe("config and settings loading", () => {
     mkdirSync(workspace, { recursive: true });
     writeFileSync(
       join(configHome, "config.json"),
-      JSON.stringify({ cwd: join(workspace, "missing") }) + "\n",
+      JSON.stringify({ cwd: join(workspace, "missing"), cwdProjectPath: workspace }) + "\n",
       "utf8",
     );
 
@@ -115,10 +166,11 @@ describe("config and settings loading", () => {
     process.env.DSCODE_CONFIG_HOME = configHome;
     process.env.DSCODE_DATA_HOME = configHome;
 
-    saveUserConfig({ modelId: "deepseek-v4-pro", cwd: "/tmp/project" });
+    saveUserConfig({ modelId: "deepseek-v4-pro" });
 
     const saved = JSON.parse(readFileSync(join(configHome, "config.json"), "utf8"));
-    expect(saved).toMatchObject({ modelId: "deepseek-v4-pro", cwd: "/tmp/project" });
+    expect(saved).toMatchObject({ modelId: "deepseek-v4-pro" });
+    expect(saved.cwd).toBeUndefined();
 
     rmSync(root, { recursive: true, force: true });
   });

@@ -76,7 +76,7 @@ node dist/dscode.mjs
 </tr>
 </table>
 
-> 欢迎大家在 GitHub 给项目点个 Star、Watch，顺手点赞支持。
+> 如果你喜欢这个项目，欢迎在 GitHub 点个 ⭐ Star、👀 Watch、👍 点赞支持！你的鼓励是我持续打磨 dscode 的动力，也非常感谢每一条反馈和建议。
 
 ### 首次启动
 
@@ -86,6 +86,7 @@ node dist/dscode.mjs
 ```
 
 `/config` 命令写入的配置会持久化到 `~/.dscode/config.json`，后续启动无需重复设置。
+其中 `cwd` 会记录本次启动对应的项目目录；只有在你手动执行 `/config cwd <path>` 时，才会对当前项目复用该目录。
 声明式配置单独放在 `settings.json`：用户级 `~/.dscode/settings.json`，项目级 `<project>/.dscode/settings.json`。
 
 ## What you get
@@ -125,7 +126,7 @@ dscode 通过 **MCP (Model Context Protocol)** 连接外部工具，把 DeepSeek
 /config model <id>          # 切换模型（即时生效）
 /config thinking <level>    # 设置思考强度
 /config key <api-key>       # 设置 API Key
-/config cwd <path>          # 设置工作目录（重启生效）
+/config cwd <path>          # 为当前项目设置工作目录（重启生效）
 /config help                # 查看帮助
 ```
 
@@ -257,7 +258,7 @@ Always push the branch before creating a PR.
 
 推荐把配置分成两类：
 
-- `/config` 命令写入的用户命令配置：`~/.dscode/config.json`
+- `/config` 命令写入的用户命令配置：`~/.dscode/config.json`（包含当前项目的 cwd 记录）
 - 声明式 settings：
   - 用户级：`~/.dscode/settings.json`
   - 项目级：`<project>/.dscode/settings.json`
@@ -270,7 +271,8 @@ Always push the branch before creating a PR.
 {
   "modelId": "deepseek-v4-flash",
   "thinkingLevel": "high",
-  "cwd": "/absolute/path/to/project"
+  "cwd": "/absolute/path/to/project/subdir",
+  "cwdProjectPath": "/absolute/path/to/project"
 }
 ```
 
