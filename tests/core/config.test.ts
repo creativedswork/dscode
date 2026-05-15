@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { loadConfig, saveUserConfig } from "../../src/core/config.js";
+import { loadConfig, loadUserSettings, saveUserConfig, saveUserSettings } from "../../src/core/config.js";
 
 describe("config and settings loading", () => {
   const originalCwd = process.cwd();
@@ -171,6 +171,36 @@ describe("config and settings loading", () => {
     const saved = JSON.parse(readFileSync(join(configHome, "config.json"), "utf8"));
     expect(saved).toMatchObject({ modelId: "deepseek-v4-pro" });
     expect(saved.cwd).toBeUndefined();
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("writes permission rules to user settings.json without dropping existing settings", () => {
+    const root = mkdtempSync(join(tmpdir(), "dscode-config-"));
+    const configHome = join(root, "home");
+
+    mkdirSync(configHome, { recursive: true });
+    process.env.DSCODE_CONFIG_HOME = configHome;
+    process.env.DSCODE_DATA_HOME = configHome;
+
+    saveUserSettings({
+      skills: ["git-workflow"],
+      permissions: { deny: ["**/.env"] },
+    });
+    saveUserSettings({
+      permissions: {
+        ...((loadUserSettings().permissions as Record<string, unknown> | undefined) ?? {}),
+        rules: [
+          { tool: "bash", argPattern: "^\\{\\\"command\\\":\\\"npm test\\\"\\}$", decision: "allow", reason: "saved from permission prompt", priority: 20 },
+        ],
+      },
+    });
+
+    const saved = JSON.parse(readFileSync(join(configHome, "settings.json"), "utf8"));
+    expect(saved.skills).toEqual(["git-workflow"]);
+    expect(saved.permissions.deny).toEqual(["**/.env"]);
+    expect(saved.permissions.rules).toHaveLength(1);
+    expect(saved.permissions.rules[0]).toMatchObject({ tool: "bash", decision: "allow" });
 
     rmSync(root, { recursive: true, force: true });
   });

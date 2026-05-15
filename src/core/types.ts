@@ -125,7 +125,15 @@ export interface SkillManifest {
 
 // --- UI ---
 
-export type PromptUserFn = (toolName: string, preview: string) => Promise<{
+export interface PermissionPromptResult {
   decision: "allow" | "deny";
-  rememberForSession: boolean;
-}>;
+  rememberForSession?: boolean;
+  persistRule?: PermissionRuleConfig;
+  denyReason?: string;
+}
+
+export type PromptUserFn = (
+  toolName: string,
+  preview: string,
+  args: unknown,
+) => Promise<PermissionPromptResult>;
