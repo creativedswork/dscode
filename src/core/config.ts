@@ -18,7 +18,7 @@ function userConfigPath(): string {
   return join(dsConfigHome(), "config.json");
 }
 
-function userSettingsPath(): string {
+export function userSettingsPath(): string {
   return join(dsConfigHome(), "settings.json");
 }
 
@@ -52,6 +52,16 @@ function loadUserCommandConfig(): Record<string, unknown> {
 
 function loadScopedSettings(settingsPath: string): Record<string, unknown> {
   return loadJsonSafe(settingsPath);
+}
+
+export function loadUserSettings(): Record<string, unknown> {
+  return loadScopedSettings(userSettingsPath());
+}
+
+export function saveUserSettings(partial: Record<string, unknown>): void {
+  const path = userSettingsPath();
+  const existing = loadUserSettings();
+  saveJsonSafe(path, { ...existing, ...partial });
 }
 
 export function saveUserConfig(partial: Record<string, unknown>): void {
@@ -106,6 +116,8 @@ export function loadConfig(): HarnessConfig {
   // API key: env var > user config (never project config for security)
   const apiKey = process.env.DEEPSEEK_API_KEY ?? (userConfig.apiKey as string | undefined);
 
+  const userPermissionRules = ((userSettings.permissions as any)?.rules as Record<string, unknown>[]) ?? [];
+  const projectPermissionRules = ((projectSettings.permissions as any)?.rules as Record<string, unknown>[]) ?? [];
   const userDeny = ((userSettings.permissions as any)?.deny as string[]) ?? [];
   const projectDeny = ((projectSettings.permissions as any)?.deny as string[]) ?? [];
   const denyPatterns = [...new Set([...userDeny, ...projectDeny])];
@@ -182,7 +194,7 @@ export function loadConfig(): HarnessConfig {
     },
     permissions: {
       defaultDecision: "ask",
-      rules: [],
+      rules: [...userPermissionRules, ...projectPermissionRules] as any,
       denyPatterns,
     },
     skills,

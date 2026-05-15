@@ -40,18 +40,29 @@ function toolResultPreview(result: unknown): string {
   }
 }
 
-interface PermOption {
-  value: "allow" | "always_allow" | "deny";
+export type PermOptionValue = "allow" | "always_allow" | "explain" | "deny";
+
+export interface PermOption {
+  value: PermOptionValue;
   label: string;
   key: string;
   color: (s: string) => string;
 }
 
-const PERM_OPTIONS: PermOption[] = [
+export const PERM_OPTIONS: PermOption[] = [
   { value: "allow", label: "Allow", key: "enter", color: c.green },
-  { value: "deny", label: "Deny", key: "esc", color: c.red },
   { value: "always_allow", label: "Always Allow", key: "a", color: c.cyan },
+  { value: "explain", label: "Input Idea", key: "i", color: c.yellow },
+  { value: "deny", label: "Deny", key: "esc", color: c.red },
 ];
+
+export function navigatePermSelection(current: number, direction: -1 | 1): number {
+  return (current + direction + PERM_OPTIONS.length) % PERM_OPTIONS.length;
+}
+
+export function findPermOptionByKey(input: string): PermOption | undefined {
+  return PERM_OPTIONS.find((option) => option.key.length === 1 && option.key.toLowerCase() === input.toLowerCase());
+}
 
 export class ConversationView {
   private box: Box;
@@ -205,8 +216,7 @@ export class ConversationView {
   }
 
   permNavigate(direction: -1 | 1): void {
-    const max = PERM_OPTIONS.length - 1;
-    this.permSelected = Math.max(0, Math.min(max, this.permSelected + direction));
+    this.permSelected = navigatePermSelection(this.permSelected, direction);
     this.render();
   }
 
@@ -242,7 +252,7 @@ export class ConversationView {
       lines.push(`${prefix} ${label}  ${hint}`);
     }
     lines.push(c.dim(" ──────────────────────────────────────────────────"));
-    lines.push(c.dim(" ↑↓ to navigate  Enter to confirm  Esc to deny"));
+    lines.push(c.dim(" ↑↓ to navigate  Enter to confirm  A/I shortcuts  Esc to deny"));
     return lines;
   }
 

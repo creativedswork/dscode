@@ -1,4 +1,5 @@
-import type { PermissionDecision, PermissionRule, PermissionsConfig, PromptUserFn } from "../core/types.js";
+import type { PermissionDecision, PermissionRule, PermissionRuleConfig, PermissionsConfig, PromptUserFn } from "../core/types.js";
+import { loadUserSettings, saveUserSettings } from "../core/config.js";
 import { DEFAULT_RULES } from "./rules.js";
 
 function globToRegex(pattern: string): RegExp {
@@ -70,12 +71,23 @@ export class PermissionManager {
       case "ask": {
         this.onBeforePrompt?.();
         const preview = this.formatPreview(toolName, context.args);
-        const result = await this.promptUser(toolName, preview);
+        const result = await this.promptUser(toolName, preview, context.args);
+        if (result.persistRule) {
+          this.persistRule(result.persistRule);
+          this.rules.push({
+            tool: result.persistRule.tool,
+            argPattern: result.persistRule.argPattern ? new RegExp(result.persistRule.argPattern) : undefined,
+            decision: result.persistRule.decision,
+            reason: result.persistRule.reason,
+            priority: result.persistRule.priority ?? 5,
+          });
+          this.rules.sort((a, b) => b.priority - a.priority);
+        }
         if (result.rememberForSession) {
           this.sessionGrants.add(toolName);
         }
         if (result.decision === "deny") {
-          return { block: true, reason: "Denied by user" };
+          return { block: true, reason: result.denyReason ?? "Denied by user" };
         }
         return undefined;
       }
@@ -92,6 +104,20 @@ export class PermissionManager {
 
   getSessionGrants(): string[] {
     return Array.from(this.sessionGrants);
+  }
+
+  private persistRule(rule: PermissionRuleConfig): void {
+    const settings = loadUserSettings();
+    const permissions = ((settings.permissions as Record<string, unknown> | undefined) ?? {});
+    const rules = Array.isArray(permissions.rules) ? [...permissions.rules] : [];
+    rules.push(rule);
+    saveUserSettings({
+      ...settings,
+      permissions: {
+        ...permissions,
+        rules,
+      },
+    });
   }
 
   private evaluate(toolName: string, argsStr: string): { decision: PermissionDecision; reason?: string } {

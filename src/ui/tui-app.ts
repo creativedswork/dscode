@@ -21,10 +21,10 @@ import type { ToolRegistry } from "../drivers/tool-registry.js";
 import type { SkillManager } from "../skills/manager.js";
 import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
-import type { HarnessConfig } from "../core/types.js";
+import type { HarnessConfig, PermissionPromptResult, PermissionRuleConfig } from "../core/types.js";
 import type { MCPManager } from "../mcp/manager.js";
 import { c, editorTheme, TIPS, randomTip } from "./theme.js";
-import { ConversationView } from "./conversation.js";
+import { ConversationView, findPermOptionByKey } from "./conversation.js";
 import { getSlashCommandAutocomplete, executeSlashCommand } from "./commands.js";
 import { buildMcpServers, getMcpVisibleRows, renderMcpServerList, renderMcpToolList } from "./mcp-browser.js";
 import { readClipboardImageNonBlocking } from "../utils/image.js";
@@ -69,9 +69,12 @@ export class TuiApp {
   private processing = false;
   private lastCtrlCPress = 0;
   private ctrlCDebounceUntil = 0;
-  private resolvePermission:
-    | ((result: { decision: "allow" | "deny"; rememberForSession: boolean }) => void)
+  private menuNavDebounceUntil = 0;
+  private resolvePermission: ((result: PermissionPromptResult) => void) | null = null;
+  private pendingPermissionContext:
+    | { toolName: string; args: unknown }
     | null = null;
+  private permissionExplainMode = false;
   private idleStartTime = 0;
   private lastActivityTime = 0;
   private waitSegments: number[] = [];
@@ -141,8 +144,9 @@ export class TuiApp {
   getPromptPermission(): (
     toolName: string,
     preview: string,
-  ) => Promise<{ decision: "allow" | "deny"; rememberForSession: boolean }> {
-    return (toolName, preview) => this.showPermissionPrompt(toolName, preview);
+    args: unknown,
+  ) => Promise<PermissionPromptResult> {
+    return (toolName, preview, args) => this.showPermissionPrompt(toolName, preview, args);
   }
 
   setMcpManager(mcpManager?: MCPManager): void {
@@ -155,52 +159,114 @@ export class TuiApp {
   private async showPermissionPrompt(
     toolName: string,
     preview: string,
-  ): Promise<{ decision: "allow" | "deny"; rememberForSession: boolean }> {
+    args: unknown,
+  ): Promise<PermissionPromptResult> {
+    this.pendingPermissionContext = { toolName, args };
+    this.permissionExplainMode = false;
     this.conversation.showPermissionPrompt(toolName, preview);
     return new Promise((resolve) => {
       this.resolvePermission = resolve;
     });
   }
 
-  private resolvePermissionChoice(decision: "allow" | "deny", rememberForSession = false): void {
+  private resolvePermissionChoice(result: PermissionPromptResult): void {
     if (this.resolvePermission) {
-      this.resolvePermission({ decision, rememberForSession });
+      this.resolvePermission(result);
       this.resolvePermission = null;
     }
+    this.pendingPermissionContext = null;
+    this.permissionExplainMode = false;
+    this.editor.disableSubmit = this.processing;
     this.conversation.clearPermissionPrompt();
+    const suffix = result.persistRule
+      ? c.dim(" (saved rule)")
+      : result.rememberForSession
+        ? c.dim(" (always)")
+        : "";
     this.conversation.addInfo(
-      c.dim(`Permission: ${decision === "allow" ? c.green("allowed") : c.red("denied")}${rememberForSession ? c.dim(" (always)") : ""}`),
+      c.dim(`Permission: ${result.decision === "allow" ? c.green("allowed") : c.red("denied")}${suffix}`),
     );
     this.tui.requestRender(true);
   }
 
+  private buildPersistedRule(toolName: string, args: unknown, reason: string): PermissionRuleConfig {
+    const argPattern = `^${JSON.stringify(args).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`;
+    return {
+      tool: toolName,
+      argPattern,
+      decision: "allow",
+      reason,
+      priority: 20,
+    };
+  }
+
+  private canNavigateMenu(now = Date.now()): boolean {
+    if (now < this.menuNavDebounceUntil) {
+      return false;
+    }
+    this.menuNavDebounceUntil = now + 90;
+    return true;
+  }
+
+  private applyPermissionOption(option: "allow" | "always_allow" | "explain" | "deny"): void {
+    if (option === "deny") {
+      this.resolvePermissionChoice({ decision: "deny" });
+      return;
+    }
+    if (option === "always_allow") {
+      this.resolvePermissionChoice({ decision: "allow", rememberForSession: true });
+      return;
+    }
+    if (option === "explain") {
+      this.permissionExplainMode = true;
+      this.editor.disableSubmit = false;
+      this.conversation.clearPermissionPrompt();
+      this.conversation.addInfo(c.dim("Type your updated idea and press Enter. It will be sent back to the agent. Esc cancels."));
+      this.tui.requestRender(true);
+      return;
+    }
+    this.resolvePermissionChoice({ decision: "allow" });
+  }
+
   private handleInput(data: string): boolean {
+    if (this.permissionExplainMode) {
+      if (matchesKey(data, Key.escape) || matchesKey(data, "ctrl+c") || data === "\x03") {
+        this.permissionExplainMode = false;
+        this.pendingPermissionContext = null;
+        this.editor.disableSubmit = this.processing;
+        this.conversation.addInfo(c.dim("Permission explanation cancelled."));
+        return true;
+      }
+      return false;
+    }
+
     if (this.resolvePermission) {
       if (matchesKey(data, Key.up)) {
-        this.conversation.permNavigate(-1);
+        if (this.canNavigateMenu()) {
+          this.conversation.permNavigate(-1);
+        }
         return true;
       }
       if (matchesKey(data, Key.down)) {
-        this.conversation.permNavigate(1);
+        if (this.canNavigateMenu()) {
+          this.conversation.permNavigate(1);
+        }
         return true;
       }
       if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
         const sel = this.conversation.permSelect();
         if (sel) {
-          if (sel.value === "deny") {
-            this.resolvePermissionChoice("deny");
-          } else {
-            this.resolvePermissionChoice("allow", sel.value === "always_allow");
-          }
+          this.applyPermissionOption(sel.value);
         }
         return true;
       }
       if (matchesKey(data, Key.escape) || matchesKey(data, "ctrl+c") || data === "\x03") {
-        this.resolvePermissionChoice("deny");
+        this.resolvePermissionChoice({ decision: "deny" });
         return true;
       }
-      if (data === "a" || data === "A") {
-        this.resolvePermissionChoice("allow", true);
+      const shortcut = findPermOptionByKey(data);
+      if (shortcut) {
+        this.applyPermissionOption(shortcut.value);
         return true;
       }
       return true;
@@ -322,6 +388,9 @@ export class TuiApp {
     }
 
     if (matchesKey(data, Key.up)) {
+      if (!this.canNavigateMenu()) {
+        return true;
+      }
       if (this.mcpSelectedServerIndex == null) {
         const prev = this.mcpServerSelection;
         this.mcpServerSelection = Math.max(0, this.mcpServerSelection - 1);
@@ -340,6 +409,9 @@ export class TuiApp {
     }
 
     if (matchesKey(data, Key.down)) {
+      if (!this.canNavigateMenu()) {
+        return true;
+      }
       if (this.mcpSelectedServerIndex == null) {
         const toolCount = servers.length;
         const visibleRows = getMcpVisibleRows(toolCount);
@@ -412,7 +484,7 @@ export class TuiApp {
 
   private handleCtrlC(): void {
     if (this.resolvePermission) {
-      this.resolvePermissionChoice("deny");
+      this.resolvePermissionChoice({ decision: "deny" });
       return;
     }
 
@@ -483,7 +555,7 @@ export class TuiApp {
 
   setProcessing(processing: boolean): void {
     this.processing = processing;
-    this.editor.disableSubmit = processing;
+    this.editor.disableSubmit = processing && !this.permissionExplainMode;
     if (processing) {
       this.idleStartTime = 0;
       this.lastActivityTime = Date.now();
@@ -562,10 +634,32 @@ export class TuiApp {
   }
 
   private handleSubmit(text: string): void {
-    if (this.processing) return;
     if (!text) return;
 
     this.editor.setText("");
+
+    if (this.permissionExplainMode) {
+      const state = this.pendingPermissionContext;
+      this.resolvePermissionChoice({
+        decision: "deny",
+        denyReason: `User updated the request during permission review: ${text}`,
+      });
+      this.setProcessing(false);
+      this.addUserMessage(text);
+      this.setProcessing(true);
+      this.deps.agent.prompt(text).then(
+        () => {
+          this.setProcessing(false);
+        },
+        (err) => {
+          this.setProcessing(false);
+          this.addError(err instanceof Error ? err.message : String(err));
+        },
+      );
+      return;
+    }
+
+    if (this.processing) return;
 
     if (text.startsWith("/")) {
       executeSlashCommand(text, this.deps, this);

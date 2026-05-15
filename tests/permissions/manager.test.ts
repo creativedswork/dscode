@@ -1,4 +1,7 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PermissionManager } from "../../src/permissions/manager.js";
 
 function createPromptFn() {
@@ -10,6 +13,8 @@ function createPromptFn() {
 
 describe("PermissionManager", () => {
   let defaultConfig: Parameters<typeof PermissionManager.prototype.constructor>[0];
+  const originalConfigHome = process.env.DSCODE_CONFIG_HOME;
+  const originalDataHome = process.env.DSCODE_DATA_HOME;
 
   beforeEach(() => {
     defaultConfig = {
@@ -17,6 +22,13 @@ describe("PermissionManager", () => {
       rules: [],
       denyPatterns: [],
     };
+  });
+
+  afterEach(() => {
+    if (originalConfigHome === undefined) delete process.env.DSCODE_CONFIG_HOME;
+    else process.env.DSCODE_CONFIG_HOME = originalConfigHome;
+    if (originalDataHome === undefined) delete process.env.DSCODE_DATA_HOME;
+    else process.env.DSCODE_DATA_HOME = originalDataHome;
   });
 
   it("should allow read_file by default", async () => {
@@ -253,5 +265,36 @@ describe("PermissionManager", () => {
       args: { path: "/tmp/test.txt", content: "hello" },
     });
     expect(called).toBe(true);
+  });
+
+  it("persists a saved allow rule to user settings", async () => {
+    const root = mkdtempSync(join(tmpdir(), "dscode-permissions-"));
+    const configHome = join(root, "home");
+    mkdirSync(configHome, { recursive: true });
+    process.env.DSCODE_CONFIG_HOME = configHome;
+    process.env.DSCODE_DATA_HOME = configHome;
+
+    const pm = new PermissionManager(defaultConfig, async () => ({
+      decision: "allow",
+      persistRule: {
+        tool: "bash",
+        argPattern: "^\\{\\\"command\\\":\\\"npm test\\\"\\}$",
+        decision: "allow",
+        reason: "saved from permission prompt",
+        priority: 20,
+      },
+    }));
+
+    const result = await pm.check({
+      toolCall: { name: "bash" },
+      args: { command: "npm test" },
+    });
+
+    expect(result).toBeUndefined();
+    const saved = JSON.parse(readFileSync(join(configHome, "settings.json"), "utf8"));
+    expect(saved.permissions.rules).toHaveLength(1);
+    expect(saved.permissions.rules[0]).toMatchObject({ tool: "bash", decision: "allow" });
+
+    rmSync(root, { recursive: true, force: true });
   });
 });

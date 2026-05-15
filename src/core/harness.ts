@@ -40,7 +40,7 @@ export class Harness {
     this.skillManager = new SkillManager(config.userSkillsDir, config.projectSkillsDir);
     this.permissionManager = new PermissionManager(
       config.permissions,
-      (toolName, preview) => this.tui.getPromptPermission()(toolName, preview),
+      (toolName, preview, args) => this.tui.getPromptPermission()(toolName, preview, args),
       () => {},
     );
   }
