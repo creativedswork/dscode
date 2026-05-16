@@ -23,6 +23,11 @@ export interface HarnessConfig {
   permissions: PermissionsConfig;
   skills: string[];
   mcp: MCPServerConfig[];
+  appHost: AppHostConfig;
+}
+
+export interface AppHostConfig {
+  enabled: boolean;
 }
 
 export interface ContextConfig {

@@ -1,0 +1,26 @@
+{
+  "name": "dscode-example-scenario-modeler",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "SaaS Scenario Modeler MCP App — dscode example",
+  "scripts": {
+    "start": "tsx server.ts",
+    "start:stdio": "tsx server.ts --stdio",
+    "demo": "tsx ../../src/core/main.ts",
+    "demo:server": "tsx server.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "concurrently": "^9.2.1",
+    "tsx": "^4.19.0"
+  }
+}

@@ -32,7 +32,14 @@ async function main() {
   });
   chmodSync(outfile, 0o755);
 
-  // Step 3: assemble dist-standalone/
+  // Step 3: copy static assets
+  console.log("Copying sandbox.html...");
+  await cp(
+    resolve(rootDir, "src", "apps", "sandbox.html"),
+    resolve(rootDir, "dist", "sandbox.html"),
+  );
+
+  // Step 4: assemble dist-standalone/
   console.log("Assembling %s/...", buildDir);
   const standalone = resolve(rootDir, buildDir);
   if (existsSync(standalone)) rmSync(standalone, { recursive: true });
