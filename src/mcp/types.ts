@@ -45,6 +45,14 @@ export interface MCPToolDefinition {
   description?: string;
   inputSchema: Record<string, unknown>;
   alwaysLoad?: boolean;
+  _meta?: {
+    ui?: {
+      resourceUri?: string;
+      visibility?: Array<"model" | "app">;
+    };
+    /** @deprecated Use ui.resourceUri */
+    "ui/resourceUri"?: string;
+  };
 }
 
 // --- MCP Server Status ---

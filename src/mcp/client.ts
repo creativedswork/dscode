@@ -34,10 +34,16 @@ export class MCPClient {
       await this.connectSSE();
     }
 
-    // send initialize
+    // send initialize with MCP Apps ui extension capability
     const result = await this.request("initialize", {
       protocolVersion: MCP_PROTOCOL_VERSION,
-      capabilities: {},
+      capabilities: {
+        extensions: {
+          "io.modelcontextprotocol/ui": {
+            mimeTypes: ["text/html;profile=mcp-app"],
+          },
+        },
+      },
       clientInfo: { name: "dscode", version: "0.2.0" },
     }) as any;
 
@@ -50,13 +56,32 @@ export class MCPClient {
     this.sendNotification("notifications/initialized");
   }
 
+  private toolDefs = new Map<string, MCPToolDefinition>();
+
   async listTools(): Promise<MCPToolDefinition[]> {
     const result = await this.request("tools/list") as any;
-    return (result?.tools ?? []) as MCPToolDefinition[];
+    const tools = (result?.tools ?? []) as MCPToolDefinition[];
+    this.toolDefs.clear();
+    for (const tool of tools) {
+      this.toolDefs.set(tool.name, tool);
+    }
+    return tools;
+  }
+
+  getToolDef(name: string): MCPToolDefinition | undefined {
+    return this.toolDefs.get(name);
+  }
+
+  getAllToolDefs(): MCPToolDefinition[] {
+    return Array.from(this.toolDefs.values());
   }
 
   async callTool(name: string, args: unknown): Promise<unknown> {
     return this.request("tools/call", { name, arguments: args }, TOOL_CALL_TIMEOUT);
+  }
+
+  async readResource(uri: string): Promise<unknown> {
+    return this.request("resources/read", { uri }, TOOL_CALL_TIMEOUT);
   }
 
   async close(): Promise<void> {

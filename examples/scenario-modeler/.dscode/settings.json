@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "scenario-modeler": {
+      "command": "npx",
+      "args": ["tsx", "server.ts", "--stdio"],
+      "description": "MCP App - SaaS Scenario Modeler"
+    }
+  }
+}

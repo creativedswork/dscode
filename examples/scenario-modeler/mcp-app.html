@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Scenario Modeler</title>
+<style>
+:root{--bg:#fff;--bg2:#f9fafb;--bg3:#f3f4f6;--text:#111827;--text2:#6b7280;--text3:#9ca3af;--border:#e5e7eb;--blue:#3b82f6;--green:#10b981;--amber:#f59e0b;--red:#ef4444;--slider-track:#d1d5db;--slider-thumb:#3b82f6}
+@media(prefers-color-scheme:dark){:root{--bg:#111827;--bg2:#1f2937;--bg3:#374151;--text:#f9fafb;--text2:#9ca3af;--text3:#6b7280;--border:#374151;--slider-track:#4b5563;--slider-thumb:#60a5fa}}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;font-family:system-ui,-apple-system,sans-serif;font-size:14px;background:var(--bg);color:var(--text);overflow:hidden}
+.main{width:100%;height:100%;display:flex;flex-direction:column}
+.header{height:40px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;border-bottom:1px solid var(--border);flex-shrink:0}
+.header-title{font-size:14px;font-weight:600;white-space:nowrap}
+.header-ctrls{display:flex;align-items:center;gap:6px}
+.template-select,.btn{font-size:12px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;background:var(--bg2);color:var(--text);cursor:pointer}
+.btn:hover{background:var(--bg3)}
+.params{padding:8px 10px;border-bottom:1px solid var(--border);flex-shrink:0}
+.section-title{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.05em;color:var(--text2);margin:0 0 4px 0}
+.slider-row{display:flex;align-items:center;height:22px;gap:8px}
+.slider-label{width:90px;font-size:12px;color:var(--text);flex-shrink:0}
+.slider-input{flex:1;height:4px;-webkit-appearance:none;appearance:none;background:var(--slider-track);border-radius:2px;cursor:pointer}
+.slider-input::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;border-radius:50%;background:var(--slider-thumb);cursor:pointer}
+.slider-value{width:45px;font-size:12px;font-weight:500;color:var(--text);text-align:right;flex-shrink:0}
+.chart-section{padding:8px 10px;border-bottom:1px solid var(--border);flex:2;display:flex;flex-direction:column;min-height:0}
+.chart-container{flex:1;position:relative;min-height:0}
+.chart-container canvas{width:100%!important;height:100%!important}
+.chart-legend{display:flex;gap:16px;justify-content:center;font-size:11px;color:var(--text2);padding-top:4px}
+.legend-item{display:flex;align-items:center;gap:4px}
+.legend-color{display:inline-block;width:10px;height:2px;border-radius:1px}
+.metrics{padding:6px 10px;flex:1;display:flex;flex-direction:column;min-height:0}
+.metrics-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:6px}
+.metric-card{background:var(--bg2);border-radius:6px;padding:4px 8px;text-align:center}
+.metric-value{font-size:16px;font-weight:600;color:var(--text)}
+.metric-label{font-size:10px;color:var(--text2);margin-top:2px}
+.green{color:var(--green)}.red{color:var(--red)}.amber{color:var(--amber)}
+.metrics-summary{padding-top:6px;border-top:1px solid var(--border);font-size:11px;color:var(--text2);display:flex;justify-content:space-between}
+.loading{display:flex;align-items:center;justify-content:center;height:100%;color:var(--text2);font-size:14px}
+</style></head>
+<body>
+<main class="main" id="app"><div class="loading" id="loading">Connecting to dscode...</div></main>
+<script>
+// ================================================================
+// Pure JS MCP App — no framework, no external dependencies
+// Canvas API for chart, DOM API for UI
+// ================================================================
+
+// --- MCP JSON-RPC over postMessage ---
+var reqId = 1, pending = {}, hostCtx = null;
+var templates = [], defaultInputs = {startingMRR:50000,monthlyGrowthRate:5,monthlyChurnRate:3,grossMargin:80,fixedCosts:30000};
+
+function send(method, params) {
+  return new Promise(function(resolve, reject) {
+    var id = reqId++;
+    pending[id] = {resolve:resolve, reject:reject};
+    window.parent.postMessage({jsonrpc:'2.0',id:id,method:method,params:params},'*');
+    setTimeout(function(){ if(pending[id]){delete pending[id]; reject(new Error('timeout'));} },30000);
+  });
+}
+
+window.addEventListener('message', function(e) {
+  var m = e.data;
+  if (!m || typeof m !== 'object') return;
+  if (m.id !== undefined && (m.result !== undefined || m.error !== undefined)) {
+    var p = pending[m.id];
+    if (p) { delete pending[m.id]; m.error ? p.reject(new Error(m.error.message)) : p.resolve(m.result); }
+  }
+  if (m.method) handleNotification(m.method, m.params);
+});
+
+var notifHandlers = {};
+function onNotif(method, fn) {
+  if (!notifHandlers[method]) notifHandlers[method] = [];
+  notifHandlers[method].push(fn);
+}
+function handleNotification(method, params) {
+  var hs = notifHandlers[method] || [];
+  for (var i = 0; i < hs.length; i++) hs[i](params);
+}
+
+// --- Business Logic ---
+function calcProjections(inp) {
+  var r = (inp.monthlyGrowthRate - inp.monthlyChurnRate) / 100;
+  var ps = [], cum = 0;
+  for (var m = 1; m <= 12; m++) {
+    var mrr = inp.startingMRR * Math.pow(1 + r, m);
+    var gp = mrr * (inp.grossMargin / 100);
+    var np = gp - inp.fixedCosts;
+    cum += mrr;
+    ps.push({month:m, mrr:mrr, grossProfit:gp, netProfit:np, cumulativeRevenue:cum});
+  }
+  return ps;
+}
+
+function calcSummary(ps, inp) {
+  var e = ps[11].mrr;
+  var tr = 0, tp = 0;
+  for (var i = 0; i < ps.length; i++) { tr += ps[i].mrr; tp += ps[i].netProfit; }
+  var bp = null;
+  for (var i = 0; i < ps.length; i++) { if (ps[i].netProfit >= 0) { bp = ps[i].month; break; } }
+  return {endingMRR:e,arr:e*12,totalRevenue:Math.round(tr),totalProfit:Math.round(tp),
+    mrrGrowthPct:Math.round(((e-inp.startingMRR)/inp.startingMRR)*1000)/10,
+    avgMargin:Math.round((tp/tr)*1000)/10, breakEvenMonth:bp};
+}
+
+function fmtCurrency(v) {
+  var a = Math.abs(v), s = v < 0 ? '-' : '';
+  if (a >= 1e6) return s + '$' + (a/1e6).toFixed(2) + 'M';
+  if (a >= 1e3) return s + '$' + (a/1e3).toFixed(1) + 'K';
+  return s + '$' + Math.round(a);
+}
+function fmtPct(v, sign) { return (sign && v > 0 ? '+' : '') + v.toFixed(1).replace(/\.0$/, '') + '%'; }
+
+// --- Canvas Chart ---
+function drawChart(canvas, userProj, tmplProj, tmplName) {
+  var ctx = canvas.getContext('2d');
+  var W = canvas.width = canvas.offsetWidth;
+  var H = canvas.height = canvas.offsetHeight;
+  var pad = {top:20, right:20, bottom:30, left:50};
+  var pw = W - pad.left - pad.right;
+  var ph = H - pad.top - pad.bottom;
+
+  ctx.clearRect(0,0,W,H);
+
+  // Find max value
+  var maxVal = 0;
+  for (var i = 0; i < 12; i++) {
+    maxVal = Math.max(maxVal, Math.abs(userProj[i].mrr), Math.abs(userProj[i].netProfit));
+    if (tmplProj) maxVal = Math.max(maxVal, Math.abs(tmplProj[i].mrr), Math.abs(tmplProj[i].netProfit));
+  }
+  maxVal = Math.ceil(maxVal/5000)*5000;
+
+  // Grid
+  var isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+  var gridColor = isDark ? '#374151' : '#e5e7eb';
+  var textColor = isDark ? '#9ca3af' : '#6b7280';
+  ctx.strokeStyle = gridColor;
+  ctx.lineWidth = 0.5;
+  var ySteps = 5;
+  for (var i = 0; i <= ySteps; i++) {
+    var y = pad.top + (ph * i / ySteps);
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(W-pad.right, y); ctx.stroke();
+    var val = maxVal - (maxVal * i / ySteps);
+    ctx.fillStyle = textColor; ctx.font = '10px system-ui';
+    ctx.textAlign = 'right';
+    ctx.fillText(fmtCurrency(val), pad.left - 4, y + 4);
+  }
+
+  // X labels
+  ctx.textAlign = 'center';
+  for (var i = 0; i < 12; i++) {
+    var x = pad.left + (pw * i / 11);
+    ctx.fillText('M' + (i+1), x, H - pad.bottom + 14);
+  }
+
+  function toX(i) { return pad.left + (pw * i / 11); }
+  function toY(v) { return pad.top + ph - (ph * v / maxVal); }
+
+  function drawLine(data, color, dashed) {
+    ctx.beginPath();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = dashed ? 1.5 : 2;
+    if (dashed) ctx.setLineDash([5, 5]); else ctx.setLineDash([]);
+    ctx.moveTo(toX(0), toY(data[0]));
+    for (var i = 1; i < 12; i++) ctx.lineTo(toX(i), toY(data[i]));
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  drawLine(userProj.map(function(p){return p.mrr}), '#3b82f6', false);
+  drawLine(userProj.map(function(p){return p.grossProfit}), '#10b981', false);
+  drawLine(userProj.map(function(p){return p.netProfit}), '#f59e0b', false);
+
+  if (tmplProj) {
+    drawLine(tmplProj.map(function(p){return p.mrr}), '#3b82f6', true);
+    drawLine(tmplProj.map(function(p){return p.grossProfit}), '#10b981', true);
+    drawLine(tmplProj.map(function(p){return p.netProfit}), '#f59e0b', true);
+  }
+}
+
+// --- DOM Rendering ---
+var currentInputs = {startingMRR:50000,monthlyGrowthRate:5,monthlyChurnRate:3,grossMargin:80,fixedCosts:30000};
+var selectedTmplId = null;
+
+function render() {
+  var proj = calcProjections(currentInputs);
+  var summary = calcSummary(proj, currentInputs);
+  var tmpl = null;
+  for (var i = 0; i < templates.length; i++) { if (templates[i].id === selectedTmplId) { tmpl = templates[i]; break; } }
+
+  var tmplOpts = templates.map(function(t){ return '<option value="' + t.id + '"' + (t.id === selectedTmplId ? ' selected' : '') + '>' + t.icon + ' ' + t.name + '</option>'; }).join('');
+
+  document.getElementById('app').innerHTML =
+    '<header class="header"><h1 class="header-title">SaaS Scenario Modeler</h1><div class="header-ctrls">' +
+    '<select class="template-select" id="tmpl-select"><option value="">Compare to...</option>' + tmplOpts + '</select>' +
+    (tmpl ? '<button class="btn" id="load-btn">Load</button>' : '') +
+    '<button class="btn" id="reset-btn">Reset</button></div></header>' +
+    '<section class="params"><h2 class="section-title">Parameters</h2>' +
+    sliderRow('Starting MRR', 'mrr', currentInputs.startingMRR, 10000, 500000, 5000, fmtCurrency) +
+    sliderRow('Growth Rate', 'grow', currentInputs.monthlyGrowthRate, 0, 20, 0.5, function(v){return fmtPct(v)}) +
+    sliderRow('Churn Rate', 'churn', currentInputs.monthlyChurnRate, 0, 15, 0.5, function(v){return fmtPct(v)}) +
+    sliderRow('Gross Margin', 'margin', currentInputs.grossMargin, 50, 95, 5, function(v){return fmtPct(v)}) +
+    sliderRow('Fixed Costs', 'costs', currentInputs.fixedCosts, 5000, 200000, 5000, fmtCurrency) +
+    '</section>' +
+    '<section class="chart-section"><h2 class="section-title">12-Month Projection</h2>' +
+    '<div class="chart-container"><canvas id="chart"></canvas></div>' +
+    '<div class="chart-legend"><span class="legend-item"><span class="legend-color" style="background:#3b82f6"></span> MRR</span>' +
+    '<span class="legend-item"><span class="legend-color" style="background:#10b981"></span> Gross Profit</span>' +
+    '<span class="legend-item"><span class="legend-color" style="background:#f59e0b"></span> Net Profit</span>' +
+    (tmpl ? '<span class="legend-item" style="color:var(--text3)">(dashed = ' + tmpl.name + ')</span>' : '') +
+    '</div></section>' +
+    '<section class="metrics"><div class="metrics-grid">' +
+    metricCard('End MRR', fmtCurrency(summary.endingMRR)) +
+    metricCard('Total Revenue', fmtCurrency(summary.totalRevenue)) +
+    metricCard('Total Profit', fmtCurrency(summary.totalProfit), summary.totalProfit >= 0 ? 'green' : 'red') +
+    '</div>' +
+    '<div class="metrics-summary"><span>Break-even: <b>' + (summary.breakEvenMonth ? 'Month ' + summary.breakEvenMonth : 'Not achieved') + '</b></span>' +
+    '<span>MRR Growth: <b class="' + (summary.mrrGrowthPct >= 0 ? 'green' : 'red') + '">' + fmtPct(summary.mrrGrowthPct) + '</b></span></div>' +
+    '</section>';
+
+  bindEvents();
+  var c = document.getElementById('chart');
+  if (c) drawChart(c, proj, tmpl ? tmpl.projections : null, tmpl ? tmpl.name : null);
+}
+
+function sliderRow(label, name, value, min, max, step, format) {
+  return '<div class="slider-row"><span class="slider-label">' + label + '</span>' +
+    '<input type="range" class="slider-input" id="sl-' + name + '" min="' + min + '" max="' + max + '" step="' + step + '" value="' + value + '">' +
+    '<span class="slider-value" id="sv-' + name + '">' + format(value) + '</span></div>';
+}
+
+function metricCard(label, value, cls) {
+  return '<div class="metric-card"><div class="metric-value' + (cls ? ' ' + cls : '') + '">' + value + '</div><div class="metric-label">' + label + '</div></div>';
+}
+
+function bindEvents() {
+  function bind(id, evt, fn) { var el = document.getElementById(id); if (el) el.addEventListener(evt, fn); }
+  bind('sl-mrr', 'input', function(e){ currentInputs.startingMRR = Number(e.target.value); document.getElementById('sv-mrr').textContent = fmtCurrency(currentInputs.startingMRR); render(); });
+  bind('sl-grow', 'input', function(e){ currentInputs.monthlyGrowthRate = Number(e.target.value); document.getElementById('sv-grow').textContent = fmtPct(currentInputs.monthlyGrowthRate); render(); });
+  bind('sl-churn', 'input', function(e){ currentInputs.monthlyChurnRate = Number(e.target.value); document.getElementById('sv-churn').textContent = fmtPct(currentInputs.monthlyChurnRate); render(); });
+  bind('sl-margin', 'input', function(e){ currentInputs.grossMargin = Number(e.target.value); document.getElementById('sv-margin').textContent = fmtPct(currentInputs.grossMargin); render(); });
+  bind('sl-costs', 'input', function(e){ currentInputs.fixedCosts = Number(e.target.value); document.getElementById('sv-costs').textContent = fmtCurrency(currentInputs.fixedCosts); render(); });
+  bind('tmpl-select', 'change', function(e){ selectedTmplId = e.target.value || null; render(); });
+  bind('load-btn', 'click', function(){
+    var tmpl = null;
+    for (var i = 0; i < templates.length; i++) { if (templates[i].id === selectedTmplId) { tmpl = templates[i]; break; } }
+    if (tmpl) { currentInputs = Object.assign({}, tmpl.parameters); selectedTmplId = null; render(); }
+  });
+  bind('reset-btn', 'click', function(){ currentInputs = Object.assign({}, defaultInputs); selectedTmplId = null; render(); });
+}
+
+// --- MCP App Lifecycle ---
+async function init() {
+  var r = await send('ui/initialize', {
+    protocolVersion:'2026-01-26',
+    appCapabilities:{},
+    clientInfo:{name:'Scenario Modeler',version:'1.0.0'}
+  });
+  hostCtx = r.hostContext || {};
+  window.parent.postMessage({jsonrpc:'2.0',method:'ui/notifications/initialized',params:{}},'*');
+
+  onNotif('ui/notifications/tool-result', function(params) {
+    var data = params.structuredContent || {};
+    if (data.templates) templates = data.templates;
+    if (data.defaultInputs) defaultInputs = data.defaultInputs;
+    if (defaultInputs && !data.customInputs) currentInputs = Object.assign({}, defaultInputs);
+    render();
+  });
+
+  render();
+}
+
+init().catch(function(e){ document.getElementById('loading').textContent = 'Error: ' + e.message; });
+</script>
+</body>
+</html>
