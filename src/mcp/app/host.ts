@@ -4,14 +4,15 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import type { AppInstance, McpUiResourceCsp, McpUiResourcePermissions, SseClient } from "./types.js";
-import type { MCPManager } from "../mcp/manager.js";
+import type { AppInstance, McpUiResourceCsp, McpUiResourcePermissions } from "./types.js";
+import type { MCPManager } from "../manager.js";
+import { generateMdxRuntimeBundle } from "../../ui/mdx/runtime-bundle.js";
 
 function findSandboxPath(): string {
   const candidates = [
-    join(process.cwd(), "src", "apps", "sandbox.html"),
-    join(dirname(fileURLToPath(import.meta.url)), "..", "sandbox.html"),
+    join(process.cwd(), "src", "mcp", "app", "sandbox.html"),
     join(dirname(fileURLToPath(import.meta.url)), "sandbox.html"),
+    join(dirname(fileURLToPath(import.meta.url)), "..", "app", "sandbox.html"),
   ];
   for (const p of candidates) {
     try { readFileSync(p); return p; } catch {}
@@ -135,8 +136,28 @@ export class AppHostManager {
     const app = this.apps.get(appId);
     if (!app) { res.writeHead(404); res.end("App not found"); return; }
     const cspHeader = buildCspHeader(app.csp);
+
+    let page = this.sandboxTemplate;
+
+    // Inject MDX data (if data mode) BEFORE MDX Runtime replaces the placeholder
+    if (!app.html && (app.mdx || app.data)) {
+      const dataScript = [
+        '<script>',
+        'var __MDX_SOURCE__ = ' + JSON.stringify(app.mdx ?? "") + ';',
+        'var __MDX_DATA__ = ' + JSON.stringify(app.data ?? {}) + ';',
+        '</script>',
+      ].join("\n");
+      page = page.replace("<!-- MDX_DATA_PLACEHOLDER -->", dataScript);
+    } else {
+      page = page.replace("<!-- MDX_DATA_PLACEHOLDER -->", "");
+    }
+
+    // Inject MDX Runtime bundle
+    const mdxRuntimeJs = generateMdxRuntimeBundle();
+    page = page.replace("<!-- MDX_RUNTIME_PLACEHOLDER -->", "<script>" + mdxRuntimeJs + "</script>");
+
     res.writeHead(200, { "Content-Type": "text/html", "Content-Security-Policy": cspHeader });
-    res.end(this.sandboxTemplate);
+    res.end(page);
   }
 
   private serveAppHtml(appId: string, res: http.ServerResponse): void {

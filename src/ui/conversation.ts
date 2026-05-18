@@ -179,6 +179,11 @@ export class ConversationView {
     this.render();
   }
 
+  addNotice(text: string): void {
+    this.segments.push(text);
+    this.render();
+  }
+
   addInlineImage(base64Data: string, mimeType: string): void {
     const caps = getCapabilities();
     if (caps.images) {

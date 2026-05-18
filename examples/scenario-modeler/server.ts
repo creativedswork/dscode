@@ -10,8 +10,6 @@ import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import cors from "cors";
 import { z } from "zod";
-import fs from "node:fs";
-import path from "node:path";
 
 // ============================================================================
 // Types & Business Logic (adapted from ext-apps scenario-modeler)
@@ -88,8 +86,60 @@ const TEMPLATES: ScenarioTemplate[] = [
 
 const DEFAULT: ScenarioInputs = { startingMRR: 50000, monthlyGrowthRate: 5, monthlyChurnRate: 3, grossMargin: 80, fixedCosts: 30000 };
 
+const DEFAULT_PROJECTIONS = calculateProjections(DEFAULT);
+const DEFAULT_SUMMARY = calculateSummary(DEFAULT_PROJECTIONS, DEFAULT);
+
 const URI = "ui://scenario-modeler/mcp-app";
-const MT = "text/html;profile=mcp-app";
+
+const SCENARIO_MODELER_MDX = `
+<Card title="SaaS Scenario Modeler">
+  <Card title="Current Scenario Inputs">
+    <Metrics items={inputMetrics}/>
+  </Card>
+  <Card title="12-Month Projection">
+    <Chart type="line" data={activeProjections} x="month" y={["mrr","grossProfit","netProfit"]}/>
+    <Metrics items={summaryMetrics}/>
+    <Table rows={activeProjections}/>
+  </Card>
+  <Card title="Scenario Templates">
+    <Table rows={templateRows}/>
+  </Card>
+</Card>
+`.trim();
+
+function formatTemplateRows(templates: ScenarioTemplate[]) {
+  return templates.map((template) => ({
+    icon: template.icon,
+    name: template.name,
+    description: template.description,
+    keyInsight: template.keyInsight,
+    breakEven: template.summary.breakEvenMonth ? `Month ${template.summary.breakEvenMonth}` : "Not achieved",
+    endingMRR: fmt(template.summary.endingMRR),
+    arr: fmt(template.summary.arr),
+  }));
+}
+
+function formatInputsMetrics(inputs: ScenarioInputs) {
+  return {
+    startingMRR: fmt(inputs.startingMRR),
+    monthlyGrowthRate: `${inputs.monthlyGrowthRate}%`,
+    monthlyChurnRate: `${inputs.monthlyChurnRate}%`,
+    grossMargin: `${inputs.grossMargin}%`,
+    fixedCosts: fmt(inputs.fixedCosts),
+  };
+}
+
+function formatSummaryMetrics(summary: ScenarioSummary) {
+  return {
+    endingMRR: fmt(summary.endingMRR),
+    arr: fmt(summary.arr),
+    totalRevenue: fmt(summary.totalRevenue),
+    totalProfit: fmt(summary.totalProfit),
+    mrrGrowth: `${summary.mrrGrowthPct}%`,
+    avgMargin: `${summary.avgMargin}%`,
+    breakEven: summary.breakEvenMonth ? `Month ${summary.breakEvenMonth}` : "Not achieved",
+  };
+}
 
 // ============================================================================
 // MCP Server Registration (standard SDK — no ext-apps wrapper)
@@ -101,33 +151,52 @@ function createServer(): McpServer {
   s.registerTool("get-scenario-data",
     {
       title: "Get Scenario Data",
-      description: "Get SaaS financial scenario templates and optionally compute custom 12-month projections. Returns data for the interactive dashboard.",
+      description: "Get SaaS financial scenario templates and optionally compute custom 12-month projections. Returns data for the interactive dashboard. Call with customInputs omitted (or empty object) to get templates with defaults.",
       inputSchema: {
         customInputs: z.object({
-          startingMRR: z.number().describe("Starting MRR ($)"),
-          monthlyGrowthRate: z.number().describe("Growth rate (%)"),
-          monthlyChurnRate: z.number().describe("Churn rate (%)"),
-          grossMargin: z.number().describe("Gross margin (%)"),
-          fixedCosts: z.number().describe("Fixed costs ($)"),
-        }).optional().describe("Custom scenario parameters to compute projections for"),
+          startingMRR: z.number().optional().describe("Starting MRR ($)"),
+          monthlyGrowthRate: z.number().optional().describe("Growth rate (%)"),
+          monthlyChurnRate: z.number().optional().describe("Churn rate (%)"),
+          grossMargin: z.number().optional().describe("Gross margin (%)"),
+          fixedCosts: z.number().optional().describe("Fixed costs ($)"),
+        }).optional().describe("Custom scenario parameters. Omit all fields to use defaults."),
       },
       _meta: { ui: { resourceUri: URI, visibility: ["model", "app"] } } as any,
     },
-    async (args: { customInputs?: ScenarioInputs }) => {
-      const custom = args.customInputs;
-      const cp = custom ? calculateProjections(custom) : undefined;
-      const cs = cp ? calculateSummary(cp, custom!) : undefined;
+    async (args: { customInputs?: Partial<ScenarioInputs> }) => {
+      const raw = args.customInputs;
+      const custom: ScenarioInputs | undefined = raw
+        ? {
+            startingMRR: raw.startingMRR ?? DEFAULT.startingMRR,
+            monthlyGrowthRate: raw.monthlyGrowthRate ?? DEFAULT.monthlyGrowthRate,
+            monthlyChurnRate: raw.monthlyChurnRate ?? DEFAULT.monthlyChurnRate,
+            grossMargin: raw.grossMargin ?? DEFAULT.grossMargin,
+            fixedCosts: raw.fixedCosts ?? DEFAULT.fixedCosts,
+          }
+        : undefined;
+      const activeInputs = custom ?? DEFAULT;
+      const activeProjections = custom ? calculateProjections(custom) : DEFAULT_PROJECTIONS;
+      const activeSummary = custom ? calculateSummary(activeProjections, activeInputs) : DEFAULT_SUMMARY;
       const lines = ["SaaS Scenario Modeler", "=".repeat(40), "", "Templates:"];
       for (const t of TEMPLATES) lines.push(`  ${t.icon} ${t.name}: ${t.description}`);
-      if (cs) lines.push("", "Custom:", `  Ending MRR: ${fmt(cs.endingMRR)}`, `  ARR: ${fmt(cs.arr)}`);
-      return { content: [{ type: "text", text: lines.join("\n") }], structuredContent: { templates: TEMPLATES, defaultInputs: DEFAULT, customProjections: cp, customSummary: cs } };
+      if (custom) lines.push("", "Custom:", `  Ending MRR: ${fmt(activeSummary.endingMRR)}`, `  ARR: ${fmt(activeSummary.arr)}`);
+      return {
+        content: [{ type: "text", text: lines.join("\n") }],
+        structuredContent: {
+          _ui: { mdx: SCENARIO_MODELER_MDX },
+          templateRows: formatTemplateRows(TEMPLATES),
+          inputMetrics: formatInputsMetrics(activeInputs),
+          summaryMetrics: formatSummaryMetrics(activeSummary),
+          activeProjections,
+          defaultInputs: DEFAULT,
+          customInputs: custom ?? null,
+        },
+      };
     },
   );
 
-  s.resource(URI, URI, { mimeType: MT, description: "Scenario Modeler UI" }, async () => {
-    const html = fs.readFileSync(path.join(import.meta.dirname, "mcp-app.html"), "utf-8");
-    return { contents: [{ uri: URI, mimeType: MT, text: html }] };
-  });
+  // No s.resource() call — dscode renders this example from structuredContent.
+  // The example includes a server-provided _ui.mdx override to avoid nested object cells.
 
   return s;
 }

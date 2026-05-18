@@ -33,11 +33,16 @@ async function main() {
   chmodSync(outfile, 0o755);
 
   // Step 3: copy static assets
-  console.log("Copying sandbox.html...");
+  console.log("Copying sandbox.html and MDX runtime...");
   await cp(
-    resolve(rootDir, "src", "apps", "sandbox.html"),
+    resolve(rootDir, "src", "mcp", "app", "sandbox.html"),
     resolve(rootDir, "dist", "sandbox.html"),
   );
+  const mdxRuntimeDest = resolve(rootDir, "dist", "mdx-runtime.js");
+  const mdxRuntimeSrc = resolve(rootDir, "src", "ui", "mdx", "mdx-runtime.js");
+  if (existsSync(mdxRuntimeSrc)) {
+    await cp(mdxRuntimeSrc, mdxRuntimeDest);
+  }
 
   // Step 4: assemble dist-standalone/
   console.log("Assembling %s/...", buildDir);

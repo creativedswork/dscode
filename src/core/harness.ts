@@ -14,7 +14,8 @@ import { makeDiscoveryDriver } from "../drivers/discovery.js";
 import { SkillManager } from "../skills/manager.js";
 import { PermissionManager } from "../permissions/manager.js";
 import { MCPManager } from "../mcp/manager.js";
-import { AppHostManager } from "../apps/host.js";
+import { AppHostManager } from "../mcp/app/host.js";
+import { inferLayout } from "../ui/mdx/inference.js";
 import { TuiApp } from "../ui/tui-app.js";
 
 export class Harness {
@@ -325,6 +326,7 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
       return;
     }
 
+    // Try to fetch UI resource (HTML) first
     this.mcpManager.fetchUiResource(uiInfo.serverName, uiInfo.resourceUri)
       .then(({ html, csp, permissions }) => {
         const app = this.appHostManager!.registerApp({
@@ -346,8 +348,51 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
         }
       })
       .catch((err) => {
-        // silently fail — tool result still available as text
+        // No HTML resource — try auto-layout inference from structuredContent
+        this.tui.addInfo(`[MDX] fetchUiResource failed: ${err.message}, falling back to data mode`);
+        this.registerDataModeApp(uiInfo, toolName, toolResult);
       });
+  }
+
+  private registerDataModeApp(
+    uiInfo: { resourceUri: string; toolName: string; serverName: string },
+    toolName: string,
+    toolResult?: unknown,
+  ): void {
+    if (!this.appHostManager) return;
+
+    const result = toolResult as Record<string, unknown> | undefined;
+    const structuredContent = result?.structuredContent as Record<string, unknown> | undefined;
+
+    if (!structuredContent || typeof structuredContent !== "object") {
+      this.tui.addInfo(`[MDX] no structuredContent (keys: ${result ? Object.keys(result).join(",") : "null"})`);
+      return;
+    }
+
+    try {
+      const layout = inferLayout(structuredContent, uiInfo.toolName);
+      this.tui.addInfo(`[MDX] layout: ${layout.mdx.slice(0, 80)}...`);
+
+      const app = this.appHostManager!.registerApp({
+        resourceUri: uiInfo.resourceUri,
+        toolName: uiInfo.toolName,
+        serverName: uiInfo.serverName,
+        mdx: layout.mdx,
+        data: structuredContent,
+      });
+      this.registeredApps.set(toolName, app.id);
+      this.tui.addAppNotification(app);
+
+      if (toolResult !== undefined) {
+        this.appHostManager!.pushToApp(app.id, {
+          jsonrpc: "2.0",
+          method: "ui/notifications/tool-result",
+          params: structuredContent,
+        });
+      }
+    } catch (e: any) {
+      this.tui.addInfo(`[MDX] error: ${e.message}`);
+    }
   }
 
   private bindEvents(): void {

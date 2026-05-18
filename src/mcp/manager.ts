@@ -2,7 +2,7 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 
 import type { MCPServerConfig, MCPServerState, MCPToolDefinition } from "./types.js";
-import type { ToolUiInfo, McpUiResourceCsp, McpUiResourcePermissions } from "./app-types.js";
+import type { ToolUiInfo, McpUiResourceCsp, McpUiResourcePermissions } from "./app/types.js";
 import { MCPClient } from "./client.js";
 import type { DriverRegistry } from "../drivers/registry.js";
 import type { Driver } from "../core/types.js";
@@ -251,9 +251,11 @@ export class MCPManager {
         try {
           const result = await client.callTool(def.name, args);
           const text = extractToolResultText(result);
+          const sc = (result as any)?.structuredContent;
           return {
             content: [{ type: "text", text: text.slice(0, 50000) }],
             details: { server: serverName, tool: def.name },
+            structuredContent: sc,
           };
         } catch (err: any) {
           return {
