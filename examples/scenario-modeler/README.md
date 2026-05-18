@@ -18,28 +18,32 @@ Server starts on http://localhost:3100/mcp
 /config mcp add scenario-modeler --url http://localhost:3100/mcp
 ```
 
-Then ask the agent: "Show me the SaaS scenario modeler"
+Then ask the agent: "Show me the current SaaS scenario projections."
 
-Agent calls `get-scenario-data` → dscode fetches the UI HTML → TUI displays a localhost URL → open in browser.
+That phrasing is more natural, but still points the agent toward the `get-scenario-data` MCP tool because it asks for live scenario output rather than code analysis or setup help.
+
+Agent calls `get-scenario-data` → dscode renders the MCP App → TUI highlights the localhost link → open it in your browser.
 
 ## How it works
 
 - **server.ts** — Standard MCP server using `@modelcontextprotocol/sdk`. Registers:
   - `get-scenario-data` tool with `_meta.ui.resourceUri = "ui://scenario-modeler/mcp-app"`
-  - `ui://scenario-modeler/mcp-app` resource returning `mcp-app.html`
-- **mcp-app.html** — Single-file interactive View. Zero external dependencies.
-  - MCP protocol handshake via postMessage
-  - Canvas API for projection chart
-  - DOM API for sliders and metric cards
-  - Local calculation for instant feedback
+  - Returns `structuredContent` with templates, projections, and summary data
+  - Includes `_ui.mdx` to demonstrate a custom MDX layout override
+  - **No HTML required** — dscode renders the dashboard from data + MDX
+- **Auto-generated UI** — dscode inspects `structuredContent` and renders:
+  - Chart from projection arrays (line chart with MRR/netProfit curves)
+  - Metrics cards from summary key-value pairs
+  - Table from template/projection data
+- **No external dependencies** — UI is rendered by dscode's built-in MDX Runtime
 
 ## Features
 
-- 5 sliders: Starting MRR, Growth Rate, Churn Rate, Gross Margin, Fixed Costs
-- 12-month line chart (MRR, Gross Profit, Net Profit)
+- 12-month line chart (MRR, Gross Profit, Net Profit) — auto-generated from data
+- Metric cards showing ending MRR, ARR, total revenue, profit, growth %, break-even
 - 5 pre-built templates (Bootstrapped, VC Rocketship, Cash Cow, Turnaround, Efficient Growth)
-- Template comparison with dashed overlay lines
-- Light/dark theme support
+- Custom projection computation via tool arguments
+- Light/dark theme support (via CSS custom properties)
 
 ## Transport
 

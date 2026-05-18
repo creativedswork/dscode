@@ -31,7 +31,9 @@ export interface AppInstance {
   resourceUri: string;
   toolName: string;
   serverName: string;
-  html: string;
+  html?: string;
+  mdx?: string;
+  data?: Record<string, unknown>;
   csp?: McpUiResourceCsp;
   permissions?: McpUiResourcePermissions;
   localUrl: string;
