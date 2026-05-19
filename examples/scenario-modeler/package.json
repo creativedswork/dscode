@@ -5,7 +5,8 @@
   "type": "module",
   "description": "SaaS Scenario Modeler MCP App — dscode example",
   "scripts": {
-    "start": "tsx server.ts",
+    "start": "node ../../dist/dscode.mjs",
+    "start:server": "tsx server.ts",
     "start:stdio": "tsx server.ts --stdio",
     "demo": "tsx ../../src/core/main.ts",
     "demo:server": "tsx server.ts"

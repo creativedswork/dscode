@@ -7,22 +7,24 @@ A SaaS financial scenario modeler MCP App. Interactive 12-month projections with
 ```bash
 cd examples/scenario-modeler
 npm install
+npm --prefix ../.. run build
 npm start
 ```
 
-Server starts on http://localhost:3100/mcp
-
-## Connect to dscode
-
-```
-/config mcp add scenario-modeler --url http://localhost:3100/mcp
-```
+`npm start` launches the current repo build of dscode from this example directory. dscode then starts the `scenario-modeler` MCP server through the existing stdio MCP config, so you only need one terminal.
 
 Then ask the agent: "Show me the current SaaS scenario projections."
 
-That phrasing is more natural, but still points the agent toward the `get-scenario-data` MCP tool because it asks for live scenario output rather than code analysis or setup help.
+If the agent replies with plain text only, ask it to use the `get-scenario-data` MCP tool explicitly.
 
 Agent calls `get-scenario-data` → dscode renders the MCP App → TUI highlights the localhost link → open it in your browser.
+
+## Alternate startup modes
+
+```bash
+npm run start:server   # start only the HTTP MCP server on localhost:3100
+npm run start:stdio    # start only the stdio MCP server
+```
 
 ## How it works
 
