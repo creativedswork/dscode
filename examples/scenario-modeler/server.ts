@@ -202,7 +202,8 @@ function createServer(): McpServer {
 }
 
 async function startHttp() {
-  const app = createMcpExpressApp({ host: "0.0.0.0" });
+  const host = process.env.SCENARIO_MODELER_HOST ?? "127.0.0.1";
+  const app = createMcpExpressApp({ host });
   app.use(cors());
   app.all("/mcp", async (req: any, res: any) => {
     const srv = createServer();
@@ -211,7 +212,7 @@ async function startHttp() {
     await srv.connect(t);
     await t.handleRequest(req, res, req.body);
   });
-  const port = 3100;
+  const port = Number(process.env.PORT ?? 3100);
   app.listen(port, () => console.log(`MCP Server → http://localhost:${port}/mcp`));
 }
 

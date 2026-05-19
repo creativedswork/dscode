@@ -34,7 +34,6 @@ export class MCPClient {
       await this.connectSSE();
     }
 
-    // send initialize with MCP Apps ui extension capability
     const result = await this.request("initialize", {
       protocolVersion: MCP_PROTOCOL_VERSION,
       capabilities: {
@@ -52,7 +51,6 @@ export class MCPClient {
       throw new Error(`MCP server "${this.config.name}" returned invalid initialize response`);
     }
 
-    // send initialized notification
     this.sendNotification("notifications/initialized");
   }
 
@@ -88,13 +86,15 @@ export class MCPClient {
     if (this.closed) return;
     this.closed = true;
 
-    try {
-      await this.request("shutdown", undefined, 5_000);
-    } catch {
-      // ignore shutdown errors
+    if (this.config.transport === "stdio") {
+      this.killProcessTree();
+    } else {
+      try {
+        await this.request("shutdown", undefined, 1_000);
+      } catch {
+      }
     }
 
-    // clear pending
     for (const [, entry] of this.pending) {
       clearTimeout(entry.timer);
       entry.reject(new Error("MCP client closed"));
@@ -102,7 +102,6 @@ export class MCPClient {
     this.pending.clear();
 
     if (this.process) {
-      this.process.kill();
       this.process = null;
     }
   }
@@ -115,6 +114,7 @@ export class MCPClient {
     this.process = spawn(cmd, expandedArgs, {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...this.config.env },
+      detached: process.platform !== "win32",
     });
 
     // Suppress EPIPE errors on stdin when the child process exits unexpectedly
@@ -237,7 +237,6 @@ export class MCPClient {
               const dataMatch = line.match(/^data:\s*(.+)/);
 
               if (eventMatch && eventMatch[1] === "endpoint") {
-                // wait for the next data line with the actual endpoint URL
                 continue;
               }
 
@@ -245,14 +244,12 @@ export class MCPClient {
                 try {
                   const data = JSON.parse(dataMatch[1]);
                   if (data.method === "endpoint") {
-                    // SSE endpoint for sending messages back
                     this.sseUrl = data.params?.endpoint ?? null;
                     resolve();
                   } else {
                     this.handleMessage(dataMatch[1]);
                   }
                 } catch {
-                  // not JSON, skip
                 }
               }
             }
@@ -277,6 +274,18 @@ export class MCPClient {
 
       req.end();
     });
+  }
+
+  private killProcessTree(): void {
+    if (!this.process?.pid) return;
+    try {
+      if (process.platform !== "win32") {
+        process.kill(-this.process.pid, "SIGTERM");
+      } else {
+        this.process.kill("SIGTERM");
+      }
+    } catch {
+    }
   }
 
   private handleMessage(raw: string): void {
@@ -329,7 +338,6 @@ export class MCPClient {
       if (this.config.transport === "stdio") {
         this.process?.stdin?.write(msg + "\n");
       } else if (this.sseUrl) {
-        // POST to SSE endpoint
         const parsed = new URL(this.sseUrl, this.config.url);
         const requester = parsed.protocol === "https:" ? httpsRequest : httpRequest;
         const body = JSON.stringify({ jsonrpc: "2.0", id, method, params });
@@ -340,8 +348,7 @@ export class MCPClient {
             method: "POST",
             headers: { "Content-Type": "application/json" },
           },
-          (res) => {
-            // response comes via SSE stream, handled in handleMessage
+          () => {
           },
         );
         req.on("error", (err) => {

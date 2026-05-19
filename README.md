@@ -310,6 +310,8 @@ Always push the branch before creating a PR.
 
 `examples/` 提供可直接运行的示例项目，用来演示 dscode 的 MCP 集成方式和交互式 UI 能力。
 
+### MCP App
+
 | 示例 | 说明 | 快速开始 |
 | --- | --- | --- |
 | `examples/scenario-modeler` | 一个 SaaS 场景建模 MCP Server。演示 tool 返回 `structuredContent` 后，dscode 如何渲染 MCP App；没有 server HTML 时走 MDX，有 HTML resource 时优先使用 server 自带页面。 | `cd examples/scenario-modeler && npm install && npm start` |
