@@ -14,6 +14,8 @@ import { makeDiscoveryDriver } from "../drivers/discovery.js";
 import { SkillManager } from "../skills/manager.js";
 import { PermissionManager } from "../permissions/manager.js";
 import { MCPManager } from "../mcp/manager.js";
+import { AppHostManager } from "../mcp/app/host.js";
+import { inferLayout } from "../ui/mdx/inference.js";
 import { TuiApp } from "../ui/tui-app.js";
 
 export class Harness {
@@ -26,6 +28,7 @@ export class Harness {
   private skillManager: SkillManager;
   private permissionManager: PermissionManager;
   private mcpManager?: MCPManager;
+  private appHostManager?: AppHostManager;
   private config: HarnessConfig;
   private tui!: TuiApp;
   private baseSystemPrompt = "";
@@ -62,6 +65,11 @@ export class Harness {
 
     // Register discovery driver so search_tools is available
     this.driverRegistry.register(makeDiscoveryDriver(this.toolRegistry));
+
+    if (this.config.appHost?.enabled) {
+      this.appHostManager = new AppHostManager();
+      await this.appHostManager.start();
+    }
 
     const memories = this.memoryManager.getRelevantMemories();
     const skillSection = this.skillManager.getSystemPromptSection();
@@ -139,9 +147,16 @@ export class Harness {
       this.tui.setMcpManager(this.mcpManager);
       await this.mcpManager.initialize();
       await this.mcpManager.registerDrivers(this.driverRegistry);
+
+      if (this.appHostManager) {
+        this.appHostManager.setMcpManager(this.mcpManager);
+      }
+
+      const appOnlyNames = new Set(this.mcpManager.getAppOnlyToolNames());
       this.toolRegistry.initialize(
         this.makeSkillTool(),
         this.mcpManager.getAlwaysLoadToolNames(),
+        appOnlyNames,
       );
       this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
       const connected = this.mcpManager.getStates().filter((s) => s.status === "connected").length;
@@ -200,6 +215,9 @@ export class Harness {
 
   private async shutdown(): Promise<void> {
     this.sessionManager.saveSession(this.agent);
+    if (this.appHostManager) {
+      await this.appHostManager.shutdown();
+    }
     if (this.mcpManager) {
       await this.mcpManager.shutdown();
     }
@@ -289,6 +307,94 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
 
 
 
+  private registeredApps = new Map<string, string>();
+
+  private checkAndRegisterApp(toolName: string, toolResult?: unknown): void {
+    if (!this.appHostManager || !this.mcpManager) return;
+    const uiInfo = this.mcpManager.getUiToolMap().get(toolName);
+    if (!uiInfo) return;
+
+    const existingAppId = this.registeredApps.get(toolName);
+    if (existingAppId) {
+      if (toolResult !== undefined) {
+        this.appHostManager.pushToApp(existingAppId, {
+          jsonrpc: "2.0",
+          method: "ui/notifications/tool-result",
+          params: toolResult,
+        });
+      }
+      return;
+    }
+
+    // Try to fetch UI resource (HTML) first
+    this.mcpManager.fetchUiResource(uiInfo.serverName, uiInfo.resourceUri)
+      .then(({ html, csp, permissions }) => {
+        const app = this.appHostManager!.registerApp({
+          resourceUri: uiInfo.resourceUri,
+          toolName: uiInfo.toolName,
+          serverName: uiInfo.serverName,
+          html,
+          csp,
+          permissions,
+        });
+        this.registeredApps.set(toolName, app.id);
+        this.tui.addAppNotification(app);
+        if (toolResult !== undefined) {
+          this.appHostManager!.pushToApp(app.id, {
+            jsonrpc: "2.0",
+            method: "ui/notifications/tool-result",
+            params: toolResult,
+          });
+        }
+      })
+      .catch((err) => {
+        // No HTML resource — try auto-layout inference from structuredContent
+        this.tui.addInfo(`[MDX] fetchUiResource failed: ${err.message}, falling back to data mode`);
+        this.registerDataModeApp(uiInfo, toolName, toolResult);
+      });
+  }
+
+  private registerDataModeApp(
+    uiInfo: { resourceUri: string; toolName: string; serverName: string },
+    toolName: string,
+    toolResult?: unknown,
+  ): void {
+    if (!this.appHostManager) return;
+
+    const result = toolResult as Record<string, unknown> | undefined;
+    const structuredContent = result?.structuredContent as Record<string, unknown> | undefined;
+
+    if (!structuredContent || typeof structuredContent !== "object") {
+      this.tui.addInfo(`[MDX] no structuredContent (keys: ${result ? Object.keys(result).join(",") : "null"})`);
+      return;
+    }
+
+    try {
+      const layout = inferLayout(structuredContent, uiInfo.toolName);
+      this.tui.addInfo(`[MDX] layout: ${layout.mdx.slice(0, 80)}...`);
+
+      const app = this.appHostManager!.registerApp({
+        resourceUri: uiInfo.resourceUri,
+        toolName: uiInfo.toolName,
+        serverName: uiInfo.serverName,
+        mdx: layout.mdx,
+        data: structuredContent,
+      });
+      this.registeredApps.set(toolName, app.id);
+      this.tui.addAppNotification(app);
+
+      if (toolResult !== undefined) {
+        this.appHostManager!.pushToApp(app.id, {
+          jsonrpc: "2.0",
+          method: "ui/notifications/tool-result",
+          params: structuredContent,
+        });
+      }
+    } catch (e: any) {
+      this.tui.addInfo(`[MDX] error: ${e.message}`);
+    }
+  }
+
   private bindEvents(): void {
     this.agent.subscribe((event) => {
       switch (event.type) {
@@ -314,6 +420,7 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
             event.result,
             event.isError,
           );
+          this.checkAndRegisterApp(event.toolName, event.result);
           break;
       }
     });

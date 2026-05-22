@@ -10,6 +10,7 @@ import {
   matchesKey,
   Key,
   decodeKittyPrintable,
+  hyperlink,
 } from "@earendil-works/pi-tui";
 
 import type { Agent } from "@mariozechner/pi-agent-core";
@@ -23,6 +24,7 @@ import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
 import type { HarnessConfig, PermissionPromptResult, PermissionRuleConfig } from "../core/types.js";
 import type { MCPManager } from "../mcp/manager.js";
+import type { AppInstance } from "../mcp/app/types.js";
 import { c, editorTheme, TIPS, randomTip } from "./theme.js";
 import { ConversationView, findPermOptionByKey } from "./conversation.js";
 import { getSlashCommandAutocomplete, executeSlashCommand } from "./commands.js";
@@ -547,6 +549,18 @@ export class TuiApp {
 
   addInfo(text: string): void {
     this.conversation.addInfo(text);
+  }
+
+  addAppNotification(app: AppInstance): void {
+    const cyan = c.cyan ?? ((s: string) => s);
+    const dim = c.dim ?? ((s: string) => s);
+    const bold = c.bold ?? ((s: string) => s);
+    const url = hyperlink(cyan.bold.underline(app.localUrl), app.localUrl);
+    this.conversation.addNotice(
+      bold(cyan("📱 MCP App ready")) + "\n" +
+      url + "\n" +
+      dim(`Open this link in your browser · ${app.serverName}:${app.toolName}`)
+    );
   }
 
   addError(text: string): void {

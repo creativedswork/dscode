@@ -199,6 +199,7 @@ export function loadConfig(): HarnessConfig {
     },
     skills,
     mcp,
+    appHost: { enabled: true },
   };
 
 }

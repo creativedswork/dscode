@@ -25,6 +25,7 @@ export class ToolRegistry {
   initialize(
     skillTool: AgentTool<any>,
     alwaysLoadNames?: Set<string>,
+    appOnlyNames?: Set<string>,
   ): void {
     // 1. Builtin driver tools — always sent (non-deferred)
     for (const driver of this.driverRegistry.getDriversBySource("builtin")) {
@@ -38,9 +39,10 @@ export class ToolRegistry {
       }
     }
 
-    // 2. MCP driver tools — deferred unless alwaysLoad
+    // 2. MCP driver tools — deferred unless alwaysLoad; skip app-only
     for (const driver of this.driverRegistry.getDriversBySource("mcp")) {
       for (const tool of driver.tools) {
+        if (appOnlyNames?.has(tool.name)) continue;
         this.allTools.set(tool.name, {
           name: tool.name,
           description: tool.description ?? "",

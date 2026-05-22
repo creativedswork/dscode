@@ -2,6 +2,7 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 
 import type { MCPServerConfig, MCPServerState, MCPToolDefinition } from "./types.js";
+import type { ToolUiInfo, McpUiResourceCsp, McpUiResourcePermissions } from "./app/types.js";
 import { MCPClient } from "./client.js";
 import type { DriverRegistry } from "../drivers/registry.js";
 import type { Driver } from "../core/types.js";
@@ -80,6 +81,7 @@ export class MCPManager {
   private clients = new Map<string, MCPClient>();
   private states = new Map<string, MCPServerState>();
   private alwaysLoadToolNames = new Set<string>();
+  private uiToolMap = new Map<string, ToolUiInfo>();
 
   constructor(private configs: MCPServerConfig[]) {
     for (const cfg of configs) {
@@ -101,6 +103,58 @@ export class MCPManager {
 
   getAlwaysLoadToolNames(): Set<string> {
     return this.alwaysLoadToolNames;
+  }
+
+  getAppOnlyToolNames(): string[] {
+    const names: string[] = [];
+    for (const [serverName, client] of this.clients) {
+      for (const def of client.getAllToolDefs()) {
+        const visibility = def._meta?.ui?.visibility;
+        if (visibility && visibility.length === 1 && visibility[0] === "app") {
+          names.push(`mcp_${serverName}_${def.name}`);
+        }
+      }
+    }
+    return names;
+  }
+
+  getUiToolMap(): Map<string, ToolUiInfo> {
+    return this.uiToolMap;
+  }
+
+  getClient(name: string): MCPClient | undefined {
+    return this.clients.get(name);
+  }
+
+  async fetchUiResource(
+    serverName: string,
+    resourceUri: string,
+  ): Promise<{ html: string; csp?: McpUiResourceCsp; permissions?: McpUiResourcePermissions }> {
+    const client = this.clients.get(serverName);
+    if (!client) throw new Error(`Server ${serverName} not connected`);
+
+    const result = await client.readResource(resourceUri) as any;
+    const contents = result?.contents;
+    if (!contents || contents.length === 0) {
+      throw new Error(`Empty resource: ${resourceUri}`);
+    }
+
+    const content = contents[0];
+    const mimeType = content.mimeType;
+    if (mimeType !== "text/html;profile=mcp-app") {
+      throw new Error(`Unsupported MIME type for UI resource: ${mimeType}`);
+    }
+
+    const html = content.blob
+      ? Buffer.from(content.blob, "base64").toString("utf-8")
+      : content.text ?? "";
+
+    const uiMeta = content._meta?.ui ?? (result as any)?._meta?.ui ?? {};
+    return {
+      html,
+      csp: uiMeta.csp,
+      permissions: uiMeta.permissions,
+    };
   }
 
   async initialize(): Promise<void> {
@@ -179,6 +233,15 @@ export class MCPManager {
       this.alwaysLoadToolNames.add(toolName);
     }
 
+    // Track UI-enabled tools
+    const resourceUri = def._meta?.ui?.resourceUri ?? def._meta?.["ui/resourceUri"];
+    if (resourceUri) {
+      this.uiToolMap.set(toolName, { resourceUri, toolName: def.name, serverName });
+      // UI-enabled tools must always be loaded so the agent can invoke them
+      // and trigger MCP App View registration
+      this.alwaysLoadToolNames.add(toolName);
+    }
+
     return {
       name: toolName,
       label: `${serverName}: ${def.name}`,
@@ -188,9 +251,11 @@ export class MCPManager {
         try {
           const result = await client.callTool(def.name, args);
           const text = extractToolResultText(result);
+          const sc = (result as any)?.structuredContent;
           return {
             content: [{ type: "text", text: text.slice(0, 50000) }],
             details: { server: serverName, tool: def.name },
+            structuredContent: sc,
           };
         } catch (err: any) {
           return {
