@@ -29,6 +29,44 @@ cp .env.example .env   # 编辑 .env，填入 DEEPSEEK_API_KEY
 git checkout -b feature/your-feature
 ```
 
+## 基于 OpenSpec 的 SDD 开发
+
+仓库已包含 `openspec/` 目录，推荐在实现中大型功能、交互流程调整或重要重构时，先走 **Spec-Driven Development（SDD）** 流程，再开始编码。
+
+### 推荐流程
+
+1. **先澄清问题和边界**
+   - 使用 Claude Code 时，推荐先通过 `/opsx:explore` 或 `openspec-explore` 梳理需求、约束和非目标。
+2. **创建变更提案**
+   - 推荐使用 `/opsx:propose` 或 `openspec-propose` 自动生成变更骨架。
+   - 变更会创建在 `openspec/changes/<change-name>/` 下，通常包含：
+     - `proposal.md`：要解决什么问题，为什么要做
+     - `design.md`：方案设计与关键权衡
+     - `tasks.md`：可执行的实现任务拆分
+3. **评审 proposal / design / tasks**
+   - 在开始编码前，先确认范围、实现路径和验收标准已经清晰。
+4. **按任务实现**
+   - 使用 `/opsx:apply` 或 `openspec-apply-change` 按 `tasks.md` 逐步落地。
+5. **完成后归档**
+   - 变更完成后，可使用 `/opsx:archive` 或 `openspec-archive-change` 归档对应 change。
+
+### 目录约定
+
+- `openspec/specs/`：沉淀长期有效的能力规格。
+- `openspec/changes/`：存放尚在推进中的变更提案与实现任务。
+- `openspec/config.yaml`：定义当前仓库的 OpenSpec 配置。
+
+### 适用场景
+
+以下情况优先使用 OpenSpec SDD：
+
+- 新增 MCP 能力或跨模块功能
+- 调整核心交互流程或权限模型
+- 会影响多个文件/多个子系统的重构
+- 需要在编码前先对齐方案、边界和验收标准的需求
+
+如果只是小型修复、文案调整或局部重构，可以直接提交代码，不必强制走完整 SDD 流程。
+
 ## 测试
 
 项目使用 [Vitest](https://vitest.dev/) 作为测试框架。
