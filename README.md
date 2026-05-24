@@ -101,7 +101,7 @@ node dist/dscode.mjs
 | 上下文管理 | 自动压缩长对话，防止 token overflow；1M token 窗口 |
 | 记忆系统 | 跨 session 记住用户偏好和项目上下文 |
 | Skills 系统 | 声明式第三方 Skill 扩展（SKILL.md），按需激活 |
-| MCP 协议 | 作为 MCP Client 连接外部工具服务器（stdio/SSE） |
+| MCP 协议 | 作为 MCP Client 连接外部工具服务器（stdio / streamable-http / legacy SSE） |
 | 图片 OCR | 基于 tesseract.js 的文字提取，支持中英文 |
 | 两级配置 | 用户级 + 项目级配置，环境变量覆盖 |
 
@@ -161,8 +161,9 @@ DeepSeek reasoning 模型通过 `thinkingLevel` 控制思考强度，切换模�
 | 能力 | 说明 |
 | --- | --- |
 | **Stdio 传输** | 启动本地进程作为 MCP Server，零网络开销 |
-| **SSE 传输** | 连接远程 MCP Server，支持分布式工具调用 |
-| **自动 Transport 推断** | 有 `command` → stdio，仅 `url` → SSE，零配置 |
+| **Streamable HTTP 传输** | 连接远程 MCP Server，优先使用 2025-11-25 MCP 主路径 |
+| **Legacy SSE 兼容** | 远端不支持新传输时，可显式指定或自动回退到旧版 SSE |
+| **自动 Transport 推断** | 有 `command` → stdio，仅 `url` → streamable-http，零配置 |
 | **工具命名空间** | `mcp_<server>_<tool>` 格式，避免冲突 |
 | **容错降级** | Server 连接失败不阻塞启动，错误信息可观测 |
 
@@ -195,14 +196,18 @@ DeepSeek reasoning 模型通过 `thinkingLevel` 控制思考强度，切换模�
 | --- | --- | --- | --- |
 | `command` | string | stdio 必填 | 启动命令 |
 | `args` | string[] | 否 | 命令参数 |
-| `url` | string | SSE 必填 | SSE 服务端 URL |
-| `transport` | `"stdio" \| "sse"` | 否 | 传输方式（自动推断） |
+| `url` | string | 远端传输必填 | 远程 MCP Server URL |
+| `transport` | `"stdio" \| "streamable-http" \| "sse"` | 否 | 传输方式；未显式指定时，`url` 默认走 `streamable-http` |
 | `description` | string | 否 | 描述信息 |
 | `env` | object | 否 | 自定义环境变量 |
+| `headers` | object | 否 | 远程 MCP 请求头 |
+| `preferredProtocolVersion` | string | 否 | 首选 MCP 协议版本，默认 `2025-11-25` |
+| `allowLegacySseFallback` | boolean | 否 | 远端不支持新传输时是否允许回退到 legacy SSE |
+| `requestTimeoutMs` / `connectTimeoutMs` | number | 否 | 请求 / 连接超时 |
 
 MCP 工具注册为 Driver，命名格式 `mcp_<server>_<tool>`，例如 `mcp_blender_get_scene_info`。连接失败不阻塞启动，错误信息输出到控制台。
 
-可在 TUI 中输入 `/mcp` 打开交互式浏览器：先选择 MCP server，再查看该 server 的 tool 列表与加载状态。
+可在 TUI 中输入 `/mcp` 打开交互式浏览器：先选择 MCP server，再查看该 server 的 tool 列表、加载状态，以及 transport / protocol version / compatibility mode / refresh 状态。
 
 ## Skills system
 
@@ -314,7 +319,7 @@ Always push the branch before creating a PR.
 
 | 示例 | 说明 | 快速开始 |
 | --- | --- | --- |
-| `examples/scenario-modeler` | 一个 SaaS 场景建模 MCP Server。演示 tool 返回 `structuredContent` 后，dscode 如何渲染 MCP App；没有 server HTML 时走 MDX，有 HTML resource 时优先使用 server 自带页面。 | `cd examples/scenario-modeler && npm install && npm start` |
+| `examples/scenario-modeler` | 一个 SaaS 场景建模 MCP Server。演示 tool 返回 `structuredContent` / `isError` 后，dscode 如何渲染 MCP App；没有 server HTML 时走 MDX，有 HTML resource 时优先使用 server 自带页面。 | `cd examples/scenario-modeler && npm install && npm start` |
 
 更多使用说明见：
 - `examples/scenario-modeler/README.md`
@@ -329,7 +334,7 @@ src/
 ├── memory/         # 跨 session 记忆
 ├── drivers/        # 驱动注册 + 内置驱动 (fs, shell, search)
 ├── skills/         # Skill 管理器 + SKILL.md 加载器
-├── mcp/            # MCP 客户端（stdio/SSE）+ 管理器 + MCP App host/runtime
+├── mcp/            # MCP 客户端（stdio / streamable-http / legacy SSE）+ 管理器 + MCP App host/runtime
 ├── permissions/    # 权限拦截
 └── ui/             # REPL、流式渲染、slash commands
 ```
