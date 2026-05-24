@@ -32,18 +32,32 @@ describe("permission prompt navigation", () => {
     expect(findPermOptionByKey("i")?.value).toBe("explain");
   });
 
-  it("debounces rapid menu navigation", () => {
-    const canNavigateMenu = TuiApp.prototype["canNavigateMenu"] as (this: { menuNavDebounceUntil: number }, now?: number) => boolean;
-    const state = { menuNavDebounceUntil: 0 };
+  it("deduplicates rapid repeated menu navigation in the same direction", () => {
+    const canNavigateMenu = TuiApp.prototype["canNavigateMenu"] as (this: { lastMenuNavDirection: "up" | "down" | null; lastMenuNavAt: number }, direction: "up" | "down", now?: number) => boolean;
+    const state = { lastMenuNavDirection: null, lastMenuNavAt: 0 };
 
     vi.spyOn(Date, "now")
       .mockReturnValueOnce(100)
       .mockReturnValueOnce(120)
       .mockReturnValueOnce(220);
 
-    expect(canNavigateMenu.call(state)).toBe(true);
-    expect(canNavigateMenu.call(state)).toBe(false);
-    expect(canNavigateMenu.call(state)).toBe(true);
+    expect(canNavigateMenu.call(state, "down")).toBe(true);
+    expect(canNavigateMenu.call(state, "down")).toBe(false);
+    expect(canNavigateMenu.call(state, "down")).toBe(true);
+  });
+
+  it("allows immediate direction changes in menu navigation", () => {
+    const canNavigateMenu = TuiApp.prototype["canNavigateMenu"] as (this: { lastMenuNavDirection: "up" | "down" | null; lastMenuNavAt: number }, direction: "up" | "down", now?: number) => boolean;
+    const state = { lastMenuNavDirection: null, lastMenuNavAt: 0 };
+
+    vi.spyOn(Date, "now")
+      .mockReturnValueOnce(100)
+      .mockReturnValueOnce(120)
+      .mockReturnValueOnce(140);
+
+    expect(canNavigateMenu.call(state, "down")).toBe(true);
+    expect(canNavigateMenu.call(state, "up")).toBe(true);
+    expect(canNavigateMenu.call(state, "down")).toBe(true);
   });
 
   it("submits input idea even while a tool call is waiting", () => {
@@ -56,6 +70,7 @@ describe("permission prompt navigation", () => {
     const state = {
       processing: true,
       permissionExplainMode: true,
+      pendingImages: [],
       pendingPermissionContext: { toolName: "write_file", args: { path: "/tmp/test.json" } },
       editor: { setText: vi.fn() },
       resolvePermissionChoice,
@@ -103,5 +118,55 @@ describe("permission prompt navigation", () => {
 
     expect(state.processing).toBe(true);
     expect(state.editor.disableSubmit).toBe(false);
+  });
+
+  it("submits image-only messages", () => {
+    const handleSubmit = TuiApp.prototype["handleSubmit"] as (this: any, text: string) => void;
+    const prompt = vi.fn().mockResolvedValue(undefined);
+    const state = {
+      pendingImages: [{ type: "image", data: "abcd", mimeType: "image/png" }],
+      processing: false,
+      permissionExplainMode: false,
+      editor: { setText: vi.fn() },
+      deps: {
+        agent: { prompt },
+        modelSupportsImages: true,
+        modelNeedsOcr: false,
+      },
+      conversation: { addInfo: vi.fn() },
+      addUserMessage: vi.fn(),
+      setProcessing: vi.fn(),
+      updateImageStatus: vi.fn(),
+      addError: vi.fn(),
+      stop: vi.fn(),
+    };
+
+    handleSubmit.call(state, "");
+
+    expect(state.editor.setText).toHaveBeenCalledWith("");
+    expect(state.addUserMessage).toHaveBeenCalledWith(expect.stringContaining("1 image(s) attached"));
+    expect(state.setProcessing).toHaveBeenCalledWith(true);
+    expect(state.pendingImages).toEqual([]);
+    expect(state.updateImageStatus).toHaveBeenCalled();
+    expect(prompt).toHaveBeenCalledWith("", [
+      { type: "image", data: "abcd", mimeType: "image/png" },
+    ]);
+  });
+
+  it("keeps empty submit as a no-op when there is no text or image", () => {
+    const handleSubmit = TuiApp.prototype["handleSubmit"] as (this: any, text: string) => void;
+    const state = {
+      pendingImages: [],
+      editor: { setText: vi.fn() },
+      deps: { agent: { prompt: vi.fn() } },
+      addUserMessage: vi.fn(),
+      setProcessing: vi.fn(),
+    };
+
+    handleSubmit.call(state, "");
+
+    expect(state.editor.setText).not.toHaveBeenCalled();
+    expect(state.addUserMessage).not.toHaveBeenCalled();
+    expect(state.setProcessing).not.toHaveBeenCalled();
   });
 });
