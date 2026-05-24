@@ -151,7 +151,14 @@ describe("config and settings loading", () => {
     expect(config.skills).toContain("git-workflow");
     expect(config.permissions.denyPatterns).toContain("**/.env");
     expect(config.mcp).toEqual([
-      expect.objectContaining({ name: "demo", command: "npx", args: ["demo-mcp"], transport: "stdio" }),
+      expect.objectContaining({
+        name: "demo",
+        command: "npx",
+        args: ["demo-mcp"],
+        transport: "stdio",
+        preferredProtocolVersion: "2025-11-25",
+        allowLegacySseFallback: true,
+      }),
     ]);
 
     rmSync(root, { recursive: true, force: true });
@@ -201,6 +208,41 @@ describe("config and settings loading", () => {
     expect(saved.permissions.deny).toEqual(["**/.env"]);
     expect(saved.permissions.rules).toHaveLength(1);
     expect(saved.permissions.rules[0]).toMatchObject({ tool: "bash", decision: "allow" });
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("defaults URL-based MCP servers to streamable-http", () => {
+    const root = mkdtempSync(join(tmpdir(), "dscode-config-"));
+    const configHome = join(root, "home");
+    const workspace = join(root, "workspace");
+
+    mkdirSync(join(workspace, ".dscode"), { recursive: true });
+    writeFileSync(
+      join(workspace, ".dscode", "settings.json"),
+      JSON.stringify({
+        mcpServers: {
+          remote: { url: "https://example.com/mcp" },
+        },
+      }) + "\n",
+      "utf8",
+    );
+
+    process.env.DSCODE_PROJECT_PATH = workspace;
+    process.env.DSCODE_CONFIG_HOME = configHome;
+    process.env.DSCODE_DATA_HOME = configHome;
+
+    const config = loadConfig();
+
+    expect(config.mcp).toEqual([
+      expect.objectContaining({
+        name: "remote",
+        url: "https://example.com/mcp",
+        transport: "streamable-http",
+        preferredProtocolVersion: "2025-11-25",
+        allowLegacySseFallback: true,
+      }),
+    ]);
 
     rmSync(root, { recursive: true, force: true });
   });

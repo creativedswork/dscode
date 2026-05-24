@@ -14,6 +14,7 @@ import { makeDiscoveryDriver } from "../drivers/discovery.js";
 import { SkillManager } from "../skills/manager.js";
 import { PermissionManager } from "../permissions/manager.js";
 import { MCPManager } from "../mcp/manager.js";
+import type { MCPClientEvent } from "../mcp/types.js";
 import { AppHostManager } from "../mcp/app/host.js";
 import { inferLayout } from "../ui/mdx/inference.js";
 import { TuiApp } from "../ui/tui-app.js";
@@ -32,6 +33,7 @@ export class Harness {
   private config: HarnessConfig;
   private tui!: TuiApp;
   private baseSystemPrompt = "";
+  private lastMcpProgress = new Map<string, { progress?: number; total?: number; message?: string }>();
 
   constructor(config: HarnessConfig) {
     this.config = config;
@@ -146,6 +148,7 @@ export class Harness {
       this.mcpManager = new MCPManager(this.config.mcp);
       this.tui.setMcpManager(this.mcpManager);
       await this.mcpManager.initialize();
+      this.mcpManager.onEvent((event) => this.handleMcpEvent(event));
       await this.mcpManager.registerDrivers(this.driverRegistry);
 
       if (this.appHostManager) {
@@ -309,18 +312,45 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
 
   private registeredApps = new Map<string, string>();
 
+  private getToolResultDetails(toolResult: unknown): Record<string, unknown> | undefined {
+    if (!toolResult || typeof toolResult !== "object") return undefined;
+    const details = (toolResult as Record<string, unknown>).details;
+    return details && typeof details === "object" ? details as Record<string, unknown> : undefined;
+  }
+
+  private getToolPayload(toolResult: unknown): unknown {
+    const details = this.getToolResultDetails(toolResult);
+    return details?.mcpResult ?? toolResult;
+  }
+
+  private getStructuredContent(toolResult: unknown): Record<string, unknown> | undefined {
+    const payload = this.getToolPayload(toolResult);
+    if (!payload || typeof payload !== "object") return undefined;
+    const structuredContent = (payload as Record<string, unknown>).structuredContent;
+    return structuredContent && typeof structuredContent === "object"
+      ? structuredContent as Record<string, unknown>
+      : undefined;
+  }
+
+  private getEffectiveToolError(toolResult: unknown, isError: boolean): boolean {
+    if (isError) return true;
+    const details = this.getToolResultDetails(toolResult);
+    return Boolean(details?.error);
+  }
+
   private checkAndRegisterApp(toolName: string, toolResult?: unknown): void {
     if (!this.appHostManager || !this.mcpManager) return;
     const uiInfo = this.mcpManager.getUiToolMap().get(toolName);
     if (!uiInfo) return;
 
+    const payload = this.getToolPayload(toolResult);
     const existingAppId = this.registeredApps.get(toolName);
     if (existingAppId) {
-      if (toolResult !== undefined) {
+      if (payload !== undefined) {
         this.appHostManager.pushToApp(existingAppId, {
           jsonrpc: "2.0",
           method: "ui/notifications/tool-result",
-          params: toolResult,
+          params: payload,
         });
       }
       return;
@@ -339,11 +369,11 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
         });
         this.registeredApps.set(toolName, app.id);
         this.tui.addAppNotification(app);
-        if (toolResult !== undefined) {
+        if (payload !== undefined) {
           this.appHostManager!.pushToApp(app.id, {
             jsonrpc: "2.0",
             method: "ui/notifications/tool-result",
-            params: toolResult,
+            params: payload,
           });
         }
       })
@@ -361,10 +391,11 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
   ): void {
     if (!this.appHostManager) return;
 
-    const result = toolResult as Record<string, unknown> | undefined;
-    const structuredContent = result?.structuredContent as Record<string, unknown> | undefined;
+    const payload = this.getToolPayload(toolResult);
+    const structuredContent = this.getStructuredContent(toolResult);
+    const result = payload as Record<string, unknown> | undefined;
 
-    if (!structuredContent || typeof structuredContent !== "object") {
+    if (!structuredContent) {
       this.tui.addInfo(`[MDX] no structuredContent (keys: ${result ? Object.keys(result).join(",") : "null"})`);
       return;
     }
@@ -383,11 +414,11 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
       this.registeredApps.set(toolName, app.id);
       this.tui.addAppNotification(app);
 
-      if (toolResult !== undefined) {
+      if (payload !== undefined) {
         this.appHostManager!.pushToApp(app.id, {
           jsonrpc: "2.0",
           method: "ui/notifications/tool-result",
-          params: structuredContent,
+          params: payload,
         });
       }
     } catch (e: any) {
@@ -414,14 +445,17 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
         case "tool_execution_start":
           this.tui.toolStart(event.toolName, event.args);
           break;
-        case "tool_execution_end":
+        case "tool_execution_end": {
+          const payload = this.getToolPayload(event.result);
+          const effectiveIsError = this.getEffectiveToolError(event.result, event.isError);
           this.tui.toolEnd(
             event.toolName,
-            event.result,
-            event.isError,
+            payload,
+            effectiveIsError,
           );
           this.checkAndRegisterApp(event.toolName, event.result);
           break;
+        }
       }
     });
 
@@ -448,5 +482,97 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
         this.tui.addError(`agent_end listener error: ${err}`);
       }
     });
+  }
+
+  private handleMcpEvent(event: MCPClientEvent): void {
+    switch (event.type) {
+      case "progress": {
+        const key = `${event.serverName}:${event.params.progressToken}`;
+        const previous = this.lastMcpProgress.get(key);
+        const next = {
+          progress: event.params.progress,
+          total: event.params.total,
+          message: event.params.message,
+        };
+        this.lastMcpProgress.set(key, next);
+
+        const shouldReport = !previous
+          || event.params.message !== previous.message
+          || this.isProgressComplete(event.params.progress, event.params.total)
+          || this.progressBucket(event.params.progress, event.params.total) !== this.progressBucket(previous.progress, previous.total);
+
+        if (shouldReport) {
+          const summary = this.formatProgress(event.params.progress, event.params.total);
+          const detail = event.params.message ? ` ${event.params.message}` : "";
+          this.tui.addInfo(`MCP ${event.serverName}: ${summary}${detail}`);
+        }
+        return;
+      }
+      case "message": {
+        const level = (event.params.level ?? "info").toLowerCase();
+        const prefix = `MCP ${event.serverName}`;
+        const text = this.stringifyMcpMessage(event.params.data);
+        const label = event.params.logger ? `${event.params.logger}: ` : "";
+        if (level === "error") {
+          this.tui.addError(`${prefix}: ${label}${text}`);
+        } else if (level === "warning" || level === "warn") {
+          this.tui.addInfo(`${prefix} warning: ${label}${text}`);
+        } else {
+          this.tui.addInfo(`${prefix}: ${label}${text}`);
+        }
+        return;
+      }
+      case "tools_list_changed":
+        this.tui.addInfo(`MCP ${event.serverName}: refreshing tool list...`);
+        return;
+      case "tools_refreshed":
+        this.tui.addInfo(`MCP ${event.serverName}: tool list refreshed (${event.toolCount} tools)`);
+        return;
+      case "tools_refresh_failed":
+        this.tui.addError(`MCP ${event.serverName}: tool refresh failed: ${event.error}`);
+        return;
+      case "resources_list_changed":
+        this.tui.addInfo(`MCP ${event.serverName}: resources updated`);
+        return;
+      case "cancelled":
+        this.tui.addInfo(`MCP ${event.serverName}: request cancelled` + (event.params.reason ? ` (${event.params.reason})` : ""));
+        return;
+      default:
+        return;
+    }
+  }
+
+  private progressBucket(progress?: number, total?: number): number {
+    if (typeof progress !== "number") return -1;
+    if (typeof total === "number" && total > 0) {
+      return Math.min(10, Math.floor((progress / total) * 10));
+    }
+    return Math.floor(progress / 10);
+  }
+
+  private isProgressComplete(progress?: number, total?: number): boolean {
+    if (typeof progress !== "number") return false;
+    if (typeof total === "number" && total > 0) {
+      return progress >= total;
+    }
+    return progress >= 100;
+  }
+
+  private formatProgress(progress?: number, total?: number): string {
+    if (typeof progress !== "number") return "progress update";
+    if (typeof total === "number" && total > 0) {
+      const percent = Math.max(0, Math.min(100, Math.round((progress / total) * 100)));
+      return `progress ${percent}% (${progress}/${total})`;
+    }
+    return `progress ${progress}`;
+  }
+
+  private stringifyMcpMessage(data: unknown): string {
+    if (typeof data === "string") return data;
+    try {
+      return JSON.stringify(data);
+    } catch {
+      return String(data);
+    }
   }
 }

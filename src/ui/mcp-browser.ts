@@ -8,7 +8,7 @@ import { c } from "./theme.js";
 
 const MIN_VISIBLE_ROWS = 6;
 const MAX_VISIBLE_ROWS = 8;
-const PREVIEW_LINES = 3;
+const PREVIEW_LINES = 4;
 const PANEL_WIDTH = 78;
 const SHORT_RULE = "────────────────────────────────────────";
 
@@ -26,6 +26,11 @@ export interface McpServerViewModel {
   error?: string;
   toolCount: number;
   tools: McpToolViewModel[];
+  transport?: string;
+  protocolVersion?: string;
+  compatibilityMode?: string;
+  refreshState?: string;
+  refreshError?: string;
 }
 
 function getToolState(name: string, toolRegistry: ToolRegistry): McpToolViewModel["state"] {
@@ -59,14 +64,26 @@ export function buildMcpServers(
       error: state.error,
       toolCount: state.toolCount,
       tools,
+      transport: state.resolvedTransport,
+      protocolVersion: state.negotiatedProtocolVersion,
+      compatibilityMode: state.compatibilityMode,
+      refreshState: state.refreshState,
+      refreshError: state.refreshError,
     };
   });
 }
 
-function renderStatus(status: McpServerViewModel["status"]): string {
+function renderStatus(status: McpServerViewModel["status"], compatibilityMode?: string): string {
+  if (status === "connected") {
+    if (compatibilityMode === "legacy-sse") {
+      return c.yellow("connected (legacy sse)");
+    }
+    if (compatibilityMode === "downgraded") {
+      return c.yellow("connected (downgraded)");
+    }
+    return c.green("connected");
+  }
   switch (status) {
-    case "connected":
-      return c.green("connected");
     case "connecting":
       return c.yellow("connecting");
     case "error":
@@ -156,8 +173,16 @@ export function renderMcpServerList(servers: McpServerViewModel[], selectedIndex
   lines.push(c.dim(SHORT_RULE));
   if (servers.length > 0) {
     const server = servers[Math.max(0, Math.min(selectedIndex, servers.length - 1))];
-    lines.push(truncateAnsi(`${c.dim("tools:")} ${server.toolCount}  ${c.dim("status:")} ${renderStatus(server.status)}`, PANEL_WIDTH));
-    const preview = wrapPreview(c.white(server.description || "No description."), PANEL_WIDTH, PREVIEW_LINES - 2);
+    lines.push(truncateAnsi(`${c.dim("tools:")} ${server.toolCount}  ${c.dim("status:")} ${renderStatus(server.status, server.compatibilityMode)}`, PANEL_WIDTH));
+    lines.push(truncateAnsi(`${c.dim("transport:")} ${server.transport ?? "unknown"}  ${c.dim("protocol:")} ${server.protocolVersion ?? "unknown"}`, PANEL_WIDTH));
+    if (server.refreshState === "refreshing") {
+      lines.push(truncateAnsi(c.yellow("Refreshing tool list..."), PANEL_WIDTH));
+    } else if (server.refreshError) {
+      lines.push(truncateAnsi(c.red(`Refresh failed: ${server.refreshError}`), PANEL_WIDTH));
+    } else {
+      lines.push(truncateAnsi(`${c.dim("mode:")} ${server.compatibilityMode ?? "native"}`, PANEL_WIDTH));
+    }
+    const preview = wrapPreview(c.white(server.description || "No description."), PANEL_WIDTH, PREVIEW_LINES - 1);
     lines.push(...preview);
     lines.push(truncateAnsi(server.error ?? c.dim(`Press Enter to browse ${server.name} tools.`), PANEL_WIDTH));
   } else {

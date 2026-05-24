@@ -121,7 +121,9 @@
           var msg = JSON.parse(event.data);
           if (mode === 'data' && dataModeActive) {
             if (msg.method === 'ui/notifications/tool-result' && msg.params) {
-              mdxData = msg.params;
+              mdxData = (msg.params && typeof msg.params === 'object' && msg.params.structuredContent && typeof msg.params.structuredContent === 'object')
+                ? msg.params.structuredContent
+                : msg.params;
               if (typeof renderMDX === 'function' && mdxSource) {
                 renderMDX(mdxSource, mdxData, mdxContainer);
               }

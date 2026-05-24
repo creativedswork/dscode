@@ -3,7 +3,8 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import type { HarnessConfig, ThinkingLevel } from "./types.js";
-import type { MCPServerConfig } from "../mcp/types.js";
+import type { MCPProtocolVersion, MCPServerConfig, MCPTransport } from "../mcp/types.js";
+import { DEFAULT_MCP_PROTOCOL_VERSION } from "../mcp/types.js";
 
 
 function dsConfigHome(): string {
@@ -75,6 +76,26 @@ export function saveUserProjectCwd(startupPath: string, cwd: string): void {
     cwd: resolve(cwd),
     cwdProjectPath: resolve(startupPath),
   });
+}
+
+function normalizeTransport(rawTransport: unknown, hasCommand: boolean, hasUrl: boolean): MCPTransport {
+  if (rawTransport === "stdio" || rawTransport === "sse" || rawTransport === "streamable-http") {
+    return rawTransport;
+  }
+  if (rawTransport === "http") {
+    return "streamable-http";
+  }
+  if (hasUrl && !hasCommand) {
+    return "streamable-http";
+  }
+  return "stdio";
+}
+
+function normalizeProtocolVersion(rawVersion: unknown): MCPProtocolVersion {
+  if (rawVersion === "2024-11-05" || rawVersion === "2025-03-26" || rawVersion === "2025-11-25") {
+    return rawVersion;
+  }
+  return DEFAULT_MCP_PROTOCOL_VERSION;
 }
 
 export function loadConfig(): HarnessConfig {
@@ -156,7 +177,7 @@ export function loadConfig(): HarnessConfig {
   const mcp: MCPServerConfig[] = mcpServersRaw.map((s: any) => {
     const hasCommand = typeof s.command === "string" && s.command.length > 0;
     const hasUrl = typeof s.url === "string" && s.url.length > 0;
-    const transport = (s.transport ?? s.type ?? (hasUrl && !hasCommand ? "sse" : "stdio")) as "stdio" | "sse";
+    const transport = normalizeTransport(s.transport ?? s.type, hasCommand, hasUrl);
 
     return {
       name: s.name,
@@ -166,6 +187,11 @@ export function loadConfig(): HarnessConfig {
       args: s.args,
       url: s.url,
       env: s.env,
+      headers: s.headers,
+      preferredProtocolVersion: normalizeProtocolVersion(s.preferredProtocolVersion ?? s.protocolVersion),
+      allowLegacySseFallback: s.allowLegacySseFallback !== false,
+      requestTimeoutMs: typeof s.requestTimeoutMs === "number" ? s.requestTimeoutMs : undefined,
+      connectTimeoutMs: typeof s.connectTimeoutMs === "number" ? s.connectTimeoutMs : undefined,
     };
   });
 

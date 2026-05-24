@@ -60,6 +60,9 @@ describe("buildMcpServers", () => {
         config: { name: "demo", description: "Demo server", transport: "stdio", command: "demo" },
         status: "connected",
         toolCount: 3,
+        resolvedTransport: "streamable-http",
+        negotiatedProtocolVersion: "2025-11-25",
+        compatibilityMode: "native",
       },
     ];
 
@@ -151,5 +154,27 @@ describe("buildMcpServers", () => {
     expect(output).toContain("browse server");
     expect(output).toContain("5/10");
     expect(visibleRows).toBe(getMcpVisibleRows(servers.length));
+  });
+
+  it("renders transport, protocol, and refresh errors for the selected server", () => {
+    const output = renderMcpServerList([
+      {
+        name: "demo",
+        description: "Demo server",
+        status: "connected",
+        toolCount: 2,
+        tools: [],
+        transport: "streamable-http",
+        protocolVersion: "2025-11-25",
+        compatibilityMode: "downgraded",
+        refreshState: "error",
+        refreshError: "refresh failed",
+      },
+    ], 0, 0);
+
+    expect(output).toContain("streamable-http");
+    expect(output).toContain("2025-11-25");
+    expect(output).toContain("connected (downgraded)");
+    expect(output).toContain("Refresh failed: refresh failed");
   });
 });

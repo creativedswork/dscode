@@ -4,9 +4,22 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { homedir } from "node:os";
 
-import type { MCPServerConfig, MCPToolDefinition } from "./types.js";
+import type {
+  MCPCancelledNotificationParams,
+  MCPClientEvent,
+  MCPCompatibilityMode,
+  MCPInitializeResult,
+  MCPLoggingMessageNotificationParams,
+  MCPProgressNotificationParams,
+  MCPProtocolVersion,
+  MCPResourcesReadResult,
+  MCPServerConfig,
+  MCPToolDefinition,
+  MCPToolsListResult,
+  MCPTransport,
+} from "./types.js";
+import { DEFAULT_MCP_PROTOCOL_VERSION } from "./types.js";
 
-const MCP_PROTOCOL_VERSION = "2024-11-05";
 const REQUEST_TIMEOUT = 30_000;
 const TOOL_CALL_TIMEOUT = 60_000;
 
@@ -17,48 +30,129 @@ function expandTilde(p: string): string {
   return p;
 }
 
+type PendingEntry = {
+  method: string;
+  resolve: (v: unknown) => void;
+  reject: (e: Error) => void;
+  timer: NodeJS.Timeout;
+  progressToken?: string | number;
+};
+
+type HttpResponseData = {
+  statusCode: number;
+  headers: Record<string, string | string[] | undefined>;
+  body: string;
+};
+
 export class MCPClient {
   private process: ChildProcess | null = null;
   private requestId = 0;
-  private pending = new Map<number, { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }>();
-  private buffer = "";
+  private pending = new Map<string | number, PendingEntry>();
   private closed = false;
   private sseUrl: string | null = null;
+  private sessionId: string | null = null;
+  private protocolVersion: MCPProtocolVersion;
+  private negotiatedProtocolVersion: string | null = null;
+  private resolvedTransport: MCPTransport;
+  private compatibilityMode: MCPCompatibilityMode = "native";
+  private toolDefs = new Map<string, MCPToolDefinition>();
+  private eventListeners = new Set<(event: MCPClientEvent) => void>();
+  private activeSseRequest: ReturnType<typeof httpRequest> | ReturnType<typeof httpsRequest> | null = null;
 
-  constructor(private config: MCPServerConfig) {}
+  constructor(private config: MCPServerConfig) {
+    this.protocolVersion = config.preferredProtocolVersion ?? DEFAULT_MCP_PROTOCOL_VERSION;
+    this.resolvedTransport = config.transport;
+  }
+
+  getNegotiatedProtocolVersion(): string | null {
+    return this.negotiatedProtocolVersion;
+  }
+
+  getResolvedTransport(): MCPTransport {
+    return this.resolvedTransport;
+  }
+
+  getCompatibilityMode(): MCPCompatibilityMode {
+    return this.compatibilityMode;
+  }
+
+  onEvent(listener: (event: MCPClientEvent) => void): () => void {
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
+  }
 
   async connect(): Promise<void> {
-    if (this.config.transport === "stdio") {
-      await this.connectStdio();
-    } else {
-      await this.connectSSE();
-    }
+    let result: MCPInitializeResult;
 
-    const result = await this.request("initialize", {
-      protocolVersion: MCP_PROTOCOL_VERSION,
-      capabilities: {
-        extensions: {
-          "io.modelcontextprotocol/ui": {
-            mimeTypes: ["text/html;profile=mcp-app"],
+    if (this.config.transport === "stdio") {
+      this.resolvedTransport = "stdio";
+      await this.connectStdio();
+      result = await this.request("initialize", {
+        protocolVersion: this.protocolVersion,
+        capabilities: {
+          extensions: {
+            "io.modelcontextprotocol/ui": {
+              mimeTypes: ["text/html;profile=mcp-app"],
+            },
           },
         },
-      },
-      clientInfo: { name: "dscode", version: "0.2.0" },
-    }) as any;
+        clientInfo: { name: "dscode", version: "0.2.0" },
+      }) as MCPInitializeResult;
+    } else if (this.config.transport === "sse") {
+      this.resolvedTransport = "sse";
+      this.compatibilityMode = "legacy-sse";
+      await this.connectLegacySSE();
+      result = await this.request("initialize", {
+        protocolVersion: this.protocolVersion,
+        capabilities: {
+          extensions: {
+            "io.modelcontextprotocol/ui": {
+              mimeTypes: ["text/html;profile=mcp-app"],
+            },
+          },
+        },
+        clientInfo: { name: "dscode", version: "0.2.0" },
+      }) as MCPInitializeResult;
+    } else {
+      result = await this.connectPreferredHttpTransport();
+    }
 
     const serverVersion = result?.protocolVersion;
     if (!serverVersion) {
       throw new Error(`MCP server "${this.config.name}" returned invalid initialize response`);
     }
 
+    this.negotiatedProtocolVersion = serverVersion;
+    if (!this.isSupportedProtocolVersion(serverVersion)) {
+      throw new Error(`MCP server "${this.config.name}" negotiated unsupported protocol version ${serverVersion}`);
+    }
+
+    if (serverVersion !== this.protocolVersion) {
+      this.compatibilityMode = this.resolvedTransport === "sse" ? "legacy-sse" : "downgraded";
+    }
+
+    this.emit({
+      type: "protocol",
+      serverName: this.config.name,
+      protocolVersion: serverVersion,
+      compatibilityMode: this.compatibilityMode,
+    });
+
     this.sendNotification("notifications/initialized");
   }
 
-  private toolDefs = new Map<string, MCPToolDefinition>();
-
   async listTools(): Promise<MCPToolDefinition[]> {
-    const result = await this.request("tools/list") as any;
-    const tools = (result?.tools ?? []) as MCPToolDefinition[];
+    const tools: MCPToolDefinition[] = [];
+    let cursor: string | undefined;
+
+    while (true) {
+      const result = await this.request("tools/list", cursor ? { cursor } : undefined) as MCPToolsListResult;
+      const page = (result?.tools ?? []) as MCPToolDefinition[];
+      tools.push(...page);
+      cursor = result?.nextCursor;
+      if (!cursor) break;
+    }
+
     this.toolDefs.clear();
     for (const tool of tools) {
       this.toolDefs.set(tool.name, tool);
@@ -75,24 +169,26 @@ export class MCPClient {
   }
 
   async callTool(name: string, args: unknown): Promise<unknown> {
-    return this.request("tools/call", { name, arguments: args }, TOOL_CALL_TIMEOUT);
+    return this.request("tools/call", { name, arguments: args }, TOOL_CALL_TIMEOUT, true);
   }
 
-  async readResource(uri: string): Promise<unknown> {
-    return this.request("resources/read", { uri }, TOOL_CALL_TIMEOUT);
+  async readResource(uri: string): Promise<MCPResourcesReadResult> {
+    return this.request("resources/read", { uri }, TOOL_CALL_TIMEOUT, true) as Promise<MCPResourcesReadResult>;
   }
 
   async close(): Promise<void> {
     if (this.closed) return;
     this.closed = true;
 
-    if (this.config.transport === "stdio") {
-      this.killProcessTree();
-    } else {
-      try {
-        await this.request("shutdown", undefined, 1_000);
-      } catch {
-      }
+    if (this.resolvedTransport === "stdio") {
+      await this.closeStdioGracefully();
+    } else if (this.resolvedTransport === "streamable-http") {
+      await this.closeStreamableHttp();
+    }
+
+    if (this.activeSseRequest) {
+      this.activeSseRequest.destroy();
+      this.activeSseRequest = null;
     }
 
     for (const [, entry] of this.pending) {
@@ -103,6 +199,45 @@ export class MCPClient {
 
     if (this.process) {
       this.process = null;
+    }
+  }
+
+  private async connectPreferredHttpTransport(): Promise<MCPInitializeResult> {
+    try {
+      const result = await this.connectStreamableHttp();
+      this.resolvedTransport = "streamable-http";
+      this.compatibilityMode = "native";
+      this.emit({
+        type: "transport",
+        serverName: this.config.name,
+        transport: this.resolvedTransport,
+        compatibilityMode: this.compatibilityMode,
+      });
+      return result;
+    } catch (error) {
+      if (!this.config.allowLegacySseFallback) {
+        throw error;
+      }
+      this.resolvedTransport = "sse";
+      this.compatibilityMode = "legacy-sse";
+      await this.connectLegacySSE();
+      this.emit({
+        type: "transport",
+        serverName: this.config.name,
+        transport: this.resolvedTransport,
+        compatibilityMode: this.compatibilityMode,
+      });
+      return await this.request("initialize", {
+        protocolVersion: this.protocolVersion,
+        capabilities: {
+          extensions: {
+            "io.modelcontextprotocol/ui": {
+              mimeTypes: ["text/html;profile=mcp-app"],
+            },
+          },
+        },
+        clientInfo: { name: "dscode", version: "0.2.0" },
+      }) as MCPInitializeResult;
     }
   }
 
@@ -117,25 +252,17 @@ export class MCPClient {
       detached: process.platform !== "win32",
     });
 
-    // Suppress EPIPE errors on stdin when the child process exits unexpectedly
-    // (e.g. during Ctrl+C shutdown). Node throws unhandled 'error' events on
-    // the stdin Writable if the pipe breaks while we're writing to it.
     this.process.stdin!.on("error", () => {});
 
-    // capture stderr for error diagnostics
     let stderrBuf = "";
     this.process.stderr!.on("data", (data: Buffer) => {
       stderrBuf += data.toString();
     });
 
-    // wait for process to be alive, or capture immediate exit with stderr
     await new Promise<void>((resolve, reject) => {
       let settled = false;
 
       const rejectWithStderr = (msg: string) => {
-        // In tsx environments, 'close' can fire before 'data' events are
-        // processed.  Use setImmediate to yield to the event loop so any
-        // pending stderr 'data' callbacks run before we read the buffer.
         setImmediate(() => {
           const stderr = stderrBuf.trim().slice(0, 500);
           const detail = stderr ? `: ${stderr}` : "";
@@ -160,7 +287,6 @@ export class MCPClient {
         this.process?.removeListener("error", onError);
       };
 
-      // if process already closed, fail fast
       if (this.process!.exitCode !== null || this.process!.killed) {
         rejectWithStderr(`MCP server "${this.config.name}" exited with code ${this.process!.exitCode}`);
         return;
@@ -169,7 +295,6 @@ export class MCPClient {
       this.process!.on("close", onClose);
       this.process!.on("error", onError);
 
-      // resolve after process is alive (next tick)
       setImmediate(() => {
         if (settled) return;
         cleanup();
@@ -181,19 +306,14 @@ export class MCPClient {
       });
     });
 
-
-    // now set up the line handler for ongoing communication
     const rl = createInterface({ input: this.process.stdout! });
     rl.on("line", (line) => {
       this.handleMessage(line);
     });
 
-    // handle delayed exit after successful connect
     this.process.on("exit", (code) => {
       if (!this.closed) {
         this.closed = true;
-        // stderr data may arrive slightly after 'exit' (e.g. npx writing
-        // npm error logs).  Wait a tick then include any captured stderr.
         setImmediate(() => {
           const stderr = stderrBuf.trim().slice(0, 500);
           const detail = stderr ? `: ${stderr}` : "";
@@ -210,8 +330,46 @@ export class MCPClient {
     });
   }
 
+  private async connectStreamableHttp(): Promise<MCPInitializeResult> {
+    const url = this.config.url;
+    if (!url) throw new Error(`MCP server "${this.config.name}" has no url`);
 
-  private async connectSSE(): Promise<void> {
+    const response = await this.sendHttpMessage(url, {
+      jsonrpc: "2.0",
+      id: 0,
+      method: "initialize",
+      params: {
+        protocolVersion: this.protocolVersion,
+        capabilities: {
+          extensions: {
+            "io.modelcontextprotocol/ui": {
+              mimeTypes: ["text/html;profile=mcp-app"],
+            },
+          },
+        },
+        clientInfo: { name: "dscode", version: "0.2.0" },
+      },
+    }, true, false);
+
+    if (response.statusCode >= 400) {
+      throw new Error(`MCP server "${this.config.name}" rejected Streamable HTTP initialize with status ${response.statusCode}`);
+    }
+
+    const sessionId = this.getHeader(response.headers, "mcp-session-id");
+    if (sessionId) {
+      this.sessionId = sessionId;
+    }
+
+    const parsed = this.parseJsonResponse(response.body);
+    if (!parsed?.result || typeof parsed.result !== "object") {
+      throw new Error(`MCP server "${this.config.name}" returned invalid Streamable HTTP initialize response`);
+    }
+
+    this.negotiatedProtocolVersion = (parsed.result as MCPInitializeResult).protocolVersion ?? null;
+    return parsed.result as MCPInitializeResult;
+  }
+
+  private async connectLegacySSE(): Promise<void> {
     const url = this.config.url;
     if (!url) throw new Error(`MCP server "${this.config.name}" has no url`);
 
@@ -223,36 +381,23 @@ export class MCPClient {
         url,
         {
           method: "GET",
-          headers: { Accept: "text/event-stream" },
+          headers: { Accept: "text/event-stream", ...(this.config.headers ?? {}) },
         },
         (res) => {
           let buffer = "";
           res.on("data", (chunk: Buffer) => {
-            buffer += chunk.toString();
-            const lines = buffer.split("\n");
-            buffer = lines.pop() ?? "";
-
-            for (const line of lines) {
-              const eventMatch = line.match(/^event:\s*(.+)/);
-              const dataMatch = line.match(/^data:\s*(.+)/);
-
-              if (eventMatch && eventMatch[1] === "endpoint") {
-                continue;
-              }
-
-              if (dataMatch) {
-                try {
-                  const data = JSON.parse(dataMatch[1]);
-                  if (data.method === "endpoint") {
-                    this.sseUrl = data.params?.endpoint ?? null;
-                    resolve();
-                  } else {
-                    this.handleMessage(dataMatch[1]);
-                  }
-                } catch {
+            buffer = this.handleSseChunk(buffer + chunk.toString(), (message) => {
+              try {
+                const data = JSON.parse(message);
+                if (data.method === "endpoint") {
+                  this.sseUrl = data.params?.endpoint ?? null;
+                  resolve();
+                } else {
+                  this.handleMessage(message);
                 }
+              } catch {
               }
-            }
+            });
           });
 
           res.on("end", () => {
@@ -268,6 +413,8 @@ export class MCPClient {
         },
       );
 
+      this.activeSseRequest = req;
+
       req.on("error", (err) => {
         reject(new Error(`MCP server "${this.config.name}" connection failed: ${err.message}`));
       });
@@ -276,16 +423,89 @@ export class MCPClient {
     });
   }
 
-  private killProcessTree(): void {
-    if (!this.process?.pid) return;
+  private async closeStdioGracefully(): Promise<void> {
+    if (!this.process) return;
+
     try {
-      if (process.platform !== "win32") {
+      this.process.stdin?.end();
+    } catch {
+    }
+
+    const exited = await new Promise<boolean>((resolve) => {
+      let settled = false;
+      const finish = (value: boolean) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+
+      const timer = setTimeout(() => finish(false), 500);
+      this.process?.once("exit", () => {
+        clearTimeout(timer);
+        finish(true);
+      });
+    });
+
+    if (exited) return;
+
+    try {
+      if (process.platform !== "win32" && this.process.pid) {
         process.kill(-this.process.pid, "SIGTERM");
       } else {
         this.process.kill("SIGTERM");
       }
     } catch {
     }
+
+    const terminated = await new Promise<boolean>((resolve) => {
+      let settled = false;
+      const finish = (value: boolean) => {
+        if (settled) return;
+        settled = true;
+        resolve(value);
+      };
+
+      const timer = setTimeout(() => finish(false), 500);
+      this.process?.once("exit", () => {
+        clearTimeout(timer);
+        finish(true);
+      });
+    });
+
+    if (terminated) return;
+
+    try {
+      if (process.platform !== "win32" && this.process?.pid) {
+        process.kill(-this.process.pid, "SIGKILL");
+      } else {
+        this.process?.kill("SIGKILL");
+      }
+    } catch {
+    }
+  }
+
+  private async closeStreamableHttp(): Promise<void> {
+    if (!this.config.url || !this.sessionId) return;
+    const url = this.config.url;
+    const sessionId = this.sessionId;
+    const parsed = new URL(url);
+    const requester = parsed.protocol === "https:" ? httpsRequest : httpRequest;
+
+    await new Promise<void>((resolve) => {
+      const req = requester(
+        url,
+        {
+          method: "DELETE",
+          headers: this.buildHttpHeaders({
+            Accept: "application/json, text/event-stream",
+            "MCP-Session-Id": sessionId,
+          }, false),
+        },
+        () => resolve(),
+      );
+      req.on("error", () => resolve());
+      req.end();
+    });
   }
 
   private handleMessage(raw: string): void {
@@ -293,10 +513,9 @@ export class MCPClient {
     try {
       msg = JSON.parse(raw);
     } catch {
-      return; // ignore non-JSON messages
+      return;
     }
 
-    // response
     if (msg.id !== undefined && (msg.result !== undefined || msg.error !== undefined)) {
       const entry = this.pending.get(msg.id);
       if (!entry) return;
@@ -312,41 +531,108 @@ export class MCPClient {
       return;
     }
 
-    // notification
     if (msg.id === undefined && msg.method) {
-      // handle notifications if needed
-      return;
+      this.handleNotification(msg.method, msg.params);
     }
   }
 
-  private request(method: string, params?: unknown, timeout = REQUEST_TIMEOUT): Promise<unknown> {
+  private handleNotification(method: string, params: unknown): void {
+    switch (method) {
+      case "notifications/progress":
+        this.emit({ type: "progress", serverName: this.config.name, params: params as MCPProgressNotificationParams });
+        return;
+      case "notifications/message":
+        this.emit({ type: "message", serverName: this.config.name, params: params as MCPLoggingMessageNotificationParams });
+        return;
+      case "notifications/cancelled":
+        this.emit({ type: "cancelled", serverName: this.config.name, params: params as MCPCancelledNotificationParams });
+        return;
+      case "notifications/tools/list_changed":
+        this.emit({ type: "tools_list_changed", serverName: this.config.name });
+        return;
+      case "notifications/resources/list_changed":
+        this.emit({ type: "resources_list_changed", serverName: this.config.name });
+        return;
+      default:
+        return;
+    }
+  }
+
+  private request(method: string, params?: unknown, timeout = this.config.requestTimeoutMs ?? REQUEST_TIMEOUT, withProgress = false): Promise<unknown> {
     if (this.closed) {
       return Promise.reject(new Error(`MCP request "${method}" rejected: client closed`));
     }
 
     return new Promise((resolve, reject) => {
       const id = ++this.requestId;
-      const msg = JSON.stringify({ jsonrpc: "2.0", id, method, params });
+      const finalParams = this.attachProgressToken(params, withProgress ? id : undefined);
 
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        if (method !== "initialize") {
+          this.sendNotification("notifications/cancelled", { requestId: id, reason: `Request timed out after ${timeout}ms` });
+        }
         reject(new Error(`MCP request "${method}" timed out after ${timeout}ms`));
       }, timeout);
 
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { resolve, reject, timer, method, progressToken: withProgress ? id : undefined });
 
-      if (this.config.transport === "stdio") {
-        this.process?.stdin?.write(msg + "\n");
-      } else if (this.sseUrl) {
+      if (this.resolvedTransport === "stdio") {
+        this.process?.stdin?.write(JSON.stringify({ jsonrpc: "2.0", id, method, params: finalParams }) + "\n");
+        return;
+      }
+
+      if (this.resolvedTransport === "streamable-http") {
+        this.sendHttpMessage(this.config.url!, { jsonrpc: "2.0", id, method, params: finalParams }, true, true)
+          .then((response) => {
+            const entry = this.pending.get(id);
+            if (!entry) return;
+
+            if (response.statusCode >= 400) {
+              clearTimeout(entry.timer);
+              this.pending.delete(id);
+              reject(new Error(`MCP HTTP response for "${method}" failed with status ${response.statusCode}`));
+              return;
+            }
+
+            if (this.isSseResponse(response.headers)) {
+              if (this.pending.has(id)) {
+                clearTimeout(entry.timer);
+                this.pending.delete(id);
+                reject(new Error(`MCP HTTP SSE response for "${method}" ended without a JSON-RPC result`));
+              }
+              return;
+            }
+
+            const parsed = this.parseJsonResponse(response.body);
+            if (!parsed) {
+              clearTimeout(entry.timer);
+              this.pending.delete(id);
+              reject(new Error(`MCP HTTP response for "${method}" was not valid JSON-RPC`));
+              return;
+            }
+            this.handleMessage(JSON.stringify(parsed));
+          })
+          .catch((err) => {
+            const entry = this.pending.get(id);
+            if (!entry) return;
+            clearTimeout(entry.timer);
+            this.pending.delete(id);
+            reject(new Error(`MCP HTTP error: ${err.message}`));
+          });
+        return;
+      }
+
+      if (this.sseUrl) {
         const parsed = new URL(this.sseUrl, this.config.url);
         const requester = parsed.protocol === "https:" ? httpsRequest : httpRequest;
-        const body = JSON.stringify({ jsonrpc: "2.0", id, method, params });
+        const body = JSON.stringify({ jsonrpc: "2.0", id, method, params: finalParams });
 
         const req = requester(
           parsed.toString(),
           {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", ...(this.config.headers ?? {}) },
           },
           () => {
           },
@@ -370,8 +656,31 @@ export class MCPClient {
 
     const msg = JSON.stringify({ jsonrpc: "2.0", method, params });
 
-    if (this.config.transport === "stdio") {
+    if (this.resolvedTransport === "stdio") {
       this.process?.stdin?.write(msg + "\n");
+      return;
+    }
+
+    if (this.resolvedTransport === "streamable-http") {
+      this.sendHttpMessage(this.config.url!, { jsonrpc: "2.0", method, params }, false, true).catch(() => {});
+      return;
+    }
+
+    if (this.sseUrl) {
+      const parsed = new URL(this.sseUrl, this.config.url);
+      const requester = parsed.protocol === "https:" ? httpsRequest : httpRequest;
+      const req = requester(
+        parsed.toString(),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...(this.config.headers ?? {}) },
+        },
+        () => {
+        },
+      );
+      req.on("error", () => {});
+      req.write(msg);
+      req.end();
     }
   }
 
@@ -381,5 +690,135 @@ export class MCPClient {
       entry.reject(err);
     }
     this.pending.clear();
+  }
+
+  private emit(event: MCPClientEvent): void {
+    for (const listener of this.eventListeners) {
+      listener(event);
+    }
+  }
+
+  private attachProgressToken(params: unknown, progressToken?: string | number): unknown {
+    if (progressToken === undefined) return params;
+    if (!params || typeof params !== "object" || Array.isArray(params)) {
+      return {
+        _meta: { progressToken },
+      };
+    }
+
+    const meta = (params as Record<string, unknown>)._meta;
+    return {
+      ...(params as Record<string, unknown>),
+      _meta: {
+        ...(meta && typeof meta === "object" && !Array.isArray(meta) ? meta as Record<string, unknown> : {}),
+        progressToken,
+      },
+    };
+  }
+
+  private isSupportedProtocolVersion(version: string): version is MCPProtocolVersion {
+    return version === "2024-11-05" || version === "2025-03-26" || version === "2025-11-25";
+  }
+
+  private parseJsonResponse(body: string): any {
+    if (!body) return null;
+    try {
+      return JSON.parse(body);
+    } catch {
+      return null;
+    }
+  }
+
+  private handleSseChunk(buffer: string, onMessage: (message: string) => void): string {
+    const normalized = buffer.replace(/\r\n/g, "\n");
+    const events = normalized.split("\n\n");
+    const remainder = events.pop() ?? "";
+
+    for (const rawEvent of events) {
+      const dataLines = rawEvent
+        .split("\n")
+        .filter((line) => line.startsWith("data:"))
+        .map((line) => line.slice(5).trimStart());
+      if (dataLines.length === 0) continue;
+      onMessage(dataLines.join("\n"));
+    }
+
+    return remainder;
+  }
+
+  private isSseResponse(headers: Record<string, string | string[] | undefined>): boolean {
+    const contentType = this.getHeader(headers, "content-type") ?? "";
+    return contentType.toLowerCase().includes("text/event-stream");
+  }
+
+  private getHeader(headers: Record<string, string | string[] | undefined>, key: string): string | null {
+    const value = headers[key] ?? headers[key.toLowerCase()];
+    if (Array.isArray(value)) return value[0] ?? null;
+    return value ?? null;
+  }
+
+  private buildHttpHeaders(extra: Record<string, string>, includeContentType: boolean): Record<string, string> {
+    const headers: Record<string, string> = {
+      ...(this.config.headers ?? {}),
+      ...extra,
+    };
+
+    if (includeContentType) {
+      headers["Content-Type"] = "application/json";
+    }
+
+    headers.Accept ??= "application/json, text/event-stream";
+    headers["MCP-Protocol-Version"] = this.negotiatedProtocolVersion ?? this.protocolVersion;
+    if (this.sessionId) {
+      headers["MCP-Session-Id"] = this.sessionId;
+    }
+    return headers;
+  }
+
+  private async sendHttpMessage(url: string, payload: unknown, isRequest: boolean, includeContentType: boolean): Promise<HttpResponseData> {
+    const parsed = new URL(url);
+    const requester = parsed.protocol === "https:" ? httpsRequest : httpRequest;
+    const body = JSON.stringify(payload);
+
+    return new Promise((resolve, reject) => {
+      const req = requester(
+        url,
+        {
+          method: "POST",
+          headers: this.buildHttpHeaders({
+            Accept: isRequest ? "application/json, text/event-stream" : "application/json, text/event-stream",
+          }, includeContentType),
+        },
+        (res) => {
+          const headers = res.headers as Record<string, string | string[] | undefined>;
+          let responseBody = "";
+          let sseBuffer = "";
+          const sseResponse = this.isSseResponse(headers);
+
+          res.on("data", (chunk: Buffer) => {
+            const text = chunk.toString();
+            responseBody += text;
+            if (sseResponse) {
+              sseBuffer = this.handleSseChunk(sseBuffer + text, (message) => this.handleMessage(message));
+            }
+          });
+          res.on("end", () => {
+            if (sseResponse && sseBuffer.trim()) {
+              this.handleSseChunk(sseBuffer + "\n\n", (message) => this.handleMessage(message));
+            }
+            resolve({
+              statusCode: res.statusCode ?? 0,
+              headers,
+              body: responseBody,
+            });
+          });
+          res.on("error", (err) => reject(err));
+        },
+      );
+
+      req.on("error", (err) => reject(err));
+      req.write(body);
+      req.end();
+    });
   }
 }
