@@ -52,6 +52,8 @@ export interface TuiDeps {
   onSetThinking: (level: string) => void;
 }
 
+type InputListenerResult = { consume?: boolean; data?: string } | undefined;
+
 export class TuiApp {
   private deps: TuiDeps;
   private terminal: ProcessTerminal;
@@ -71,7 +73,8 @@ export class TuiApp {
   private processing = false;
   private lastCtrlCPress = 0;
   private ctrlCDebounceUntil = 0;
-  private menuNavDebounceUntil = 0;
+  private lastMenuNavDirection: "up" | "down" | null = null;
+  private lastMenuNavAt = 0;
   private resolvePermission: ((result: PermissionPromptResult) => void) | null = null;
   private pendingPermissionContext:
     | { toolName: string; args: unknown }
@@ -116,8 +119,9 @@ export class TuiApp {
     };
 
     this.tui.addInputListener((data) => {
-      if (this.handlePasteImage(data)) {
-        return { consume: true };
+      const pasteResult = this.handlePasteImage(data);
+      if (pasteResult) {
+        return pasteResult;
       }
       if (this.handleInput(data)) {
         return { consume: true };
@@ -203,11 +207,12 @@ export class TuiApp {
     };
   }
 
-  private canNavigateMenu(now = Date.now()): boolean {
-    if (now < this.menuNavDebounceUntil) {
+  private canNavigateMenu(direction: "up" | "down", now = Date.now()): boolean {
+    if (this.lastMenuNavDirection === direction && now - this.lastMenuNavAt < 90) {
       return false;
     }
-    this.menuNavDebounceUntil = now + 90;
+    this.lastMenuNavDirection = direction;
+    this.lastMenuNavAt = now;
     return true;
   }
 
@@ -245,13 +250,13 @@ export class TuiApp {
 
     if (this.resolvePermission) {
       if (matchesKey(data, Key.up)) {
-        if (this.canNavigateMenu()) {
+        if (this.canNavigateMenu("up")) {
           this.conversation.permNavigate(-1);
         }
         return true;
       }
       if (matchesKey(data, Key.down)) {
-        if (this.canNavigateMenu()) {
+        if (this.canNavigateMenu("down")) {
           this.conversation.permNavigate(1);
         }
         return true;
@@ -391,7 +396,7 @@ export class TuiApp {
     }
 
     if (matchesKey(data, Key.up)) {
-      if (!this.canNavigateMenu()) {
+      if (!this.canNavigateMenu("up")) {
         return true;
       }
       if (this.mcpSelectedServerIndex == null) {
@@ -412,7 +417,7 @@ export class TuiApp {
     }
 
     if (matchesKey(data, Key.down)) {
-      if (!this.canNavigateMenu()) {
+      if (!this.canNavigateMenu("down")) {
         return true;
       }
       if (this.mcpSelectedServerIndex == null) {
@@ -458,17 +463,81 @@ export class TuiApp {
     return true;
   }
 
-  private handlePasteImage(data: string): boolean {
-    // Detect empty bracketed paste (possible image paste)
-    const m = data.match(/^\x1b\[200~([\s\S]*?)\x1b\[201~$/);
-    if (!m) return false;
-
-    const pasteContent = m[1];
-    // Only intercept if paste content is empty or contains non-printable data
-    if (pasteContent.trim() !== "" && !/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/.test(pasteContent)) {
-      return false;
+  /**
+   * Handle pasted content that may contain images.
+   *
+   * Supports:
+   * - Bracketed paste with image data (terminal wraps clipboard image in \x1b[200~...\x1b[201~)
+   * - Kitty image protocol sequences (\x1b_G...\x1b\\) sent directly or within bracketed paste
+   * - Mixed content: text accompanying images is extracted and passed through to the editor
+   *
+   * Returns an InputListenerResult:
+   * - undefined: not a paste/kitty sequence, let other handlers process
+   * - { consume: true }: pure image/kittty data, consume entirely
+   * - { data: string }: mixed content, pass extracted text to editor while also loading image
+   */
+  private handlePasteImage(data: string): InputListenerResult {
+    // ── Kitty image protocol (ESC _ G ... ESC \) ──
+    // These APC sequences can arrive outside bracketed paste when the terminal
+    // natively pastes images via Kitty protocol.
+    if (this.handleKittyImageProtocol(data)) {
+      return { consume: true };
     }
 
+    // ── Bracketed paste ──
+    const m = data.match(/^\x1b\[200~([\s\S]*?)\x1b\[201~$/);
+    if (!m) return undefined;
+
+    const pasteContent = m[1];
+
+    // Check if paste is pure printable text (no image data)
+    const hasControlChars = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/.test(pasteContent);
+    if (pasteContent.trim() !== "" && !hasControlChars) {
+      // Pure text paste — let it through to the editor unchanged
+      return undefined;
+    }
+
+    // ── Paste contains potential image data ──
+    // Extract any printable text mixed with the image binary data
+    const printableText = this.extractPrintableText(pasteContent);
+
+    // Try to read the image from system clipboard (macOS only)
+    readClipboardImageNonBlocking().then((img) => {
+      if (img) {
+        this.pendingImages.push(img);
+        this.updateImageStatus();
+        this.conversation.addInlineImage(img.data, img.mimeType);
+        if (!this.deps.modelSupportsImages) {
+          this.conversation.addInfo(
+            c.yellow(`${this.deps.modelName} does not support image input.`),
+          );
+        }
+      }
+    });
+
+    // If there's extractable printable text, pass it through to the editor
+    // so text + image can coexist in the same message
+    if (printableText.length > 0) {
+      // Transform: strip the image data, keep the text for the editor
+      return { data: printableText };
+    }
+
+    // Pure image paste — consume entirely (don't let binary data reach the editor)
+    return { consume: true };
+  }
+
+  /**
+   * Handle Kitty image protocol sequences.
+   * Kitty uses APC sequences: ESC _ G <params> ; <base64> ESC \
+   * These can arrive as direct input when pasting images in Kitty-native terminals.
+   */
+  private handleKittyImageProtocol(data: string): boolean {
+    // Kitty image transmission always contains ESC _ G
+    if (!data.includes("\x1b_G")) return false;
+
+    // The data might be a Kitty image transmission.
+    // We consume it and try to read the clipboard image instead,
+    // since extracting base64 from Kitty protocol chunks is fragile.
     readClipboardImageNonBlocking().then((img) => {
       if (img) {
         this.pendingImages.push(img);
@@ -483,6 +552,24 @@ export class TuiApp {
     });
 
     return true;
+  }
+
+  /**
+   * Extract printable text characters from mixed binary/text content.
+   * Filters out control characters while preserving spaces, newlines, tabs,
+   * and all printable Unicode characters.
+   */
+  private extractPrintableText(content: string): string {
+    return content
+      .split("")
+      .filter((char) => {
+        const code = char.charCodeAt(0);
+        // Keep: printable ASCII (>=32), newline, carriage return, tab
+        // Also keep: all Unicode chars above ASCII range (code >= 128)
+        return code >= 32 || char === "\n" || char === "\r" || char === "\t";
+      })
+      .join("")
+      .trim();
   }
 
   private handleCtrlC(): void {
@@ -649,7 +736,10 @@ export class TuiApp {
   }
 
   private handleSubmit(text: string): void {
-    if (!text) return;
+    const images = this.pendingImages.length > 0 ? [...this.pendingImages] : undefined;
+    const hasText = text.length > 0;
+    const hasImages = Boolean(images?.length);
+    if (!hasText && !hasImages) return;
 
     this.editor.setText("");
 
@@ -692,13 +782,15 @@ export class TuiApp {
       );
     }
 
-    const imageIndicator = this.pendingImages.length > 0
-      ? "\n" + c.dim(`[${this.pendingImages.length} image(s) attached]`)
+    const imageIndicator = images
+      ? c.dim(`[${images.length} image(s) attached]`)
       : "";
-    this.addUserMessage(text + imageIndicator);
+    const userMessage = hasText
+      ? imageIndicator ? `${text}\n${imageIndicator}` : text
+      : imageIndicator;
+    this.addUserMessage(userMessage);
     this.setProcessing(true);
 
-    const images = this.pendingImages.length > 0 ? [...this.pendingImages] : undefined;
     this.pendingImages = [];
     this.updateImageStatus();
 
@@ -707,9 +799,13 @@ export class TuiApp {
         (result: OcrResult) => {
           let promptText: string;
           if (result.hasText) {
-            promptText = `${text}\n\n<image_text>\n${result.content}\n</image_text>`;
+            promptText = hasText
+              ? `${text}\n\n<image_text>\n${result.content}\n</image_text>`
+              : `<image_text>\n${result.content}\n</image_text>`;
           } else {
-            promptText = `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`;
+            promptText = hasText
+              ? `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`
+              : "(用户附带了一张图片，但图片中没有可识别的文字内容)";
           }
           this.deps.agent.prompt(promptText).then(
             () => this.setProcessing(false),
@@ -772,7 +868,8 @@ export class TuiApp {
     this.conversation.clear();
     this.permissionExplainMode = false;
     this.pendingPermissionContext = null;
-    this.menuNavDebounceUntil = 0;
+    this.lastMenuNavDirection = null;
+    this.lastMenuNavAt = 0;
     this.pendingImages = [];
     if (this.mcpPanelVisible) {
       this.closeMcpBrowser();
@@ -796,7 +893,7 @@ export class TuiApp {
         this.pendingImages.reduce((sum, img) => sum + img.data.length * 0.75, 0) / 1024,
       );
       this.imageStatus.setText(
-        c.dim(` ${this.pendingImages.length} image(s) attached (${totalKB} KB)`),
+        c.dim(` ${this.pendingImages.length} image(s) attached (${totalKB} KB) — type text and press Enter to send`),
       );
     } else {
       this.imageStatus.setText("");
