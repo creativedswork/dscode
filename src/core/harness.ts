@@ -34,6 +34,8 @@ export class Harness {
   private tui!: TuiApp;
   private baseSystemPrompt = "";
   private lastMcpProgress = new Map<string, { progress?: number; total?: number; message?: string }>();
+  private mcpEventUnsubscribe?: () => void;
+  private shuttingDown = false;
 
   constructor(config: HarnessConfig) {
     this.config = config;
@@ -143,57 +145,60 @@ export class Harness {
 
     await this.tui.start();
 
-    if (this.config.mcp.length > 0) {
-      this.tui.addInfo(`Connecting ${this.config.mcp.length} MCP server(s)...`);
-      this.mcpManager = new MCPManager(this.config.mcp);
-      this.tui.setMcpManager(this.mcpManager);
-      await this.mcpManager.initialize();
-      this.mcpManager.onEvent((event) => this.handleMcpEvent(event));
-      await this.mcpManager.registerDrivers(this.driverRegistry);
+    try {
+      if (this.config.mcp.length > 0) {
+        this.tui.addInfo(`Connecting ${this.config.mcp.length} MCP server(s)...`);
+        this.mcpManager = new MCPManager(this.config.mcp);
+        this.tui.setMcpManager(this.mcpManager);
+        await this.mcpManager.initialize();
+        this.mcpEventUnsubscribe = this.mcpManager.onEvent((event) => this.handleMcpEvent(event));
+        await this.mcpManager.registerDrivers(this.driverRegistry);
 
-      if (this.appHostManager) {
-        this.appHostManager.setMcpManager(this.mcpManager);
-      }
-
-      const appOnlyNames = new Set(this.mcpManager.getAppOnlyToolNames());
-      this.toolRegistry.initialize(
-        this.makeSkillTool(),
-        this.mcpManager.getAlwaysLoadToolNames(),
-        appOnlyNames,
-      );
-      this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
-      const connected = this.mcpManager.getStates().filter((s) => s.status === "connected").length;
-      const total = this.config.mcp.length;
-      this.tui.addInfo(`MCP: ${connected}/${total} connected`);
-      if (connected < total) {
-        const errors = this.mcpManager.getStates().filter((s) => s.status === "error");
-        for (const err of errors) {
-          this.tui.addInfo(`MCP '${err.config.name}' failed: ${err.error ?? "unknown"}`);
+        if (this.appHostManager) {
+          this.appHostManager.setMcpManager(this.mcpManager);
         }
+
+        const appOnlyNames = new Set(this.mcpManager.getAppOnlyToolNames());
+        this.toolRegistry.initialize(
+          this.makeSkillTool(),
+          this.mcpManager.getAlwaysLoadToolNames(),
+          appOnlyNames,
+        );
+        this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
+        const connected = this.mcpManager.getStates().filter((s) => s.status === "connected").length;
+        const total = this.config.mcp.length;
+        this.tui.addInfo(`MCP: ${connected}/${total} connected`);
+        if (connected < total) {
+          const errors = this.mcpManager.getStates().filter((s) => s.status === "error");
+          for (const err of errors) {
+            this.tui.addInfo(`MCP '${err.config.name}' failed: ${err.error ?? "unknown"}`);
+          }
+        }
+        this.tui.focusEditor();
+      } else {
+        this.toolRegistry.initialize(this.makeSkillTool());
+        this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
       }
+
+      if (!this.config.apiKey) {
+        this.tui.addInfo([
+          "Welcome to DSCode! To get started, configure your API key:",
+          "",
+          "  /config key sk-your-deepseek-api-key",
+          "",
+          "Then set your preferred model:",
+          "",
+          "  /config model deepseek-v4-pro",
+          "",
+          "Type /config to see all settings.",
+        ].join("\n"));
+      }
+
       this.tui.focusEditor();
-    } else {
-      this.toolRegistry.initialize(this.makeSkillTool());
-      this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
+      await this.tui.waitForExit();
+    } finally {
+      await this.shutdown();
     }
-
-    if (!this.config.apiKey) {
-      this.tui.addInfo([
-        "Welcome to DSCode! To get started, configure your API key:",
-        "",
-        "  /config key sk-your-deepseek-api-key",
-        "",
-        "Then set your preferred model:",
-        "",
-        "  /config model deepseek-v4-pro",
-        "",
-        "Type /config to see all settings.",
-      ].join("\n"));
-    }
-
-    this.tui.focusEditor();
-    await this.tui.waitForExit();
-    await this.shutdown();
   }
 
   setModel(modelId: string): void {
@@ -217,6 +222,11 @@ export class Harness {
   }
 
   private async shutdown(): Promise<void> {
+    if (this.shuttingDown) return;
+    this.shuttingDown = true;
+
+    this.mcpEventUnsubscribe?.();
+    this.mcpEventUnsubscribe = undefined;
     this.sessionManager.saveSession(this.agent);
     if (this.appHostManager) {
       await this.appHostManager.shutdown();

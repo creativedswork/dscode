@@ -88,6 +88,7 @@ export class TuiApp {
   private exitResolve!: () => void;
   private stopping = false;
   private pendingImages: ImageContent[] = [];
+  private sigintHandler = () => this.handleCtrlC();
 
   constructor(deps: TuiDeps) {
     this.deps = deps;
@@ -124,7 +125,7 @@ export class TuiApp {
       return undefined;
     });
 
-    process.on("SIGINT", () => this.handleCtrlC());
+    process.on("SIGINT", this.sigintHandler);
 
     this.loader.onAbort = () => {
       deps.agent.abort();
@@ -757,6 +758,7 @@ export class TuiApp {
   stop(): void {
     if (this.stopping) return;
     this.stopping = true;
+    process.removeListener("SIGINT", this.sigintHandler);
     this.terminal.write("\n" + c.dim("Goodbye.\n"));
     this.tui.stop();
     this.exitResolve();

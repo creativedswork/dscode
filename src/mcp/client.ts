@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { createInterface } from "node:readline";
+import { createInterface, type Interface } from "node:readline";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { homedir } from "node:os";
@@ -49,6 +49,7 @@ export class MCPClient {
   private requestId = 0;
   private pending = new Map<string | number, PendingEntry>();
   private closed = false;
+  private closing = false;
   private sseUrl: string | null = null;
   private sessionId: string | null = null;
   private protocolVersion: MCPProtocolVersion;
@@ -58,6 +59,7 @@ export class MCPClient {
   private toolDefs = new Map<string, MCPToolDefinition>();
   private eventListeners = new Set<(event: MCPClientEvent) => void>();
   private activeSseRequest: ReturnType<typeof httpRequest> | ReturnType<typeof httpsRequest> | null = null;
+  private stdioReadline: Interface | null = null;
 
   constructor(private config: MCPServerConfig) {
     this.protocolVersion = config.preferredProtocolVersion ?? DEFAULT_MCP_PROTOCOL_VERSION;
@@ -177,7 +179,8 @@ export class MCPClient {
   }
 
   async close(): Promise<void> {
-    if (this.closed) return;
+    if (this.closed || this.closing) return;
+    this.closing = true;
     this.closed = true;
 
     if (this.resolvedTransport === "stdio") {
@@ -191,6 +194,9 @@ export class MCPClient {
       this.activeSseRequest = null;
     }
 
+    this.stdioReadline?.close();
+    this.stdioReadline = null;
+
     for (const [, entry] of this.pending) {
       clearTimeout(entry.timer);
       entry.reject(new Error("MCP client closed"));
@@ -198,6 +204,7 @@ export class MCPClient {
     this.pending.clear();
 
     if (this.process) {
+      this.process.removeAllListeners();
       this.process = null;
     }
   }
@@ -306,12 +313,13 @@ export class MCPClient {
       });
     });
 
-    const rl = createInterface({ input: this.process.stdout! });
-    rl.on("line", (line) => {
+    this.stdioReadline = createInterface({ input: this.process.stdout! });
+    this.stdioReadline.on("line", (line) => {
       this.handleMessage(line);
     });
 
     this.process.on("exit", (code) => {
+      if (this.closing) return;
       if (!this.closed) {
         this.closed = true;
         setImmediate(() => {
@@ -323,6 +331,7 @@ export class MCPClient {
     });
 
     this.process.on("error", (err) => {
+      if (this.closing) return;
       if (!this.closed) {
         this.closed = true;
         this.rejectAllPending(new Error(`MCP server "${this.config.name}" error: ${err.message}`));
