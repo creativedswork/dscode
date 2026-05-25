@@ -36,6 +36,7 @@ async function main() {
   const webDir = resolve(rootDir, "web");
   if (existsSync(webDir)) {
     console.log("Building web UI...");
+    execSync("npm install", { stdio: "inherit", cwd: webDir });
     execSync("npm run build", { stdio: "inherit", cwd: webDir });
   }
 
