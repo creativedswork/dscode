@@ -111,7 +111,13 @@ npm run build:web             # 先构建前端
 node dist/dscode.mjs --web    # 启动 Web 模式
 ```
 
-浏览器打开 `http://localhost:3000` 即可使用。Web UI 包含：
+浏览器打开 `http://localhost:3000` 即可使用：
+
+<p align="center">
+  <img src="docs/screen_shots/web-ui.gif" alt="DSCode Web UI" width="720" />
+</p>
+
+Web UI 包含：
 
 | 功能 | 说明 |
 | --- | --- |
@@ -366,6 +372,12 @@ Always push the branch before creating a PR.
 | 示例 | 说明 | 快速开始 |
 | --- | --- | --- |
 | `examples/scenario-modeler` | 一个 SaaS 场景建模 MCP Server。演示 tool 返回 `structuredContent` / `isError` 后，dscode 如何渲染 MCP App；没有 server HTML 时走 MDX，有 HTML resource 时优先使用 server 自带页面。 | `cd examples/scenario-modeler && npm install && npm start` |
+
+<p align="center">
+  <img src="docs/screen_shots/mcp-app.gif" alt="MCP App 演示" width="720" />
+</p>
+
+> 上图演示了 scenario-modeler 在 Web UI 中内联展示 MCP App HTML —— 点击 "Open App ▼" 即可展开交互式 SaaS 财务建模仪表盘。
 
 更多使用说明见：
 - `examples/scenario-modeler/README.md`

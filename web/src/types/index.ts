@@ -57,11 +57,18 @@ export interface ConversationMessage {
   tools?: ToolCallEntry[];
 }
 
+export interface McpAppInfo {
+  toolName: string;
+  appUrl: string;
+  resourceUri: string;
+}
+
 export interface ToolCallEntry {
   name: string;
   args: string;
   result: string;
   isError: boolean;
+  mcpApp?: McpAppInfo;
 }
 
 export type ServerEvent =
@@ -81,7 +88,8 @@ export type ServerEvent =
   | { type: "sessions"; data: SessionInfo[] }
   | { type: "mcp_state"; servers: McpServerInfo[] }
   | { type: "model"; name: string }
-  | { type: "slash_result"; text: string };
+  | { type: "slash_result"; text: string }
+  | { type: "mcp_app"; app: McpAppInfo };
 
 // ── Local UI Types ──
 

@@ -52,6 +52,12 @@ export interface ConfigData {
   maxTokens: number;
 }
 
+export interface McpAppInfo {
+  toolName: string;
+  appUrl: string;
+  resourceUri: string;
+}
+
 export type ServerEvent =
   | { type: "ready"; model: string; config: ConfigData; messages: ConversationMessage[] }
   | { type: "user_message"; text: string }
@@ -69,7 +75,8 @@ export type ServerEvent =
   | { type: "sessions"; data: SessionInfo[] }
   | { type: "mcp_state"; servers: McpServerInfo[] }
   | { type: "model"; name: string }
-  | { type: "slash_result"; text: string };
+  | { type: "slash_result"; text: string }
+  | { type: "mcp_app"; app: McpAppInfo };
 
 export interface ConversationMessage {
   role: "user" | "assistant" | "system";
@@ -83,4 +90,5 @@ export interface ToolCallEntry {
   args: string;
   result: string;
   isError: boolean;
+  mcpApp?: McpAppInfo;
 }

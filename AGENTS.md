@@ -43,6 +43,7 @@ Agent Loop (pi-agent-core，已有)
 | `src/mcp/` | MCP 客户端（stdio/SSE）+ 管理器 | `client.ts`, `manager.ts`, `types.ts` |
 | `src/permissions/` | 权限拦截（deny/ask/allow） | `manager.ts`, `rules.ts` |
 | `src/ui/` | REPL、流式渲染、slash commands | `tui-app.ts`, `conversation.ts`, `commands.ts` |
+| `web/` | Web 前端（独立 Vite + React 项目） | `src/components/`, `src/hooks/`, `src/types/` |
 
 ## 内置驱动 (Drivers)
 
@@ -53,6 +54,8 @@ Agent Loop (pi-agent-core，已有)
 | `search` | builtin | `grep`, `glob` | always-allow |
 
 MCP 服务器连接后也会注册为驱动，source 为 `"mcp"`。
+
+`web/` 放在根目录而非 `src/` 下，因为它是独立的 Vite + React 项目，有自己的 `tsconfig.json`、`package.json`、`vite.config.ts`，不和 `src/` 共用 tsc 构建。构建产物输出到 `dist/web/`，由 dscode 的 HTTP server 直接 serve。
 
 ## 关键 Hook 接线
 
@@ -84,6 +87,8 @@ new Agent({
 
 ```bash
 npm start          # 本地开发：启动交互式 REPL
+npm start -- --web  # Web 模式：浏览器中对话
+npm run build:web   # 构建前端（npm start 前需先执行）
 npm run typecheck  # 类型检查
 npm test           # 运行测试
 ```

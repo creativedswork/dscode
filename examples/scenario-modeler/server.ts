@@ -4,6 +4,9 @@
  * Registration: server.tool() + server.resource() with _meta.ui
  * No @modelcontextprotocol/ext-apps dependency.
  */
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
@@ -195,7 +198,22 @@ function createServer(): McpServer {
     },
   );
 
-  // No s.resource() call — dscode renders this example from structuredContent.
+  // No s.registerResource() call — dscode renders this example from structuredContent.
+
+  // Register UI resource — serves mcp-app.html as the MCP App UI
+  const mcpAppHtml = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "mcp-app.html"), "utf-8");
+  s.registerResource(
+    "Scenario Modeler App",
+    URI,
+    {
+      mimeType: "text/html;profile=mcp-app",
+      description: "Interactive SaaS financial scenario modeler",
+      _meta: { ui: { domain: "mcp-app", prefersBorder: false } },
+    },
+    async () => ({
+      contents: [{ uri: URI, mimeType: "text/html;profile=mcp-app", text: mcpAppHtml }],
+    }),
+  );
   // The example includes a server-provided _ui.mdx override to avoid nested object cells.
 
   return s;

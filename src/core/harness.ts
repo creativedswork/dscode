@@ -31,7 +31,7 @@ export class Harness {
   private skillManager: SkillManager;
   private permissionManager: PermissionManager;
   private mcpManager?: MCPManager;
-  private appHostManager?: AppHostManager;
+  public appHostManager?: AppHostManager;
   private config: HarnessConfig;
   private ui!: UiBackend;
   private baseSystemPrompt = "";

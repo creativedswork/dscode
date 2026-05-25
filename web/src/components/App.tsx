@@ -134,6 +134,26 @@ export function App() {
         break;
       }
 
+
+      case "mcp_app": {
+        setMessages((prev) => {
+          const next = [...prev];
+          for (let i = next.length - 1; i >= 0; i--) {
+            const msg = next[i];
+            if (msg.tools) {
+              const toolIdx = msg.tools.findIndex((t) => t.name === event.app.toolName);
+              if (toolIdx >= 0) {
+                const newTools = [...msg.tools];
+                newTools[toolIdx] = { ...newTools[toolIdx], mcpApp: event.app };
+                next[i] = { ...msg, tools: newTools };
+                break;
+              }
+            }
+          }
+          return next;
+        });
+        break;
+      }
       case "assistant_end": {
         setMessages((prev) => {
           const next = [...prev];

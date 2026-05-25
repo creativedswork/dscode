@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { ToolCallEntry } from "../types";
 
 interface ToolCardProps {
@@ -7,6 +8,8 @@ interface ToolCardProps {
 export function ToolCard({ tool }: ToolCardProps) {
   const isError = tool.isError;
   const hasResult = tool.result && tool.result.length > 0;
+  const hasMcpApp = !!tool.mcpApp;
+  const [appExpanded, setAppExpanded] = useState(false);
 
   return (
     <div
@@ -26,11 +29,32 @@ export function ToolCard({ tool }: ToolCardProps) {
             {tool.args}
           </span>
         )}
+        {hasMcpApp && (
+          <button
+            onClick={() => setAppExpanded(!appExpanded)}
+            className="ml-auto px-2 py-0.5 text-xs rounded bg-dscode-accent/20 text-dscode-accent hover:bg-dscode-accent/30 transition-colors"
+          >
+            {appExpanded ? "Hide App ▲" : "Open App ▼"}
+          </button>
+        )}
       </div>
-      {hasResult && (
+
+      {hasResult && !hasMcpApp && (
         <div className={`mt-1.5 font-mono ${isError ? "text-dscode-red" : "text-dscode-text"}`}>
           <span className="text-dscode-muted">→ </span>
           {tool.result}
+        </div>
+      )}
+
+      {hasMcpApp && appExpanded && (
+        <div className="mt-2">
+          <iframe
+            src={tool.mcpApp!.appUrl}
+            className="w-full rounded border border-dscode-border bg-white dark:bg-gray-900"
+            style={{ minHeight: "480px", height: "60vh", maxHeight: "700px" }}
+            sandbox="allow-scripts allow-same-origin"
+            title={`MCP App: ${tool.name}`}
+          />
         </div>
       )}
     </div>

@@ -1,4 +1,4 @@
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
 import { join, extname } from "node:path";
@@ -11,6 +11,8 @@ import { maskApiKey } from "../../core/config.js";
 import { executeSlashCommand } from "../commands.js";
 import type { Harness } from "../../core/harness.js";
 import type { MCPManager } from "../../mcp/manager.js";
+import type { AppHostManager } from "../../mcp/app/host.js";
+import type { AppInstance } from "../../mcp/app/types.js";
 import { buildMcpServers } from "../mcp-browser.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
 import type {
@@ -20,6 +22,7 @@ import type {
   SessionInfo,
   ConversationMessage,
   McpServerInfo,
+  McpAppInfo,
   ToolCallEntry,
 } from "./protocol.js";
 
@@ -43,6 +46,7 @@ export class WebUiBackend implements UiBackend {
   private currentClient: WebSocketClient | null = null;
   private exitPromise!: Promise<void>;
   private exitResolve!: () => void;
+  private appHostManager?: AppHostManager;
 
   // Pending permission state
   private permissionResolve: ((result: PermissionPromptResult) => void) | null = null;
@@ -78,6 +82,10 @@ export class WebUiBackend implements UiBackend {
     this.wsServer.onMessageHandler = (client, cmd) => this.handleMessage(client, cmd);
   }
 
+  setAppHostManager(manager: AppHostManager): void {
+    this.appHostManager = manager;
+  }
+
   // ── UiBackend Lifecycle ──
 
   async start(): Promise<void> {
@@ -85,9 +93,25 @@ export class WebUiBackend implements UiBackend {
       this.exitResolve = resolve;
     });
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      this.httpServer.on("error", (err: NodeJS.ErrnoException) => {
+        if (err.code === "EADDRINUSE") {
+          console.log("");
+          console.log(`  [33m⚠ Port ${this.port} is already in use.[0m`);
+          console.log(`  Try a different port: [36mnode ./dist/dscode.mjs --web --web-port ${this.port + 1}[0m`);
+          console.log(`  Or kill the existing process: [36mlsof -ti:${this.port} | xargs kill[0m`);
+          console.log("");
+          this.exitResolve();
+          resolve();
+          return;
+        }
+        reject(err);
+      });
+
       this.httpServer.listen(this.port, () => {
-        console.log(`\n  DSCode Web UI ready at http://localhost:${this.port}\n`);
+        console.log(`
+  DSCode Web UI ready at http://localhost:${this.port}
+`);
         resolve();
       });
     });
@@ -159,6 +183,19 @@ export class WebUiBackend implements UiBackend {
 
   addError(text: string): void {
     this.broadcast({ type: "error", text });
+  }
+
+  // ── MCP App Notification (called by Harness when app is registered) ──
+
+  addAppNotification(app: AppInstance): void {
+    // Build URL relative to the web server — proxy through the main server
+    const appUrl = `/mcp-app/${app.id}`;
+    const appInfo: McpAppInfo = {
+      toolName: `mcp_${app.serverName}_${app.toolName}`,
+      appUrl,
+      resourceUri: app.resourceUri,
+    };
+    this.broadcast({ type: "mcp_app", app: appInfo });
   }
 
   // ── UiBackend Permission ──
@@ -354,18 +391,44 @@ export class WebUiBackend implements UiBackend {
     }
   }
 
-  private handleConfig(client: WebSocketClient, cmd: ClientCommand & { type: "config" }): void {
-    if (cmd.action === "set_model") {
-      (this.harness as any).setModel(cmd.value);
-    } else if (cmd.action === "set_thinking") {
-      (this.harness as any).setThinking(cmd.value);
-    } else if (cmd.action === "set_key") {
-      process.env.DEEPSEEK_API_KEY = cmd.value;
+  private handleConfig(
+    client: WebSocketClient,
+    cmd: ClientCommand & { type: "config" },
+  ): void {
+    try {
+      switch (cmd.action) {
+        case "set_model": {
+          (this.harness as any).setModel(cmd.value);
+          client.send({ type: "config", data: this.buildConfigData() });
+          client.send({ type: "info", text: `Model set to ${cmd.value}` });
+          break;
+        }
+        case "set_thinking": {
+          (this.harness as any).setThinking(cmd.value);
+          client.send({ type: "config", data: this.buildConfigData() });
+          client.send({ type: "info", text: `Thinking level set to ${cmd.value}` });
+          break;
+        }
+        case "set_key": {
+          this.config.apiKey = cmd.value;
+          process.env.DEEPSEEK_API_KEY = cmd.value;
+          client.send({ type: "config", data: this.buildConfigData() });
+          client.send({ type: "info", text: "API key updated" });
+          break;
+        }
+      }
+    } catch (err) {
+      client.send({
+        type: "error",
+        text: err instanceof Error ? err.message : String(err),
+      });
     }
-    client.send({ type: "config", data: this.buildConfigData() });
   }
 
-  private handleSession(client: WebSocketClient, cmd: ClientCommand & { type: "session" }): void {
+  private handleSession(
+    client: WebSocketClient,
+    cmd: ClientCommand & { type: "session" },
+  ): void {
     const sessionManager = (this.harness as any).sessionManager;
     const agent = this.harness.agent;
 
@@ -477,6 +540,17 @@ export class WebUiBackend implements UiBackend {
     const url = new URL(req.url ?? "/", `http://localhost:${this.port}`);
     const path = url.pathname;
 
+    // Proxy MCP App routes to AppHostManager
+    if (path.startsWith("/mcp-app/") || path.startsWith("/api/bridge/") || path.startsWith("/api/app/")) {
+      if (this.appHostManager) {
+        this.proxyToAppHost(req, res);
+        return;
+      }
+      res.writeHead(503);
+      res.end("App host not available");
+      return;
+    }
+
     // API endpoints
     if (path === "/api/config" && req.method === "GET") {
       res.writeHead(200, { "Content-Type": "application/json" });
@@ -500,6 +574,55 @@ export class WebUiBackend implements UiBackend {
 
     // Static file serving
     this.serveStatic(res, path);
+  }
+
+  /**
+   * Proxy requests to the AppHostManager's internal HTTP server.
+   * Rewrites /mcp-app/{appId} to /app/{appId} on the app host.
+   */
+  private proxyToAppHost(req: IncomingMessage, res: ServerResponse): void {
+    if (!this.appHostManager) {
+      res.writeHead(503);
+      res.end("App host not available");
+      return;
+    }
+
+    const appHostPort = this.appHostManager.getPort();
+    // Rewrite /mcp-app/{id} → /app/{id}
+    const targetPath = req.url!.replace(/^\/mcp-app/, "/app");
+
+    const opts = {
+      hostname: "127.0.0.1",
+      port: appHostPort,
+      path: targetPath,
+      method: req.method,
+      headers: { ...req.headers },
+    };
+
+    const proxyReq = httpRequest(opts, (proxyRes) => {
+      // Copy status and headers (except CSP which may block iframe)
+      const csp = proxyRes.headers["content-security-policy"];
+      if (csp) {
+        // Relax CSP: allow embedding in iframe from same origin
+        const relaxedCsp = String(csp)
+          .replace(/frame-ancestors\s+[^;]+;?/gi, "frame-ancestors 'self';")
+          .replace(/frame-src\s+[^;]+;?/gi, "frame-src 'self';");
+        proxyRes.headers["content-security-policy"] = relaxedCsp;
+      }
+      res.writeHead(proxyRes.statusCode ?? 200, proxyRes.headers);
+      proxyRes.pipe(res);
+    });
+
+    proxyReq.on("error", () => {
+      res.writeHead(502);
+      res.end("Bad gateway");
+    });
+
+    if (req.method === "POST" || req.method === "PUT") {
+      req.pipe(proxyReq);
+    } else {
+      proxyReq.end();
+    }
   }
 
   private serveStatic(res: ServerResponse, path: string): void {
@@ -580,29 +703,38 @@ export class WebUiBackend implements UiBackend {
   }
 
   private buildConversationHistory(): ConversationMessage[] {
-    const messages = this.harness.agent.state.messages ?? [];
-    const result: ConversationMessage[] = [];
+    try {
+      const history = this.harness.agent.state.messages ?? [];
+      return history
+        .filter((m: any) => m.role === "user" || m.role === "assistant")
+        .map((m: any): ConversationMessage => {
+          let thinking: string | undefined;
+          const textParts: string[] = [];
 
-    for (const msg of messages) {
-      const role = (msg as any).role ?? "system";
-      if (role === "system") continue;
+          for (const part of m.content ?? []) {
+            if (part.type === "thinking") {
+              thinking = (thinking ?? "") + part.text;
+            } else if (part.type === "text") {
+              textParts.push(part.text);
+            }
+          }
 
-      let content = "";
-      if (typeof (msg as any).content === "string") {
-        content = (msg as any).content;
-      } else if (Array.isArray((msg as any).content)) {
-        content = (msg as any).content
-          .filter((b: any) => b.type === "text")
-          .map((b: any) => b.text)
-          .join("\n");
-      }
-
-      result.push({
-        role: role === "user" ? "user" : "assistant",
-        content,
-      });
+          return {
+            role: m.role,
+            content: textParts.join("\n"),
+            thinking,
+            tools: m.toolCalls?.map((tc: any) => ({
+              name: tc.name,
+              result: typeof tc.result === "string"
+                ? tc.result.slice(0, 200)
+                : "",
+              args: JSON.stringify(tc.arguments).slice(0, 80),
+              isError: Boolean(tc.error),
+            })),
+          };
+        });
+    } catch {
+      return [];
     }
-
-    return result;
   }
 }

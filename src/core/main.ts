@@ -71,6 +71,10 @@ async function main(): Promise<void> {
       harness,
       config,
     });
+    // Pass AppHostManager to web backend so MCP apps can be served
+    if (harness.appHostManager) {
+      webUi.setAppHostManager(harness.appHostManager);
+    }
     await harness.run(webUi);
   } else {
     // CLI mode: default TuiBackend

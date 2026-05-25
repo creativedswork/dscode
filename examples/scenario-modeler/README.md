@@ -4,6 +4,8 @@ A SaaS financial scenario modeler MCP App. Interactive 12-month projections with
 
 ## Quick Start
 
+### CLI Mode (TUI)
+
 ```bash
 cd examples/scenario-modeler
 npm install
@@ -11,45 +13,49 @@ npm --prefix ../.. run build
 npm start
 ```
 
-`npm start` launches the current repo build of dscode from this example directory. dscode then starts the `scenario-modeler` MCP server through the existing stdio MCP config, so you only need one terminal.
-
-Then ask the agent: "Show me the current SaaS scenario projections."
-
-If the agent replies with plain text only, ask it to use the `get-scenario-data` MCP tool explicitly.
+Then ask: "Show me the current SaaS scenario projections."
 
 Agent calls `get-scenario-data` → dscode renders the MCP App → TUI highlights the localhost link → open it in your browser.
 
-## Alternate startup modes
+### Web Mode
+
+Run from the example directory so dscode picks up the local `.dscode/settings.json`:
 
 ```bash
-npm run start:server   # start only the HTTP MCP server on localhost:3100
-npm run start:stdio    # start only the stdio MCP server
+cd examples/scenario-modeler
+npm install
+npm --prefix ../.. run build
+npm --prefix ../.. run build:web
+npm start -- --web --web-port 3000
+```
+
+> `npm start` runs `node ../../dist/dscode.mjs` from the current directory — no `--prefix` needed, so cwd stays as `examples/scenario-modeler` and the local MCP config is loaded.
+
+Open `http://localhost:3000`, then ask: "Show me the current SaaS scenario projections."
+
+When the agent calls `get-scenario-data`, the MCP App renders **inline in the chat** — click **"Open App ▼"** to expand the interactive dashboard with sliders, chart, and templates.
+
+## Alternate startup
+
+```bash
+npm run start:server   # HTTP MCP server only (localhost:3100)
+npm run start:stdio    # stdio MCP server only
 ```
 
 ## How it works
 
-- **server.ts** — Standard MCP server using `@modelcontextprotocol/sdk`. Registers:
+- **server.ts** — MCP server using `@modelcontextprotocol/sdk`. Registers:
   - `get-scenario-data` tool with `_meta.ui.resourceUri = "ui://scenario-modeler/mcp-app"`
-  - Returns `structuredContent` with templates, projections, and summary data
-  - Includes `_ui.mdx` to demonstrate a custom MDX layout override
-  - **No HTML required** — dscode renders the dashboard from data + MDX
-- **Auto-generated UI** — dscode inspects `structuredContent` and renders:
-  - Chart from projection arrays (line chart with MRR/netProfit curves)
-  - Metrics cards from summary key-value pairs
-  - Table from template/projection data
-- **No external dependencies** — UI is rendered by dscode's built-in MDX Runtime
+  - `mcp-app.html` as a UI resource (`text/html;profile=mcp-app`)
+  - `structuredContent` + `_ui.mdx` for MDX auto-layout fallback
+- **mcp-app.html** — Pure JS dashboard with Canvas chart, 5 sliders, template comparison, postMessage bridge
+- **Web inline rendering** — iframe embedded in the tool card, communicating via SSE bridge
 
-## Features
+## Files
 
-- 12-month line chart (MRR, Gross Profit, Net Profit) — auto-generated from data
-- Metric cards showing ending MRR, ARR, total revenue, profit, growth %, break-even
-- 5 pre-built templates (Bootstrapped, VC Rocketship, Cash Cow, Turnaround, Efficient Growth)
-- Custom projection computation via tool arguments
-- Light/dark theme support (via CSS custom properties)
-
-## Transport
-
-```bash
-npm start          # HTTP (default, port 3100)
-npm run start:stdio  # stdio for direct MCP client connection
-```
+| File | Purpose |
+|------|---------|
+| `server.ts` | MCP server with tool + resource registration |
+| `mcp-app.html` | Interactive dashboard (served as MCP resource) |
+| `package.json` | Dependencies and scripts |
+| `.dscode/settings.json` | MCP config (loaded when running from this directory) |
