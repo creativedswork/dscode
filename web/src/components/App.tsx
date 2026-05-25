@@ -1,10 +1,9 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { UIMessage, ServerEvent, Toast, ConfigData, SessionInfo, McpServerInfo, ToolCallEntry } from "../types";
+import type { UIMessage, ServerEvent, ConfigData, SessionInfo, McpServerInfo } from "../types";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { ChatView } from "./ChatView";
 import { MessageInput } from "./MessageInput";
 import { Sidebar } from "./Sidebar";
-import { PermissionDialog } from "./PermissionDialog";
 import { ToastContainer, useToasts } from "./Toast";
 
 const SLASH_COMMANDS = [
@@ -22,6 +21,26 @@ const SLASH_COMMANDS = [
   { name: "image", description: "Attach an image (file path or 'clipboard')" },
 ];
 
+/** Always produce a new array; update last message immutably if streaming, else push new. */
+function updateLastOrCreate(prev: UIMessage[], update: (msg: UIMessage) => Partial<UIMessage>): UIMessage[] {
+  const next = [...prev];
+  const last = next[next.length - 1];
+  if (last?.isStreaming) {
+    next[next.length - 1] = { ...last, ...update(last) };
+  } else {
+    next.push({
+      id: `assistant-${Date.now()}`,
+      role: "assistant",
+      content: "",
+      thinking: "",
+      tools: [],
+      isStreaming: true,
+      ...update({} as UIMessage),
+    });
+  }
+  return next;
+}
+
 export function App() {
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [processing, setProcessing] = useState(false);
@@ -37,10 +56,8 @@ export function App() {
   const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
   const { toasts, addToast, removeToast } = useToasts();
 
-  const messagesRef = useRef(messages);
-  messagesRef.current = messages;
-
-  const permissionResolve = useRef<((decision: string, persistRule?: boolean) => void) | null>(null);
+  // Track when the current assistant turn started (for timer)
+  const turnStartRef = useRef<number>(0);
 
   const handleEvent = useCallback((event: ServerEvent) => {
     switch (event.type) {
@@ -59,68 +76,44 @@ export function App() {
       }
 
       case "user_message": {
-        const msg: UIMessage = {
+        setMessages((prev) => [...prev, {
           id: `user-${Date.now()}`,
           role: "user",
           content: event.text,
-        };
-        setMessages((prev) => [...prev, msg]);
+        }]);
         break;
       }
 
       case "assistant_start": {
-        const msg: UIMessage = {
-          id: `assistant-${Date.now()}`,
-          role: "assistant",
-          content: "",
-          thinking: "",
-          tools: [],
-          isStreaming: true,
-        };
-        setMessages((prev) => [...prev, msg]);
+        turnStartRef.current = Date.now();
         setProcessing(true);
         break;
       }
 
       case "thinking_delta": {
-        setMessages((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last?.isStreaming) {
-            last.thinking = (last.thinking ?? "") + event.delta;
-          }
-          return next;
-        });
+        setMessages((prev) => updateLastOrCreate(prev, (msg) => ({
+          thinking: (msg.thinking ?? "") + event.delta,
+        })));
         break;
       }
 
       case "text_delta": {
-        setMessages((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last?.isStreaming) {
-            last.content += event.delta;
-          }
-          return next;
-        });
+        setMessages((prev) => updateLastOrCreate(prev, (msg) => ({
+          content: msg.content + event.delta,
+        })));
         break;
       }
 
       case "tool_start": {
-        setMessages((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last?.isStreaming) {
-            last.tools = last.tools ?? [];
-            last.tools.push({
-              name: event.name,
-              args: typeof event.args === "string" ? event.args : JSON.stringify(event.args).slice(0, 80),
-              result: "",
-              isError: false,
-            });
-          }
-          return next;
-        });
+        setMessages((prev) => updateLastOrCreate(prev, (msg) => {
+          const tools = [...(msg.tools ?? []), {
+            name: event.name,
+            args: typeof event.args === "string" ? event.args : JSON.stringify(event.args).slice(0, 80),
+            result: "",
+            isError: false,
+          }];
+          return { tools };
+        }));
         break;
       }
 
@@ -129,13 +122,12 @@ export function App() {
           const next = [...prev];
           const last = next[next.length - 1];
           if (last?.isStreaming) {
-            last.tools = last.tools ?? [];
-            // Update the matching tool entry
-            const toolEntry = last.tools[last.tools.length - 1];
-            if (toolEntry && toolEntry.name === event.name && !toolEntry.result) {
-              toolEntry.result = event.result;
-              toolEntry.isError = event.isError;
-            }
+            const tools = (last.tools ?? []).map((t) =>
+              t.name === event.name && !t.result
+                ? { ...t, result: event.result, isError: event.isError }
+                : t
+            );
+            next[next.length - 1] = { ...last, tools };
           }
           return next;
         });
@@ -147,11 +139,11 @@ export function App() {
           const next = [...prev];
           const last = next[next.length - 1];
           if (last?.isStreaming) {
-            last.isStreaming = false;
+            next[next.length - 1] = { ...last, isStreaming: false };
           }
           return next;
         });
-        setProcessing(false);
+        // Keep processing=true — agent is still working between turns
         break;
       }
 
@@ -163,6 +155,7 @@ export function App() {
       case "error": {
         addToast({ type: "error", text: event.text });
         setProcessing(false);
+        turnStartRef.current = 0;
         break;
       }
 
@@ -252,7 +245,6 @@ export function App() {
     [send],
   );
 
-  // Request sessions and MCP state on connect
   useEffect(() => {
     if (connected) {
       handleSessionAction("list");
@@ -260,9 +252,10 @@ export function App() {
     }
   }, [connected, handleSessionAction, handleMcpAction]);
 
+  const hasStreaming = messages.some((m) => m.isStreaming);
+
   return (
     <div className="h-screen flex flex-col bg-dscode-bg">
-      {/* Header */}
       <header className="flex items-center justify-between px-4 py-2 border-b border-dscode-border bg-dscode-surface shrink-0">
         <div className="flex items-center gap-3">
           <button
@@ -293,9 +286,7 @@ export function App() {
         </div>
       </header>
 
-      {/* Body */}
       <div className="flex flex-1 overflow-hidden">
-        {/* Sidebar */}
         <Sidebar
           open={sidebarOpen}
           onClose={() => setSidebarOpen(false)}
@@ -309,9 +300,14 @@ export function App() {
           onConfigChange={handleConfigChange}
         />
 
-        {/* Main chat area */}
         <main className="flex-1 flex flex-col min-w-0">
-          <ChatView messages={messages} />
+          <ChatView
+            messages={messages}
+            processing={processing}
+            hasStreaming={hasStreaming}
+            permissionPrompt={permissionPrompt}
+            onPermission={handlePermission}
+          />
           <MessageInput
             onSend={handleSend}
             onAbort={handleAbort}
@@ -322,16 +318,6 @@ export function App() {
         </main>
       </div>
 
-      {/* Permission Dialog */}
-      {permissionPrompt && (
-        <PermissionDialog
-          toolName={permissionPrompt.toolName}
-          preview={permissionPrompt.preview}
-          onDecision={handlePermission}
-        />
-      )}
-
-      {/* Toast notifications */}
       <ToastContainer toasts={toasts} onRemove={removeToast} />
     </div>
   );

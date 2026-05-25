@@ -45,6 +45,10 @@ export class WsServer {
     this.wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
     this.wss.on("connection", (socket: WebSocket, _req: IncomingMessage) => {
+      // Disable Nagle's algorithm for low-latency streaming
+      const raw = (socket as any)._socket;
+      if (raw) raw.setNoDelay(true);
+
       const client = this.createClient(socket);
 
       // Notify connection

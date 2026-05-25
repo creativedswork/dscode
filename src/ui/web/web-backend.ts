@@ -257,6 +257,8 @@ export class WebUiBackend implements UiBackend {
           return;
         }
 
+        // Broadcast user message to client before sending to agent
+        client.send({ type: "user_message", text } as any);
         try {
           const imageContents = this.pendingImages.length > 0 ? [...this.pendingImages] : undefined;
           this.pendingImages = [];
