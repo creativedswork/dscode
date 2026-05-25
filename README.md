@@ -13,16 +13,22 @@
 </p>
 
 <p align="center">
-  面向数字工作的 DeepSeek 交互式 AI Agent Harness。支持 **终端 (TUI)** 和 **浏览器 (Web UI)** 两种交互方式。<br />
-  从 Agentic Workflow 到上下文管理再到记忆系统，dscode 只做 DeepSeek 模型的 Harness。
+  <sub><a href="README.zh-CN.md">中文文档</a></sub>
+</p>
+
+<p align="center">
+  An interactive AI Agent Harness for DeepSeek powering digital work. Supports <strong>Terminal (TUI)</strong> and <strong>Browser (Web UI)</strong>.<br />
+  From agentic workflows to context management to memory systems — dscode is a harness purpose-built for DeepSeek models.
 </p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@wangcan26/dscode">npm</a> ·
-  <a href="docs/Introduction.md">设计理念</a> ·
-  <a href="docs/">架构文档</a> ·
+  <a href="docs/Introduction.md">Philosophy</a> ·
+  <a href="docs/">Architecture</a> ·
   <a href="docs/roadmap.md">Roadmap</a>
 </p>
+
+---
 
 ## Why dscode
 
@@ -30,31 +36,31 @@
 <tr>
 <td width="33%" valign="top">
   <strong>DeepSeek native</strong><br />
-  围绕 DeepSeek 模型能力设计，不做多模型折中层，配置、推理模式和体验都为 DeepSeek 优化。
+  Designed around DeepSeek model capabilities — no multi-model abstraction layer. Configuration, inference modes, and experience are all optimized for DeepSeek.
 </td>
 <td width="33%" valign="top">
   <strong>Agent harness</strong><br />
-  文件操作、Shell、代码搜索、权限控制、上下文压缩、会话持久化和记忆系统一体化。
+  File operations, shell, code search, permission control, context compression, session persistence, and memory system — all in one.
 </td>
 <td width="33%" valign="top">
   <strong>Digital work ready</strong><br />
-  通过 MCP 把能力延伸到浏览器、3D、文档、表格和更多外部工具，而不只停留在代码生成。
+  Extend capabilities to browsers, 3D, documents, spreadsheets, and more external tools via MCP — not limited to code generation.
 </td>
 </tr>
 </table>
 
 ## Digital work, not just coding
 
-dscode 通过 **MCP (Model Context Protocol)** 连接外部工具，把 DeepSeek 的能力延伸到更广义的数字工作流——从 Blender 3D 建模到浏览器自动化，从文档与表格处理到设计与内容生产。
+dscode connects external tools through **MCP (Model Context Protocol)**, extending DeepSeek's capabilities to broader digital workflows — from Blender 3D modeling to browser automation, from document and spreadsheet processing to design and content production.
 
 <table>
 <tr>
-<td width="50%"><img src="docs/screen_shots/blender_show.jpg" alt="Blender 展示" width="100%"></td>
-<td width="50%"><img src="docs/screen_shots/blender_show1.jpg" alt="Blender MCP 演示" width="100%"></td>
+<td width="50%"><img src="docs/screen_shots/blender_show.jpg" alt="Blender showcase" width="100%"></td>
+<td width="50%"><img src="docs/screen_shots/blender_show1.jpg" alt="Blender MCP demo" width="100%"></td>
 </tr>
 </table>
 
-上图演示了通过 `blender-mcp` 连接 Blender，用自然语言操控 3D 场景。这类创意工具链只是数字工作的一种场景；dscode 通过标准 MCP 协议，让 DeepSeek 模型同样能接入更广泛的数字工具生态。
+The screenshots above demonstrate controlling Blender via `blender-mcp`, manipulating a 3D scene with natural language. Creative toolchains like this are just one example of digital work — dscode uses the standard MCP protocol to let DeepSeek models access a much broader ecosystem of digital tools.
 
 ## Install in 30 seconds
 
@@ -62,7 +68,7 @@ dscode 通过 **MCP (Model Context Protocol)** 连接外部工具，把 DeepSeek
 <tr>
 <td width="50%" valign="top">
 
-### 使用 npm 安装
+### Install via npm
 
 ```bash
 # Node.js >= 20
@@ -71,13 +77,12 @@ dscode --version
 dscode
 ```
 
-
-安装包：<https://www.npmjs.com/package/@wangcan26/dscode>
+Package: <https://www.npmjs.com/package/@wangcan26/dscode>
 
 </td>
 <td width="50%" valign="top">
 
-### 本地构建运行
+### Build from source
 
 ```bash
 npm install
@@ -85,138 +90,132 @@ npm run build
 node dist/dscode.mjs
 ```
 
-
-适合本地开发、调试和二次修改。
+Suitable for local development, debugging, and customization.
 
 </td>
 </tr>
 </table>
 
-> 如果你喜欢这个项目，欢迎在 GitHub 点个 ⭐ Star、👀 Watch、👍 点赞支持！你的鼓励是我持续打磨 dscode 的动力，也非常感谢每一条反馈和建议。
+> If you like this project, give it a ⭐ Star, 👀 Watch, and 👍 on GitHub! Your support keeps dscode evolving, and every piece of feedback is deeply appreciated.
 
-### 首次启动
+### First launch
 
 ```bash
 /config key sk-your-deepseek-api-key
 /config model deepseek-v4-pro
 ```
 
-
-`/config` 命令写入的配置会持久化到 `~/.dscode/config.json`，后续启动无需重复设置。
-其中 `cwd` 会记录本次启动对应的项目目录；只有在你手动执行 `/config cwd <path>` 时，才会对当前项目复用该目录。
-声明式配置单独放在 `settings.json`：用户级 `~/.dscode/settings.json`，项目级 `<project>/.dscode/settings.json`。
+Configuration written by the `/config` command is persisted to `~/.dscode/config.json` — no need to repeat setup on subsequent launches. The `cwd` field records the project directory associated with the current session; it is only reused when you manually run `/config cwd <path>`. Declarative settings go in `settings.json`: user-level at `~/.dscode/settings.json`, project-level at `<project>/.dscode/settings.json`.
 
 ## Web UI
 
-除了终端交互，dscode 也提供简洁现代的 **浏览器界面**，完整支持 TUI 的全部功能：
+In addition to terminal interaction, dscode also offers a clean, modern **browser interface** with full feature parity with the TUI.
 
-**npm 全局安装：**
-
-```bash
-dscode --web                  # 默认端口 3000
-dscode --web --web-port 8080  # 自定义端口
-```
-
-**本地构建运行：**
+**Global npm install:**
 
 ```bash
-npm run build:web             # 先构建前端
-node dist/dscode.mjs --web    # 启动 Web 模式
+dscode --web                  # Default port 3000
+dscode --web --web-port 8080  # Custom port
 ```
 
-浏览器打开 `http://localhost:3000` 即可使用：
+**Build from source:**
+
+```bash
+npm run build:web             # Build frontend first
+node dist/dscode.mjs --web    # Start web mode
+```
+
+Open `http://localhost:3000` in your browser:
 
 <p align="center">
   <img src="docs/screen_shots/web-ui.gif" alt="DSCode Web UI" width="720" />
 </p>
 
-Web UI 包含：
+Web UI features:
 
-| 功能 | 说明 |
+| Feature | Description |
 | --- | --- |
-| 流式对话 | 实时显示 thinking + 文本输出，与 TUI 体验一致 |
-| 工具调用 | 内联卡片展示工具名、参数和结果（成功/失败图标） |
-| 权限确认 | 图形化弹窗，Allow / Always Allow / Deny |
-| Slash 命令 | 输入 `/` 弹出命令面板，支持键盘导航和点击 |
-| 会话管理 | 侧边栏可视化浏览、保存、加载、删除会话 |
-| MCP 浏览器 | 查看已连接 MCP 服务器和工具列表 |
-| 配置管理 | 图形化切换模型、Thinking Level 和 API Key |
-| 图片上传 | 支持拖拽 / 粘贴 / 点击上传图片 |
-| 响应式布局 | 适配桌面和移动端 |
-| 深色主题 | 默认 GitHub 风格暗色主题，保护眼睛 |
+| Streaming chat | Real-time display of thinking + text output, consistent with TUI |
+| Tool calls | Inline cards showing tool name, parameters, and result (success/failure icons) |
+| Permission confirm | Graphical dialogs: Allow / Always Allow / Deny |
+| Slash commands | Type `/` for command palette with keyboard navigation and click |
+| Session management | Sidebar with visual browse, save, load, delete sessions |
+| MCP browser | View connected MCP servers and tool lists |
+| Config management | Graphical model switching, thinking level, and API key settings |
+| Image upload | Drag & drop / paste / click to upload images |
+| Responsive layout | Adapts to desktop and mobile |
+| Dark theme | Default GitHub-style dark theme, easy on the eyes |
 
-> Web UI 与 CLI 共享同一套 Agent 后端，所有功能完全一致。切换模式时无需重新配置。
+> Web UI and CLI share the same Agent backend — all features are fully consistent. No reconfiguration needed when switching modes.
 
 ## What you get
 
-| 能力 | 说明 |
+| Capability | Description |
 | --- | --- |
-| 多轮对话 | 流式输出 + thinking（reasoning 模型） |
-| 内置驱动 | fs、shell、search，始终可用 |
-| 权限控制 | 危险操作需确认，支持 glob 模式禁止读写敏感文件 |
-| 会话持久化 | 自动保存，可恢复历史对话 |
-| 上下文管理 | 自动压缩长对话，防止 token overflow；1M token 窗口 |
-| 记忆系统 | 跨 session 记住用户偏好和项目上下文 |
-| Skills 系统 | 声明式第三方 Skill 扩展（SKILL.md），按需激活 |
-| MCP 协议 | 作为 MCP Client 连接外部工具服务器（stdio / streamable-http / legacy SSE） |
-| 图片 OCR | 基于 tesseract.js 的文字提取，支持中英文 |
-| 两级配置 | 用户级 + 项目级配置，环境变量覆盖 |
-| Web UI | 浏览器图形界面，实时流式对话，权限弹窗，侧边栏管理 |
+| Multi-turn chat | Streaming output + thinking (reasoning models) |
+| Built-in drivers | fs, shell, search — always available |
+| Permission control | Dangerous ops require confirmation; glob patterns to deny read/write of sensitive files |
+| Session persistence | Auto-save, resume historical conversations |
+| Context management | Auto-compress long conversations to prevent token overflow; 1M token window |
+| Memory system | Cross-session memory of user preferences and project context |
+| Skills system | Declarative third-party skill extensions (SKILL.md), on-demand activation |
+| MCP protocol | MCP Client connecting to external tool servers (stdio / streamable-http / legacy SSE) |
+| Image OCR | Text extraction via tesseract.js, supports Chinese and English |
+| Two-level config | User-level + project-level config, environment variable overrides |
+| Web UI | Browser GUI with real-time streaming, permission dialogs, sidebar management |
 
 ## Model configuration
 
-在 TUI 中使用 `/config` 管理配置，无需编辑文件或设置环境变量：
+Manage configuration in the TUI with `/config` — no file editing or environment variables needed:
 
 ```bash
-/config                     # 查看当前配置
-/config model <id>          # 切换模型（即时生效）
-/config thinking <level>    # 设置思考强度
-/config key <api-key>       # 设置 API Key
-/config cwd <path>          # 为当前项目设置工作目录（重启生效）
-/config help                # 查看帮助
+/config                     # View current config
+/config model <id>          # Switch model (immediate)
+/config thinking <level>    # Set thinking intensity
+/config key <api-key>       # Set API Key
+/config cwd <path>          # Set working directory for current project (restart to apply)
+/config help                # Show help
 ```
 
+Defaults to `deepseek-v4-flash`. Recommended to switch to `deepseek-v4-pro` for stronger reasoning/thinking:
 
-默认使用 `deepseek-v4-flash`，推荐切换为 `deepseek-v4-pro` 获得更强的 reasoning / thinking 能力：
-
-| 模型 | 特点 |
+| Model | Characteristics |
 | --- | --- |
-| `deepseek-v4-flash` | 默认，快速，适合日常编码 |
-| `deepseek-v4-pro` | 支持 reasoning / thinking，复杂任务更强，支持图片 OCR |
+| `deepseek-v4-flash` | Default, fast, suitable for daily coding |
+| `deepseek-v4-pro` | Supports reasoning/thinking, stronger on complex tasks, image OCR |
 
-> DeepSeek V4 系列均支持 **100 万 token** 上下文窗口，最大输出 384K token。
+> DeepSeek V4 series all support a **1 million token** context window with a maximum output of 384K tokens.
 
-底层基于 `pi-ai`，可扩展接入 OpenAI、Anthropic、Google 等 25+ 提供商。
+Under the hood is `pi-ai`, extensible to 25+ providers including OpenAI, Anthropic, Google, and more.
 
 ### Thinking levels
 
-DeepSeek reasoning 模型通过 `thinkingLevel` 控制思考强度，切换模型时自动匹配默认值（pro → `medium`，其他 → `off`），也可手动覆盖：
+DeepSeek reasoning models control thinking intensity via `thinkingLevel`. The default is automatically set when switching models (pro → `medium`, others → `off`), and can be manually overridden:
 
-| Level | 行为 |
+| Level | Behavior |
 | --- | --- |
-| `off` | 关闭思考，直接输出 |
-| `minimal` / `low` / `medium` / `high` | 启用思考，映射为 `reasoning_effort: "high"` |
-| `xhigh` | 最大思考强度，映射为 `reasoning_effort: "max"` |
+| `off` | Thinking disabled, direct output |
+| `minimal` / `low` / `medium` / `high` | Thinking enabled, mapped to `reasoning_effort: "high"` |
+| `xhigh` | Maximum thinking intensity, mapped to `reasoning_effort: "max"` |
 
 ```bash
 /config thinking xhigh
 ```
 
-
 ## MCP connector
 
-| 能力 | 说明 |
+| Capability | Description |
 | --- | --- |
-| **Stdio 传输** | 启动本地进程作为 MCP Server，零网络开销 |
-| **Streamable HTTP 传输** | 连接远程 MCP Server，优先使用 2025-11-25 MCP 主路径 |
-| **Legacy SSE 兼容** | 远端不支持新传输时，可显式指定或自动回退到旧版 SSE |
-| **自动 Transport 推断** | 有 `command` → stdio，仅 `url` → streamable-http，零配置 |
-| **工具命名空间** | `mcp_<server>_<tool>` 格式，避免冲突 |
-| **容错降级** | Server 连接失败不阻塞启动，错误信息可观测 |
+| **Stdio transport** | Launch local process as MCP Server, zero network overhead |
+| **Streamable HTTP transport** | Connect to remote MCP Server, prefers 2025-11-25 MCP spec |
+| **Legacy SSE compatibility** | Explicit passthrough or auto-fallback to legacy SSE when remote doesn't support new transport |
+| **Auto transport inference** | `command` present → stdio, `url` only → streamable-http, zero config |
+| **Tool namespacing** | `mcp_<server>_<tool>` format, avoids conflicts |
+| **Graceful degradation** | Server connection failure doesn't block startup, errors are observable |
 
-### MCP 配置示例
+### MCP configuration example
 
-将 MCP 写在 `~/.dscode/settings.json` 或 `<project>/.dscode/settings.json` 中，而不是 `/config` 写入的 `config.json`。
+Place MCP config in `~/.dscode/settings.json` or `<project>/.dscode/settings.json`, not in the `/config`-managed `config.json`.
 
 ```jsonc
 {
@@ -239,27 +238,26 @@ DeepSeek reasoning 模型通过 `thinkingLevel` 控制思考强度，切换模�
 }
 ```
 
-
-| 字段 | 类型 | 必填 | 说明 |
+| Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `command` | string | stdio 必填 | 启动命令 |
-| `args` | string[] | 否 | 命令参数 |
-| `url` | string | 远端传输必填 | 远程 MCP Server URL |
-| `transport` | `"stdio" \| "streamable-http" \| "sse"` | 否 | 传输方式；未显式指定时，`url` 默认走 `streamable-http` |
-| `description` | string | 否 | 描述信息 |
-| `env` | object | 否 | 自定义环境变量 |
-| `headers` | object | 否 | 远程 MCP 请求头 |
-| `preferredProtocolVersion` | string | 否 | 首选 MCP 协议版本，默认 `2025-11-25` |
-| `allowLegacySseFallback` | boolean | 否 | 远端不支持新传输时是否允许回退到 legacy SSE |
-| `requestTimeoutMs` / `connectTimeoutMs` | number | 否 | 请求 / 连接超时 |
+| `command` | string | Required for stdio | Launch command |
+| `args` | string[] | No | Command arguments |
+| `url` | string | Required for remote | Remote MCP Server URL |
+| `transport` | `"stdio" \| "streamable-http" \| "sse"` | No | Transport method; when unspecified, `url` defaults to `streamable-http` |
+| `description` | string | No | Description |
+| `env` | object | No | Custom environment variables |
+| `headers` | object | No | Remote MCP request headers |
+| `preferredProtocolVersion` | string | No | Preferred MCP protocol version, default `2025-11-25` |
+| `allowLegacySseFallback` | boolean | No | Whether to allow fallback to legacy SSE when remote doesn't support new transport |
+| `requestTimeoutMs` / `connectTimeoutMs` | number | No | Request / connection timeout |
 
-MCP 工具注册为 Driver，命名格式 `mcp_<server>_<tool>`，例如 `mcp_blender_get_scene_info`。连接失败不阻塞启动，错误信息输出到控制台。
+MCP tools are registered as Drivers with naming format `mcp_<server>_<tool>`, e.g. `mcp_blender_get_scene_info`. Connection failures don't block startup; error messages are output to the console.
 
-可在 TUI 中输入 `/mcp` 打开交互式浏览器：先选择 MCP server，再查看该 server 的 tool 列表、加载状态，以及 transport / protocol version / compatibility mode / refresh 状态。
+Type `/mcp` in the TUI to open the interactive browser: select an MCP server, then view its tool list, load status, transport, protocol version, compatibility mode, and refresh status.
 
 ## Skills system
 
-dscode 采用 **Agent as OS** 架构：Drivers（内核模块，始终加载）和 Skills（用户态程序，按需激活）。
+dscode uses an **Agent as OS** architecture: Drivers (kernel modules, always loaded) and Skills (user-mode programs, activated on demand).
 
 ```text
 ~/.dscode/skills/
@@ -269,8 +267,7 @@ dscode 采用 **Agent as OS** 架构：Drivers（内核模块，始终加载）�
     └── SKILL.md
 ```
 
-
-**SKILL.md 格式：**
+**SKILL.md format:**
 
 ```yaml
 ---
@@ -287,39 +284,38 @@ When the user asks about git workflows, use these tools.
 Always push the branch before creating a PR.
 ```
 
-
-- YAML frontmatter 声明 `name`、`description`、`tools` 白名单
-- 激活时 instructions 注入 system prompt，根据白名单从已加载 Driver 中筛选工具
-- 启动时自动激活所有扫描到的 Skill，也支持 `/skills activate <name>` 手动激活
+- YAML frontmatter declares `name`, `description`, `tools` whitelist
+- When activated, instructions are injected into the system prompt; tools are filtered from loaded Drivers by the whitelist
+- All scanned Skills are auto-activated at startup; manual activation via `/skills activate <name>` is also supported
 
 ## CLI commands
 
-| 命令 | 说明 |
+| Command | Description |
 | --- | --- |
-| `/help` | 显示所有命令 |
-| `/config` | 查看或修改用户命令配置（模型 / Key / 思考 / cwd） |
-| `/reset` | 清空对话历史 |
-| `/session list/save/load/delete` | 会话管理 |
-| `/memory list/add/remove/clear` | 记忆管理 |
-| `/skills` | 列出 Skills 及状态 |
-| `/drivers` | 列出已加载的驱动 |
-| `/mcp` | 交互式浏览 MCP server 与 tools |
-| `/permissions` | 查看当前权限授予 |
-| `/cost` | 显示 token 用量 |
-| `/compact` | 手动压缩上下文 |
+| `/help` | Show all commands |
+| `/config` | View or modify user config (model / key / thinking / cwd) |
+| `/reset` | Clear conversation history |
+| `/session list/save/load/delete` | Session management |
+| `/memory list/add/remove/clear` | Memory management |
+| `/skills` | List skills and status |
+| `/drivers` | List loaded drivers |
+| `/mcp` | Interactive MCP server & tool browser |
+| `/permissions` | View current permission grants |
+| `/cost` | Show token usage |
+| `/compact` | Manually trigger context compression |
 
-退出：输入 `exit` 或按 `Ctrl+C` 两次。中断生成：单次 `Ctrl+C`。Web UI 中命令对应侧边栏和按钮操作。
+Exit: type `exit` or press `Ctrl+C` twice. Interrupt generation: single `Ctrl+C`. In Web UI, commands correspond to sidebar and button actions.
 
 ## Configuration reference
 
-推荐把配置分成两类：
+We recommend separating configuration into two categories:
 
-- `/config` 命令写入的用户命令配置：`~/.dscode/config.json`（包含当前项目的 cwd 记录）
-- 声明式 settings：
-  - 用户级：`~/.dscode/settings.json`
-  - 项目级：`<project>/.dscode/settings.json`
+- User command config written by `/config`: `~/.dscode/config.json` (includes cwd record for current project)
+- Declarative settings:
+  - User-level: `~/.dscode/settings.json`
+  - Project-level: `<project>/.dscode/settings.json`
 
-项目级配置统一使用 `<project>/.dscode/settings.json`。
+Project-level configuration always uses `<project>/.dscode/settings.json`.
 
 ### `/config` command config
 
@@ -331,7 +327,6 @@ Always push the branch before creating a PR.
   "cwdProjectPath": "/absolute/path/to/project"
 }
 ```
-
 
 ### `settings.json`
 
@@ -350,65 +345,63 @@ Always push the branch before creating a PR.
 }
 ```
 
-
 ### Environment variables
 
-| 环境变量 | 对应配置 |
+| Env Variable | Corresponding Config |
 | --- | --- |
 | `DEEPSEEK_API_KEY` | API Key |
 | `AGENT_MODEL` / `DEEPSEEK_MODEL` | modelId |
 | `AGENT_THINKING_LEVEL` | thinkingLevel |
 | `DSCODE_MAX_TOKENS` | maxTokens |
-| `DSCODE_PROJECT_PATH` | 工作目录（默认当前目录） |
-| `DSCODE_CONFIG_HOME` | 自定义配置目录（默认 `~/.dscode`） |
-| `DSCODE_DATA_HOME` | 自定义数据目录（默认 `~/.dscode`） |
+| `DSCODE_PROJECT_PATH` | Working directory (defaults to current directory) |
+| `DSCODE_CONFIG_HOME` | Custom config directory (default `~/.dscode`) |
+| `DSCODE_DATA_HOME` | Custom data directory (default `~/.dscode`) |
 
 ## Examples
 
-`examples/` 提供可直接运行的示例项目，用来演示 dscode 的 MCP 集成方式和交互式 UI 能力。
+`examples/` provides runnable sample projects demonstrating dscode's MCP integration and interactive UI capabilities.
 
 ### MCP App
 
-| 示例 | 说明 | 快速开始 |
+| Example | Description | Quick Start |
 | --- | --- | --- |
-| `examples/scenario-modeler` | 一个 SaaS 场景建模 MCP Server。演示 tool 返回 `structuredContent` / `isError` 后，dscode 如何渲染 MCP App；没有 server HTML 时走 MDX，有 HTML resource 时优先使用 server 自带页面。 | `cd examples/scenario-modeler && npm install && npm start` |
+| `examples/scenario-modeler` | A SaaS scenario modeling MCP Server. Demonstrates how dscode renders MCP Apps when a tool returns `structuredContent` / `isError`; uses MDX when no server HTML is present, and prefers server-provided pages when an HTML resource is available. | `cd examples/scenario-modeler && npm install && npm start` |
 
 <p align="center">
-  <img src="docs/screen_shots/mcp-app.gif" alt="MCP App 演示" width="720" />
+  <img src="docs/screen_shots/mcp-app.gif" alt="MCP App demo" width="720" />
 </p>
 
-> 上图演示了 scenario-modeler 在 Web UI 中内联展示 MCP App HTML —— 点击 "Open App ▼" 即可展开交互式 SaaS 财务建模仪表盘。
+> The screenshot above shows scenario-modeler rendering an MCP App HTML inline in the Web UI — click "Open App ▼" to expand an interactive SaaS financial modeling dashboard.
 
-更多使用说明见：
+More usage instructions in:
 - `examples/scenario-modeler/README.md`
 
 ## Project structure
 
 ```text
 src/
-├── core/           # 入口、host 组装、配置、共享类型
-├── session/        # 会话持久化
-├── context/        # token 估算、上下文压缩
-├── memory/         # 跨 session 记忆
-├── drivers/        # 驱动注册 + 内置驱动 (fs, shell, search)
-├── skills/         # Skill 管理器 + SKILL.md 加载器
-├── mcp/            # MCP 客户端（stdio / streamable-http / legacy SSE）+ 管理器 + MCP App host/runtime
-├── permissions/    # 权限拦截
-└── ui/             # TUI (终端)、Web UI (浏览器)、流式渲染、slash commands
+├── core/           # Entry, host assembly, config, shared types
+├── session/        # Session persistence
+├── context/        # Token estimation, context compression
+├── memory/         # Cross-session memory
+├── drivers/        # Driver registry + built-in drivers (fs, shell, search)
+├── skills/         # Skill manager + SKILL.md loader
+├── mcp/            # MCP client (stdio / streamable-http / legacy SSE) + manager + MCP App host/runtime
+├── permissions/    # Permission interception
+└── ui/             # TUI (terminal), Web UI (browser), streaming renderer, slash commands
 ```
-
 
 ## Permission model
 
-| 工具 | 默认策略 |
+| Tool | Default Policy |
 | --- | --- |
-| `read_file`, `list_files`, `grep`, `glob` | 自动放行 |
-| `write_file` | 需确认 |
-| `bash` | 需确认；`sudo`、`rm -rf` 等直接拒绝 |
+| `read_file`, `list_files`, `grep`, `glob` | Auto-allow |
+| `write_file` | Requires confirmation |
+| `bash` | Requires confirmation; `sudo`, `rm -rf`, etc. are directly denied |
 
-确认时可选择：**Y**（放行本次）、**N**（拒绝）、**A**（本 session 始终放行该工具）。
+When confirming, you can choose: **Y** (allow this time), **N** (deny), **A** (always allow this tool for the current session).
 
-通过 `permissions.deny` 配置 glob 模式阻止读写敏感文件，用户级和项目级的 deny 列表取并集。
+Configure `permissions.deny` with glob patterns to block reading/writing sensitive files. User-level and project-level deny lists are merged.
 
 ## Development
 
@@ -416,35 +409,36 @@ src/
 npm start
 npm run typecheck
 npm test
+```
 
-**Web UI 开发：**
+**Web UI development:**
 
 ```bash
-# 安装前端依赖
+# Install frontend dependencies
 cd web && npm install && cd ..
 
-# 构建前端 + 启动 Web 模式
+# Build frontend + start web mode
 npm run build:web
 dscode --web
 
-# 开发模式（前端 HMR + 后端热重载）
+# Development mode (frontend HMR + backend hot reload)
 npm run dev:web
-``````
+```
 
-**技术栈：** TypeScript + tsx · React + Vite + Tailwind CSS (Web UI) · [pi-agent-core](https://www.npmjs.com/package/@mariozechner/pi-agent-core) · [pi-ai](https://www.npmjs.com/package/@mariozechner/pi-ai) · DeepSeek API
+**Tech stack:** TypeScript + tsx · React + Vite + Tailwind CSS (Web UI) · [pi-agent-core](https://www.npmjs.com/package/@mariozechner/pi-agent-core) · [pi-ai](https://www.npmjs.com/package/@mariozechner/pi-ai) · DeepSeek API
 
-欢迎贡献！请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 了解理念对齐和 PR 流程。
+Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for philosophy alignment and PR process.
 
 ## Known limitations
 
-- 上下文压缩的 `summarize-prefix` 策略当前回退为 `sliding-window`
-- 记忆自动提取默认关闭，需手动 `/memory add`
-- 图片输入基于 OCR，仅提取文字，不具备视觉理解能力
-- 首次启动若无输出，通常为 API Key 无效或网络问题
+- The `summarize-prefix` context compression strategy currently falls back to `sliding-window`
+- Automatic memory extraction is off by default; use `/memory add` manually
+- Image input is OCR-based, text extraction only — no visual understanding
+- If there's no output on first launch, it's usually an invalid API Key or network issue
 
 ## More docs
 
-- [架构设计文档](docs/)
+- [Architecture docs](docs/)
 - [Roadmap](docs/roadmap.md)
 
 ## License
