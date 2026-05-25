@@ -17,7 +17,9 @@ import { MCPManager } from "../mcp/manager.js";
 import type { MCPClientEvent } from "../mcp/types.js";
 import { AppHostManager } from "../mcp/app/host.js";
 import { inferLayout } from "../ui/mdx/inference.js";
-import { TuiApp } from "../ui/tui-app.js";
+import { TuiBackend } from "../ui/tui-backend.js";
+import type { UiBackend } from "../ui/backend.js";
+import type { TuiDeps } from "../ui/tui-app.js";
 
 export class Harness {
   agent!: Agent;
@@ -31,7 +33,7 @@ export class Harness {
   private mcpManager?: MCPManager;
   private appHostManager?: AppHostManager;
   private config: HarnessConfig;
-  private tui!: TuiApp;
+  private ui!: UiBackend;
   private baseSystemPrompt = "";
   private lastMcpProgress = new Map<string, { progress?: number; total?: number; message?: string }>();
   private mcpEventUnsubscribe?: () => void;
@@ -47,7 +49,7 @@ export class Harness {
     this.skillManager = new SkillManager(config.userSkillsDir, config.projectSkillsDir);
     this.permissionManager = new PermissionManager(
       config.permissions,
-      (toolName, preview, args) => this.tui.getPromptPermission()(toolName, preview, args),
+      (toolName, preview, args) => this.ui.getPromptPermission()(toolName, preview, args),
       () => {},
     );
   }
@@ -120,36 +122,41 @@ export class Harness {
     this.sessionManager.createSession(this.config.provider, this.config.modelId);
   }
 
-  async run(): Promise<void> {
+  async run(ui?: UiBackend): Promise<void> {
+    if (ui) this.ui = ui;
     const model = (getModel as (p: string, m: string) => Model<Api>)(this.config.provider, this.config.modelId);
     const nativeImageSupport = model.input.includes("image");
     const needsOcr = !nativeImageSupport && this.config.provider === "deepseek";
-    this.tui = new TuiApp({
-      agent: this.agent,
-      sessionManager: this.sessionManager,
-      memoryManager: this.memoryManager,
-      driverRegistry: this.driverRegistry,
-      toolRegistry: this.toolRegistry,
-      skillManager: this.skillManager,
-      permissionManager: this.permissionManager,
-      contextManager: this.contextManager,
-      mcpManager: this.mcpManager,
-      modelName: model.name,
-      modelSupportsImages: nativeImageSupport || needsOcr,
-      modelNeedsOcr: needsOcr,
-      projectPath: this.config.projectPath,
-      config: this.config,
-      onSetModel: (id: string) => this.setModel(id),
-      onSetThinking: (level: string) => this.setThinking(level),
-    });
+    if (!ui) {
+      const tuiDeps: TuiDeps = {
+        agent: this.agent,
+        sessionManager: this.sessionManager,
+        memoryManager: this.memoryManager,
+        driverRegistry: this.driverRegistry,
+        toolRegistry: this.toolRegistry,
+        skillManager: this.skillManager,
+        permissionManager: this.permissionManager,
+        contextManager: this.contextManager,
+        mcpManager: this.mcpManager,
+        modelName: model.name,
+        modelSupportsImages: nativeImageSupport || needsOcr,
+        modelNeedsOcr: needsOcr,
+        projectPath: this.config.projectPath,
+        config: this.config,
+        onSetModel: (id: string) => this.setModel(id),
+        onSetThinking: (level: string) => this.setThinking(level),
+      };
+      ui = new TuiBackend(tuiDeps);
+    }
+    this.ui = ui;
 
-    await this.tui.start();
+    await this.ui.start();
 
     try {
       if (this.config.mcp.length > 0) {
-        this.tui.addInfo(`Connecting ${this.config.mcp.length} MCP server(s)...`);
+        this.ui.addInfo(`Connecting ${this.config.mcp.length} MCP server(s)...`);
         this.mcpManager = new MCPManager(this.config.mcp);
-        this.tui.setMcpManager(this.mcpManager);
+        this.ui.setMcpManager(this.mcpManager);
         await this.mcpManager.initialize();
         this.mcpEventUnsubscribe = this.mcpManager.onEvent((event) => this.handleMcpEvent(event));
         await this.mcpManager.registerDrivers(this.driverRegistry);
@@ -167,21 +174,21 @@ export class Harness {
         this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
         const connected = this.mcpManager.getStates().filter((s) => s.status === "connected").length;
         const total = this.config.mcp.length;
-        this.tui.addInfo(`MCP: ${connected}/${total} connected`);
+        this.ui.addInfo(`MCP: ${connected}/${total} connected`);
         if (connected < total) {
           const errors = this.mcpManager.getStates().filter((s) => s.status === "error");
           for (const err of errors) {
-            this.tui.addInfo(`MCP '${err.config.name}' failed: ${err.error ?? "unknown"}`);
+            this.ui.addInfo(`MCP '${err.config.name}' failed: ${err.error ?? "unknown"}`);
           }
         }
-        this.tui.focusEditor();
+        this.ui.focusEditor();
       } else {
         this.toolRegistry.initialize(this.makeSkillTool());
         this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
       }
 
       if (!this.config.apiKey) {
-        this.tui.addInfo([
+        this.ui.addInfo([
           "Welcome to DSCode! To get started, configure your API key:",
           "",
           "  /config key sk-your-deepseek-api-key",
@@ -194,8 +201,8 @@ export class Harness {
         ].join("\n"));
       }
 
-      this.tui.focusEditor();
-      await this.tui.waitForExit();
+      this.ui.focusEditor();
+      await this.ui.waitForExit();
     } finally {
       await this.shutdown();
     }
@@ -378,7 +385,7 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
           permissions,
         });
         this.registeredApps.set(toolName, app.id);
-        this.tui.addAppNotification(app);
+        if ("addAppNotification" in this.ui) (this.ui as any).addAppNotification?.(app);
         if (payload !== undefined) {
           this.appHostManager!.pushToApp(app.id, {
             jsonrpc: "2.0",
@@ -389,7 +396,7 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
       })
       .catch((err) => {
         // No HTML resource — try auto-layout inference from structuredContent
-        this.tui.addInfo(`[MDX] fetchUiResource failed: ${err.message}, falling back to data mode`);
+        this.ui.addInfo(`[MDX] fetchUiResource failed: ${err.message}, falling back to data mode`);
         this.registerDataModeApp(uiInfo, toolName, toolResult);
       });
   }
@@ -406,13 +413,13 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
     const result = payload as Record<string, unknown> | undefined;
 
     if (!structuredContent) {
-      this.tui.addInfo(`[MDX] no structuredContent (keys: ${result ? Object.keys(result).join(",") : "null"})`);
+      this.ui.addInfo(`[MDX] no structuredContent (keys: ${result ? Object.keys(result).join(",") : "null"})`);
       return;
     }
 
     try {
       const layout = inferLayout(structuredContent, uiInfo.toolName);
-      this.tui.addInfo(`[MDX] layout: ${layout.mdx.slice(0, 80)}...`);
+      this.ui.addInfo(`[MDX] layout: ${layout.mdx.slice(0, 80)}...`);
 
       const app = this.appHostManager!.registerApp({
         resourceUri: uiInfo.resourceUri,
@@ -422,7 +429,7 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
         data: structuredContent,
       });
       this.registeredApps.set(toolName, app.id);
-      this.tui.addAppNotification(app);
+      if ("addAppNotification" in this.ui) (this.ui as any).addAppNotification?.(app);
 
       if (payload !== undefined) {
         this.appHostManager!.pushToApp(app.id, {
@@ -432,7 +439,7 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
         });
       }
     } catch (e: any) {
-      this.tui.addInfo(`[MDX] error: ${e.message}`);
+      this.ui.addInfo(`[MDX] error: ${e.message}`);
     }
   }
 
@@ -444,21 +451,21 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
           if (!ev) break;
           switch (ev.type) {
             case "thinking_delta":
-              this.tui.thinkingDelta(ev.delta);
+              this.ui.thinkingDelta(ev.delta);
               break;
             case "text_delta":
-              this.tui.textDelta(ev.delta);
+              this.ui.textDelta(ev.delta);
               break;
           }
           break;
         }
         case "tool_execution_start":
-          this.tui.toolStart(event.toolName, event.args);
+          this.ui.toolStart(event.toolName, event.args);
           break;
         case "tool_execution_end": {
           const payload = this.getToolPayload(event.result);
           const effectiveIsError = this.getEffectiveToolError(event.result, event.isError);
-          this.tui.toolEnd(
+          this.ui.toolEnd(
             event.toolName,
             payload,
             effectiveIsError,
@@ -472,24 +479,24 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
     this.agent.subscribe(async (event) => {
       try {
         if (event.type === "agent_end") {
-          this.tui.setProcessing(false);
+          this.ui.setProcessing(false);
           this.sessionManager.saveSession(this.agent);
         }
         if (event.type === "agent_start") {
-          this.tui.startAssistantMessage();
+          this.ui.startAssistantMessage();
         }
         if (event.type === "turn_end") {
-          this.tui.finishAssistantMessage();
+          this.ui.finishAssistantMessage();
           const msg = event.message as AssistantMessage;
           if (msg?.stopReason === "length") {
-            this.tui.addInfo("Output truncated (hit max_tokens). Continue from where you left off.");
+            this.ui.addInfo("Output truncated (hit max_tokens). Continue from where you left off.");
           }
           if (msg?.stopReason === "error" && msg?.errorMessage) {
-            this.tui.addError(`Model error: ${msg.errorMessage}`);
+            this.ui.addError(`Model error: ${msg.errorMessage}`);
           }
         }
       } catch (err) {
-        this.tui.addError(`agent_end listener error: ${err}`);
+        this.ui.addError(`agent_end listener error: ${err}`);
       }
     });
   }
@@ -514,7 +521,7 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
         if (shouldReport) {
           const summary = this.formatProgress(event.params.progress, event.params.total);
           const detail = event.params.message ? ` ${event.params.message}` : "";
-          this.tui.addInfo(`MCP ${event.serverName}: ${summary}${detail}`);
+          this.ui.addInfo(`MCP ${event.serverName}: ${summary}${detail}`);
         }
         return;
       }
@@ -524,28 +531,28 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
         const text = this.stringifyMcpMessage(event.params.data);
         const label = event.params.logger ? `${event.params.logger}: ` : "";
         if (level === "error") {
-          this.tui.addError(`${prefix}: ${label}${text}`);
+          this.ui.addError(`${prefix}: ${label}${text}`);
         } else if (level === "warning" || level === "warn") {
-          this.tui.addInfo(`${prefix} warning: ${label}${text}`);
+          this.ui.addInfo(`${prefix} warning: ${label}${text}`);
         } else {
-          this.tui.addInfo(`${prefix}: ${label}${text}`);
+          this.ui.addInfo(`${prefix}: ${label}${text}`);
         }
         return;
       }
       case "tools_list_changed":
-        this.tui.addInfo(`MCP ${event.serverName}: refreshing tool list...`);
+        this.ui.addInfo(`MCP ${event.serverName}: refreshing tool list...`);
         return;
       case "tools_refreshed":
-        this.tui.addInfo(`MCP ${event.serverName}: tool list refreshed (${event.toolCount} tools)`);
+        this.ui.addInfo(`MCP ${event.serverName}: tool list refreshed (${event.toolCount} tools)`);
         return;
       case "tools_refresh_failed":
-        this.tui.addError(`MCP ${event.serverName}: tool refresh failed: ${event.error}`);
+        this.ui.addError(`MCP ${event.serverName}: tool refresh failed: ${event.error}`);
         return;
       case "resources_list_changed":
-        this.tui.addInfo(`MCP ${event.serverName}: resources updated`);
+        this.ui.addInfo(`MCP ${event.serverName}: resources updated`);
         return;
       case "cancelled":
-        this.tui.addInfo(`MCP ${event.serverName}: request cancelled` + (event.params.reason ? ` (${event.params.reason})` : ""));
+        this.ui.addInfo(`MCP ${event.serverName}: request cancelled` + (event.params.reason ? ` (${event.params.reason})` : ""));
         return;
       default:
         return;

@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  面向数字工作的 DeepSeek 交互式命令行 Agent Harness。<br />
+  面向数字工作的 DeepSeek 交互式 AI Agent Harness。支持 **终端 (TUI)** 和 **浏览器 (Web UI)** 两种交互方式。<br />
   从 Agentic Workflow 到上下文管理再到记忆系统，dscode 只做 DeepSeek 模型的 Harness。
 </p>
 
@@ -58,6 +58,7 @@ dscode --version
 dscode
 ```
 
+
 安装包：<https://www.npmjs.com/package/@wangcan26/dscode>
 
 </td>
@@ -70,6 +71,7 @@ npm install
 npm run build
 node dist/dscode.mjs
 ```
+
 
 适合本地开发、调试和二次修改。
 
@@ -86,9 +88,45 @@ node dist/dscode.mjs
 /config model deepseek-v4-pro
 ```
 
+
 `/config` 命令写入的配置会持久化到 `~/.dscode/config.json`，后续启动无需重复设置。
 其中 `cwd` 会记录本次启动对应的项目目录；只有在你手动执行 `/config cwd <path>` 时，才会对当前项目复用该目录。
 声明式配置单独放在 `settings.json`：用户级 `~/.dscode/settings.json`，项目级 `<project>/.dscode/settings.json`。
+
+## Web UI
+
+除了终端交互，dscode 也提供简洁现代的 **浏览器界面**，完整支持 TUI 的全部功能：
+
+**npm 全局安装：**
+
+```bash
+dscode --web                  # 默认端口 3000
+dscode --web --web-port 8080  # 自定义端口
+```
+
+**本地构建运行：**
+
+```bash
+npm run build:web             # 先构建前端
+node dist/dscode.mjs --web    # 启动 Web 模式
+```
+
+浏览器打开 `http://localhost:3000` 即可使用。Web UI 包含：
+
+| 功能 | 说明 |
+| --- | --- |
+| 流式对话 | 实时显示 thinking + 文本输出，与 TUI 体验一致 |
+| 工具调用 | 内联卡片展示工具名、参数和结果（成功/失败图标） |
+| 权限确认 | 图形化弹窗，Allow / Always Allow / Deny |
+| Slash 命令 | 输入 `/` 弹出命令面板，支持键盘导航和点击 |
+| 会话管理 | 侧边栏可视化浏览、保存、加载、删除会话 |
+| MCP 浏览器 | 查看已连接 MCP 服务器和工具列表 |
+| 配置管理 | 图形化切换模型、Thinking Level 和 API Key |
+| 图片上传 | 支持拖拽 / 粘贴 / 点击上传图片 |
+| 响应式布局 | 适配桌面和移动端 |
+| 深色主题 | 默认 GitHub 风格暗色主题，保护眼睛 |
+
+> Web UI 与 CLI 共享同一套 Agent 后端，所有功能完全一致。切换模式时无需重新配置。
 
 ## What you get
 
@@ -104,6 +142,7 @@ node dist/dscode.mjs
 | MCP 协议 | 作为 MCP Client 连接外部工具服务器（stdio / streamable-http / legacy SSE） |
 | 图片 OCR | 基于 tesseract.js 的文字提取，支持中英文 |
 | 两级配置 | 用户级 + 项目级配置，环境变量覆盖 |
+| Web UI | 浏览器图形界面，实时流式对话，权限弹窗，侧边栏管理 |
 
 ## Digital work, not just coding
 
@@ -131,6 +170,7 @@ dscode 通过 **MCP (Model Context Protocol)** 连接外部工具，把 DeepSeek
 /config help                # 查看帮助
 ```
 
+
 默认使用 `deepseek-v4-flash`，推荐切换为 `deepseek-v4-pro` 获得更强的 reasoning / thinking 能力：
 
 | 模型 | 特点 |
@@ -155,6 +195,7 @@ DeepSeek reasoning 模型通过 `thinkingLevel` 控制思考强度，切换模�
 ```bash
 /config thinking xhigh
 ```
+
 
 ## MCP connector
 
@@ -192,6 +233,7 @@ DeepSeek reasoning 模型通过 `thinkingLevel` 控制思考强度，切换模�
 }
 ```
 
+
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
 | `command` | string | stdio 必填 | 启动命令 |
@@ -221,6 +263,7 @@ dscode 采用 **Agent as OS** 架构：Drivers（内核模块，始终加载）�
     └── SKILL.md
 ```
 
+
 **SKILL.md 格式：**
 
 ```yaml
@@ -237,6 +280,7 @@ tools:
 When the user asks about git workflows, use these tools.
 Always push the branch before creating a PR.
 ```
+
 
 - YAML frontmatter 声明 `name`、`description`、`tools` 白名单
 - 激活时 instructions 注入 system prompt，根据白名单从已加载 Driver 中筛选工具
@@ -258,7 +302,7 @@ Always push the branch before creating a PR.
 | `/cost` | 显示 token 用量 |
 | `/compact` | 手动压缩上下文 |
 
-退出：输入 `exit` 或按 `Ctrl+C` 两次。中断生成：单次 `Ctrl+C`。
+退出：输入 `exit` 或按 `Ctrl+C` 两次。中断生成：单次 `Ctrl+C`。Web UI 中命令对应侧边栏和按钮操作。
 
 ## Configuration reference
 
@@ -282,6 +326,7 @@ Always push the branch before creating a PR.
 }
 ```
 
+
 ### `settings.json`
 
 ```jsonc
@@ -298,6 +343,7 @@ Always push the branch before creating a PR.
   }
 }
 ```
+
 
 ### Environment variables
 
@@ -336,8 +382,9 @@ src/
 ├── skills/         # Skill 管理器 + SKILL.md 加载器
 ├── mcp/            # MCP 客户端（stdio / streamable-http / legacy SSE）+ 管理器 + MCP App host/runtime
 ├── permissions/    # 权限拦截
-└── ui/             # REPL、流式渲染、slash commands
+└── ui/             # TUI (终端)、Web UI (浏览器)、流式渲染、slash commands
 ```
+
 
 ## Permission model
 
@@ -357,9 +404,22 @@ src/
 npm start
 npm run typecheck
 npm test
-```
 
-**技术栈：** TypeScript + tsx · [pi-agent-core](https://www.npmjs.com/package/@mariozechner/pi-agent-core) · [pi-ai](https://www.npmjs.com/package/@mariozechner/pi-ai) · DeepSeek API
+**Web UI 开发：**
+
+```bash
+# 安装前端依赖
+cd web && npm install && cd ..
+
+# 构建前端 + 启动 Web 模式
+npm run build:web
+dscode --web
+
+# 开发模式（前端 HMR + 后端热重载）
+npm run dev:web
+``````
+
+**技术栈：** TypeScript + tsx · React + Vite + Tailwind CSS (Web UI) · [pi-agent-core](https://www.npmjs.com/package/@mariozechner/pi-agent-core) · [pi-ai](https://www.npmjs.com/package/@mariozechner/pi-ai) · DeepSeek API
 
 欢迎贡献！请先阅读 [CONTRIBUTING.md](CONTRIBUTING.md) 了解理念对齐和 PR 流程。
 

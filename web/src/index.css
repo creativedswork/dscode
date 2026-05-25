@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #30363d transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: #30363d;
+    border-radius: 3px;
+  }
+
+  body {
+    @apply bg-dscode-bg text-dscode-text font-sans;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply px-4 py-2 rounded-lg font-medium text-sm transition-all duration-150
+           focus:outline-none focus:ring-2 focus:ring-dscode-accent/50
+           disabled:opacity-50 disabled:cursor-not-allowed;
+  }
+
+  .btn-primary {
+    @apply btn bg-dscode-accent text-white hover:bg-blue-600;
+  }
+
+  .btn-secondary {
+    @apply btn bg-dscode-surface text-dscode-text border border-dscode-border
+           hover:bg-gray-700;
+  }
+
+  .btn-danger {
+    @apply btn bg-red-900/30 text-dscode-red border border-dscode-red/30
+           hover:bg-red-900/50;
+  }
+
+  .input {
+    @apply w-full px-3 py-2 bg-dscode-surface border border-dscode-border rounded-lg
+           text-dscode-text placeholder-dscode-muted
+           focus:outline-none focus:ring-2 focus:ring-dscode-accent/50 focus:border-dscode-accent
+           transition-all duration-150;
+  }
+
+  .card {
+    @apply bg-dscode-surface border border-dscode-border rounded-xl p-4;
+  }
+
+  .tool-card {
+    @apply card border-l-2 mb-2;
+  }
+
+  .tool-card-success {
+    @apply tool-card border-l-dscode-green;
+  }
+
+  .tool-card-error {
+    @apply tool-card border-l-dscode-red;
+  }
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(100%) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out;
+}

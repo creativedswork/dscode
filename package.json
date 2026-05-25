@@ -9,6 +9,7 @@
   "main": "dist/dscode.mjs",
   "files": [
     "dist/",
+    "dist/web/",
     "docs/assets/",
     "docs/screen_shots/",
     "package.json",
@@ -18,6 +19,8 @@
   "scripts": {
     "start": "tsx src/core/main.ts",
     "build": "node scripts/build.mjs",
+    "build:web": "cd web && npm run build",
+    "dev:web": "tsx src/core/main.ts --web & cd web && npm run dev",
     "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -45,10 +48,12 @@
     "@mariozechner/pi-agent-core": "^0.70.2",
     "@mariozechner/pi-ai": "^0.70.2",
     "chalk": "^5.5.0",
-    "tesseract.js": "^7.0.0"
+    "tesseract.js": "^7.0.0",
+    "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "@types/ws": "^8.18.1",
     "esbuild": "^0.28.0",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3",

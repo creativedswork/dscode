@@ -25,14 +25,21 @@ async function main() {
     format: "esm",
     outfile,
     banner: { js: "#!/usr/bin/env node" },
-    external: ["@earendil-works/*", "@mariozechner/*", "chalk", "tesseract.js"],
+    external: ["@earendil-works/*", "@mariozechner/*", "chalk", "tesseract.js", "ws"],
     sourcemap: false,
     minify: false,
     logLevel: "info",
   });
   chmodSync(outfile, 0o755);
 
-  // Step 3: copy static assets
+  // Step 3: build web frontend
+  const webDir = resolve(rootDir, "web");
+  if (existsSync(webDir)) {
+    console.log("Building web UI...");
+    execSync("npm run build", { stdio: "inherit", cwd: webDir });
+  }
+
+  // Step 4: copy static assets
   console.log("Copying sandbox.html and MDX runtime...");
   await cp(
     resolve(rootDir, "src", "mcp", "app", "sandbox.html"),
@@ -44,13 +51,19 @@ async function main() {
     await cp(mdxRuntimeSrc, mdxRuntimeDest);
   }
 
-  // Step 4: assemble dist-standalone/
+  // Step 5: assemble dist-standalone/
   console.log("Assembling %s/...", buildDir);
   const standalone = resolve(rootDir, buildDir);
   if (existsSync(standalone)) rmSync(standalone, { recursive: true });
   mkdirSync(resolve(standalone, "dist"), { recursive: true });
 
   await cp(resolve(rootDir, "dist"), resolve(standalone, "dist"), { recursive: true });
+
+  // Copy web frontend if exists
+  const webDist = resolve(rootDir, "dist", "web");
+  if (existsSync(webDist)) {
+    await cp(webDist, resolve(standalone, "dist", "web"), { recursive: true });
+  }
 
   const packageJson = JSON.parse(await readFile(resolve(rootDir, "package.json"), "utf8"));
   delete packageJson.scripts;
