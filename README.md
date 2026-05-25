@@ -157,7 +157,7 @@ dscode 通过 **MCP (Model Context Protocol)** 连接外部工具，把 DeepSeek
 <table>
 <tr>
 <td width="50%"><img src="docs/screen_shots/blender_show.jpg" alt="Blender 展示" width="100%"></td>
-<td width="50%"><img src="docs/screen_shots/blender_mcp.gif" alt="Blender MCP 演示" width="100%"></td>
+<td width="50%"><img src="docs/screen_shots/blender_show1.jpg" alt="Blender MCP 演示" width="100%"></td>
 </tr>
 </table>
 
