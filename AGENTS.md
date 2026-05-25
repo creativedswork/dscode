@@ -90,6 +90,7 @@ npm start          # 本地开发：启动交互式 REPL
 npm start -- --web  # Web 模式：浏览器中对话
 npm run build:web   # 构建前端（npm start 前需先执行）
 npm run typecheck  # 类型检查
+npm run ci:check   # 模拟 CI 干净构建（删 node_modules 重装 + 全量 build）
 npm test           # 运行测试
 ```
 

@@ -2,7 +2,7 @@
   "name": "@wangcan26/dscode",
   "version": "0.1.2",
   "type": "module",
-  "description": "DeepSeek-native terminal AI agent for digital work — DeepSeek model harness analogous to Claude Code for Claude models.",
+  "description": "DeepSeek-native terminal AI agent for digital work \u2014 DeepSeek model harness analogous to Claude Code for Claude models.",
   "bin": {
     "dscode": "dist/dscode.mjs"
   },
@@ -20,6 +20,7 @@
     "start": "tsx src/core/main.ts",
     "build": "node scripts/build.mjs",
     "build:web": "cd web && npm run build",
+    "ci:check": "rm -rf dist node_modules web/node_modules && npm install && cd web && npm install && cd .. && npm run build && echo \"\n\u2705 CI check passed\"",
     "dev:web": "tsx src/core/main.ts --web & cd web && npm run dev",
     "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
