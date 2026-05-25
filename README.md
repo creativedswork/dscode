@@ -43,6 +43,19 @@
 </tr>
 </table>
 
+## Digital work, not just coding
+
+dscode 通过 **MCP (Model Context Protocol)** 连接外部工具，把 DeepSeek 的能力延伸到更广义的数字工作流——从 Blender 3D 建模到浏览器自动化，从文档与表格处理到设计与内容生产。
+
+<table>
+<tr>
+<td width="50%"><img src="docs/screen_shots/blender_show.jpg" alt="Blender 展示" width="100%"></td>
+<td width="50%"><img src="docs/screen_shots/blender_show1.jpg" alt="Blender MCP 演示" width="100%"></td>
+</tr>
+</table>
+
+上图演示了通过 `blender-mcp` 连接 Blender，用自然语言操控 3D 场景。这类创意工具链只是数字工作的一种场景；dscode 通过标准 MCP 协议，让 DeepSeek 模型同样能接入更广泛的数字工具生态。
+
 ## Install in 30 seconds
 
 <table>
@@ -149,19 +162,6 @@ Web UI 包含：
 | 图片 OCR | 基于 tesseract.js 的文字提取，支持中英文 |
 | 两级配置 | 用户级 + 项目级配置，环境变量覆盖 |
 | Web UI | 浏览器图形界面，实时流式对话，权限弹窗，侧边栏管理 |
-
-## Digital work, not just coding
-
-dscode 通过 **MCP (Model Context Protocol)** 连接外部工具，把 DeepSeek 的能力延伸到更广义的数字工作流——从 Blender 3D 建模到浏览器自动化，从文档与表格处理到设计与内容生产。
-
-<table>
-<tr>
-<td width="50%"><img src="docs/screen_shots/blender_show.jpg" alt="Blender 展示" width="100%"></td>
-<td width="50%"><img src="docs/screen_shots/blender_show1.jpg" alt="Blender MCP 演示" width="100%"></td>
-</tr>
-</table>
-
-上图演示了通过 `blender-mcp` 连接 Blender，用自然语言操控 3D 场景。这类创意工具链只是数字工作的一种场景；dscode 通过标准 MCP 协议，让 DeepSeek 模型同样能接入更广泛的数字工具生态。
 
 ## Model configuration
 
