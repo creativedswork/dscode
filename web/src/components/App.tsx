@@ -208,6 +208,13 @@ export function App() {
         setModel(event.name);
         break;
       }
+
+      case "clear_conversation": {
+        setMessages([]);
+        setProcessing(false);
+        turnStartRef.current = 0;
+        break;
+      }
     }
   }, [addToast]);
 

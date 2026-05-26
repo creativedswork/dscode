@@ -1,0 +1,55 @@
+<svg width="1280" height="640" viewBox="0 0 1280 640" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="accent" x1="0" y1="0" x2="1280" y2="640" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#68E7FF"/>
+      <stop offset="0.5" stop-color="#7C89FF"/>
+      <stop offset="1" stop-color="#6EEB47"/>
+    </linearGradient>
+    <linearGradient id="swish" x1="80" y1="48" x2="160" y2="140" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#68E7FF"/>
+      <stop offset="0.52" stop-color="#7C89FF"/>
+      <stop offset="1" stop-color="#6EEB47"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1280" height="640" rx="24" fill="#0d1117"/>
+
+  <!-- Decorative glow -->
+  <circle cx="200" cy="160" r="300" fill="#68E7FF" opacity="0.03"/>
+  <circle cx="1080" cy="480" r="280" fill="#6EEB47" opacity="0.03"/>
+
+  <!-- Top line -->
+  <rect x="80" y="80" width="1120" height="1" fill="url(#accent)" opacity="0.5"/>
+
+  <!-- Brand label -->
+  <text x="80" y="150" fill="#8b949e" font-size="26" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif" font-weight="500" letter-spacing="8">DSCODE</text>
+
+  <!-- Title -->
+  <text x="80" y="280" fill="#f0f6fc" font-size="88" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif" font-weight="800" letter-spacing="-3">DeepSeek Agent</text>
+  <text x="80" y="370" fill="#f0f6fc" font-size="88" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif" font-weight="800" letter-spacing="-3">for Digital Work</text>
+
+  <!-- Underline -->
+  <rect x="80" y="400" width="480" height="6" rx="3" fill="url(#accent)"/>
+
+  <!-- Description -->
+  <text x="80" y="470" fill="#8b949e" font-size="30" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif" font-weight="400">The open source MCP-first AI agent for DeepSeek —</text>
+  <text x="80" y="515" fill="#8b949e" font-size="30" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif" font-weight="400">terminal or browser, one agent harness.</text>
+
+  <!-- Bottom line -->
+  <rect x="80" y="560" width="1120" height="1" fill="url(#accent)" opacity="0.5"/>
+
+  <!-- DS icon mark -->
+  <g transform="translate(1000 420)">
+    <rect width="120" height="120" rx="28" fill="#161b22"/>
+    <rect x="10" y="10" width="100" height="100" rx="20" stroke="#30363d" stroke-width="2"/>
+    <path d="M26 30H56C75 30 90 45 90 64C90 83 75 98 56 98H26V30ZM44 47V81H56C65 81 73 73 73 64C73 55 65 47 56 47H44Z" fill="#f0f6fc"/>
+    <path d="M93 37H73C65 37 58 44 58 52C58 59 63 64 72 65L81 66C91 68 98 73 98 82C98 93 89 101 78 101H48" stroke="url(#swish)" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <rect x="84" y="24" width="12" height="12" rx="4" fill="#68E7FF"/>
+    <rect x="98" y="115" width="9" height="9" rx="3" fill="#6EEB47"/>
+    <rect x="21" y="104" width="7" height="7" rx="2" fill="#7C89FF"/>
+  </g>
+
+  <!-- Repo URL -->
+  <text x="80" y="605" fill="#484f58" font-size="20" font-family="SFMono-Regular, Menlo, Monaco, Consolas, Liberation Mono, monospace" font-weight="400">github.com/wangcan26/dscode</text>
+</svg>

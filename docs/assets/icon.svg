@@ -1,0 +1,32 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="accent" x1="40" y1="40" x2="216" y2="216" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#68E7FF"/>
+      <stop offset="0.5" stop-color="#7C89FF"/>
+      <stop offset="1" stop-color="#6EEB47"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="256" height="256" rx="48" fill="#0d1117"/>
+
+  <!-- Subtle inner border -->
+  <rect x="12" y="12" width="232" height="232" rx="40" stroke="#30363d" stroke-width="1.5"/>
+
+  <!-- DS icon mark -->
+  <g transform="translate(52 52)">
+    <rect width="152" height="152" rx="32" fill="#161b22"/>
+    <rect x="12" y="12" width="128" height="128" rx="24" stroke="#30363d" stroke-width="2"/>
+
+    <!-- D letterform -->
+    <path d="M34 38H72C96 38 116 58 116 82C116 106 96 126 72 126H34V38ZM56 60V104H72C84 104 94 94 94 82C94 70 84 60 72 60H56Z" fill="#f0f6fc"/>
+
+    <!-- S swoosh -->
+    <path d="M118 48H92C82 48 74 56 74 66C74 75 80 80 92 82L104 83C116 85 124 92 124 106C124 120 112 130 98 130H62" stroke="url(#accent)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+
+    <!-- Accent dots -->
+    <rect x="110" y="32" width="12" height="12" rx="4" fill="#68E7FF"/>
+    <rect x="24" y="134" width="8" height="8" rx="2.5" fill="#7C89FF"/>
+    <rect x="124" y="142" width="10" height="10" rx="3" fill="#6EEB47"/>
+  </g>
+</svg>

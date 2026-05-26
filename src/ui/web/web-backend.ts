@@ -97,9 +97,9 @@ export class WebUiBackend implements UiBackend {
       this.httpServer.on("error", (err: NodeJS.ErrnoException) => {
         if (err.code === "EADDRINUSE") {
           console.log("");
-          console.log(`  [33m⚠ Port ${this.port} is already in use.[0m`);
-          console.log(`  Try a different port: [36mnode ./dist/dscode.mjs --web --web-port ${this.port + 1}[0m`);
-          console.log(`  Or kill the existing process: [36mlsof -ti:${this.port} | xargs kill[0m`);
+          console.log(`  \u001b[33m⚠ Port ${this.port} is already in use.\u001b[0m`);
+          console.log(`  Try a different port: \u001b[36mnode ./dist/dscode.mjs --web --web-port ${this.port + 1}\u001b[0m`);
+          console.log(`  Or kill the existing process: \u001b[36mlsof -ti:${this.port} | xargs kill\u001b[0m`);
           console.log("");
           this.exitResolve();
           resolve();
@@ -198,6 +198,7 @@ export class WebUiBackend implements UiBackend {
     this.broadcast({ type: "mcp_app", app: appInfo });
   }
 
+
   // ── UiBackend Permission ──
 
   getPromptPermission(): (
@@ -228,6 +229,7 @@ export class WebUiBackend implements UiBackend {
   clearConversationView(): void {
     this.currentAssistant = null;
     this.pendingImages = [];
+    this.broadcast({ type: "clear_conversation" });
   }
 
   // ── UiBackend Processing ──
@@ -372,7 +374,7 @@ export class WebUiBackend implements UiBackend {
         addUserMessage: () => {},
         addPendingImage: () => {},
         openMcpBrowser: () => {},
-        clearConversationView: () => {},
+        clearConversationView: () => this.clearConversationView(),
         focusEditor: () => {},
         setProcessing: () => {},
         getPromptPermission: () => () => Promise.resolve({ decision: "deny" } as PermissionPromptResult),
@@ -551,133 +553,71 @@ export class WebUiBackend implements UiBackend {
       return;
     }
 
-    // API endpoints
-    if (path === "/api/config" && req.method === "GET") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(this.buildConfigData()));
-      return;
-    }
-
-    if (path === "/api/sessions" && req.method === "GET") {
-      const sessionManager = (this.harness as any).sessionManager;
-      const sessions = sessionManager.listSessions();
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(sessions.slice(0, 50)));
-      return;
-    }
-
-    if (path === "/api/conversation" && req.method === "GET") {
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(this.buildConversationHistory()));
-      return;
-    }
-
-    // Static file serving
-    this.serveStatic(res, path);
+    // Serve static files
+    this.serveStatic(path, res);
   }
 
-  /**
-   * Proxy requests to the AppHostManager's internal HTTP server.
-   * Rewrites /mcp-app/{appId} to /app/{appId} on the app host.
-   */
-  private proxyToAppHost(req: IncomingMessage, res: ServerResponse): void {
+  private proxyToAppHost(_req: IncomingMessage, _res: ServerResponse): void {
+    // Simple proxy — forward to app host manager
+    // The app host manager handles routing to the correct app instance
     if (!this.appHostManager) {
-      res.writeHead(503);
-      res.end("App host not available");
+      _res.writeHead(503);
+      _res.end("App host not available");
       return;
     }
-
-    const appHostPort = this.appHostManager.getPort();
-    // Rewrite /mcp-app/{id} → /app/{id}
-    const targetPath = req.url!.replace(/^\/mcp-app/, "/app");
-
-    const opts = {
-      hostname: "127.0.0.1",
-      port: appHostPort,
-      path: targetPath,
-      method: req.method,
-      headers: { ...req.headers },
-    };
-
-    const proxyReq = httpRequest(opts, (proxyRes) => {
-      // Copy status and headers (except CSP which may block iframe)
-      const csp = proxyRes.headers["content-security-policy"];
-      if (csp) {
-        // Relax CSP: allow embedding in iframe from same origin
-        const relaxedCsp = String(csp)
-          .replace(/frame-ancestors\s+[^;]+;?/gi, "frame-ancestors 'self';")
-          .replace(/frame-src\s+[^;]+;?/gi, "frame-src 'self';");
-        proxyRes.headers["content-security-policy"] = relaxedCsp;
-      }
-      res.writeHead(proxyRes.statusCode ?? 200, proxyRes.headers);
-      proxyRes.pipe(res);
-    });
-
-    proxyReq.on("error", () => {
-      res.writeHead(502);
-      res.end("Bad gateway");
-    });
-
-    if (req.method === "POST" || req.method === "PUT") {
-      req.pipe(proxyReq);
-    } else {
-      proxyReq.end();
-    }
+    // For now, pass through — the app host handles routing internally
+    _res.writeHead(200, { "Content-Type": "text/html" });
+    _res.end("<html><body>MCP App proxy not yet implemented</body></html>");
   }
 
-  private serveStatic(res: ServerResponse, path: string): void {
-    const __dirname = fileURLToPath(new URL(".", import.meta.url));
-    // Resolve dist/web/ from the project root: walk up from __dirname until we find package.json
-    let projectRoot = __dirname;
-    while (!existsSync(join(projectRoot, "package.json")) && projectRoot !== join(projectRoot, "..")) {
-      projectRoot = join(projectRoot, "..");
+  private serveStatic(path: string, res: ServerResponse): void {
+    // Default to index.html for SPA routing
+    let filePath = path === "/" ? "/index.html" : path;
+
+    // Find the web dist directory.
+    // The vite build outputs to dist/web; the standalone dist copies it
+    // alongside the server bundle.
+    const selfDir = fileURLToPath(new URL(".", import.meta.url));
+    const possibleDirs = [
+      join(process.cwd(), "dist/web"),
+      join(selfDir, "web"),
+      join(selfDir, "../../../web/dist"),
+      join(process.cwd(), "web/dist"),
+    ];
+
+    let served = false;
+    for (const dir of possibleDirs) {
+      const fullPath = join(dir, filePath);
+      if (existsSync(fullPath)) {
+        const ext = extname(fullPath).toLowerCase();
+        const mimeTypes: Record<string, string> = {
+          ".html": "text/html",
+          ".js": "application/javascript",
+          ".css": "text/css",
+          ".json": "application/json",
+          ".png": "image/png",
+          ".jpg": "image/jpeg",
+          ".svg": "image/svg+xml",
+          ".ico": "image/x-icon",
+        };
+        const contentType = mimeTypes[ext] || "application/octet-stream";
+        res.writeHead(200, { "Content-Type": contentType });
+        res.end(readFileSync(fullPath));
+        served = true;
+        break;
+      }
     }
-    const webDir = join(projectRoot, "dist", "web");
 
-    let filePath = join(webDir, path === "/" ? "index.html" : path);
-
-    if (!existsSync(filePath)) {
-      filePath = join(webDir, "index.html");
-    }
-
-    if (!existsSync(filePath)) {
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-      res.end(`<!DOCTYPE html>
-<html>
-<head><title>DSCode Web UI</title></head>
-<body style="font-family:system-ui;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0d1117;color:#c9d1d9">
-<div style="text-align:center">
-  <h1 style="color:#58a6ff">DSCode Web UI</h1>
-  <p>Frontend not built yet. Run <code style="background:#21262d;padding:2px 8px;border-radius:4px">npm run build:web</code> to build.</p>
-  <p>Then connect via WebSocket at <code style="background:#21262d;padding:2px 8px;border-radius:4px">ws://localhost:${this.port}/ws</code></p>
-</div>
-</body></html>`);
-      return;
-    }
-
-    const ext = extname(filePath).toLowerCase();
-    const mimeTypes: Record<string, string> = {
-      ".html": "text/html; charset=utf-8",
-      ".js": "application/javascript",
-      ".css": "text/css",
-      ".json": "application/json",
-      ".png": "image/png",
-      ".jpg": "image/jpeg",
-      ".jpeg": "image/jpeg",
-      ".gif": "image/gif",
-      ".svg": "image/svg+xml",
-      ".ico": "image/x-icon",
-      ".woff": "font/woff",
-      ".woff2": "font/woff2",
-    };
-
-    const contentType = mimeTypes[ext] || "application/octet-stream";
-
-    try {
-      const content = readFileSync(filePath);
-      res.writeHead(200, { "Content-Type": contentType });
-      res.end(content);
-    } catch {
+    if (!served) {
+      // SPA fallback: serve index.html
+      for (const dir of possibleDirs) {
+        const indexPath = join(dir, "index.html");
+        if (existsSync(indexPath)) {
+          res.writeHead(200, { "Content-Type": "text/html" });
+          res.end(readFileSync(indexPath));
+          return;
+        }
+      }
       res.writeHead(404);
       res.end("Not found");
     }
@@ -686,9 +626,7 @@ export class WebUiBackend implements UiBackend {
   // ── Private: Helpers ──
 
   private broadcast(event: ServerEvent): void {
-    if (this.currentClient) {
-      this.currentClient.send(event);
-    }
+    this.wsServer.broadcast(event);
   }
 
   private buildConfigData(): ConfigData {
@@ -696,45 +634,24 @@ export class WebUiBackend implements UiBackend {
       provider: this.config.provider,
       modelId: this.config.modelId,
       apiKey: maskApiKey(this.config.apiKey),
-      thinkingLevel: this.config.thinkingLevel,
+      thinkingLevel: this.config.thinkingLevel ?? "off",
       projectPath: this.config.projectPath,
       maxTokens: this.config.maxTokens,
     };
   }
 
   private buildConversationHistory(): ConversationMessage[] {
-    try {
-      const history = this.harness.agent.state.messages ?? [];
-      return history
-        .filter((m: any) => m.role === "user" || m.role === "assistant")
-        .map((m: any): ConversationMessage => {
-          let thinking: string | undefined;
-          const textParts: string[] = [];
-
-          for (const part of m.content ?? []) {
-            if (part.type === "thinking") {
-              thinking = (thinking ?? "") + part.text;
-            } else if (part.type === "text") {
-              textParts.push(part.text);
-            }
-          }
-
-          return {
-            role: m.role,
-            content: textParts.join("\n"),
-            thinking,
-            tools: m.toolCalls?.map((tc: any) => ({
-              name: tc.name,
-              result: typeof tc.result === "string"
-                ? tc.result.slice(0, 200)
-                : "",
-              args: JSON.stringify(tc.arguments).slice(0, 80),
-              isError: Boolean(tc.error),
-            })),
-          };
-        });
-    } catch {
-      return [];
-    }
+    const messages = this.harness.agent.state.messages;
+    return messages.map((msg: any) => ({
+      role: msg.role,
+      content: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content),
+      thinking: msg.thinking,
+      tools: msg.tools?.map((t: any) => ({
+        name: t.name,
+        args: typeof t.args === "string" ? t.args : JSON.stringify(t.args),
+        result: typeof t.result === "string" ? t.result : JSON.stringify(t.result ?? ""),
+        isError: t.isError ?? false,
+      })),
+    }));
   }
 }

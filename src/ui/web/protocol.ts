@@ -76,7 +76,8 @@ export type ServerEvent =
   | { type: "mcp_state"; servers: McpServerInfo[] }
   | { type: "model"; name: string }
   | { type: "slash_result"; text: string }
-  | { type: "mcp_app"; app: McpAppInfo };
+  | { type: "mcp_app"; app: McpAppInfo }
+  | { type: "clear_conversation" };
 
 export interface ConversationMessage {
   role: "user" | "assistant" | "system";
