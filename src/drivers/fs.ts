@@ -4,10 +4,13 @@ import { join, resolve } from "node:path";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 
+import { computeLineHash, formatHashedLine } from "./edit.js";
+
 const readFileParams = Type.Object({
   path: Type.String({ description: "Absolute file path to read" }),
   offset: Type.Optional(Type.Number({ description: "Start line (0-indexed)" })),
   limit: Type.Optional(Type.Number({ description: "Number of lines to read, default 200" })),
+  hashes: Type.Optional(Type.Boolean({ description: "Enable hashline mode: prefix each line with 'N:XXXX|' where XXXX is a content hash for use with the edit tool" })),
 });
 
 export const readFileTool: AgentTool<typeof readFileParams> = {
@@ -15,7 +18,7 @@ export const readFileTool: AgentTool<typeof readFileParams> = {
   label: "Read file",
   description: "Read the contents of a file. Returns numbered lines.",
   parameters: readFileParams,
-  execute: async (_id, { path, offset, limit }) => {
+  execute: async (_id, { path, offset, limit, hashes }) => {
     const resolved = resolve(path);
     if (!existsSync(resolved)) {
       return {
@@ -35,13 +38,22 @@ export const readFileTool: AgentTool<typeof readFileParams> = {
     const start = offset ?? 0;
     const count = limit ?? 200;
     const slice = lines.slice(start, start + count);
-    const numbered = slice.map((l, i) => `${start + i + 1}\t${l}`).join("\n");
+    const useHashes = hashes === true;
+    const numbered = useHashes
+      ? slice.map((l, i) => {
+          const lineNum = start + i + 1;
+          const hash = computeLineHash(l, lineNum);
+          return formatHashedLine(lineNum, hash, l);
+        }).join("\n")
+      : slice.map((l, i) => `${start + i + 1}\t${l}`).join("\n");
     const result = slice.length < lines.length
-      ? `${numbered}\n\n(${lines.length} lines total, showing ${start + 1}-${start + slice.length})`
+      ? (useHashes
+          ? `${numbered}\n\n(${lines.length} lines total, showing ${start + 1}-${start + slice.length}, hashes enabled)`
+          : `${numbered}\n\n(${lines.length} lines total, showing ${start + 1}-${start + slice.length})`)
       : numbered;
     return {
       content: [{ type: "text", text: result }],
-      details: { lines: lines.length, shown: slice.length },
+      details: { lines: lines.length, shown: slice.length, hashes: useHashes || undefined },
     };
   },
 };

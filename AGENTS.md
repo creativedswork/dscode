@@ -52,6 +52,7 @@ Agent Loop (pi-agent-core，已有)
 | `fs` | builtin | `read_file`, `write_file`, `list_files` | always-allow (read/list), ask (write) |
 | `shell` | builtin | `bash` | ask (deny dangerous patterns) |
 | `search` | builtin | `grep`, `glob` | always-allow |
+| `edit` | builtin | `edit` | ask (same as write_file) |
 
 MCP 服务器连接后也会注册为驱动，source 为 `"mcp"`。
 

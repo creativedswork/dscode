@@ -13,7 +13,8 @@ export const DEFAULT_RULES: PermissionRule[] = [
   { tool: "bash", argPattern: /chmod\s+777/, decision: "deny", reason: "chmod 777 blocked", priority: 100 },
   { tool: "bash", argPattern: /mkfs|dd\s+if=/, decision: "deny", reason: "Disk operations blocked", priority: 100 },
 
-  // write/bash need confirmation
+  // write/edit/bash need confirmation
   { tool: "write_file", decision: "ask", priority: 1 },
+  { tool: "edit", decision: "ask", priority: 1 },
   { tool: "bash", decision: "ask", priority: 1 },
 ];

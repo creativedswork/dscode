@@ -5,8 +5,8 @@ describe("DriverRegistry", () => {
   it("should have builtin drivers registered on construction", () => {
     const registry = new DriverRegistry();
     const drivers = registry.listAll();
-    expect(drivers.length).toBe(3);
-    expect(drivers.map((d) => d.name).sort()).toEqual(["fs", "search", "shell"]);
+    expect(drivers.length).toBe(4);
+    expect(drivers.map((d) => d.name).sort()).toEqual(["edit", "fs", "search", "shell"]);
   });
 
   it("should get a driver by name", () => {
@@ -31,7 +31,7 @@ describe("DriverRegistry", () => {
       source: "mcp",
     });
     expect(registry.get("test")).toBeDefined();
-    expect(registry.listAll().length).toBe(4);
+    expect(registry.listAll().length).toBe(5);
   });
 
   it("should overwrite existing driver on register", () => {
@@ -53,6 +53,7 @@ describe("DriverRegistry", () => {
     const toolNames = allTools.map((t) => t.name).sort();
     expect(toolNames).toEqual([
       "bash",
+      "edit",
       "glob",
       "grep",
       "list_files",

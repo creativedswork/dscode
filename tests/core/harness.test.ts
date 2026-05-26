@@ -64,13 +64,13 @@ describe("Harness tool list regression", () => {
     expect(fixedNames.length).toBe(fixedUnique.size);
   });
 
-  it("should have exactly 6 unique tool names from builtin drivers", () => {
+  it("should have exactly 7 unique tool names from builtin drivers", () => {
     const registry = new DriverRegistry();
     const allTools = registry.getAllTools();
     const names = allTools.map((t) => t.name).sort();
     expect(names).toEqual([
       "bash",
-      "glob",
+      "edit",      "glob",
       "grep",
       "list_files",
       "read_file",
