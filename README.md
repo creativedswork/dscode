@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>The open source AI coding agent for DeepSeek.</strong>
+  <strong>The open source MCP-first AI agent for DeepSeek — built for digital creation, not just coding.</strong>
 </p>
 
 <p align="center">
@@ -17,8 +17,8 @@
 </p>
 
 <p align="center">
-  An interactive AI Agent Harness for DeepSeek powering digital work. Supports <strong>Terminal (TUI)</strong> and <strong>Browser (Web UI)</strong>.<br />
-  From agentic workflows to context management to memory systems — dscode is a harness purpose-built for DeepSeek models.
+  Terminal or browser — one agent harness. MCP-native tooling, agentic workflows, purpose-built for DeepSeek.<br />
+  From context management to memory systems to permission control — everything you need in one tool.
 </p>
 
 <p align="center">
@@ -43,7 +43,7 @@
   File operations, shell, code search, permission control, context compression, session persistence, and memory system — all in one.
 </td>
 <td width="33%" valign="top">
-  <strong>Digital work ready</strong><br />
+  <strong>MCP-first</strong><br />
   Extend capabilities to browsers, 3D, documents, spreadsheets, and more external tools via MCP — not limited to code generation.
 </td>
 </tr>
@@ -164,44 +164,6 @@ Web UI features:
 | Two-level config | User-level + project-level config, environment variable overrides |
 | Web UI | Browser GUI with real-time streaming, permission dialogs, sidebar management |
 
-## Model configuration
-
-Manage configuration in the TUI with `/config` — no file editing or environment variables needed:
-
-```bash
-/config                     # View current config
-/config model <id>          # Switch model (immediate)
-/config thinking <level>    # Set thinking intensity
-/config key <api-key>       # Set API Key
-/config cwd <path>          # Set working directory for current project (restart to apply)
-/config help                # Show help
-```
-
-Defaults to `deepseek-v4-flash`. Recommended to switch to `deepseek-v4-pro` for stronger reasoning/thinking:
-
-| Model | Characteristics |
-| --- | --- |
-| `deepseek-v4-flash` | Default, fast, suitable for daily coding |
-| `deepseek-v4-pro` | Supports reasoning/thinking, stronger on complex tasks, image OCR |
-
-> DeepSeek V4 series all support a **1 million token** context window with a maximum output of 384K tokens.
-
-Under the hood is `pi-ai`, extensible to 25+ providers including OpenAI, Anthropic, Google, and more.
-
-### Thinking levels
-
-DeepSeek reasoning models control thinking intensity via `thinkingLevel`. The default is automatically set when switching models (pro → `medium`, others → `off`), and can be manually overridden:
-
-| Level | Behavior |
-| --- | --- |
-| `off` | Thinking disabled, direct output |
-| `minimal` / `low` / `medium` / `high` | Thinking enabled, mapped to `reasoning_effort: "high"` |
-| `xhigh` | Maximum thinking intensity, mapped to `reasoning_effort: "max"` |
-
-```bash
-/config thinking xhigh
-```
-
 ## MCP connector
 
 | Capability | Description |
@@ -254,6 +216,44 @@ Place MCP config in `~/.dscode/settings.json` or `<project>/.dscode/settings.jso
 MCP tools are registered as Drivers with naming format `mcp_<server>_<tool>`, e.g. `mcp_blender_get_scene_info`. Connection failures don't block startup; error messages are output to the console.
 
 Type `/mcp` in the TUI to open the interactive browser: select an MCP server, then view its tool list, load status, transport, protocol version, compatibility mode, and refresh status.
+
+## Model configuration
+
+Manage configuration in the TUI with `/config` — no file editing or environment variables needed:
+
+```bash
+/config                     # View current config
+/config model <id>          # Switch model (immediate)
+/config thinking <level>    # Set thinking intensity
+/config key <api-key>       # Set API Key
+/config cwd <path>          # Set working directory for current project (restart to apply)
+/config help                # Show help
+```
+
+Defaults to `deepseek-v4-flash`. Recommended to switch to `deepseek-v4-pro` for stronger reasoning/thinking:
+
+| Model | Characteristics |
+| --- | --- |
+| `deepseek-v4-flash` | Default, fast, suitable for daily coding |
+| `deepseek-v4-pro` | Supports reasoning/thinking, stronger on complex tasks, image OCR |
+
+> DeepSeek V4 series all support a **1 million token** context window with a maximum output of 384K tokens.
+
+Under the hood is `pi-ai`, extensible to 25+ providers including OpenAI, Anthropic, Google, and more.
+
+### Thinking levels
+
+DeepSeek reasoning models control thinking intensity via `thinkingLevel`. The default is automatically set when switching models (pro → `medium`, others → `off`), and can be manually overridden:
+
+| Level | Behavior |
+| --- | --- |
+| `off` | Thinking disabled, direct output |
+| `minimal` / `low` / `medium` / `high` | Thinking enabled, mapped to `reasoning_effort: "high"` |
+| `xhigh` | Maximum thinking intensity, mapped to `reasoning_effort: "max"` |
+
+```bash
+/config thinking xhigh
+```
 
 ## Skills system
 

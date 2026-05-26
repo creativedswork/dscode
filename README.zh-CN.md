@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>面向 DeepSeek 的开源 AI 编程智能体。</strong>
+  <strong>面向 DeepSeek 的开源 MCP-first AI Agent —— 为数字创作而生，而非止于编程。</strong>
 </p>
 
 <p align="center">
@@ -17,8 +17,8 @@
 </p>
 
 <p align="center">
-  面向数字工作的 DeepSeek 交互式 AI Agent Harness。支持 <strong>终端 (TUI)</strong> 和 <strong>浏览器 (Web UI)</strong> 两种交互方式。<br />
-  从 Agentic Workflow 到上下文管理再到记忆系统，dscode 只做 DeepSeek 模型的 Harness。
+  终端还是浏览器 —— 一个 Agent Harness 全搞定。MCP 原生工具链，Agentic Workflow，专为 DeepSeek 打造。<br />
+  从上下文管理到记忆系统再到权限控制 —— 一个工具全搞定。
 </p>
 
 <p align="center">
@@ -43,7 +43,7 @@
   文件操作、Shell、代码搜索、权限控制、上下文压缩、会话持久化和记忆系统一体化。
 </td>
 <td width="33%" valign="top">
-  <strong>数字工作就绪</strong><br />
+  <strong>MCP-first</strong><br />
   通过 MCP 把能力延伸到浏览器、3D、文档、表格和更多外部工具，而不只停留在代码生成。
 </td>
 </tr>
@@ -164,44 +164,6 @@ Web UI 功能：
 | 两级配置 | 用户级 + 项目级配置，环境变量覆盖 |
 | Web UI | 浏览器图形界面，实时流式对话，权限弹窗，侧边栏管理 |
 
-## 模型配置
-
-在 TUI 中使用 `/config` 管理配置，无需编辑文件或设置环境变量：
-
-```bash
-/config                     # 查看当前配置
-/config model <id>          # 切换模型（即时生效）
-/config thinking <level>    # 设置思考强度
-/config key <api-key>       # 设置 API Key
-/config cwd <path>          # 为当前项目设置工作目录（重启生效）
-/config help                # 查看帮助
-```
-
-默认使用 `deepseek-v4-flash`，推荐切换为 `deepseek-v4-pro` 获得更强的 reasoning / thinking 能力：
-
-| 模型 | 特点 |
-| --- | --- |
-| `deepseek-v4-flash` | 默认，快速，适合日常编码 |
-| `deepseek-v4-pro` | 支持 reasoning / thinking，复杂任务更强，支持图片 OCR |
-
-> DeepSeek V4 系列均支持 **100 万 token** 上下文窗口，最大输出 384K token。
-
-底层基于 `pi-ai`，可扩展接入 OpenAI、Anthropic、Google 等 25+ 提供商。
-
-### 思考强度
-
-DeepSeek reasoning 模型通过 `thinkingLevel` 控制思考强度，切换模型时自动匹配默认值（pro → `medium`，其他 → `off`），也可手动覆盖：
-
-| Level | 行为 |
-| --- | --- |
-| `off` | 关闭思考，直接输出 |
-| `minimal` / `low` / `medium` / `high` | 启用思考，映射为 `reasoning_effort: "high"` |
-| `xhigh` | 最大思考强度，映射为 `reasoning_effort: "max"` |
-
-```bash
-/config thinking xhigh
-```
-
 ## MCP 连接器
 
 | 能力 | 说明 |
@@ -254,6 +216,44 @@ DeepSeek reasoning 模型通过 `thinkingLevel` 控制思考强度，切换模�
 MCP 工具注册为 Driver，命名格式 `mcp_<server>_<tool>`，例如 `mcp_blender_get_scene_info`。连接失败不阻塞启动，错误信息输出到控制台。
 
 可在 TUI 中输入 `/mcp` 打开交互式浏览器：先选择 MCP server，再查看该 server 的 tool 列表、加载状态，以及 transport / protocol version / compatibility mode / refresh 状态。
+
+## 模型配置
+
+在 TUI 中使用 `/config` 管理配置，无需编辑文件或设置环境变量：
+
+```bash
+/config                     # 查看当前配置
+/config model <id>          # 切换模型（即时生效）
+/config thinking <level>    # 设置思考强度
+/config key <api-key>       # 设置 API Key
+/config cwd <path>          # 为当前项目设置工作目录（重启生效）
+/config help                # 查看帮助
+```
+
+默认使用 `deepseek-v4-flash`，推荐切换为 `deepseek-v4-pro` 获得更强的 reasoning / thinking 能力：
+
+| 模型 | 特点 |
+| --- | --- |
+| `deepseek-v4-flash` | 默认，快速，适合日常编码 |
+| `deepseek-v4-pro` | 支持 reasoning / thinking，复杂任务更强，支持图片 OCR |
+
+> DeepSeek V4 系列均支持 **100 万 token** 上下文窗口，最大输出 384K token。
+
+底层基于 `pi-ai`，可扩展接入 OpenAI、Anthropic、Google 等 25+ 提供商。
+
+### 思考强度
+
+DeepSeek reasoning 模型通过 `thinkingLevel` 控制思考强度，切换模型时自动匹配默认值（pro → `medium`，其他 → `off`），也可手动覆盖：
+
+| Level | 行为 |
+| --- | --- |
+| `off` | 关闭思考，直接输出 |
+| `minimal` / `low` / `medium` / `high` | 启用思考，映射为 `reasoning_effort: "high"` |
+| `xhigh` | 最大思考强度，映射为 `reasoning_effort: "max"` |
+
+```bash
+/config thinking xhigh
+```
 
 ## Skills 系统
 
