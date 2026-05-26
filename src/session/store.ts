@@ -13,18 +13,36 @@ export class SessionStore {
     }
   }
 
-  save(session: SerializedSession): void {
+  save(session: SerializedSession): boolean {
     const filePath = join(this.dir, `${session.metadata.id}.json`);
     const tmp = filePath + ".tmp";
-    writeFileSync(tmp, JSON.stringify(session, null, 2));
-    renameSync(tmp, filePath);
-    this.updateIndex(session.metadata);
+    try {
+      writeFileSync(tmp, JSON.stringify(session, null, 2));
+      renameSync(tmp, filePath);
+      this.updateIndex(session.metadata);
+      return true;
+    } catch (err) {
+      // If atomic write fails, try direct write as fallback
+      try {
+        writeFileSync(filePath, JSON.stringify(session, null, 2));
+        this.updateIndex(session.metadata);
+        return true;
+      } catch {
+        console.error(`[session] Failed to save session ${session.metadata.id}:`, err);
+        return false;
+      }
+    }
   }
 
   load(id: string): SerializedSession | null {
     const filePath = join(this.dir, `${id}.json`);
     if (!existsSync(filePath)) return null;
-    return JSON.parse(readFileSync(filePath, "utf8"));
+    try {
+      return JSON.parse(readFileSync(filePath, "utf8"));
+    } catch (err) {
+      console.error(`[session] Failed to load session ${id}:`, err);
+      return null;
+    }
   }
 
   list(): SessionMetadata[] {
@@ -40,7 +58,11 @@ export class SessionStore {
   delete(id: string): void {
     const filePath = join(this.dir, `${id}.json`);
     if (existsSync(filePath)) {
-      unlinkSync(filePath);
+      try {
+        unlinkSync(filePath);
+      } catch {
+        // Ignore deletion errors
+      }
     }
     const index = this.list().filter((m) => m.id !== id);
     this.writeIndex(index);
@@ -59,6 +81,10 @@ export class SessionStore {
 
   private writeIndex(index: SessionMetadata[]): void {
     const indexPath = join(this.dir, "index.json");
-    writeFileSync(indexPath, JSON.stringify(index, null, 2));
+    try {
+      writeFileSync(indexPath, JSON.stringify(index, null, 2));
+    } catch {
+      // Ignore index write failures; the session file is the source of truth
+    }
   }
 }

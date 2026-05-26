@@ -1,7 +1,7 @@
 import { Agent } from "@mariozechner/pi-agent-core";
 import type { AfterToolCallContext, AfterToolCallResult, AgentMessage, AgentTool, BeforeToolCallContext } from "@mariozechner/pi-agent-core";
 import { getModel, streamSimple, Type } from "@mariozechner/pi-ai";
-import type { Api, AssistantMessage, Context, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
+import type { Api, AssistantMessage, Context, ImageContent, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
 
 import type { HarnessConfig } from "./types.js";
 import { saveUserConfig } from "./config.js";
@@ -23,14 +23,14 @@ import type { TuiDeps } from "../ui/tui-app.js";
 
 export class Harness {
   agent!: Agent;
-  private sessionManager: SessionManager;
+  sessionManager: SessionManager;
   private contextManager: ContextManager;
-  private memoryManager: MemoryManager;
-  private driverRegistry: DriverRegistry;
-  private toolRegistry: ToolRegistry;
-  private skillManager: SkillManager;
-  private permissionManager: PermissionManager;
-  private mcpManager?: MCPManager;
+  memoryManager: MemoryManager;
+  driverRegistry: DriverRegistry;
+  toolRegistry: ToolRegistry;
+  skillManager: SkillManager;
+  permissionManager: PermissionManager;
+  mcpManager?: MCPManager;
   public appHostManager?: AppHostManager;
   private config: HarnessConfig;
   private ui!: UiBackend;
@@ -101,18 +101,28 @@ export class Harness {
         maxRetries: 0,
       }),
       transformContext: (msgs: AgentMessage[], signal?: AbortSignal) => {
-        // Update tools based on current discovery state
-        self.agent.state.tools = self.toolRegistry.buildToolsForRequest();
-        // Update system prompt with current deferred tools hint
-        const deferredHint = self.toolRegistry.buildDeferredToolsHint();
-        self.agent.state.systemPrompt = self.baseSystemPrompt + deferredHint;
-        return self.contextManager.transform(msgs, signal) as Promise<AgentMessage[]>;
+        try {
+          // Update tools based on current discovery state
+          self.agent.state.tools = self.toolRegistry.buildToolsForRequest();
+          // Update system prompt with current deferred tools hint
+          const deferredHint = self.toolRegistry.buildDeferredToolsHint();
+          self.agent.state.systemPrompt = self.baseSystemPrompt + deferredHint;
+          return self.contextManager.transform(msgs, signal) as Promise<AgentMessage[]>;
+        } catch (err) {
+          console.error("[harness] transformContext error:", err);
+          // Return original messages to keep the agent loop running
+          return msgs as unknown as Promise<AgentMessage[]>;
+        }
       },
       beforeToolCall: (ctx: BeforeToolCallContext, signal?: AbortSignal) =>
         this.permissionManager.check(ctx, signal),
       afterToolCall: async (ctx: AfterToolCallContext, _signal?: AbortSignal) => {
-        if (ctx.toolCall.name === "search_tools" && ctx.context.tools) {
-          ctx.context.tools = self.toolRegistry.buildToolsForRequest();
+        try {
+          if (ctx.toolCall.name === "search_tools" && ctx.context.tools) {
+            ctx.context.tools = self.toolRegistry.buildToolsForRequest();
+          }
+        } catch (err) {
+          console.error("[harness] afterToolCall error:", err);
         }
         return undefined as AfterToolCallResult | undefined;
       },
@@ -120,6 +130,28 @@ export class Harness {
 
     this.bindEvents();
     this.sessionManager.createSession(this.config.provider, this.config.modelId);
+  }
+
+  /**
+   * Prompt the agent and automatically save the session after the turn completes
+   * (whether successful or not). This provides an extra safety layer on top of
+   * the agent_end event handler.
+   */
+  async promptAndSave(text: string, images?: ImageContent[]): Promise<void> {
+    try {
+      await this.agent.prompt(text, images);
+    } finally {
+      // Always save after each turn, regardless of success/failure
+      this.sessionManager.trySaveSession(this.agent);
+    }
+  }
+
+  /**
+   * Force a session save immediately. Safe to call from anywhere,
+   * including error handlers and shutdown hooks.
+   */
+  saveSessionNow(): void {
+    this.sessionManager.trySaveSession(this.agent);
   }
 
   async run(ui?: UiBackend): Promise<void> {
@@ -229,17 +261,29 @@ export class Harness {
   }
 
   private async shutdown(): Promise<void> {
+    // Save session FIRST, before any other shutdown steps.
+    // This ensures data is persisted even if later steps fail.
+    // Also save regardless of shuttingDown flag — this is the last chance to persist.
+    this.sessionManager.trySaveSession(this.agent);
+
     if (this.shuttingDown) return;
     this.shuttingDown = true;
 
     this.mcpEventUnsubscribe?.();
     this.mcpEventUnsubscribe = undefined;
-    this.sessionManager.saveSession(this.agent);
     if (this.appHostManager) {
-      await this.appHostManager.shutdown();
+      try {
+        await this.appHostManager.shutdown();
+      } catch (err) {
+        console.error("[harness] appHostManager shutdown error:", err);
+      }
     }
     if (this.mcpManager) {
-      await this.mcpManager.shutdown();
+      try {
+        await this.mcpManager.shutdown();
+      } catch (err) {
+        console.error("[harness] mcpManager shutdown error:", err);
+      }
     }
   }
 
@@ -496,7 +540,9 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
           }
         }
       } catch (err) {
-        this.ui.addError(`agent_end listener error: ${err}`);
+        // If the event handler fails, still try to save session
+        console.error("[harness] agent event handler error:", err);
+        this.sessionManager.trySaveSession(this.agent);
       }
     });
   }

@@ -301,8 +301,9 @@ export class WebUiBackend implements UiBackend {
         try {
           const imageContents = this.pendingImages.length > 0 ? [...this.pendingImages] : undefined;
           this.pendingImages = [];
-          await this.harness.agent.prompt(text, imageContents);
+          await this.harness.promptAndSave(text, imageContents as any);
         } catch (err) {
+          this.harness.saveSessionNow();
           client.send({
             type: "error",
             text: err instanceof Error ? err.message : String(err),

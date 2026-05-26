@@ -30,8 +30,8 @@ export class SessionManager {
     return this.current;
   }
 
-  saveSession(agent: Agent): void {
-    if (!this.current) return;
+  saveSession(agent: Agent): boolean {
+    if (!this.current) return false;
 
     const messages = agent.state.messages;
     this.current.updatedAt = Date.now();
@@ -55,7 +55,19 @@ export class SessionManager {
       metadata: this.current,
       messages: messages as unknown[],
     };
-    this.store.save(session);
+    return this.store.save(session);
+  }
+
+  /**
+   * Attempt to save the session, catching all errors.
+   * Safe to call from error handlers and shutdown hooks.
+   */
+  trySaveSession(agent: Agent): void {
+    try {
+      this.saveSession(agent);
+    } catch (err) {
+      console.error("[session] trySaveSession failed:", err);
+    }
   }
 
   loadSession(id: string, agent: Agent): boolean {

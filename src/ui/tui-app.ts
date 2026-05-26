@@ -758,6 +758,7 @@ export class TuiApp {
         },
         (err) => {
           this.setProcessing(false);
+          this.deps.sessionManager.trySaveSession(this.deps.agent);
           this.addError(err instanceof Error ? err.message : String(err));
         },
       );
@@ -811,6 +812,7 @@ export class TuiApp {
             () => this.setProcessing(false),
             (err) => {
               this.setProcessing(false);
+              this.deps.sessionManager.trySaveSession(this.deps.agent);
               this.addError(err instanceof Error ? err.message : String(err));
             },
           );
@@ -820,6 +822,7 @@ export class TuiApp {
             () => this.setProcessing(false),
             (e) => {
               this.setProcessing(false);
+              this.deps.sessionManager.trySaveSession(this.deps.agent);
               this.addError(e instanceof Error ? e.message : String(e));
             },
           );
@@ -832,6 +835,7 @@ export class TuiApp {
         },
         (err) => {
           this.setProcessing(false);
+          this.deps.sessionManager.trySaveSession(this.deps.agent);
           this.addError(err instanceof Error ? err.message : String(err));
         },
       );

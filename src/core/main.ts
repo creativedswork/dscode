@@ -5,9 +5,57 @@ import { fileURLToPath } from "node:url";
 import { loadConfig } from "./config.js";
 import { Harness } from "./harness.js";
 
+// ── Crash-resilience: attempt to save session on fatal events ──
+
+let harnessRef: Harness | null = null;
+
+function emergencySaveSession(): void {
+  if (harnessRef) {
+    try {
+      harnessRef.saveSessionNow();
+    } catch {
+      // Last-resort save, suppress all errors
+    }
+  }
+}
+
 process.on("unhandledRejection", (reason) => {
   console.error("[unhandledRejection]", reason);
+  emergencySaveSession();
 });
+
+process.on("uncaughtException", (err) => {
+  console.error("[uncaughtException]", err);
+  emergencySaveSession();
+  // Give I/O a brief moment to flush, then exit
+  setTimeout(() => {
+    process.exit(1);
+  }, 500).unref();
+});
+
+// ── Signal handlers for graceful shutdown ──
+
+let sigintCount = 0;
+process.on("SIGINT", () => {
+  sigintCount++;
+  if (sigintCount === 1) {
+    console.log("\nShutting down... (press Ctrl+C again to force quit)");
+    emergencySaveSession();
+    // Let the normal shutdown flow handle the rest
+  } else {
+    console.log("\nForce quitting...");
+    emergencySaveSession();
+    process.exit(0);
+  }
+});
+
+process.on("SIGTERM", () => {
+  console.log("\nReceived SIGTERM, shutting down...");
+  emergencySaveSession();
+  process.exit(0);
+});
+
+// ── CLI ──
 
 function readCliVersion(): string {
   const currentDir = dirname(fileURLToPath(import.meta.url));
@@ -61,6 +109,7 @@ async function main(): Promise<void> {
   }
 
   const harness = new Harness(config);
+  harnessRef = harness;
   await harness.initialize();
 
   if (web) {
@@ -84,5 +133,6 @@ async function main(): Promise<void> {
 
 main().catch((err) => {
   console.error(err);
+  emergencySaveSession();
   process.exit(1);
 });
