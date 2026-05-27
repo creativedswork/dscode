@@ -56,6 +56,34 @@ Agent Loop (pi-agent-core，已有)
 
 MCP 服务器连接后也会注册为驱动，source 为 `"mcp"`。
 
+## LSP MCP — 代码上下文感知
+
+本项目通过 `.dscode/settings.json` 配置了 LSP MCP 服务器（TypeScript Language Server），提供对仓库的深度代码智能感知。
+
+### 优先使用 LSP 工具
+
+对代码进行理解、导航、重构时，**优先使用 LSP MCP 工具**而非裸 `grep` / `read_file`：
+
+| 场景 | 优先 LSP 工具 | 不推荐 |
+|------|-------------|--------|
+| 查找定义 | `mcp_lsp_textDocument_definition` | grep 符号名 |
+| 查找引用 | `mcp_lsp_textDocument_references` | grep 全仓库 |
+| 类型信息 | `mcp_lsp_textDocument_hover` | read_file 逐行读 |
+| 符号浏览 | `mcp_lsp_textDocument_documentSymbol` | grep class/function |
+| 全局符号搜索 | `mcp_lsp_workspace_symbol` | grep -r |
+| 查找实现 | `mcp_lsp_textDocument_implementation` | grep + 人肉推断 |
+| 类型定义 | `mcp_lsp_textDocument_typeDefinition` | grep interface/type |
+| 代码补全 | `mcp_lsp_textDocument_completion` | — |
+| 格式化 | `mcp_lsp_textDocument_formatting` | — |
+| 重命名 | `mcp_lsp_textDocument_rename` | sed 批量替换 |
+| 诊断/代码操作 | `mcp_lsp_textDocument_codeAction` | — |
+
+### 使用方式
+
+LSP 工具通过 `search_tools` 发现后按需加载（deferred）。工具名前缀为 `mcp_lsp_`，使用 `search_tools` 查询 `lsp` 即可获取完整列表。
+
+工具以文件路径为参数，直接传入绝对路径即可，无需先转 URI。
+
 `web/` 放在根目录而非 `src/` 下，因为它是独立的 Vite + React 项目，有自己的 `tsconfig.json`、`package.json`、`vite.config.ts`，不和 `src/` 共用 tsc 构建。构建产物输出到 `dist/web/`，由 dscode 的 HTTP server 直接 serve。
 
 ## 关键 Hook 接线
