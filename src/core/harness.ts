@@ -320,6 +320,9 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
     if (memories) {
       prompt += memories;
     }
+    if (this.config.agentsMdContent) {
+      prompt += "\n\n" + this.config.agentsMdContent;
+    }
     return prompt;
   }
 
