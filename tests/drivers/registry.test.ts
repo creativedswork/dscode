@@ -57,6 +57,7 @@ describe("DriverRegistry", () => {
       "glob",
       "grep",
       "list_files",
+      "overwrite_file",
       "read_file",
       "write_file",
     ]);

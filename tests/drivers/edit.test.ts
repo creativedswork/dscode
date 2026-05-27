@@ -5,64 +5,89 @@ import { tmpdir } from "node:os";
 
 import {
   computeLineHash,
+  computeFileVersion,
   hashLines,
   formatHashedLine,
   editTool,
 } from "../../src/drivers/edit.js";
 
-// --- computeLineHash ---
+// --- computeLineHash (content-only, no line number) ---
 
 describe("computeLineHash", () => {
   it("should produce deterministic output for same input", () => {
-    const h1 = computeLineHash("function hello() {", 1);
-    const h2 = computeLineHash("function hello() {", 1);
+    const h1 = computeLineHash("function hello() {");
+    const h2 = computeLineHash("function hello() {");
     expect(h1).toBe(h2);
   });
 
   it("should produce 4-character hex string", () => {
-    const hash = computeLineHash("some line content", 5);
+    const hash = computeLineHash("some line content");
     expect(hash).toMatch(/^[0-9a-f]{4}$/);
   });
 
-  it("should produce different hashes for different line numbers with same content", () => {
-    const h1 = computeLineHash("}", 10);
-    const h2 = computeLineHash("}", 20);
-    expect(h1).not.toBe(h2);
+  it("should produce same hash for same content regardless of position", () => {
+    // Content-only hash: same content → same hash (position is advisory, not identity)
+    const h1 = computeLineHash("}");
+    const h2 = computeLineHash("}");
+    expect(h1).toBe(h2);
   });
 
   it("should trim whitespace before hashing", () => {
-    const h1 = computeLineHash("  return x;  ", 1);
-    const h2 = computeLineHash("return x;", 1);
+    const h1 = computeLineHash("  return x;  ");
+    const h2 = computeLineHash("return x;");
     expect(h1).toBe(h2);
   });
 
   it("should produce different hashes for different content", () => {
-    const h1 = computeLineHash("const x = 1;", 1);
-    const h2 = computeLineHash("const x = 2;", 1);
+    const h1 = computeLineHash("const x = 1;");
+    const h2 = computeLineHash("const x = 2;");
     expect(h1).not.toBe(h2);
+  });
+});
+
+// --- computeFileVersion ---
+
+describe("computeFileVersion", () => {
+  it("should produce deterministic output for same content", () => {
+    const v1 = computeFileVersion("hello\nworld");
+    const v2 = computeFileVersion("hello\nworld");
+    expect(v1).toBe(v2);
+  });
+
+  it("should produce different versions for different content", () => {
+    const v1 = computeFileVersion("hello\nworld");
+    const v2 = computeFileVersion("hello\nworld!");
+    expect(v1).not.toBe(v2);
+  });
+
+  it("should prefix with fv_", () => {
+    const v = computeFileVersion("test");
+    expect(v).toMatch(/^fv_[0-9a-f]{8}$/);
   });
 });
 
 // --- hashLines ---
 
 describe("hashLines", () => {
-  it("should build a hash-to-linenumber map", () => {
+  it("should build a hash-to-linenumbers map (content-only)", () => {
     const lines = ["line one", "line two", "line three"];
     const map = hashLines(lines);
     expect(map.size).toBe(3);
     for (let i = 0; i < lines.length; i++) {
-      const hash = computeLineHash(lines[i], i + 1);
-      expect(map.get(hash)).toBe(i + 1);
+      const hash = computeLineHash(lines[i]);
+      const nums = map.get(hash);
+      expect(nums).toBeDefined();
+      expect(nums).toContain(i + 1);
     }
   });
 
-  it("should throw on hash collision (same content, same line number)", () => {
-    // Force a collision by modifying the function — this tests the error path
-    // In practice hashLines uses different line numbers so collision is near impossible,
-    // but we test that the function handles the map correctly
-    const lines = ["a", "b", "c"];
+  it("should group duplicate content under same hash", () => {
+    const lines = ["a", "b", "a"];
     const map = hashLines(lines);
-    expect(map.size).toBe(3);
+    expect(map.size).toBe(2); // only "a" and "b"
+    const aHash = computeLineHash("a");
+    const aNums = map.get(aHash);
+    expect(aNums).toEqual([1, 3]); // both line 1 and line 3
   });
 
   it("should handle empty array", () => {
@@ -73,22 +98,22 @@ describe("hashLines", () => {
   it("should handle single line", () => {
     const map = hashLines(["only line"]);
     expect(map.size).toBe(1);
-    const hash = computeLineHash("only line", 1);
-    expect(map.get(hash)).toBe(1);
+    const hash = computeLineHash("only line");
+    expect(map.get(hash)).toEqual([1]);
   });
 });
 
-// --- formatHashedLine ---
+// --- formatHashedLine (now uses # separator) ---
 
 describe("formatHashedLine", () => {
-  it("should format line with hash prefix", () => {
+  it("should format line with # anchor prefix", () => {
     const result = formatHashedLine(1, "a1b2", "function hello() {");
-    expect(result).toBe("1:a1b2|function hello() {");
+    expect(result).toBe("1#a1b2|function hello() {");
   });
 
   it("should handle empty content", () => {
     const result = formatHashedLine(3, "c3d4", "");
-    expect(result).toBe("3:c3d4|");
+    expect(result).toBe("3#c3d4|");
   });
 });
 
@@ -109,7 +134,7 @@ describe("editTool", () => {
 
   function getHash(filePath: string, lineNumber: number): string {
     const lines = readFile(filePath).split("\n");
-    return computeLineHash(lines[lineNumber - 1], lineNumber);
+    return computeLineHash(lines[lineNumber - 1]);
   }
 
   // setup: create temp dir before each
@@ -237,9 +262,9 @@ describe("editTool", () => {
     expect(readFile(filePath)).toBe("line 1\nline 5");
   });
 
-  // --- error: hash mismatch ---
+  // --- error: anchor stale ---
 
-  it("should reject when hash not found", async () => {
+  it("should reject when hash not found (anchor_stale)", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3");
 
     const result = await editTool.execute("test-id", {
@@ -247,8 +272,9 @@ describe("editTool", () => {
       operations: [{ op: "replace_line", hash: "ffff", content: "should not apply" }],
     });
 
-    expect(result.details?.error).toBe("hash_mismatch");
+    expect(result.details?.error).toBe("anchor_stale");
     expect(result.details?.missingHashes).toContain("ffff");
+    expect(result.details?.suggested_action).toBe("re-read_file");
     // File should be unchanged
     expect(readFile(filePath)).toBe("line 1\nline 2\nline 3");
   });
@@ -291,7 +317,7 @@ describe("editTool", () => {
       ],
     });
 
-    expect(result.details?.error).toBe("hash_mismatch");
+    expect(result.details?.error).toBe("anchor_stale");
     // File should be unchanged — atomic rejection
     expect(readFile(filePath)).toBe("line 1\nline 2\nline 3");
   });
@@ -315,9 +341,34 @@ describe("editTool", () => {
     expect(readFile(filePath)).toBe("LINE ONE\nline 2\nline 4");
   });
 
-  // --- return summary ---
+  // --- anchors survive upstream changes ---
 
-  it("should return operation summary", async () => {
+  it("should keep downstream anchors valid after upstream edit", async () => {
+    // Content-only hash: downstream anchors stay valid even after upstream changes
+    const filePath = createTempFile("line 1\nline 2\nline 3\nline 4\nline 5");
+    const hash5 = getHash(filePath, 5); // hash for "line 5"
+
+    // First edit: insert a line at the top
+    await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "insert_before", hash: getHash(filePath, 1), content: "line 0" }],
+    });
+
+    // Second edit: edit what was originally line 5 (now line 6).
+    // With content-only hash, the anchor should still be valid
+    // even though the line number shifted from 5 to 6.
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "replace_line", hash: hash5, content: "LINE FIVE" }],
+    });
+
+    expect(result.details?.error).toBeUndefined();
+    expect(readFile(filePath)).toBe("line 0\nline 1\nline 2\nline 3\nline 4\nLINE FIVE");
+  });
+
+  // --- return summary with file_version and local diff ---
+
+  it("should return operation summary with file_version and local diff", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3");
 
     const result = await editTool.execute("test-id", {
@@ -332,5 +383,14 @@ describe("editTool", () => {
     expect(result.details?.linesAfter).toBe(5);
     expect(result.details?.addedLines).toBe(2);
     expect(result.details?.removedLines).toBe(0);
+    expect(result.details?.file_version).toBeDefined();
+    expect(result.details?.file_version).toMatch(/^fv_[0-9a-f]{8}$/);
+
+    // Content should include local diff
+    const text = result.content?.[0]?.text ?? "";
+    expect(text).toContain("New file version");
+    expect(text).toContain("Local diff");
+    expect(text).toContain("--- file");
+    expect(text).toContain("+++ file");
   });
 });

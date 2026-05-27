@@ -64,20 +64,21 @@ describe("Harness tool list regression", () => {
     expect(fixedNames.length).toBe(fixedUnique.size);
   });
 
-  it("should have exactly 7 unique tool names from builtin drivers", () => {
+  it("should have exactly 8 unique tool names from builtin drivers", () => {
     const registry = new DriverRegistry();
     const allTools = registry.getAllTools();
     const names = allTools.map((t) => t.name).sort();
     expect(names).toEqual([
       "bash",
-      "edit",      "glob",
+      "edit",
+      "glob",
       "grep",
       "list_files",
+      "overwrite_file",
       "read_file",
       "write_file",
     ]);
   });
-
   it("should maintain unique tool names when MCP drivers are registered", () => {
     const registry = new DriverRegistry();
 

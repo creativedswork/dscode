@@ -1,7 +1,7 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 
 import type { Driver } from "../core/types.js";
-import { readFileTool, writeFileTool, listFilesTool } from "./fs.js";
+import { readFileTool, writeFileTool, overwriteFileTool, listFilesTool } from "./fs.js";
 import { bashTool } from "./shell.js";
 import { grepTool, globTool } from "./search.js";
 import { editTool } from "./edit.js";
@@ -9,8 +9,8 @@ import { editTool } from "./edit.js";
 const BUILTIN_DRIVERS: Driver[] = [
   {
     name: "fs",
-    description: "File read/write/list operations",
-    tools: [readFileTool, writeFileTool, listFilesTool],
+    description: "File read/write/list operations with anchor-based editing and version protection",
+    tools: [readFileTool, writeFileTool, overwriteFileTool, listFilesTool],
     source: "builtin",
   },
   {
@@ -27,7 +27,7 @@ const BUILTIN_DRIVERS: Driver[] = [
   },
   {
     name: "edit",
-    description: "Hashline-based file editing (replace, insert, delete by line hash)",
+    description: "Anchor-based file editing (replace, insert, delete by content hash)",
     tools: [editTool],
     source: "builtin",
   },
