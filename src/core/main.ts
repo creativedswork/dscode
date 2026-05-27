@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { loadConfig } from "./config.js";
+import { loadConfig, PROVIDER_ENV_VARS } from "./config.js";
 import { Harness } from "./harness.js";
 
 // ── Crash-resilience: attempt to save session on fatal events ──
@@ -105,7 +105,11 @@ async function main(): Promise<void> {
   const config = loadConfig();
 
   if (config.apiKey) {
-    process.env.DEEPSEEK_API_KEY = config.apiKey;
+    const envVar = PROVIDER_ENV_VARS[config.provider] ?? "DEEPSEEK_API_KEY";
+    process.env[envVar] = config.apiKey;
+    if (envVar !== "DEEPSEEK_API_KEY") {
+      process.env.DEEPSEEK_API_KEY = config.apiKey;
+    }
   }
 
   const harness = new Harness(config);

@@ -13,7 +13,7 @@ interface ChatViewProps {
   processing: boolean;
   hasStreaming: boolean;
   permissionPrompt: PermissionPrompt | null;
-  onPermission: (decision: "allow" | "always_allow" | "deny") => void;
+  onPermission: (decision: "allow" | "always_allow" | "deny", explainText?: string) => void;
 }
 
 export function ChatView({ messages, processing, hasStreaming, permissionPrompt, onPermission }: ChatViewProps) {
@@ -107,8 +107,24 @@ function InlinePermission({
 }: {
   toolName: string;
   preview: string;
-  onDecision: (decision: "allow" | "always_allow" | "deny") => void;
+  onDecision: (decision: "allow" | "always_allow" | "deny", explainText?: string) => void;
 }) {
+  const [explainMode, setExplainMode] = useState(false);
+  const [explainText, setExplainText] = useState("");
+
+  const handleSubmitExplain = () => {
+    if (explainText.trim()) {
+      onDecision("deny", explainText.trim());
+      setExplainText("");
+      setExplainMode(false);
+    }
+  };
+
+  const handleCancelExplain = () => {
+    setExplainText("");
+    setExplainMode(false);
+  };
+
   return (
     <div className="flex justify-start">
       <div className="max-w-[85%] md:max-w-[75%] bg-yellow-900/20 border border-yellow-700/40 rounded-2xl rounded-bl-md px-4 py-3">
@@ -124,26 +140,69 @@ function InlinePermission({
           {preview}
         </div>
 
-        <div className="flex gap-2">
-          <button
-            onClick={() => onDecision("allow")}
-            className="px-3 py-1.5 text-xs font-medium bg-dscode-accent text-white rounded-lg hover:bg-blue-600 transition-colors"
-          >
-            Allow
-          </button>
-          <button
-            onClick={() => onDecision("always_allow")}
-            className="px-3 py-1.5 text-xs font-medium bg-dscode-surface border border-dscode-border text-dscode-text rounded-lg hover:bg-gray-700 transition-colors"
-          >
-            Always Allow
-          </button>
-          <button
-            onClick={() => onDecision("deny")}
-            className="px-3 py-1.5 text-xs font-medium bg-red-900/30 text-dscode-red border border-dscode-red/30 rounded-lg hover:bg-red-900/50 transition-colors"
-          >
-            Deny
-          </button>
-        </div>
+        {explainMode ? (
+          <div className="space-y-2">
+            <textarea
+              value={explainText}
+              onChange={(e) => setExplainText(e.target.value)}
+              placeholder="Explain what you want the agent to do instead..."
+              className="w-full text-xs bg-dscode-bg border border-dscode-border rounded-lg p-2 text-dscode-text placeholder-dscode-muted resize-none focus:outline-none focus:border-dscode-accent"
+              rows={3}
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  handleSubmitExplain();
+                }
+                if (e.key === "Escape") {
+                  handleCancelExplain();
+                }
+              }}
+            />
+            <div className="flex gap-2">
+              <button
+                onClick={handleSubmitExplain}
+                disabled={!explainText.trim()}
+                className="px-3 py-1.5 text-xs font-medium bg-dscode-accent text-white rounded-lg hover:bg-blue-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Submit
+              </button>
+              <button
+                onClick={handleCancelExplain}
+                className="px-3 py-1.5 text-xs font-medium bg-dscode-surface border border-dscode-border text-dscode-text rounded-lg hover:bg-gray-700 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex gap-2">
+            <button
+              onClick={() => onDecision("allow")}
+              className="px-3 py-1.5 text-xs font-medium bg-dscode-accent text-white rounded-lg hover:bg-blue-600 transition-colors"
+            >
+              Allow
+            </button>
+            <button
+              onClick={() => onDecision("always_allow")}
+              className="px-3 py-1.5 text-xs font-medium bg-dscode-surface border border-dscode-border text-dscode-text rounded-lg hover:bg-gray-700 transition-colors"
+            >
+              Always Allow
+            </button>
+            <button
+              onClick={() => setExplainMode(true)}
+              className="px-3 py-1.5 text-xs font-medium bg-yellow-700/30 text-dscode-yellow border border-yellow-600/40 rounded-lg hover:bg-yellow-700/50 transition-colors"
+            >
+              Explain
+            </button>
+            <button
+              onClick={() => onDecision("deny")}
+              className="px-3 py-1.5 text-xs font-medium bg-red-900/30 text-dscode-red border border-dscode-red/30 rounded-lg hover:bg-red-900/50 transition-colors"
+            >
+              Deny
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

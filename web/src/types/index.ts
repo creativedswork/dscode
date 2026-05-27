@@ -9,6 +9,7 @@ export type ClientCommand =
   | { type: "chat"; text: string; images?: ImageAttachment[] }
   | { type: "abort" }
   | { type: "permission"; decision: "allow" | "always_allow" | "deny"; persistRule?: boolean }
+  | { type: "permission_response"; decision: "allow" | "always_allow" | "deny"; denyReason?: string }
   | { type: "slash"; command: string }
   | { type: "config"; action: "set_model"; value: string }
   | { type: "config"; action: "set_thinking"; value: string }

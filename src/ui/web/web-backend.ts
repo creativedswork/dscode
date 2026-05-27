@@ -150,14 +150,14 @@ export class WebUiBackend implements UiBackend {
   }
 
   thinkingDelta(delta: string): void {
-    if (this.currentAssistant) {
+    if (this.currentAssistant && delta != null) {
       this.currentAssistant.thinking += delta;
     }
     this.broadcast({ type: "thinking_delta", delta });
   }
 
   textDelta(delta: string): void {
-    if (this.currentAssistant) {
+    if (this.currentAssistant && delta != null) {
       this.currentAssistant.text += delta;
     }
     this.broadcast({ type: "text_delta", delta });
@@ -372,6 +372,24 @@ export class WebUiBackend implements UiBackend {
         break;
       }
 
+      case "permission_response": {
+        if (this.permissionResolve && (cmd as any).denyReason) {
+          const resolve = this.permissionResolve;
+          this.permissionResolve = null;
+          resolve({
+            decision: "deny",
+            denyReason: `User updated the request during permission review: ${(cmd as any).denyReason}`,
+          });
+          client.send({ type: "user_message", text: (cmd as any).denyReason } as any);
+          this.harness.promptAndSave((cmd as any).denyReason, undefined).catch((err: any) => {
+            client.send({
+              type: "error",
+              text: err instanceof Error ? err.message : String(err),
+            });
+          });
+        }
+      }
+
       case "permission": {
         if (this.permissionResolve) {
           const resolve = this.permissionResolve;
@@ -379,7 +397,7 @@ export class WebUiBackend implements UiBackend {
           resolve({
             decision: cmd.decision === "always_allow" ? "allow" : cmd.decision,
             rememberForSession: cmd.decision === "always_allow",
-            persistRule: cmd.persistRule ? undefined : undefined,
+            persistRule: undefined,
           });
         }
         break;
@@ -457,7 +475,9 @@ export class WebUiBackend implements UiBackend {
       switch (cmd.action) {
         case "set_model": {
           (this.harness as any).setModel(cmd.value);
+          const modelName = (this.harness.agent.state.model as any)?.name ?? cmd.value;
           client.send({ type: "config", data: this.buildConfigData() });
+          client.send({ type: "model", name: modelName });
           client.send({ type: "info", text: `Model set to ${cmd.value}` });
           break;
         }
@@ -469,6 +489,7 @@ export class WebUiBackend implements UiBackend {
         }
         case "set_key": {
           this.config.apiKey = cmd.value;
+          saveUserConfig({ apiKey: cmd.value });
           const envVar = PROVIDER_ENV_VARS[this.config.provider] ?? "DEEPSEEK_API_KEY";
           process.env[envVar] = cmd.value;
           if (envVar !== "DEEPSEEK_API_KEY") {
@@ -481,7 +502,18 @@ export class WebUiBackend implements UiBackend {
         case "set_provider": {
           this.config.provider = cmd.value;
           saveUserConfig({ provider: cmd.value });
+          // Auto-select the first model for the new provider
+          const cd = this.buildConfigData();
+          if (cd.models.length > 0) {
+            try {
+              (this.harness as any).setModel(cd.models[0].id);
+            } catch {
+              // ignore if model resolution fails
+            }
+          }
           client.send({ type: "config", data: this.buildConfigData() });
+          const mn = (this.harness.agent.state.model as any)?.name ?? this.config.modelId;
+          client.send({ type: "model", name: mn });
           client.send({ type: "info", text: `Provider set to: ${cmd.value}. Restart required for full effect.` });
           break;
         }

@@ -35,7 +35,7 @@ function updateLastOrCreate(prev: UIMessage[], update: (msg: UIMessage) => Parti
       thinking: "",
       tools: [],
       isStreaming: true,
-      ...update({} as UIMessage),
+      ...update({ id: "", role: "assistant" as const, content: "", thinking: "", tools: [] }),
     });
   }
   return next;
@@ -235,11 +235,12 @@ export function App() {
   );
 
   const handlePermission = useCallback(
-    (decision: "allow" | "always_allow" | "deny") => {
+    (decision: "allow" | "always_allow" | "deny", explainText?: string) => {
       send({
-        type: "permission",
+        type: explainText ? "permission_response" : "permission",
         decision,
         persistRule: decision === "always_allow",
+        denyReason: explainText,
       });
       setPermissionPrompt(null);
     },

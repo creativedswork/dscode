@@ -216,6 +216,16 @@ function SettingsPanel({
   const [modelInput, setModelInput] = useState(config?.modelId ?? "");
   const [thinkingLevel, setThinkingLevel] = useState(config?.thinkingLevel ?? "off");
   const [providerInput, setProviderInput] = useState(config?.provider ?? "");
+  const prevConfigRef = useRef(config);
+
+  useEffect(() => {
+    if (config && config !== prevConfigRef.current) {
+      setProviderInput(config.provider);
+      setModelInput(config.modelId);
+      setThinkingLevel(config.thinkingLevel);
+      prevConfigRef.current = config;
+    }
+  }, [config]);
 
   if (!config) {
     return <p className="text-xs text-dscode-muted text-center py-8">Loading...</p>;
@@ -318,4 +328,4 @@ function SettingsPanel({
   );
 }
 
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";

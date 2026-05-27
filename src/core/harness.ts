@@ -33,56 +33,62 @@ const QWEN_MODELS: Record<string, Omit<Model<Api>, "id" | "name">> = {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 1_000_000,
     maxTokens: 65536,
+    compat: { supportsDeveloperRole: false },
   },
   "qwen3-coder": {
     api: "openai-completions",
     provider: "qwen",
     baseUrl: DASHSCOPE_BASE,
     reasoning: false,
-    input: ["text"],
+    input: ["text", "image"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 131_072,
     maxTokens: 8192,
+    compat: { supportsDeveloperRole: false },
   },
   "qwq-32b": {
     api: "openai-completions",
     provider: "qwen",
     baseUrl: DASHSCOPE_BASE,
     reasoning: true,
-    input: ["text"],
+    input: ["text", "image"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 131_072,
     maxTokens: 8192,
+    compat: { supportsDeveloperRole: false },
   },
   "qwen-max": {
     api: "openai-completions",
     provider: "qwen",
     baseUrl: DASHSCOPE_BASE,
     reasoning: true,
-    input: ["text"],
+    input: ["text", "image"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 32_768,
     maxTokens: 8192,
+    compat: { supportsDeveloperRole: false },
   },
   "qwen-plus": {
     api: "openai-completions",
     provider: "qwen",
     baseUrl: DASHSCOPE_BASE,
     reasoning: false,
-    input: ["text"],
+    input: ["text", "image"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 131_072,
     maxTokens: 8192,
+    compat: { supportsDeveloperRole: false },
   },
   "qwen-turbo": {
     api: "openai-completions",
     provider: "qwen",
     baseUrl: DASHSCOPE_BASE,
     reasoning: false,
-    input: ["text"],
+    input: ["text", "image"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 1_000_000,
     maxTokens: 8192,
+    compat: { supportsDeveloperRole: false },
   },
 };
 
@@ -90,7 +96,6 @@ function buildQwenModel(modelId: string): Model<Api> {
   const key = modelId.startsWith("qwen/") ? modelId.slice(5) : modelId;
   const def = QWEN_MODELS[key];
   if (def) return { id: modelId, name: `Qwen: ${modelId}`, ...def };
-  // Fallback: create a generic qwen model definition for unknown models
   return {
     id: modelId,
     name: `Qwen: ${modelId}`,
@@ -98,7 +103,7 @@ function buildQwenModel(modelId: string): Model<Api> {
     provider: "qwen",
     baseUrl: DASHSCOPE_BASE,
     reasoning: false,
-    input: ["text"] as ("text" | "image")[],
+    input: ["text", "image"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 131_072,
     maxTokens: 8192,
@@ -192,7 +197,7 @@ export class Harness {
       },
       streamFn: (m: Model<Api>, ctx: Context, opts?: SimpleStreamOptions) => streamSimple(m, ctx, {
         ...opts,
-        apiKey,
+        apiKey: opts?.apiKey ?? self.config.apiKey,
         maxTokens,
         timeoutMs: 120_000,
         maxRetries: 0,
@@ -242,7 +247,6 @@ export class Harness {
       this.sessionManager.trySaveSession(this.agent);
     }
   }
-
   /**
    * Force a session save immediately. Safe to call from anywhere,
    * including error handlers and shutdown hooks.
@@ -250,7 +254,6 @@ export class Harness {
   saveSessionNow(): void {
     this.sessionManager.trySaveSession(this.agent);
   }
-
   async run(ui?: UiBackend): Promise<void> {
     if (ui) this.ui = ui;
     const model = this.resolveModel();
@@ -338,17 +341,25 @@ export class Harness {
   }
 
   setModel(modelId: string): void {
+    const oldModelId = this.config.modelId;
     const model = this.resolveModel(modelId);
     this.config.modelId = modelId;
     this.agent.state.model = model;
     this.contextManager.updateModel(model.contextWindow, model.maxTokens);
 
-    // Auto-adjust thinking level: "medium" for pro/thinking models, "off" otherwise
-    const thinkingLevel = (modelId.includes("pro") || modelId.includes("thinking")) ? "medium" : "off";
+    // Auto-adjust thinking level: "high" for reasoning-capable models, "off" otherwise
+    const thinkingLevel = (model.provider === "qwen" || modelId.includes("thinking")) ? "high" : (modelId.includes("pro") ? "medium" : "off");
     this.config.thinkingLevel = thinkingLevel;
     this.agent.state.thinkingLevel = thinkingLevel;
 
     saveUserConfig({ modelId, thinkingLevel });
+
+    // Clear conversation context when switching models to avoid capability mismatch
+    // (e.g. image messages from qwen -> deepseek which only supports text)
+    if (oldModelId && modelId !== oldModelId) {
+      this.agent.reset();
+      this.ui.clearConversationView();
+    }
   }
 
   setThinking(level: string): void {

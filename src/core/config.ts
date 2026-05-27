@@ -176,7 +176,7 @@ export function loadConfig(): HarnessConfig {
 
   const userSkillsDir = join(configDir, "skills");
   const projectSkillsDir = join(projectPath, ".dscode", "skills");
-  const defaultThinkingLevel: ThinkingLevel = (modelId.includes("pro") || modelId.includes("thinking")) ? "medium" : "off";
+  const defaultThinkingLevel: ThinkingLevel = (provider === "qwen" || modelId.includes("thinking")) ? "high" : (modelId.includes("pro") ? "medium" : "off");
   const validThinkingLevels = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
   const rawThinkingLevel = process.env.AGENT_THINKING_LEVEL ?? userConfig.thinkingLevel ?? merged.thinkingLevel;
   const thinkingLevel: ThinkingLevel = rawThinkingLevel !== undefined && validThinkingLevels.has(rawThinkingLevel as string)
