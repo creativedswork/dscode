@@ -215,6 +215,7 @@ function SettingsPanel({
   const [apiKey, setApiKey] = useState("");
   const [modelInput, setModelInput] = useState(config?.modelId ?? "");
   const [thinkingLevel, setThinkingLevel] = useState(config?.thinkingLevel ?? "off");
+  const [providerInput, setProviderInput] = useState(config?.provider ?? "");
 
   if (!config) {
     return <p className="text-xs text-dscode-muted text-center py-8">Loading...</p>;
@@ -222,24 +223,40 @@ function SettingsPanel({
 
   return (
     <div className="space-y-4">
+      {/* Provider */}
+      <div>
+        <label className="text-xs text-dscode-muted mb-1 block">Provider</label>
+        <select
+          value={providerInput}
+          onChange={(e) => {
+            const value = e.target.value;
+            setProviderInput(value);
+            if (value) onChange("set_provider", value);
+          }}
+          className="input text-xs w-full"
+        >
+          {config.providers.map((p) => (
+            <option key={p} value={p}>{p}</option>
+          ))}
+        </select>
+      </div>
+
       {/* Model */}
       <div>
         <label className="text-xs text-dscode-muted mb-1 block">Model</label>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={modelInput}
-            onChange={(e) => setModelInput(e.target.value)}
-            className="input text-xs flex-1"
-            placeholder="deepseek-v4-pro"
-          />
-          <button
-            onClick={() => onChange("set_model", modelInput)}
-            className="btn-primary text-xs px-3"
-          >
-            Set
-          </button>
-        </div>
+        <select
+          value={modelInput}
+          onChange={(e) => {
+            const value = e.target.value;
+            setModelInput(value);
+            if (value) onChange("set_model", value);
+          }}
+          className="input text-xs w-full"
+        >
+          {config.models.map((m) => (
+            <option key={m.id} value={m.id}>{m.name}</option>
+          ))}
+        </select>
       </div>
 
       {/* Thinking Level */}

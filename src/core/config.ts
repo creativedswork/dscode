@@ -2,6 +2,20 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
+import { getEnvApiKey } from "@mariozechner/pi-ai";
+
+export const PROVIDER_ENV_VARS: Record<string, string> = {
+  deepseek: "DEEPSEEK_API_KEY",
+  "kimi-coding": "KIMI_API_KEY",
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  google: "GEMINI_API_KEY",
+  xai: "XAI_API_KEY",
+  groq: "GROQ_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+};
+
 import type { HarnessConfig, ThinkingLevel } from "./types.js";
 import type { MCPProtocolVersion, MCPServerConfig, MCPTransport } from "../mcp/types.js";
 import { DEFAULT_MCP_PROTOCOL_VERSION } from "../mcp/types.js";
@@ -98,6 +112,16 @@ function normalizeProtocolVersion(rawVersion: unknown): MCPProtocolVersion {
   return DEFAULT_MCP_PROTOCOL_VERSION;
 }
 
+function loadAgentsMd(projectPath: string): string | undefined {
+  const path = join(projectPath, "AGENTS.md");
+  if (!existsSync(path)) return undefined;
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
 export function loadConfig(): HarnessConfig {
   const startupPath = resolve(process.env.DSCODE_PROJECT_PATH ?? process.cwd());
   const configDir = dsConfigHome();
@@ -132,10 +156,12 @@ export function loadConfig(): HarnessConfig {
 
   const provider = (process.env.AGENT_PROVIDER as string) ?? (merged.provider as string) ?? "deepseek";
   const modelId = (process.env.AGENT_MODEL as string) ?? (process.env.DEEPSEEK_MODEL as string) ?? (userConfig.modelId as string) ?? (merged.modelId as string) ?? "deepseek-v4-flash";
-  const maxTokens = Number(process.env.DSCODE_MAX_TOKENS) || (merged.maxTokens as number) || 16384;
-
   // API key: env var > user config (never project config for security)
-  const apiKey = process.env.DEEPSEEK_API_KEY ?? (userConfig.apiKey as string | undefined);
+  // Use provider-specific env var (e.g. KIMI_API_KEY, DEEPSEEK_API_KEY) via pi-ai,
+  // fall back to DEEPSEEK_API_KEY for backward compat, then user config
+  const envApiKey = getEnvApiKey(provider) ?? process.env.DEEPSEEK_API_KEY;
+  const apiKey = envApiKey ?? (userConfig.apiKey as string | undefined);
+  const maxTokens = Number(process.env.DSCODE_MAX_TOKENS) || (merged.maxTokens as number) || 16384;
 
   const userPermissionRules = ((userSettings.permissions as any)?.rules as Record<string, unknown>[]) ?? [];
   const projectPermissionRules = ((projectSettings.permissions as any)?.rules as Record<string, unknown>[]) ?? [];
@@ -149,9 +175,8 @@ export function loadConfig(): HarnessConfig {
 
   const userSkillsDir = join(configDir, "skills");
   const projectSkillsDir = join(projectPath, ".dscode", "skills");
-
+  const defaultThinkingLevel: ThinkingLevel = (modelId.includes("pro") || modelId.includes("thinking")) ? "medium" : "off";
   const validThinkingLevels = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
-  const defaultThinkingLevel: ThinkingLevel = modelId.includes("pro") ? "medium" : "off";
   const rawThinkingLevel = process.env.AGENT_THINKING_LEVEL ?? userConfig.thinkingLevel ?? merged.thinkingLevel;
   const thinkingLevel: ThinkingLevel = rawThinkingLevel !== undefined && validThinkingLevels.has(rawThinkingLevel as string)
     ? (rawThinkingLevel as ThinkingLevel)
@@ -226,6 +251,7 @@ export function loadConfig(): HarnessConfig {
     skills,
     mcp,
     appHost: { enabled: true },
+    agentsMdContent: loadAgentsMd(projectPath),
   };
 
 }

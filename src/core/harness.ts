@@ -158,7 +158,7 @@ export class Harness {
     if (ui) this.ui = ui;
     const model = (getModel as (p: string, m: string) => Model<Api>)(this.config.provider, this.config.modelId);
     const nativeImageSupport = model.input.includes("image");
-    const needsOcr = !nativeImageSupport && this.config.provider === "deepseek";
+    const needsOcr = !nativeImageSupport && (this.config.provider === "deepseek" || this.config.provider === "kimi-coding");
     if (!ui) {
       const tuiDeps: TuiDeps = {
         agent: this.agent,
@@ -223,11 +223,11 @@ export class Harness {
         this.ui.addInfo([
           "Welcome to DSCode! To get started, configure your API key:",
           "",
-          "  /config key sk-your-deepseek-api-key",
+          `  /config key your-${this.config.provider}-api-key`,
           "",
           "Then set your preferred model:",
           "",
-          "  /config model deepseek-v4-pro",
+          `  /config model ${this.config.modelId}`,
           "",
           "Type /config to see all settings.",
         ].join("\n"));
@@ -246,8 +246,8 @@ export class Harness {
     this.agent.state.model = model;
     this.contextManager.updateModel(model.contextWindow, model.maxTokens);
 
-    // Auto-adjust thinking level: "medium" for pro models, "off" otherwise
-    const thinkingLevel = modelId.includes("pro") ? "medium" : "off";
+    // Auto-adjust thinking level: "medium" for pro/thinking models, "off" otherwise
+    const thinkingLevel = (modelId.includes("pro") || modelId.includes("thinking")) ? "medium" : "off";
     this.config.thinkingLevel = thinkingLevel;
     this.agent.state.thinkingLevel = thinkingLevel;
 

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { UIMessage, ServerEvent, ConfigData, SessionInfo, McpServerInfo } from "../types";
+import type { UIMessage, ServerEvent, ConfigData, SessionInfo, McpServerInfo, ImageAttachment } from "../types";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { ChatView } from "./ChatView";
 import { MessageInput } from "./MessageInput";
@@ -70,6 +70,7 @@ export function App() {
           content: m.content,
           thinking: m.thinking,
           tools: m.tools,
+          images: m.images,
         }));
         setMessages(msgs);
         break;
@@ -80,6 +81,7 @@ export function App() {
           id: `user-${Date.now()}`,
           role: "user",
           content: event.text,
+          images: event.images,
         }]);
         break;
       }
@@ -221,9 +223,9 @@ export function App() {
   const { connected, send } = useWebSocket(handleEvent);
 
   const handleSend = useCallback(
-    (text: string) => {
-      if (!text.trim()) return;
-      send({ type: "chat", text });
+    (text: string, images?: ImageAttachment[]) => {
+      if (!text.trim() && (!images || images.length === 0)) return;
+      send({ type: "chat", text, images: images && images.length > 0 ? images : undefined });
     },
     [send],
   );

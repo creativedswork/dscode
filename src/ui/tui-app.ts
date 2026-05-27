@@ -25,7 +25,7 @@ import type { ContextManager } from "../context/manager.js";
 import type { HarnessConfig, PermissionPromptResult, PermissionRuleConfig } from "../core/types.js";
 import type { MCPManager } from "../mcp/manager.js";
 import type { AppInstance } from "../mcp/app/types.js";
-import { c, editorTheme, TIPS, randomTip } from "./theme.js";
+import { c, editorTheme } from "./theme.js";
 import { ConversationView, findPermOptionByKey } from "./conversation.js";
 import { getSlashCommandAutocomplete, executeSlashCommand } from "./commands.js";
 import { buildMcpServers, getMcpVisibleRows, renderMcpServerList, renderMcpToolList } from "./mcp-browser.js";
@@ -632,7 +632,6 @@ export class TuiApp {
         c.dim(`⏱ total wait: ${this.formatElapsed(this.totalWaitMs)} (${this.waitSegments.length} segment${this.waitSegments.length > 1 ? "s" : ""})`),
       );
     }
-    this.conversation.addInfo(c.dim(randomTip()));
   }
 
   addInfo(text: string): void {

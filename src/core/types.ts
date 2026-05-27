@@ -24,6 +24,7 @@ export interface HarnessConfig {
   skills: string[];
   mcp: MCPServerConfig[];
   appHost: AppHostConfig;
+  agentsMdContent?: string;
 }
 
 export interface AppHostConfig {

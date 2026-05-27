@@ -4,16 +4,18 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ImageContent } from "@mariozechner/pi-ai";
-
+import { getProviders, getModels } from "@mariozechner/pi-ai";
 import type { UiBackend } from "../backend.js";
 import type { HarnessConfig, PermissionPromptResult } from "../../core/types.js";
-import { maskApiKey } from "../../core/config.js";
+import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig } from "../../core/config.js";
 import { executeSlashCommand } from "../commands.js";
 import type { Harness } from "../../core/harness.js";
 import type { MCPManager } from "../../mcp/manager.js";
 import type { AppHostManager } from "../../mcp/app/host.js";
 import type { AppInstance } from "../../mcp/app/types.js";
 import { buildMcpServers } from "../mcp-browser.js";
+import { ocrImages } from "../../utils/ocr.js";
+import type { OcrResult } from "../../utils/ocr.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
 import type {
   ClientCommand,
@@ -130,6 +132,7 @@ export class WebUiBackend implements UiBackend {
   // ── UiBackend Conversation ──
 
   addUserMessage(text: string): void {
+    // Images are sent separately via the chat command path
     this.broadcast({ type: "user_message", text });
   }
 
@@ -157,7 +160,7 @@ export class WebUiBackend implements UiBackend {
   }
 
   toolEnd(name: string, result: unknown, isError: boolean): void {
-    const resultStr = typeof result === "string" ? result.slice(0, 200) : JSON.stringify(result).slice(0, 200);
+    const resultStr = typeof result === "string" ? result.slice(0, 5000) : JSON.stringify(result).slice(0, 5000);
     if (this.currentAssistant) {
       this.currentAssistant.tools = this.currentAssistant.tools.filter((t) => t.name !== name || t.result !== "");
       this.currentAssistant.tools.push({
@@ -285,23 +288,67 @@ export class WebUiBackend implements UiBackend {
         const text = cmd.text;
         const images = cmd.images;
 
+        // Check model image support
+        const model = (this.harness.agent.state.model as any);
+        const nativeImageSupport = model?.input?.includes("image") ?? false;
+        const needsOcr = !nativeImageSupport && (this.config.provider === "deepseek" || this.config.provider === "kimi-coding");
+
         if (images && images.length > 0) {
-          for (const img of images) {
-            this.pendingImages.push({ data: img.data, mimeType: img.mimeType } as ImageContent);
+          if (nativeImageSupport) {
+            // Model supports images natively — pass them through
+            for (const img of images) {
+              this.pendingImages.push({ data: img.data, mimeType: img.mimeType } as ImageContent);
+            }
           }
+          // For models that need OCR, we handle it below before prompting
         }
 
         if (text.startsWith("/")) {
+          // Clear pending images on slash commands
+          this.pendingImages = [];
           this.handleSlashCommand(client, text);
-          return;
+          break;
         }
 
         // Broadcast user message to client before sending to agent
-        client.send({ type: "user_message", text } as any);
+        client.send({ type: "user_message", text, images: images && images.length > 0 ? images : undefined } as any);
+
         try {
-          const imageContents = this.pendingImages.length > 0 ? [...this.pendingImages] : undefined;
-          this.pendingImages = [];
-          await this.harness.promptAndSave(text, imageContents as any);
+          if (images && images.length > 0 && needsOcr) {
+            // Model doesn't support images natively — run OCR and embed result in prompt
+            const imageContents: ImageContent[] = images.map((img) => ({
+              data: img.data,
+              mimeType: img.mimeType,
+            }) as ImageContent);
+            this.pendingImages = [];
+
+            try {
+              const ocrResult: OcrResult = await ocrImages(imageContents);
+              let promptText: string;
+              if (ocrResult.hasText) {
+                promptText = text
+                  ? `${text}\n\n<image_text>\n${ocrResult.content}\n</image_text>`
+                  : `<image_text>\n${ocrResult.content}\n</image_text>`;
+              } else {
+                promptText = text
+                  ? `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`
+                  : "(用户附带了一张图片，但图片中没有可识别的文字内容)";
+              }
+              await this.harness.promptAndSave(promptText, undefined);
+            } catch {
+              // OCR failed — fall back to text-only prompt
+              client.send({
+                type: "info",
+                text: "OCR processing failed, sending text-only message.",
+              });
+              await this.harness.promptAndSave(text, undefined);
+            }
+          } else {
+            // Native image support or no images — pass through normally
+            const imageContents = this.pendingImages.length > 0 ? [...this.pendingImages] : undefined;
+            this.pendingImages = [];
+            await this.harness.promptAndSave(text, imageContents as any);
+          }
         } catch (err) {
           this.harness.saveSessionNow();
           client.send({
@@ -414,9 +461,20 @@ export class WebUiBackend implements UiBackend {
         }
         case "set_key": {
           this.config.apiKey = cmd.value;
-          process.env.DEEPSEEK_API_KEY = cmd.value;
+          const envVar = PROVIDER_ENV_VARS[this.config.provider] ?? "DEEPSEEK_API_KEY";
+          process.env[envVar] = cmd.value;
+          if (envVar !== "DEEPSEEK_API_KEY") {
+            process.env.DEEPSEEK_API_KEY = cmd.value;
+          }
           client.send({ type: "config", data: this.buildConfigData() });
           client.send({ type: "info", text: "API key updated" });
+          break;
+        }
+        case "set_provider": {
+          this.config.provider = cmd.value;
+          saveUserConfig({ provider: cmd.value });
+          client.send({ type: "config", data: this.buildConfigData() });
+          client.send({ type: "info", text: `Provider set to: ${cmd.value}. Restart required for full effect.` });
           break;
         }
       }
@@ -474,12 +532,17 @@ export class WebUiBackend implements UiBackend {
           return;
         }
         sessionManager.loadSession(match.id, agent);
-        client.send({ type: "info", text: `Loaded session: ${match.title}` });
+        client.send({ type: "info", text: `Session loaded: ${match.title}` });
+        client.send({ type: "clear_conversation" });
+
+        // Resync conversation history after load
+        const messages = this.buildConversationHistory();
+        const model = (agent.state.model as any)?.name ?? this.config.modelId;
         client.send({
           type: "ready",
-          model: this.config.modelId,
+          model,
           config: this.buildConfigData(),
-          messages: this.buildConversationHistory(),
+          messages,
         });
         break;
       }
@@ -505,154 +568,160 @@ export class WebUiBackend implements UiBackend {
     }
   }
 
-  private handleMcp(client: WebSocketClient, _cmd: ClientCommand & { type: "mcp" }): void {
-    const mcpManager = (this.harness as any).mcpManager;
-    const driverRegistry = (this.harness as any).driverRegistry;
-    const toolRegistry = (this.harness as any).toolRegistry;
-
+  private handleMcp(
+    client: WebSocketClient,
+    cmd: ClientCommand & { type: "mcp" },
+  ): void {
+    const mcpManager = (this.harness as any).mcpManager as MCPManager | undefined;
     if (!mcpManager) {
-      client.send({ type: "mcp_state", servers: [] });
+      client.send({ type: "error", text: "No MCP manager available." });
       return;
     }
 
-    const states = mcpManager.getStates();
-    const servers = buildMcpServers(states, driverRegistry, toolRegistry);
-
-    const serverInfos: McpServerInfo[] = servers.map((s: any) => ({
-      name: s.name,
-      description: s.description,
-      status: s.status,
-      error: s.error,
-      toolCount: s.toolCount,
-      tools: s.tools.map((t: any) => ({
-        name: t.name,
-        label: t.label,
-        description: t.description,
-        state: t.state,
-      })),
-      transport: s.transport,
-      protocolVersion: s.protocolVersion,
-    }));
-
-    client.send({ type: "mcp_state", servers: serverInfos });
-  }
-
-  // ── Private: HTTP request handling ──
-
-  private handleHttpRequest(req: IncomingMessage, res: ServerResponse): void {
-    const url = new URL(req.url ?? "/", `http://localhost:${this.port}`);
-    const path = url.pathname;
-
-    // Proxy MCP App routes to AppHostManager
-    if (path.startsWith("/mcp-app/") || path.startsWith("/api/bridge/") || path.startsWith("/api/app/")) {
-      if (this.appHostManager) {
-        this.proxyToAppHost(req, res);
-        return;
-      }
-      res.writeHead(503);
-      res.end("App host not available");
-      return;
-    }
-
-    // Serve static files
-    this.serveStatic(path, res);
-  }
-
-  private proxyToAppHost(_req: IncomingMessage, _res: ServerResponse): void {
-    // Simple proxy — forward to app host manager
-    // The app host manager handles routing to the correct app instance
-    if (!this.appHostManager) {
-      _res.writeHead(503);
-      _res.end("App host not available");
-      return;
-    }
-    // For now, pass through — the app host handles routing internally
-    _res.writeHead(200, { "Content-Type": "text/html" });
-    _res.end("<html><body>MCP App proxy not yet implemented</body></html>");
-  }
-
-  private serveStatic(path: string, res: ServerResponse): void {
-    // Default to index.html for SPA routing
-    let filePath = path === "/" ? "/index.html" : path;
-
-    // Find the web dist directory.
-    // The vite build outputs to dist/web; the standalone dist copies it
-    // alongside the server bundle.
-    const selfDir = fileURLToPath(new URL(".", import.meta.url));
-    const possibleDirs = [
-      join(process.cwd(), "dist/web"),
-      join(selfDir, "web"),
-      join(selfDir, "../../../web/dist"),
-      join(process.cwd(), "web/dist"),
-    ];
-
-    let served = false;
-    for (const dir of possibleDirs) {
-      const fullPath = join(dir, filePath);
-      if (existsSync(fullPath)) {
-        const ext = extname(fullPath).toLowerCase();
-        const mimeTypes: Record<string, string> = {
-          ".html": "text/html",
-          ".js": "application/javascript",
-          ".css": "text/css",
-          ".json": "application/json",
-          ".png": "image/png",
-          ".jpg": "image/jpeg",
-          ".svg": "image/svg+xml",
-          ".ico": "image/x-icon",
-        };
-        const contentType = mimeTypes[ext] || "application/octet-stream";
-        res.writeHead(200, { "Content-Type": contentType });
-        res.end(readFileSync(fullPath));
-        served = true;
+    switch (cmd.action) {
+      case "list": {
+        const servers = buildMcpServers(mcpManager.getStates(), (this.harness as any).driverRegistry, (this.harness as any).toolRegistry);
+        client.send({ type: "mcp_state", servers });
         break;
       }
-    }
-
-    if (!served) {
-      // SPA fallback: serve index.html
-      for (const dir of possibleDirs) {
-        const indexPath = join(dir, "index.html");
-        if (existsSync(indexPath)) {
-          res.writeHead(200, { "Content-Type": "text/html" });
-          res.end(readFileSync(indexPath));
-          return;
-        }
+      case "refresh": {
+        const driverRegistry = (this.harness as any).driverRegistry;
+        mcpManager.registerDrivers(driverRegistry).then(() => {
+          const servers = buildMcpServers(mcpManager.getStates(), driverRegistry, (this.harness as any).toolRegistry);
+          client.send({ type: "mcp_state", servers });
+          client.send({ type: "info", text: "MCP servers refreshed." });
+        }).catch((err: Error) => {
+          client.send({ type: "error", text: `MCP refresh failed: ${err.message}` });
+        });
+        break;
       }
-      res.writeHead(404);
-      res.end("Not found");
     }
   }
 
   // ── Private: Helpers ──
 
-  private broadcast(event: ServerEvent): void {
-    this.wsServer.broadcast(event);
-  }
-
   private buildConfigData(): ConfigData {
+    const providers = getProviders();
+    const models = getModels(this.config.provider as any).map((m: any) => ({
+      id: m.id,
+      name: m.name,
+    }));
+
     return {
       provider: this.config.provider,
       modelId: this.config.modelId,
       apiKey: maskApiKey(this.config.apiKey),
-      thinkingLevel: this.config.thinkingLevel ?? "off",
+      thinkingLevel: this.config.thinkingLevel,
       projectPath: this.config.projectPath,
       maxTokens: this.config.maxTokens,
+      providers,
+      models,
     };
   }
 
   private buildConversationHistory(): ConversationMessage[] {
-    const messages = this.harness.agent.state.messages;
-    return messages.map((msg: any) => ({
-      role: msg.role,
-      content: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content),
-      thinking: msg.thinking,
-      tools: msg.tools?.map((t: any) => ({
-        name: t.name,
-        args: typeof t.args === "string" ? t.args : JSON.stringify(t.args),
-        result: typeof t.result === "string" ? t.result : JSON.stringify(t.result ?? ""),
-        isError: t.isError ?? false,
-      })),
+    const messages = (this.harness as any).sessionManager?.getCurrentMessages?.() ?? [];
+    return messages.map((m: any) => ({
+      role: m.role,
+      content: m.content ?? "",
+      thinking: m.thinking,
+      tools: m.tools,
+      images: m.images,
     }));
+  }
+
+  private broadcast(event: ServerEvent): void {
+    if (this.currentClient) {
+      this.currentClient.send(event);
+    }
+  }
+
+  // ── HTTP request handling (SPA + MCP app proxy) ──
+
+  private handleHttpRequest(req: IncomingMessage, res: ServerResponse): void {
+    const url = req.url ?? "/";
+
+    // MCP App proxy
+    if (url.startsWith("/mcp-app/") && this.appHostManager) {
+      const appId = url.slice("/mcp-app/".length).split("?")[0].split("/")[0];
+      const app = (this.appHostManager as any).apps?.get?.(appId);
+      if (app) {
+        // Proxy to the MCP app's local server
+        const targetUrl = `http://127.0.0.1:${app.port}${url.slice("/mcp-app/".length + appId.length)}`;
+        this.proxyRequest(req, res, targetUrl);
+        return;
+      }
+      res.writeHead(404);
+      res.end("MCP App not found");
+      return;
+    }
+
+    // SPA serving
+    this.serveSpa(req, res);
+  }
+
+  private proxyRequest(req: IncomingMessage, res: ServerResponse, targetUrl: string): void {
+    const parsed = new URL(targetUrl);
+    const options = {
+      hostname: parsed.hostname,
+      port: parsed.port,
+      path: parsed.pathname + parsed.search,
+      method: req.method,
+      headers: { ...req.headers, host: parsed.host },
+    };
+
+    const proxyReq = httpRequest(options, (proxyRes) => {
+      res.writeHead(proxyRes.statusCode ?? 200, proxyRes.headers);
+      proxyRes.pipe(res);
+    });
+
+    proxyReq.on("error", () => {
+      res.writeHead(502);
+      res.end("Bad Gateway");
+    });
+
+    req.pipe(proxyReq);
+  }
+
+  private serveSpa(req: IncomingMessage, res: ServerResponse): void {
+    const __dirname = fileURLToPath(new URL(".", import.meta.url));
+    const webDist = join(__dirname, "web");
+
+    let filePath = join(webDist, req.url === "/" ? "index.html" : req.url!);
+
+    // Normalize: strip query/hash
+    const qIdx = filePath.indexOf("?");
+    if (qIdx >= 0) filePath = filePath.slice(0, qIdx);
+    const hIdx = filePath.indexOf("#");
+    if (hIdx >= 0) filePath = filePath.slice(0, hIdx);
+
+    const ext = extname(filePath);
+    const mimeTypes: Record<string, string> = {
+      ".html": "text/html",
+      ".js": "application/javascript",
+      ".css": "text/css",
+      ".svg": "image/svg+xml",
+      ".png": "image/png",
+      ".jpg": "image/jpeg",
+      ".json": "application/json",
+      ".woff2": "font/woff2",
+      ".woff": "font/woff",
+    };
+
+    try {
+      if (existsSync(filePath) && ext) {
+        const content = readFileSync(filePath);
+        res.writeHead(200, { "Content-Type": mimeTypes[ext] ?? "application/octet-stream" });
+        res.end(content);
+      } else {
+        // SPA fallback
+        const html = readFileSync(join(webDist, "index.html"));
+        res.writeHead(200, { "Content-Type": "text/html" });
+        res.end(html);
+      }
+    } catch {
+      res.writeHead(404);
+      res.end("Not Found");
+    }
   }
 }

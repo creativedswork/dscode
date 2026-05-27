@@ -1,5 +1,4 @@
 import { resolve } from "node:path";
-
 import type { Agent } from "@mariozechner/pi-agent-core";
 import type { SlashCommand as AutocompleteSlashCommand } from "@earendil-works/pi-tui";
 
@@ -13,8 +12,9 @@ import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
 import type { MCPManager } from "../mcp/manager.js";
 import type { TuiApp } from "./tui-app.js";
-import { saveUserConfig, saveUserProjectCwd, maskApiKey } from "../core/config.js";
+import { saveUserConfig, saveUserProjectCwd, maskApiKey, PROVIDER_ENV_VARS } from "../core/config.js";
 import { readImageFile, readClipboardImage } from "../utils/image.js";
+
 
 interface CommandContext {
   agent: Agent;
@@ -250,14 +250,26 @@ const COMMANDS: SlashCommandDef[] = [
         case "help": {
           ctx.tui.addInfo([
             "/config                  Show current user command config",
+            "/config provider <id>     Switch provider (saved to ~/.dscode/config.json)",
             "/config model <id>       Switch model (saved to ~/.dscode/config.json)",
             "/config thinking <level> Set thinking level (saved to ~/.dscode/config.json)",
-            "/config key <api-key>    Set your DeepSeek API key",
+            "/config key <api-key>    Set your API key",
             "/config cwd <path>       Set working directory for this project (saved to ~/.dscode/config.json)",
             "/config help             Show this help",
           ].join("\n"));
           break;
         }
+        case "provider": {
+          const providerId = rest[0];
+          if (!providerId) {
+            ctx.tui.addError("Usage: /config provider <provider-id>");
+            return;
+          }
+          saveUserConfig({ provider: providerId });
+          ctx.tui.addInfo(`Provider set to: ${providerId}. Restart required for changes to take effect.`);
+          break;
+        }
+
         case "model": {
           const modelId = rest[0];
           if (!modelId) {
@@ -286,7 +298,11 @@ const COMMANDS: SlashCommandDef[] = [
             return;
           }
           saveUserConfig({ apiKey: key });
-          process.env.DEEPSEEK_API_KEY = key;
+          const envVar = PROVIDER_ENV_VARS[ctx.config.provider] ?? "DEEPSEEK_API_KEY";
+          process.env[envVar] = key;
+          if (envVar !== "DEEPSEEK_API_KEY") {
+            process.env.DEEPSEEK_API_KEY = key;
+          }
           ctx.tui.addInfo(`API key saved to ~/.dscode/config.json: ${maskApiKey(key)}`);
           break;
         }

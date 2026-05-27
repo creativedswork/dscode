@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { UIMessage } from "../types";
 import { ToolCard } from "./ToolCard";
+import { Markdown } from "./Markdown";
 
 interface PermissionPrompt {
   toolName: string;
@@ -165,11 +166,24 @@ function MessageBubble({ message, elapsed }: { message: UIMessage; elapsed: numb
           <ThinkingBlock thinking={message.thinking} isStreaming={message.isStreaming} elapsed={elapsed} />
         )}
 
+        {/* Images */}
+        {message.images && message.images.length > 0 && (
+          <div className={`flex flex-wrap gap-2 mb-2 ${isUser ? "justify-end" : "justify-start"}`}>
+            {message.images.map((img, i) => (
+              <img
+                key={i}
+                src={`data:${img.mimeType};base64,${img.data}`}
+                alt={`Attached image ${i + 1}`}
+                className="max-w-[200px] max-h-[200px] object-cover rounded-lg border border-dscode-border cursor-pointer hover:opacity-90 transition-opacity"
+                onClick={() => window.open(`data:${img.mimeType};base64,${img.data}`, "_blank")}
+              />
+            ))}
+          </div>
+        )}
+
         {/* Content */}
         {message.content && (
-          <div className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-            {message.content}
-          </div>
+          <Markdown className="text-sm leading-relaxed">{message.content}</Markdown>
         )}
 
         {/* Streaming cursor — only when no content and no thinking yet */}

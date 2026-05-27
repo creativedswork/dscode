@@ -13,6 +13,7 @@ export type ClientCommand =
   | { type: "config"; action: "set_model"; value: string }
   | { type: "config"; action: "set_thinking"; value: string }
   | { type: "config"; action: "set_key"; value: string }
+  | { type: "config"; action: "set_provider"; value: string }
   | { type: "session"; action: "list" | "save" | "load" | "delete"; id?: string }
   | { type: "mcp"; action: "list" | "refresh" };
 
@@ -50,6 +51,8 @@ export interface ConfigData {
   thinkingLevel: string;
   projectPath: string;
   maxTokens: number;
+  providers: string[];
+  models: { id: string; name: string }[];
 }
 
 export interface McpAppInfo {
@@ -60,7 +63,7 @@ export interface McpAppInfo {
 
 export type ServerEvent =
   | { type: "ready"; model: string; config: ConfigData; messages: ConversationMessage[] }
-  | { type: "user_message"; text: string }
+  | { type: "user_message"; text: string; images?: ImageAttachment[] }
   | { type: "assistant_start" }
   | { type: "thinking_delta"; delta: string }
   | { type: "text_delta"; delta: string }
@@ -84,6 +87,7 @@ export interface ConversationMessage {
   content: string;
   thinking?: string;
   tools?: ToolCallEntry[];
+  images?: ImageAttachment[];
 }
 
 export interface ToolCallEntry {
