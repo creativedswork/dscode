@@ -4,19 +4,22 @@ import { join, resolve, dirname } from "node:path";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
 
-import { computeLineHash, computeFileVersion, formatHashedLine } from "./edit.js";
+import { computeLineHash, computeFileVersion, formatHashedLine, ANCHOR_FORMAT_VERSION } from "./edit.js";
 
 const readFileParams = Type.Object({
   path: Type.String({ description: "Absolute file path to read" }),
   offset: Type.Optional(Type.Number({ description: "Start line (0-indexed)" })),
   limit: Type.Optional(Type.Number({ description: "Number of lines to read, default 200" })),
-  hashes: Type.Optional(Type.Boolean({ description: "Enable anchor mode: prefix each line with 'N#XXXX|' where XXXX is a content hash for use with the edit tool, and return file_version for write_file stale-state protection" })),
+  hashes: Type.Optional(Type.Boolean({ description: "Enable anchor mode: prefix each line with 'N#XXXX|' where XXXX is a content-only hash for use with the edit tool. Also returns file_version (for stale-state protection) and anchor_format_version." })),
 });
 
 export const readFileTool: AgentTool<typeof readFileParams> = {
   name: "read_file",
   label: "Read file",
-  description: "Read the contents of a file. Returns numbered lines.",
+  description:
+    "Read the contents of a file. Returns numbered lines. " +
+    "When hashes:true, each line is prefixed with 'lineNum#hash|' where the hash is a content-based identity — " +
+    "the line number is advisory (snapshot position) only, and the hash is the authoritative identity for edit operations.",
   parameters: readFileParams,
   execute: async (_id, { path, offset, limit, hashes }) => {
     const resolved = resolve(path);
@@ -66,6 +69,7 @@ export const readFileTool: AgentTool<typeof readFileParams> = {
         shown: slice.length,
         hashes: useHashes || undefined,
         file_version: useHashes ? computeFileVersion(raw) : undefined,
+        anchor_format_version: useHashes ? ANCHOR_FORMAT_VERSION : undefined,
       },
     };
   },
@@ -85,7 +89,7 @@ export const writeFileTool: AgentTool<typeof writeFileParams> = {
     "For existing files, you MUST provide expected_file_version (obtained from read_file(hashes: true)) " +
     "to prevent accidental overwrites of changes made by other tools or users. " +
     "For new files, omit expected_file_version. " +
-    "Prefer using the edit tool for partial modifications to existing files.",
+    "Prefer using the edit tool for partial modifications to existing files — whole-file rewrite is an explicit, high-risk operation.",
   parameters: writeFileParams,
   execute: async (_id, { path, content, expected_file_version }) => {
     const resolved = resolve(path);

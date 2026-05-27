@@ -631,9 +631,7 @@ export class WebUiBackend implements UiBackend {
   }
 
   private broadcast(event: ServerEvent): void {
-    if (this.currentClient) {
-      this.currentClient.send(event);
-    }
+    this.wsServer.broadcast(event);
   }
 
   // ── HTTP request handling (SPA + MCP app proxy) ──

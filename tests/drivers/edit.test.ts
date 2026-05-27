@@ -9,6 +9,7 @@ import {
   hashLines,
   formatHashedLine,
   editTool,
+  ANCHOR_FORMAT_VERSION,
 } from "../../src/drivers/edit.js";
 
 // --- computeLineHash (content-only, no line number) ---
@@ -114,6 +115,14 @@ describe("formatHashedLine", () => {
   it("should handle empty content", () => {
     const result = formatHashedLine(3, "c3d4", "");
     expect(result).toBe("3#c3d4|");
+  });
+});
+
+// --- anchor_format_version ---
+
+describe("ANCHOR_FORMAT_VERSION", () => {
+  it("should be v2", () => {
+    expect(ANCHOR_FORMAT_VERSION).toBe("v2");
   });
 });
 
@@ -368,7 +377,7 @@ describe("editTool", () => {
 
   // --- return summary with file_version and local diff ---
 
-  it("should return operation summary with file_version and local diff", async () => {
+  it("should return operation summary with file_version, invalidation scope, and local diff", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3");
 
     const result = await editTool.execute("test-id", {
@@ -385,6 +394,9 @@ describe("editTool", () => {
     expect(result.details?.removedLines).toBe(0);
     expect(result.details?.file_version).toBeDefined();
     expect(result.details?.file_version).toMatch(/^fv_[0-9a-f]{8}$/);
+    // v2: invalidation contract
+    expect(result.details?.anchors_valid_through).toBeDefined();
+    expect(result.details?.must_refresh_from_line).toBeDefined();
 
     // Content should include local diff
     const text = result.content?.[0]?.text ?? "";
@@ -392,5 +404,215 @@ describe("editTool", () => {
     expect(text).toContain("Local diff");
     expect(text).toContain("--- file");
     expect(text).toContain("+++ file");
+  });
+
+  // === v2: occurrence disambiguation ===
+
+  it("should use occurrence to target specific duplicate line", async () => {
+    const filePath = createTempFile("a\nb\na\nc");
+    const aHash = computeLineHash("a"); // matches lines 1 and 3
+
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "replace_line", hash: aHash, occurrence: 2, content: "A2" }],
+    });
+
+    expect(result.details?.error).toBeUndefined();
+    expect(readFile(filePath)).toBe("a\nb\nA2\nc");
+  });
+
+  it("should reject single-line op with ambiguous hash and no occurrence", async () => {
+    const filePath = createTempFile("a\nb\na\nc");
+    const aHash = computeLineHash("a"); // matches lines 1 and 3
+
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "replace_line", hash: aHash, content: "should fail" }],
+    });
+
+    expect(result.details?.error).toBe("anchor_ambiguous");
+    expect(result.details?.suggested_action).toBe("re-read_with_context");
+    expect(result.details?.ambiguous_anchors).toBeDefined();
+    expect(result.details.ambiguous_anchors[0].hash).toBe(aHash);
+    expect(result.details.ambiguous_anchors[0].candidates).toEqual([1, 3]);
+    // File should be unchanged
+    expect(readFile(filePath)).toBe("a\nb\na\nc");
+  });
+
+  it("should reject single-line op with occurrence out of range", async () => {
+    const filePath = createTempFile("a\nb\na\nc");
+    const aHash = computeLineHash("a"); // matches 2 lines
+
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "replace_line", hash: aHash, occurrence: 5, content: "x" }],
+    });
+
+    expect(result.details?.error).toBe("anchor_ambiguous");
+    expect(readFile(filePath)).toBe("a\nb\na\nc");
+  });
+
+  it("should use occurrence:1 (first match) for delete_line", async () => {
+    const filePath = createTempFile("a\nb\na\nc");
+    const aHash = computeLineHash("a");
+
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "delete_line", hash: aHash, occurrence: 1 }],
+    });
+
+    expect(result.details?.error).toBeUndefined();
+    expect(readFile(filePath)).toBe("b\na\nc");
+  });
+
+  it("should use occurrence for insert_after on duplicate line", async () => {
+    const filePath = createTempFile("a\nb\na\nc");
+    const aHash = computeLineHash("a");
+
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "insert_after", hash: aHash, occurrence: 2, content: "INSERTED" }],
+    });
+
+    expect(result.details?.error).toBeUndefined();
+    expect(readFile(filePath)).toBe("a\nb\na\nINSERTED\nc");
+  });
+
+  // === v2: range operation ambiguity rejection ===
+
+  it("should reject range op with ambiguous start_hash", async () => {
+    const filePath = createTempFile("a\nb\na\nc\nd");
+    const aHash = computeLineHash("a"); // matches lines 1 and 3
+    const dHash = getHash(filePath, 5);  // unique
+
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "delete_range", start_hash: aHash, end_hash: dHash }],
+    });
+
+    expect(result.details?.error).toBe("anchor_ambiguous");
+    expect(result.details?.ambiguous_anchors[0].hash).toBe(aHash);
+    expect(readFile(filePath)).toBe("a\nb\na\nc\nd");
+  });
+
+  it("should reject range op with ambiguous end_hash", async () => {
+    const filePath = createTempFile("a\nb\nc\na\nd");
+    const bHash = getHash(filePath, 2);  // unique
+    const aHash = computeLineHash("a"); // matches lines 1 and 4
+
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "replace_range", start_hash: bHash, end_hash: aHash, content: "X" }],
+    });
+
+    expect(result.details?.error).toBe("anchor_ambiguous");
+    expect(readFile(filePath)).toBe("a\nb\nc\na\nd");
+  });
+
+  it("should reject range op when both endpoints are ambiguous", async () => {
+    const filePath = createTempFile("a\nb\na\nc\na");
+    const aHash = computeLineHash("a"); // matches lines 1, 3, 5
+
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "delete_range", start_hash: aHash, end_hash: aHash }],
+    });
+
+    expect(result.details?.error).toBe("anchor_ambiguous");
+    expect(readFile(filePath)).toBe("a\nb\na\nc\na");
+  });
+
+  // === v2: invalidation contract ===
+
+  it("should return anchors_valid_through and must_refresh_from_line for middle edit", async () => {
+    const filePath = createTempFile("line 1\nline 2\nline 3\nline 4\nline 5");
+    const hash = getHash(filePath, 3);
+
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "replace_line", hash, content: "LINE THREE" }],
+    });
+
+    expect(result.details?.error).toBeUndefined();
+    expect(result.details?.anchors_valid_through).toBe(2);
+    expect(result.details?.must_refresh_from_line).toBe(3);
+  });
+
+  it("should return anchors_valid_through: 0 for edit at top of file", async () => {
+    const filePath = createTempFile("line 1\nline 2\nline 3");
+    const hash = getHash(filePath, 1);
+
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "insert_before", hash, content: "line 0" }],
+    });
+
+    expect(result.details?.error).toBeUndefined();
+    expect(result.details?.anchors_valid_through).toBe(0);
+    expect(result.details?.must_refresh_from_line).toBe(1);
+  });
+
+  it("should include stale anchor warning with line range in text", async () => {
+    const filePath = createTempFile("line 1\nline 2\nline 3\nline 4");
+    const hash = getHash(filePath, 2);
+
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "replace_line", hash, content: "LINE TWO" }],
+    });
+
+    const text = result.content?.[0]?.text ?? "";
+    expect(text).toContain("Anchors valid through line: 1");
+    expect(text).toContain("Refresh required from line: 2");
+  });
+
+  // === v2: error taxonomy ===
+
+  it("should return invalid_range_order for reversed range", async () => {
+    const filePath = createTempFile("line 1\nline 2\nline 3");
+    const hash3 = getHash(filePath, 3);
+    const hash1 = getHash(filePath, 1);
+
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "replace_range", start_hash: hash3, end_hash: hash1, content: "x" }],
+    });
+
+    expect(result.details?.error).toBe("invalid_range_order");
+    expect(result.details?.suggested_action).toBe("re-read_file");
+    expect(result.details?.start_line).toBe(3);
+    expect(result.details?.end_line).toBe(1);
+  });
+
+  it("should return suggested_action on empty_operations", async () => {
+    const filePath = createTempFile("content");
+
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [],
+    });
+
+    expect(result.details?.error).toBe("empty_operations");
+    expect(result.details?.suggested_action).toBe("provide_at_least_one_operation");
+  });
+
+  // === v2: batch atomicity with ambiguity ===
+
+  it("should reject entire batch if any op has ambiguous hash", async () => {
+    const filePath = createTempFile("a\nb\na\nc");
+    const bHash = getHash(filePath, 2);  // unique
+    const aHash = computeLineHash("a"); // ambiguous (lines 1 and 3)
+
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [
+        { op: "replace_line", hash: bHash, content: "B" },
+        { op: "replace_line", hash: aHash, content: "A" },  // ambiguous, no occurrence
+      ],
+    });
+
+    expect(result.details?.error).toBe("anchor_ambiguous");
+    // File should be unchanged — atomic rejection
+    expect(readFile(filePath)).toBe("a\nb\na\nc");
   });
 });

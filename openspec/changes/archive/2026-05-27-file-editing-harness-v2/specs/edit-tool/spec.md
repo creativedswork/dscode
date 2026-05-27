@@ -1,7 +1,25 @@
-## Purpose
+## ADDED Requirements
 
-The `edit` tool provides content-addressable file editing using hash-based anchors. It replaces traditional line-number-based or string-replace editing with an anchor-guarded protocol where line identity is determined by content hash, and line numbers serve only as advisory snapshot positions.
-## Requirements
+### Requirement: Edit operations support occurrence field for disambiguation
+Single-line edit operations (replace_line, insert_after, insert_before, delete_line) SHALL support an optional `occurrence` field (1-indexed integer) that specifies which matching line to target when the hash matches multiple lines. If `occurrence` is omitted and the hash has multiple candidates, the edit SHALL be rejected with error `anchor_ambiguous`.
+
+#### Scenario: replace_line with occurrence targets correct line
+- **WHEN** the model calls `edit` with `op: "replace_line"`, `hash: "d41d"`, `occurrence: 3`, `content: "new content"`, and `hash` matches lines 2, 5, 7, and 12
+- **THEN** line 7 (the 3rd occurrence) SHALL be replaced
+
+#### Scenario: delete_line with occurrence 1 targets first match
+- **WHEN** the model calls `edit` with `op: "delete_line"`, `hash: "d41d"`, `occurrence: 1`, and `hash` matches lines 2, 5, and 7
+- **THEN** line 2 (the 1st occurrence) SHALL be deleted
+
+### Requirement: Edit returns structured invalidation scope
+Upon successful completion, the `edit` tool SHALL return `anchors_valid_through` and `must_refresh_from_line` fields in its `details`. These fields SHALL indicate the exact boundary between valid and stale anchor regions.
+
+#### Scenario: Invalidation scope after middle-of-file edit
+- **WHEN** `edit` successfully modifies lines 20-22 of a file
+- **THEN** details SHALL contain `anchors_valid_through: 19` and `must_refresh_from_line: 20`
+
+## MODIFIED Requirements
+
 ### Requirement: edit tool replaces a single line by hash
 
 The `edit` tool SHALL support `op: "replace_line"` which replaces exactly one line identified by its hash with new content. If the hash matches multiple lines, the operation MUST include an `occurrence` field to disambiguate; otherwise the entire batch SHALL be rejected with error `anchor_ambiguous`. The operation MUST fail if the hash does not match any line in the current file.
@@ -113,22 +131,3 @@ Upon successful completion, the `edit` tool SHALL return a summary including the
 #### Scenario: Successful edit summary with invalidation scope
 - **WHEN** `edit` successfully applies 2 operations (one replacement, one insertion) resulting in +3 lines and -1 line, affecting lines starting at line 12
 - **THEN** the return SHALL include "2 operations applied", the net line change, `anchors_valid_through: 11`, `must_refresh_from_line: 12`, and a localized diff with new anchors
-
-### Requirement: Edit operations support occurrence field for disambiguation
-Single-line edit operations (replace_line, insert_after, insert_before, delete_line) SHALL support an optional `occurrence` field (1-indexed integer) that specifies which matching line to target when the hash matches multiple lines. If `occurrence` is omitted and the hash has multiple candidates, the edit SHALL be rejected with error `anchor_ambiguous`.
-
-#### Scenario: replace_line with occurrence targets correct line
-- **WHEN** the model calls `edit` with `op: "replace_line"`, `hash: "d41d"`, `occurrence: 3`, `content: "new content"`, and `hash` matches lines 2, 5, 7, and 12
-- **THEN** line 7 (the 3rd occurrence) SHALL be replaced
-
-#### Scenario: delete_line with occurrence 1 targets first match
-- **WHEN** the model calls `edit` with `op: "delete_line"`, `hash: "d41d"`, `occurrence: 1`, and `hash` matches lines 2, 5, and 7
-- **THEN** line 2 (the 1st occurrence) SHALL be deleted
-
-### Requirement: Edit returns structured invalidation scope
-Upon successful completion, the `edit` tool SHALL return `anchors_valid_through` and `must_refresh_from_line` fields in its `details`. These fields SHALL indicate the exact boundary between valid and stale anchor regions.
-
-#### Scenario: Invalidation scope after middle-of-file edit
-- **WHEN** `edit` successfully modifies lines 20-22 of a file
-- **THEN** details SHALL contain `anchors_valid_through: 19` and `must_refresh_from_line: 20`
-

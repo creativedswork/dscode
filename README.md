@@ -1,17 +1,15 @@
 <p align="center">
   <img src="docs/assets/dscode-logo.svg" alt="dscode" width="460" />
 </p>
-
 <p align="center">
-  <strong>The open source MCP-first AI agent for DeepSeek — built for digital creation, not just coding.</strong>
+  <strong>The open source spec-driven MCP-first AI agent for DeepSeek — built for digital creation, not just coding.</strong>
 </p>
-
 <p align="center">
   <a href="https://www.npmjs.com/package/@wangcan26/dscode"><img src="docs/assets/badge-npm.svg" alt="npm version" /></a>
   <img src="docs/assets/badge-node.svg" alt="Node.js >=20" />
   <img src="docs/assets/badge-deepseek.svg" alt="DeepSeek native" />
+  <img src="docs/assets/badge-spec-driven.svg" alt="spec driven" />
 </p>
-
 <p align="center">
   <sub><a href="README.zh-CN.md">中文文档</a></sub>
 </p>
@@ -35,8 +33,8 @@
 <table>
 <tr>
 <td width="33%" valign="top">
-  <strong>DeepSeek native</strong><br />
-  Designed around DeepSeek model capabilities — no multi-model abstraction layer. Configuration, inference modes, and experience are all optimized for DeepSeek.
+  <strong>🔬 Spec-driven</strong><br />
+  Every feature starts as a spec — <code>openspec/specs/</code> is the source of truth, code is the implementation.
 </td>
 <td width="33%" valign="top">
   <strong>Agent harness</strong><br />
@@ -49,7 +47,14 @@
 </tr>
 </table>
 
+## Spec-driven development
+dscode is built entirely through <strong>spec coding</strong> — every feature is first defined as a formal spec in <a href="https://github.com/anthropics/open-spec">OpenSpec</a>, then implemented by AI agents. <code>AGENTS.md</code> + <code>openspec/specs/</code> serve as the complete project blueprint.
+
+> <strong>Code is the implementation of specs — not the other way around.</strong>
+
+
 ## Digital work, not just coding
+
 
 dscode connects external tools through **MCP (Model Context Protocol)**, extending DeepSeek's capabilities to broader digital workflows — from Blender 3D modeling to browser automation, from document and spreadsheet processing to design and content production.
 
@@ -57,7 +62,6 @@ dscode connects external tools through **MCP (Model Context Protocol)**, extendi
 <tr>
 <td width="50%"><img src="docs/screen_shots/blender_show.jpg" alt="Blender showcase" width="100%"></td>
 <td width="50%"><img src="docs/screen_shots/blender_show1.jpg" alt="Blender MCP demo" width="100%"></td>
-</tr>
 </table>
 
 The screenshots above demonstrate controlling Blender via `blender-mcp`, manipulating a 3D scene with natural language. Creative toolchains like this are just one example of digital work — dscode uses the standard MCP protocol to let DeepSeek models access a much broader ecosystem of digital tools.
