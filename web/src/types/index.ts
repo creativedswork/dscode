@@ -94,7 +94,8 @@ export type ServerEvent =
   | { type: "model"; name: string }
   | { type: "slash_result"; text: string }
   | { type: "mcp_app"; app: McpAppInfo }
-  | { type: "clear_conversation" };
+  | { type: "clear_conversation" }
+  | { type: "processing"; processing: boolean };
 
 // ── Local UI Types ──
 

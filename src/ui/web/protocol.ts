@@ -6,16 +6,19 @@ export interface ImageAttachment {
 }
 
 export type ClientCommand =
-  | { type: "chat"; text: string; images?: ImageAttachment[] }
+  | { type: "chat"; text: string; images?: ImageAttachment[]; clipboardImages?: ImageAttachment[] }
   | { type: "abort" }
   | { type: "permission"; decision: "allow" | "always_allow" | "deny"; persistRule?: boolean }
+  | { type: "permission_response"; decision: "allow" | "always_allow" | "deny"; denyReason?: string }
   | { type: "slash"; command: string }
+  | { type: "command"; text: string }
   | { type: "config"; action: "set_model"; value: string }
   | { type: "config"; action: "set_thinking"; value: string }
   | { type: "config"; action: "set_key"; value: string }
   | { type: "config"; action: "set_provider"; value: string }
   | { type: "session"; action: "list" | "save" | "load" | "delete"; id?: string }
-  | { type: "mcp"; action: "list" | "refresh" };
+  | { type: "mcp"; action: "list" | "refresh" }
+  | { type: "mcp_app"; action: "rpc"; appId: string; message: object };
 
 // ── Server → Client Events ──
 
@@ -80,7 +83,8 @@ export type ServerEvent =
   | { type: "model"; name: string }
   | { type: "slash_result"; text: string }
   | { type: "mcp_app"; app: McpAppInfo }
-  | { type: "clear_conversation" };
+  | { type: "clear_conversation" }
+  | { type: "processing"; processing: boolean };
 
 export interface ConversationMessage {
   role: "user" | "assistant" | "system";

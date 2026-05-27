@@ -21,6 +21,89 @@ import { TuiBackend } from "../ui/tui-backend.js";
 import type { UiBackend } from "../ui/backend.js";
 import type { TuiDeps } from "../ui/tui-app.js";
 
+const DASHSCOPE_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+
+const QWEN_MODELS: Record<string, Omit<Model<Api>, "id" | "name">> = {
+  "qwen3.6-plus": {
+    api: "openai-completions",
+    provider: "qwen",
+    baseUrl: DASHSCOPE_BASE,
+    reasoning: true,
+    input: ["text", "image"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1_000_000,
+    maxTokens: 65536,
+  },
+  "qwen3-coder": {
+    api: "openai-completions",
+    provider: "qwen",
+    baseUrl: DASHSCOPE_BASE,
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 131_072,
+    maxTokens: 8192,
+  },
+  "qwq-32b": {
+    api: "openai-completions",
+    provider: "qwen",
+    baseUrl: DASHSCOPE_BASE,
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 131_072,
+    maxTokens: 8192,
+  },
+  "qwen-max": {
+    api: "openai-completions",
+    provider: "qwen",
+    baseUrl: DASHSCOPE_BASE,
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 32_768,
+    maxTokens: 8192,
+  },
+  "qwen-plus": {
+    api: "openai-completions",
+    provider: "qwen",
+    baseUrl: DASHSCOPE_BASE,
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 131_072,
+    maxTokens: 8192,
+  },
+  "qwen-turbo": {
+    api: "openai-completions",
+    provider: "qwen",
+    baseUrl: DASHSCOPE_BASE,
+    reasoning: false,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1_000_000,
+    maxTokens: 8192,
+  },
+};
+
+function buildQwenModel(modelId: string): Model<Api> {
+  const key = modelId.startsWith("qwen/") ? modelId.slice(5) : modelId;
+  const def = QWEN_MODELS[key];
+  if (def) return { id: modelId, name: `Qwen: ${modelId}`, ...def };
+  // Fallback: create a generic qwen model definition for unknown models
+  return {
+    id: modelId,
+    name: `Qwen: ${modelId}`,
+    api: "openai-completions" as const,
+    provider: "qwen",
+    baseUrl: DASHSCOPE_BASE,
+    reasoning: false,
+    input: ["text"] as ("text" | "image")[],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 131_072,
+    maxTokens: 8192,
+  };
+}
 export class Harness {
   agent!: Agent;
   sessionManager: SessionManager;
@@ -38,6 +121,18 @@ export class Harness {
   private lastMcpProgress = new Map<string, { progress?: number; total?: number; message?: string }>();
   private mcpEventUnsubscribe?: () => void;
   private shuttingDown = false;
+
+  private resolveModel(modelId?: string): Model<Api> {
+    const id = modelId ?? this.config.modelId;
+    let model = (getModel as (p: string, m: string) => Model<Api>)(this.config.provider, id);
+    if (!model && this.config.provider === "qwen") {
+      model = buildQwenModel(id);
+    }
+    if (!model) {
+      throw new Error(`Unknown model: ${id} for provider ${this.config.provider}`);
+    }
+    return model;
+  }
 
   constructor(config: HarnessConfig) {
     this.config = config;
@@ -82,10 +177,11 @@ export class Harness {
     this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection);
     const systemPrompt = this.baseSystemPrompt;
 
-    const model = (getModel as (p: string, m: string) => Model<Api>)(this.config.provider, this.config.modelId);
+    const model = this.resolveModel();
     this.contextManager.updateModel(model.contextWindow, model.maxTokens);
 
     const maxTokens = this.config.maxTokens;
+    const apiKey = this.config.apiKey;
     const self = this;
     this.agent = new Agent({
       initialState: {
@@ -96,6 +192,7 @@ export class Harness {
       },
       streamFn: (m: Model<Api>, ctx: Context, opts?: SimpleStreamOptions) => streamSimple(m, ctx, {
         ...opts,
+        apiKey,
         maxTokens,
         timeoutMs: 120_000,
         maxRetries: 0,
@@ -156,7 +253,7 @@ export class Harness {
 
   async run(ui?: UiBackend): Promise<void> {
     if (ui) this.ui = ui;
-    const model = (getModel as (p: string, m: string) => Model<Api>)(this.config.provider, this.config.modelId);
+    const model = this.resolveModel();
     const nativeImageSupport = model.input.includes("image");
     const needsOcr = !nativeImageSupport && (this.config.provider === "deepseek" || this.config.provider === "kimi-coding");
     if (!ui) {
@@ -241,7 +338,7 @@ export class Harness {
   }
 
   setModel(modelId: string): void {
-    const model = (getModel as (p: string, m: string) => Model<Api>)(this.config.provider, modelId);
+    const model = this.resolveModel(modelId);
     this.config.modelId = modelId;
     this.agent.state.model = model;
     this.contextManager.updateModel(model.contextWindow, model.maxTokens);

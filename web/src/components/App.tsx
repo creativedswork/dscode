@@ -186,6 +186,10 @@ export function App() {
         break;
       }
 
+      case "processing": {
+        setProcessing(event.processing);
+        break;
+      }
       case "loader": {
         setProcessing(event.state === "show");
         break;

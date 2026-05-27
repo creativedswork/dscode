@@ -28,6 +28,14 @@ import type {
   ToolCallEntry,
 } from "./protocol.js";
 
+const QWEN_MODEL_LIST = [
+  { id: "qwen3.6-plus", name: "Qwen: Qwen3.6 Plus" },
+  { id: "qwen3-coder", name: "Qwen: Qwen3 Coder" },
+  { id: "qwq-32b", name: "Qwen: QwQ 32B" },
+  { id: "qwen-max", name: "Qwen: Qwen Max" },
+  { id: "qwen-plus", name: "Qwen: Qwen Plus" },
+  { id: "qwen-turbo", name: "Qwen: Qwen Turbo" },
+];
 export interface WebUiOptions {
   port: number;
   harness: Harness;
@@ -601,11 +609,14 @@ export class WebUiBackend implements UiBackend {
   // ── Private: Helpers ──
 
   private buildConfigData(): ConfigData {
-    const providers = getProviders();
-    const models = getModels(this.config.provider as any).map((m: any) => ({
-      id: m.id,
-      name: m.name,
-    }));
+    const providers = getProviders() as string[];
+    if (!providers.includes("qwen")) providers.push("qwen");
+    const models = this.config.provider === "qwen"
+      ? QWEN_MODEL_LIST.map((m) => ({ id: m.id, name: m.name }))
+      : getModels(this.config.provider as any).map((m: any) => ({
+        id: m.id,
+        name: m.name,
+      }));
 
     return {
       provider: this.config.provider,

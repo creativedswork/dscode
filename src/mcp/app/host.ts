@@ -104,6 +104,8 @@ export class AppHostManager {
 
   unregisterApp(id: string): void { this.apps.delete(id); }
 
+  getApp(id: string): AppInstance | undefined { return this.apps.get(id); }
+
   pushToApp(appId: string, message: object): void {
     const clients = this.sseClients.get(appId);
     if (!clients) return;

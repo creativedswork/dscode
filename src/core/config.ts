@@ -14,6 +14,7 @@ export const PROVIDER_ENV_VARS: Record<string, string> = {
   groq: "GROQ_API_KEY",
   openrouter: "OPENROUTER_API_KEY",
   mistral: "MISTRAL_API_KEY",
+  qwen: "DASHSCOPE_API_KEY",
 };
 
 import type { HarnessConfig, ThinkingLevel } from "./types.js";
@@ -154,12 +155,12 @@ export function loadConfig(): HarnessConfig {
   const projectSettings = loadScopedSettings(projectSettingsPath(projectPath));
   const merged = { ...userSettings, ...projectSettings };
 
-  const provider = (process.env.AGENT_PROVIDER as string) ?? (merged.provider as string) ?? "deepseek";
+  const provider = (process.env.AGENT_PROVIDER as string) ?? (userConfig.provider as string) ?? (merged.provider as string) ?? "deepseek";
   const modelId = (process.env.AGENT_MODEL as string) ?? (process.env.DEEPSEEK_MODEL as string) ?? (userConfig.modelId as string) ?? (merged.modelId as string) ?? "deepseek-v4-flash";
   // API key: env var > user config (never project config for security)
   // Use provider-specific env var (e.g. KIMI_API_KEY, DEEPSEEK_API_KEY) via pi-ai,
   // fall back to DEEPSEEK_API_KEY for backward compat, then user config
-  const envApiKey = getEnvApiKey(provider) ?? process.env.DEEPSEEK_API_KEY;
+  const envApiKey = getEnvApiKey(provider) ?? (provider === "qwen" ? process.env.DASHSCOPE_API_KEY : undefined) ?? process.env.DEEPSEEK_API_KEY;
   const apiKey = envApiKey ?? (userConfig.apiKey as string | undefined);
   const maxTokens = Number(process.env.DSCODE_MAX_TOKENS) || (merged.maxTokens as number) || 16384;
 
