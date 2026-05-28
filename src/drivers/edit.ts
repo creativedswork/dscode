@@ -8,16 +8,20 @@ import { Type } from "@mariozechner/pi-ai";
 // --- Hash utilities ---
 
 /**
- * Compute a content-only hash for a line (v2 protocol).
+ * Compute a 6-character display hash for a line (v3 protocol).
+ * Shown in read_file output and accepted as input by edit operations.
  * The hash is based solely on the trimmed line content — NOT on the line number.
- * This ensures that upstream insertions/deletions do not invalidate anchors
- * for unchanged lines downstream.
- *
- * Line numbers are advisory (snapshot position) only, not authoritative identity.
- * This is anchor_format_version "v2" semantics.
  */
 export function computeLineHash(line: string): string {
-  return createHash("md5").update(line.trim()).digest("hex").slice(0, 4);
+  return createHash("md5").update(line.trim()).digest("hex").slice(0, 6);
+}
+
+/**
+ * Compute an 8-character resolution hash for internal disambiguation.
+ * Used when the 6-char display hash matches multiple lines.
+ */
+export function computeResolutionHash(line: string): string {
+  return createHash("md5").update(line.trim()).digest("hex").slice(0, 8);
 }
 
 /**
@@ -28,29 +32,39 @@ export function computeFileVersion(content: string): string {
 }
 
 /**
- * Build a hash → line-number[] map from file lines.
- * Since hash is content-only, identical lines share the same hash.
- * All matching line numbers are stored; single-line operations must use
- * the `occurrence` field for disambiguation when hash is not unique.
- * Range operations require both endpoint hashes to be unique.
+ * Build a hash → line-number[] map from file lines using 8-char resolution hashes.
+ * Also returns a displayHash → resolutionHash[] index for adaptive resolution.
  */
-export function hashLines(lines: string[]): Map<string, number[]> {
-  const map = new Map<string, number[]>();
+export function hashLines(lines: string[]): {
+  resolutionMap: Map<string, number[]>;
+  displayIndex: Map<string, string[]>;
+} {
+  const resolutionMap = new Map<string, number[]>();
+  const displayIndex = new Map<string, string[]>();
   for (let i = 0; i < lines.length; i++) {
-    const hash = computeLineHash(lines[i]);
-    const existing = map.get(hash);
+    const resHash = computeResolutionHash(lines[i]);
+    const displayHash = resHash.slice(0, 6);
+    const existing = resolutionMap.get(resHash);
     if (existing) {
       existing.push(i + 1);
     } else {
-      map.set(hash, [i + 1]);
+      resolutionMap.set(resHash, [i + 1]);
+    }
+    const displayEntries = displayIndex.get(displayHash);
+    if (displayEntries) {
+      if (!displayEntries.includes(resHash)) {
+        displayEntries.push(resHash);
+      }
+    } else {
+      displayIndex.set(displayHash, [resHash]);
     }
   }
-  return map;
+  return { resolutionMap, displayIndex };
 }
 
 /**
  * Build a hash → line-number map, keeping only the first occurrence for each hash.
- * Used for quick single-line lookups where disambiguation is not critical.
+ * Uses 6-char display hash for quick single-line lookups.
  */
 export function hashLinesUnique(lines: string[]): Map<string, number> {
   const map = new Map<string, number>();
@@ -65,18 +79,66 @@ export function hashLinesUnique(lines: string[]): Map<string, number> {
 
 /**
  * The current anchor protocol version.
- * Returned in read_file(hashes: true) details so agents can detect format changes.
+ * v3: 6-char display hash + quality annotations.
  */
-export const ANCHOR_FORMAT_VERSION = "v2";
+export const ANCHOR_FORMAT_VERSION = "v3";
 
 /**
- * Format a line with its hashed anchor prefix (v2 format).
- * Format: lineNumber#hash|content
- * - lineNumber: snapshot position when read (advisory, not authoritative identity)
- * - hash: content-based identity (authoritative for edit targeting)
+ * Format a line with its hashed anchor prefix (v3 format).
+ * Format: lineNumber#hash [quality]|content
  */
-export function formatHashedLine(lineNumber: number, hash: string, content: string): string {
-  return `${lineNumber}#${hash}|${content}`;
+export function formatHashedLine(lineNumber: number, hash: string, content: string, quality: string): string {
+  return `${lineNumber}#${hash} [${quality}]|${content}`;
+}
+
+// --- Line quality classification ---
+
+type LineQuality = "low" | "med" | "high";
+
+const LOW_ENTROPY_PATTERN = /^[\s{}()\[\],;'"`]*$/;
+
+function classifyLineQuality(line: string): "low" | "other" {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) return "low";
+  if (LOW_ENTROPY_PATTERN.test(trimmed)) return "low";
+  return "other";
+}
+
+export function classifyLinesWithFrequency(lines: string[]): LineQuality[] {
+  const freq = new Map<string, number>();
+  for (const l of lines) {
+    const hash = computeLineHash(l);
+    freq.set(hash, (freq.get(hash) ?? 0) + 1);
+  }
+  return lines.map((l) => {
+    const initial = classifyLineQuality(l);
+    if (initial === "low") return "low";
+    const count = freq.get(computeLineHash(l)) ?? 0;
+    return count > 3 ? "med" : "high";
+  });
+}
+
+// --- Context-augmented hash ---
+
+function computeContextHash(lines: string[], lineIdx: number): string {
+  const prev = findNonEmptyBefore(lines, lineIdx);
+  const curr = lines[lineIdx].trim();
+  const next = findNonEmptyAfter(lines, lineIdx);
+  return createHash("md5").update(`${prev}\n${curr}\n${next}`).digest("hex").slice(0, 8);
+}
+
+function findNonEmptyBefore(lines: string[], idx: number): string {
+  for (let i = idx - 1; i >= 0; i--) {
+    if (lines[i].trim().length > 0) return lines[i].trim();
+  }
+  return "";
+}
+
+function findNonEmptyAfter(lines: string[], idx: number): string {
+  for (let i = idx + 1; i < lines.length; i++) {
+    if (lines[i].trim().length > 0) return lines[i].trim();
+  }
+  return "";
 }
 
 // --- Edit operation types ---
@@ -156,9 +218,15 @@ function isRangeOp(op: EditOperation): op is RangeOp {
   return op.op === "replace_range" || op.op === "delete_range";
 }
 
+interface CandidateInfo {
+  line: number;
+  preview: string;
+}
+
 interface AmbiguousAnchor {
   hash: string;
   candidates: number[];
+  candidatePreviews?: CandidateInfo[];
 }
 
 interface ValidationResult {
@@ -168,49 +236,166 @@ interface ValidationResult {
   ambiguousAnchors?: AmbiguousAnchor[];
   suggested_action?: string;
   invalidRangeOrder?: { startLine: number; endLine: number };
+  lowEntropyAnchors?: { hash: string; line: number; content: string; neighborAnchors: string[] }[];
 }
 
-function validateOperations(ops: EditOperation[], hashMap: Map<string, number[]>): ValidationResult {
+interface ResolutionContext {
+  resolutionMap: Map<string, number[]>;
+  displayIndex: Map<string, string[]>;
+  lines: string[];
+  qualities: LineQuality[];
+  hashToQuality: Map<string, LineQuality>;
+}
+
+// --- Adaptive anchor resolution ---
+
+interface ResolvedAnchor {
+  lineNum: number;
+  level: "display" | "resolution" | "context";
+}
+
+function resolveAnchor(
+  displayHash: string,
+  ctx: ResolutionContext,
+  occurrence?: number,
+): ResolvedAnchor | { error: string; candidates: CandidateInfo[] } {
+  const resHashes = ctx.displayIndex.get(displayHash);
+
+  // Step 1: display hash not found at all
+  if (!resHashes || resHashes.length === 0) {
+    return { error: "anchor_stale", candidates: [] };
+  }
+
+  // Step 2: display hash maps to exactly one resolution hash → unique
+  if (resHashes.length === 1) {
+    const lineNums = ctx.resolutionMap.get(resHashes[0])!;
+    const lineNum = resolveSingleLineTarget(lineNums, occurrence);
+    return { lineNum, level: "display" };
+  }
+
+  // Step 3: multiple resolution hashes — try occurrence disambiguation
+  if (occurrence !== undefined) {
+    const allLineNums: number[] = [];
+    for (const rh of resHashes) {
+      allLineNums.push(...(ctx.resolutionMap.get(rh) ?? []));
+    }
+    allLineNums.sort((a, b) => a - b);
+    if (occurrence >= 1 && occurrence <= allLineNums.length) {
+      return { lineNum: allLineNums[occurrence - 1], level: "context" };
+    }
+  }
+
+  // Step 4: all disambiguation failed
+  const candidates: CandidateInfo[] = [];
+  for (const rh of resHashes) {
+    const lineNums = ctx.resolutionMap.get(rh) ?? [];
+    for (const ln of lineNums) {
+      candidates.push({
+        line: ln,
+        preview: ctx.lines[ln - 1].trim().slice(0, 40),
+      });
+    }
+  }
+
+  // If only one candidate total across all resolution hashes, resolve to it
+  if (candidates.length === 1) {
+    return { lineNum: candidates[0].line, level: "resolution" };
+  }
+
+  return { error: "anchor_prefix_ambiguous", candidates };
+}
+
+function resolveSingleLineTarget(
+  lineNums: number[],
+  occurrence?: number,
+): number {
+  if (occurrence !== undefined && occurrence >= 1 && occurrence <= lineNums.length) {
+    return lineNums[occurrence - 1];
+  }
+  return lineNums[0];
+}
+
+function computeNeighborAnchors(lineNum: number, ctx: ResolutionContext): string[] {
+  const result: string[] = [];
+  for (let offset = -3; offset <= 3; offset++) {
+    if (offset === 0) continue;
+    const idx = lineNum - 1 + offset;
+    if (idx >= 0 && idx < ctx.lines.length && ctx.qualities[idx] === "high") {
+      result.push(`${idx + 1}#${computeLineHash(ctx.lines[idx])}`);
+    }
+    if (result.length >= 6) break;
+  }
+  return result;
+}
+
+function validateOperations(
+  ops: EditOperation[],
+  ctx: ResolutionContext,
+): ValidationResult {
   const missingHashes: string[] = [];
   const ambiguousAnchors: AmbiguousAnchor[] = [];
-  const seen = new Set<string>();
+  const lowEntropyAnchors: { hash: string; line: number; content: string; neighborAnchors: string[] }[] = [];
+  const resolvedMap = new Map<string, ResolvedAnchor>();
 
   for (const op of ops) {
     if (isRangeOp(op)) {
-      // Range operations: both endpoints must exist and be unique
       for (const hash of [op.start_hash, op.end_hash]) {
-        if (seen.has(hash)) continue;
-        seen.add(hash);
-        const matches = hashMap.get(hash);
-        if (!matches || matches.length === 0) {
-          missingHashes.push(hash);
-        } else if (matches.length > 1) {
-          // Range ops never support occurrence — ambiguity means reject
-          ambiguousAnchors.push({ hash, candidates: matches });
+        if (resolvedMap.has(hash)) continue;
+        const result = resolveAnchor(hash, ctx);
+        if ("error" in result) {
+          if (result.error === "anchor_stale") {
+            missingHashes.push(hash);
+          } else {
+            ambiguousAnchors.push({
+              hash,
+              candidates: result.candidates.map(c => c.line),
+              candidatePreviews: result.candidates,
+            });
+          }
+        } else {
+          resolvedMap.set(hash, result);
         }
       }
       // Check range order
-      const startMatches = hashMap.get(op.start_hash);
-      const endMatches = hashMap.get(op.end_hash);
-      if (startMatches && startMatches.length === 1 && endMatches && endMatches.length === 1) {
-        if (startMatches[0] > endMatches[0]) {
+      const startRes = resolvedMap.get(op.start_hash);
+      const endRes = resolvedMap.get(op.end_hash);
+      if (startRes && "lineNum" in startRes && endRes && "lineNum" in endRes) {
+        if (startRes.lineNum > endRes.lineNum) {
           return {
             valid: false,
             error: "invalid_range_order",
-            invalidRangeOrder: { startLine: startMatches[0], endLine: endMatches[0] },
+            invalidRangeOrder: { startLine: startRes.lineNum, endLine: endRes.lineNum },
             suggested_action: "re-read_file",
           };
         }
       }
     } else if (isSingleLineOp(op)) {
       const hash = op.hash;
-      if (seen.has(hash)) continue;
-      seen.add(hash);
-      const matches = hashMap.get(hash);
-      if (!matches || matches.length === 0) {
-        missingHashes.push(hash);
-      } else if (matches.length > 1 && (!op.occurrence || op.occurrence < 1 || op.occurrence > matches.length)) {
-        ambiguousAnchors.push({ hash, candidates: matches });
+      if (resolvedMap.has(hash)) continue;
+      const result = resolveAnchor(hash, ctx, op.occurrence);
+      if ("error" in result) {
+        if (result.error === "anchor_stale") {
+          missingHashes.push(hash);
+        } else {
+          ambiguousAnchors.push({
+            hash,
+            candidates: result.candidates.map(c => c.line),
+            candidatePreviews: result.candidates,
+          });
+        }
+      } else {
+        resolvedMap.set(hash, result);
+        // Check low-entropy for single-line ops
+        const lineNum = result.lineNum;
+        const quality = ctx.qualities[lineNum - 1];
+        if (quality === "low") {
+          lowEntropyAnchors.push({
+            hash,
+            line: lineNum,
+            content: ctx.lines[lineNum - 1].trim(),
+            neighborAnchors: computeNeighborAnchors(lineNum, ctx),
+          });
+        }
       }
     }
   }
@@ -224,12 +409,22 @@ function validateOperations(ops: EditOperation[], hashMap: Map<string, number[]>
     };
   }
 
-  if (ambiguousAnchors.length > 0) {
+  if (lowEntropyAnchors.length > 0) {
     return {
       valid: false,
-      error: "anchor_ambiguous",
+      error: "anchor_low_entropy",
+      lowEntropyAnchors,
+      suggested_action: "use_neighbor_anchor",
+    };
+  }
+
+  if (ambiguousAnchors.length > 0) {
+    const hasContextAmbig = ambiguousAnchors.some(a => a.candidatePreviews && a.candidatePreviews.length > 0);
+    return {
+      valid: false,
+      error: hasContextAmbig ? "anchor_context_ambiguous" : "anchor_prefix_ambiguous",
       ambiguousAnchors,
-      suggested_action: "re-read_with_context",
+      suggested_action: hasContextAmbig ? "re-read_with_context" : "use_context_anchor",
     };
   }
 
@@ -238,42 +433,44 @@ function validateOperations(ops: EditOperation[], hashMap: Map<string, number[]>
 
 // --- Apply operations ---
 
-/**
- * Resolve the target line number for a single-line operation.
- * Uses `occurrence` if provided (1-indexed), otherwise defaults to 1 (first match).
- * Caller must have already validated that occurrence is within range via validateOperations.
- */
-function resolveSingleLineTarget(
-  lineNums: number[],
-  occurrence?: number,
-): number {
-  if (occurrence !== undefined && occurrence >= 1 && occurrence <= lineNums.length) {
-    return lineNums[occurrence - 1];
-  }
-  return lineNums[0];
-}
-
 function applyEditOperations(
   lines: string[],
   ops: EditOperation[],
-  hashMap: Map<string, number[]>,
+  ctx: ResolutionContext,
 ): string[] {
   let result = [...lines];
+
+  // Pre-resolve all operations
+  const resolved = new Map<string, number>();
+  for (const op of ops) {
+    if (isSingleLineOp(op)) {
+      if (!resolved.has(op.hash)) {
+        const r = resolveAnchor(op.hash, ctx, op.occurrence);
+        if (!("error" in r)) resolved.set(op.hash, r.lineNum);
+      }
+    } else {
+      if (!resolved.has(op.start_hash)) {
+        const r = resolveAnchor(op.start_hash, ctx);
+        if (!("error" in r)) resolved.set(op.start_hash, r.lineNum);
+      }
+      if (!resolved.has(op.end_hash)) {
+        const r = resolveAnchor(op.end_hash, ctx);
+        if (!("error" in r)) resolved.set(op.end_hash, r.lineNum);
+      }
+    }
+  }
 
   for (const op of ops) {
     switch (op.op) {
       case "replace_line": {
-        const lineNums = hashMap.get(op.hash)!;
-        const lineNum = resolveSingleLineTarget(lineNums, op.occurrence);
+        const lineNum = resolved.get(op.hash)!;
         const idx = lineNum - 1;
         result[idx] = op.content;
         break;
       }
       case "replace_range": {
-        const startNums = hashMap.get(op.start_hash)!;
-        const endNums = hashMap.get(op.end_hash)!;
-        const startLine = startNums[0];
-        const endLine = endNums[0];
+        const startLine = resolved.get(op.start_hash)!;
+        const endLine = resolved.get(op.end_hash)!;
         const startIdx = startLine - 1;
         const endIdx = endLine - 1;
         const newLines = op.content.split("\n");
@@ -281,33 +478,28 @@ function applyEditOperations(
         break;
       }
       case "insert_after": {
-        const lineNums = hashMap.get(op.hash)!;
-        const lineNum = resolveSingleLineTarget(lineNums, op.occurrence);
+        const lineNum = resolved.get(op.hash)!;
         const idx = lineNum;
         const newLines = op.content.split("\n");
         result.splice(idx, 0, ...newLines);
         break;
       }
       case "insert_before": {
-        const lineNums = hashMap.get(op.hash)!;
-        const lineNum = resolveSingleLineTarget(lineNums, op.occurrence);
+        const lineNum = resolved.get(op.hash)!;
         const idx = lineNum - 1;
         const newLines = op.content.split("\n");
         result.splice(idx, 0, ...newLines);
         break;
       }
       case "delete_line": {
-        const lineNums = hashMap.get(op.hash)!;
-        const lineNum = resolveSingleLineTarget(lineNums, op.occurrence);
+        const lineNum = resolved.get(op.hash)!;
         const idx = lineNum - 1;
         result.splice(idx, 1);
         break;
       }
       case "delete_range": {
-        const startNums = hashMap.get(op.start_hash)!;
-        const endNums = hashMap.get(op.end_hash)!;
-        const startLine = startNums[0];
-        const endLine = endNums[0];
+        const startLine = resolved.get(op.start_hash)!;
+        const endLine = resolved.get(op.end_hash)!;
         const startIdx = startLine - 1;
         const endIdx = endLine - 1;
         result.splice(startIdx, endIdx - startIdx + 1);
@@ -321,16 +513,31 @@ function applyEditOperations(
 
 // --- Diff context helpers ---
 
-/**
- * Compute the affected line range from a set of operations.
- * Returns [minLine, maxLine] for the affected region (1-indexed, inclusive).
- */
 function computeAffectedRange(
   ops: EditOperation[],
-  hashMap: Map<string, number[]>,
+  ctx: ResolutionContext,
 ): { minLine: number; maxLine: number } {
   let minLine = Infinity;
   let maxLine = 0;
+
+  const resolved = new Map<string, number>();
+  for (const op of ops) {
+    if (isSingleLineOp(op)) {
+      if (!resolved.has(op.hash)) {
+        const r = resolveAnchor(op.hash, ctx, op.occurrence);
+        if (!("error" in r)) resolved.set(op.hash, r.lineNum);
+      }
+    } else {
+      if (!resolved.has(op.start_hash)) {
+        const r = resolveAnchor(op.start_hash, ctx);
+        if (!("error" in r)) resolved.set(op.start_hash, r.lineNum);
+      }
+      if (!resolved.has(op.end_hash)) {
+        const r = resolveAnchor(op.end_hash, ctx);
+        if (!("error" in r)) resolved.set(op.end_hash, r.lineNum);
+      }
+    }
+  }
 
   for (const op of ops) {
     switch (op.op) {
@@ -338,9 +545,8 @@ function computeAffectedRange(
       case "insert_after":
       case "insert_before":
       case "delete_line": {
-        const nums = hashMap.get(op.hash);
-        if (nums && nums.length > 0) {
-          const lineNum = resolveSingleLineTarget(nums, op.occurrence);
+        const lineNum = resolved.get(op.hash);
+        if (lineNum !== undefined) {
           minLine = Math.min(minLine, lineNum);
           maxLine = Math.max(maxLine, lineNum);
         }
@@ -348,10 +554,10 @@ function computeAffectedRange(
       }
       case "replace_range":
       case "delete_range": {
-        const sNums = hashMap.get(op.start_hash);
-        const eNums = hashMap.get(op.end_hash);
-        if (sNums && sNums.length > 0) minLine = Math.min(minLine, sNums[0]);
-        if (eNums && eNums.length > 0) maxLine = Math.max(maxLine, eNums[0]);
+        const sNum = resolved.get(op.start_hash);
+        const eNum = resolved.get(op.end_hash);
+        if (sNum !== undefined) minLine = Math.min(minLine, sNum);
+        if (eNum !== undefined) maxLine = Math.max(maxLine, eNum);
         break;
       }
     }
@@ -360,60 +566,82 @@ function computeAffectedRange(
   return { minLine: minLine === Infinity ? 0 : minLine, maxLine };
 }
 
-/**
- * Generate a localized hashed diff showing the changed region with new anchors.
- * Includes N lines of context before and after the change.
- */
+interface LocalDiffResult {
+  text: string;
+  newAnchors: string[];
+  diffPreview: string[];
+}
+
 function generateLocalDiff(
   oldLines: string[],
   newLines: string[],
   ops: EditOperation[],
-  hashMap: Map<string, number[]>,
-): string {
-  const { minLine, maxLine } = computeAffectedRange(ops, hashMap);
+  ctx: ResolutionContext,
+): LocalDiffResult {
+  const { minLine, maxLine } = computeAffectedRange(ops, ctx);
 
-  if (minLine > maxLine || minLine === 0) return "";
+  if (minLine > maxLine || minLine === 0) {
+    return { text: "", newAnchors: [], diffPreview: [] };
+  }
 
-  // Context window: 3 lines before and after the affected region
   const contextBefore = 3;
   const contextAfter = 3;
   const ctxStart = Math.max(0, minLine - 1 - contextBefore);
   const ctxEnd = Math.min(newLines.length, maxLine + contextAfter);
 
-  const parts: string[] = [];
-  parts.push("--- file");
-  parts.push("+++ file");
+  const newQualities = classifyLinesWithFrequency(newLines);
+
+  const textParts: string[] = [];
+  const newAnchors: string[] = [];
+  const diffPreview: string[] = [];
+
+  textParts.push("--- file");
+  textParts.push("+++ file");
 
   for (let i = ctxStart; i < ctxEnd; i++) {
     const lineNum = i + 1;
     const newHash = computeLineHash(newLines[i]);
-    const formatted = formatHashedLine(lineNum, newHash, newLines[i]);
+    const newQuality = newQualities[i];
+    const anchorStr = `${lineNum}#${newHash}`;
+    const formatted = formatHashedLine(lineNum, newHash, newLines[i], newQuality);
 
-    // Check if this line is in the affected range
     const isInOld = i < oldLines.length;
-    const oldLineNum = i + 1;
-    const inRange = oldLineNum >= minLine && oldLineNum <= maxLine;
+    const inRange = lineNum >= minLine && lineNum <= maxLine;
 
     if (inRange && isInOld) {
       const oldHash = computeLineHash(oldLines[i]);
-      parts.push(`-${formatHashedLine(oldLineNum, oldHash, oldLines[i])}`);
+      const oldQuality = ctx.qualities[i];
+      const oldFormatted = formatHashedLine(lineNum, oldHash, oldLines[i], oldQuality);
+      textParts.push(`-${oldFormatted}`);
+      diffPreview.push(`-${oldFormatted}`);
       if (newLines[i] !== oldLines[i]) {
-        parts.push(`+${formatted}`);
+        textParts.push(`+${formatted}`);
+        diffPreview.push(`+${formatted}`);
       } else {
-        parts.push(` ${formatted}`);
+        textParts.push(` ${formatted}`);
+        diffPreview.push(` ${formatted}`);
       }
+      newAnchors.push(anchorStr);
     } else if (!isInOld) {
-      parts.push(`+${formatted}`);
+      textParts.push(`+${formatted}`);
+      diffPreview.push(`+${formatted}`);
+      newAnchors.push(anchorStr);
     } else {
-      parts.push(` ${formatted}`);
+      textParts.push(` ${formatted}`);
+      diffPreview.push(` ${formatted}`);
+      newAnchors.push(anchorStr);
     }
   }
 
   if (ctxEnd < newLines.length) {
-    parts.push(`... (${newLines.length - ctxEnd} more lines after)`);
+    textParts.push(`... (${newLines.length - ctxEnd} more lines after)`);
   }
 
-  return parts.join("\n");
+  return {
+    text: textParts.join("\n"),
+    newAnchors,
+    diffPreview,
+  };
 }
 
 
@@ -434,7 +662,8 @@ export const editTool: AgentTool<typeof editParams> = {
     "If any hash is invalid, ambiguous, or out of order, the entire batch is rejected and no changes are made. " +
     "For duplicate-content lines, use the `occurrence` field (1-indexed) to specify which matching line to target. " +
     "Range operations (replace_range, delete_range) require both endpoint hashes to be unique and will be rejected if ambiguous. " +
-    "Example: { op: \"replace_line\", hash: \"a1b2\", content: \"new line content\" }",
+    "The edit tool resolves ambiguous short hashes automatically via longer hash and context matching. " +
+    "Example: { op: \"replace_line\", hash: \"a1b2c3\", content: \"new line content\" }",
   parameters: editParams,
   execute: async (_id, { file_path, operations }) => {
     const resolved = resolve(file_path);
@@ -455,29 +684,72 @@ export const editTool: AgentTool<typeof editParams> = {
 
     const raw = readFileSync(resolved, "utf8");
     const lines = raw.split("\n");
-    const hashMap = hashLines(lines);
+    const { resolutionMap, displayIndex } = hashLines(lines);
+    const qualities = classifyLinesWithFrequency(lines);
 
-    const validation = validateOperations(operations, hashMap);
+    const hashToQuality = new Map<string, LineQuality>();
+    for (let i = 0; i < lines.length; i++) {
+      hashToQuality.set(computeLineHash(lines[i]), qualities[i]);
+    }
+
+    const ctx: ResolutionContext = {
+      resolutionMap,
+      displayIndex,
+      lines,
+      qualities,
+      hashToQuality,
+    };
+
+    const validation = validateOperations(operations, ctx);
     if (!validation.valid) {
-      if (validation.error === "anchor_ambiguous") {
-        const ambDetails = validation.ambiguousAnchors!.map(a =>
-          `  hash "${a.hash}" matches lines [${a.candidates.join(", ")}]`
+      if (validation.error === "anchor_low_entropy") {
+        const leDetails = validation.lowEntropyAnchors!.map(a =>
+          `  hash "${a.hash}" resolves to low-entropy line ${a.line}: "${a.content}"\n` +
+          `  Suggested high-quality neighbor anchors: [${a.neighborAnchors.join(", ")}]`
         ).join("\n");
         return {
           content: [
             {
               type: "text",
               text:
-                `Edit rejected: ambiguous anchors detected.\n` +
-                `${ambDetails}\n` +
-                `Hint: for single-line operations, add the "occurrence" field (1-indexed) to specify which matching line.\n` +
-                `For range operations, re-read the file and use more specific anchors, or use single-line operations instead.`,
+                `Edit rejected: low-entropy anchor detected.\n` +
+                `${leDetails}\n` +
+                `Hint: use one of the suggested neighbor anchors instead, or switch to a range operation ` +
+                `that uses this line only as a boundary marker.`,
             },
           ],
           details: {
-            error: "anchor_ambiguous",
+            error: "anchor_low_entropy",
+            low_entropy_anchors: validation.lowEntropyAnchors,
+            suggested_action: "use_neighbor_anchor",
+          },
+        };
+      }
+
+      if (validation.error === "anchor_prefix_ambiguous" || validation.error === "anchor_context_ambiguous") {
+        const ambDetails = validation.ambiguousAnchors!.map(a => {
+          const previews = a.candidatePreviews && a.candidatePreviews.length > 0
+            ? a.candidatePreviews.map(c => `  line ${c.line}: "${c.preview}"`).join("\n")
+            : `  lines [${a.candidates.join(", ")}]`;
+          return `  hash "${a.hash}" matches:\n${previews}`;
+        }).join("\n");
+        const hint = validation.error === "anchor_prefix_ambiguous"
+          ? `Hint: the hash prefix is ambiguous. Try re-reading with context or use a neighboring unique line as anchor.`
+          : `Hint: all disambiguation levels failed. Re-read the file and use different anchors.`;
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `Edit rejected: ambiguous anchors detected (${validation.error}).\n` +
+                `${ambDetails}\n` +
+                `${hint}`,
+            },
+          ],
+          details: {
+            error: validation.error,
             ambiguous_anchors: validation.ambiguousAnchors,
-            suggested_action: "re-read_with_context",
+            suggested_action: validation.suggested_action,
           },
         };
       }
@@ -522,12 +794,12 @@ export const editTool: AgentTool<typeof editParams> = {
       };
     }
 
-    // Compute affected range BEFORE applying (uses pre-edit hashMap)
-    const { minLine: affectedMinLine } = computeAffectedRange(operations, hashMap);
+    // Compute affected range BEFORE applying (uses pre-edit ctx)
+    const { minLine: affectedMinLine } = computeAffectedRange(operations, ctx);
 
     let resultLines: string[];
     try {
-      resultLines = applyEditOperations(lines, operations, hashMap);
+      resultLines = applyEditOperations(lines, operations, ctx);
     } catch (err: any) {
       return {
         content: [
@@ -543,11 +815,9 @@ export const editTool: AgentTool<typeof editParams> = {
     const newContent = resultLines.join("\n");
     writeFileSync(resolved, newContent);
 
-    // Compute new file version and localized diff
     const newFileVersion = computeFileVersion(newContent);
-    const localDiff = generateLocalDiff(lines, resultLines, operations, hashMap);
+    const diffResult = generateLocalDiff(lines, resultLines, operations, ctx);
 
-    // Compute invalidation contract
     const mustRefreshFromLine = affectedMinLine > 0 ? affectedMinLine : 1;
     const anchorsValidThrough = mustRefreshFromLine - 1;
 
@@ -563,8 +833,8 @@ export const editTool: AgentTool<typeof editParams> = {
       `Anchors valid through line: ${anchorsValidThrough}. Refresh required from line: ${mustRefreshFromLine}.`,
     ];
 
-    if (localDiff) {
-      summaryParts.push(`\nLocal diff (with new anchors):\n${localDiff}`);
+    if (diffResult.text) {
+      summaryParts.push(`\nLocal diff (with new anchors):\n${diffResult.text}`);
     }
 
     if (mustRefreshFromLine > 1) {
@@ -586,6 +856,7 @@ export const editTool: AgentTool<typeof editParams> = {
         },
       ],
       details: {
+        ok: true,
         operations: opsCount,
         linesBefore: lines.length,
         linesAfter: resultLines.length,
@@ -594,6 +865,8 @@ export const editTool: AgentTool<typeof editParams> = {
         file_version: newFileVersion,
         anchors_valid_through: anchorsValidThrough,
         must_refresh_from_line: mustRefreshFromLine,
+        new_anchors: diffResult.newAnchors,
+        diff_preview: diffResult.diffPreview,
       },
     };
   },

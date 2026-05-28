@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 
 import {
   computeLineHash,
+  computeResolutionHash,
   computeFileVersion,
   hashLines,
   formatHashedLine,
@@ -12,7 +13,7 @@ import {
   ANCHOR_FORMAT_VERSION,
 } from "../../src/drivers/edit.js";
 
-// --- computeLineHash (content-only, no line number) ---
+// --- computeLineHash ---
 
 describe("computeLineHash", () => {
   it("should produce deterministic output for same input", () => {
@@ -21,13 +22,12 @@ describe("computeLineHash", () => {
     expect(h1).toBe(h2);
   });
 
-  it("should produce 4-character hex string", () => {
+  it("should produce 6-character hex string", () => {
     const hash = computeLineHash("some line content");
-    expect(hash).toMatch(/^[0-9a-f]{4}$/);
+    expect(hash).toMatch(/^[0-9a-f]{6}$/);
   });
 
   it("should produce same hash for same content regardless of position", () => {
-    // Content-only hash: same content → same hash (position is advisory, not identity)
     const h1 = computeLineHash("}");
     const h2 = computeLineHash("}");
     expect(h1).toBe(h2);
@@ -67,62 +67,61 @@ describe("computeFileVersion", () => {
   });
 });
 
-// --- hashLines ---
+// --- hashLines (v3: returns {resolutionMap, displayIndex}) ---
 
 describe("hashLines", () => {
-  it("should build a hash-to-linenumbers map (content-only)", () => {
+  it("should build resolutionMap with 8-char hashes", () => {
     const lines = ["line one", "line two", "line three"];
-    const map = hashLines(lines);
-    expect(map.size).toBe(3);
-    for (let i = 0; i < lines.length; i++) {
-      const hash = computeLineHash(lines[i]);
-      const nums = map.get(hash);
-      expect(nums).toBeDefined();
-      expect(nums).toContain(i + 1);
-    }
+    const { resolutionMap } = hashLines(lines);
+    expect(resolutionMap.size).toBe(3);
   });
 
   it("should group duplicate content under same hash", () => {
     const lines = ["a", "b", "a"];
-    const map = hashLines(lines);
-    expect(map.size).toBe(2); // only "a" and "b"
-    const aHash = computeLineHash("a");
-    const aNums = map.get(aHash);
-    expect(aNums).toEqual([1, 3]); // both line 1 and line 3
+    const { resolutionMap } = hashLines(lines);
+    expect(resolutionMap.size).toBe(2);
+    const aHash = computeResolutionHash("a");
+    const aNums = resolutionMap.get(aHash);
+    expect(aNums).toEqual([1, 3]);
   });
 
   it("should handle empty array", () => {
-    const map = hashLines([]);
-    expect(map.size).toBe(0);
+    const { resolutionMap } = hashLines([]);
+    expect(resolutionMap.size).toBe(0);
   });
 
   it("should handle single line", () => {
-    const map = hashLines(["only line"]);
-    expect(map.size).toBe(1);
-    const hash = computeLineHash("only line");
-    expect(map.get(hash)).toEqual([1]);
+    const { resolutionMap } = hashLines(["only line"]);
+    expect(resolutionMap.size).toBe(1);
+    const hash = computeResolutionHash("only line");
+    expect(resolutionMap.get(hash)).toEqual([1]);
+  });
+
+  it("should return displayIndex", () => {
+    const { displayIndex } = hashLines(["a", "b"]);
+    expect(displayIndex.size).toBeGreaterThan(0);
   });
 });
 
-// --- formatHashedLine (now uses # separator) ---
+// --- formatHashedLine (v3: includes quality) ---
 
 describe("formatHashedLine", () => {
-  it("should format line with # anchor prefix", () => {
-    const result = formatHashedLine(1, "a1b2", "function hello() {");
-    expect(result).toBe("1#a1b2|function hello() {");
+  it("should format line with # anchor prefix and quality", () => {
+    const result = formatHashedLine(1, "a1b2c3", "function hello() {", "high");
+    expect(result).toBe("1#a1b2c3 [high]|function hello() {");
   });
 
-  it("should handle empty content", () => {
-    const result = formatHashedLine(3, "c3d4", "");
-    expect(result).toBe("3#c3d4|");
+  it("should handle empty content with quality", () => {
+    const result = formatHashedLine(3, "c3d4e5", "", "low");
+    expect(result).toBe("3#c3d4e5 [low]|");
   });
 });
 
 // --- anchor_format_version ---
 
 describe("ANCHOR_FORMAT_VERSION", () => {
-  it("should be v2", () => {
-    expect(ANCHOR_FORMAT_VERSION).toBe("v2");
+  it("should be v3", () => {
+    expect(ANCHOR_FORMAT_VERSION).toBe("v3");
   });
 });
 
@@ -132,7 +131,7 @@ describe("editTool", () => {
   let tmpDir: string;
 
   function createTempFile(content: string): string {
-    const filePath = join(tmpDir, `test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.txt`);
+    const filePath = join(tmpDir, "test-" + Date.now() + "-" + Math.random().toString(36).slice(2, 8) + ".txt");
     writeFileSync(filePath, content);
     return filePath;
   }
@@ -146,55 +145,40 @@ describe("editTool", () => {
     return computeLineHash(lines[lineNumber - 1]);
   }
 
-  // setup: create temp dir before each
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "dscode-edit-test-"));
   });
 
-  // cleanup is handled by OS temp cleanup
-
-  // --- replace_line ---
-
   it("should replace a single line by hash", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3");
     const hash = getHash(filePath, 2);
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "replace_line", hash, content: "line 2 replaced" }],
     });
-
     expect(result.details?.error).toBeUndefined();
     expect(readFile(filePath)).toBe("line 1\nline 2 replaced\nline 3");
   });
-
-  // --- replace_range ---
 
   it("should replace a range of lines", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3\nline 4\nline 5");
     const startHash = getHash(filePath, 2);
     const endHash = getHash(filePath, 4);
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "replace_range", start_hash: startHash, end_hash: endHash, content: "A\nB\nC" }],
     });
-
     expect(result.details?.error).toBeUndefined();
     expect(readFile(filePath)).toBe("line 1\nA\nB\nC\nline 5");
   });
 
-  // --- insert_after ---
-
   it("should insert content after a line", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3");
     const hash = getHash(filePath, 1);
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "insert_after", hash, content: "inserted A\ninserted B" }],
     });
-
     expect(result.details?.error).toBeUndefined();
     expect(readFile(filePath)).toBe("line 1\ninserted A\ninserted B\nline 2\nline 3");
   });
@@ -202,27 +186,21 @@ describe("editTool", () => {
   it("should insert after last line", async () => {
     const filePath = createTempFile("line 1\nline 2");
     const hash = getHash(filePath, 2);
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "insert_after", hash, content: "line 3" }],
     });
-
     expect(result.details?.error).toBeUndefined();
     expect(readFile(filePath)).toBe("line 1\nline 2\nline 3");
   });
 
-  // --- insert_before ---
-
   it("should insert content before a line", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3");
     const hash = getHash(filePath, 3);
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "insert_before", hash, content: "inserted before" }],
     });
-
     expect(result.details?.error).toBeUndefined();
     expect(readFile(filePath)).toBe("line 1\nline 2\ninserted before\nline 3");
   });
@@ -230,104 +208,77 @@ describe("editTool", () => {
   it("should insert before first line", async () => {
     const filePath = createTempFile("line 1\nline 2");
     const hash = getHash(filePath, 1);
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "insert_before", hash, content: "line 0" }],
     });
-
     expect(result.details?.error).toBeUndefined();
     expect(readFile(filePath)).toBe("line 0\nline 1\nline 2");
   });
 
-  // --- delete_line ---
-
   it("should delete a single line", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3");
     const hash = getHash(filePath, 2);
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "delete_line", hash }],
     });
-
     expect(result.details?.error).toBeUndefined();
     expect(readFile(filePath)).toBe("line 1\nline 3");
   });
-
-  // --- delete_range ---
 
   it("should delete a range of lines", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3\nline 4\nline 5");
     const startHash = getHash(filePath, 2);
     const endHash = getHash(filePath, 4);
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "delete_range", start_hash: startHash, end_hash: endHash }],
     });
-
     expect(result.details?.error).toBeUndefined();
     expect(readFile(filePath)).toBe("line 1\nline 5");
   });
 
-  // --- error: anchor stale ---
-
   it("should reject when hash not found (anchor_stale)", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3");
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
-      operations: [{ op: "replace_line", hash: "ffff", content: "should not apply" }],
+      operations: [{ op: "replace_line", hash: "ffffff", content: "should not apply" }],
     });
-
     expect(result.details?.error).toBe("anchor_stale");
-    expect(result.details?.missingHashes).toContain("ffff");
+    expect(result.details?.missingHashes).toContain("ffffff");
     expect(result.details?.suggested_action).toBe("re-read_file");
-    // File should be unchanged
     expect(readFile(filePath)).toBe("line 1\nline 2\nline 3");
   });
-
-  // --- error: file not found ---
 
   it("should return error for nonexistent file", async () => {
     const result = await editTool.execute("test-id", {
       file_path: "/nonexistent/path/file.txt",
-      operations: [{ op: "replace_line", hash: "a1b2", content: "x" }],
+      operations: [{ op: "replace_line", hash: "a1b2c3", content: "x" }],
     });
-
     expect(result.details?.error).toBe("not_found");
   });
 
-  // --- error: empty operations ---
-
   it("should return error for empty operations", async () => {
     const filePath = createTempFile("content");
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [],
     });
-
     expect(result.details?.error).toBe("empty_operations");
   });
-
-  // --- batch atomicity ---
 
   it("should reject entire batch if any hash is invalid", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3");
     const validHash = getHash(filePath, 1);
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [
         { op: "replace_line", hash: validHash, content: "new line 1" },
-        { op: "replace_line", hash: "ffff", content: "should not apply" },
+        { op: "replace_line", hash: "ffffff", content: "should not apply" },
       ],
     });
-
     expect(result.details?.error).toBe("anchor_stale");
-    // File should be unchanged — atomic rejection
     expect(readFile(filePath)).toBe("line 1\nline 2\nline 3");
   });
 
@@ -335,7 +286,6 @@ describe("editTool", () => {
     const filePath = createTempFile("line 1\nline 2\nline 3\nline 4");
     const hash1 = getHash(filePath, 1);
     const hash3 = getHash(filePath, 3);
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [
@@ -343,124 +293,146 @@ describe("editTool", () => {
         { op: "delete_line", hash: hash3 },
       ],
     });
-
     expect(result.details?.error).toBeUndefined();
-    // line 1 replaced, original line 3 deleted (which is now line 3 in new file)
-    // Operations use initial hashMap - so hash3 maps to original line 3
     expect(readFile(filePath)).toBe("LINE ONE\nline 2\nline 4");
   });
 
-  // --- anchors survive upstream changes ---
-
   it("should keep downstream anchors valid after upstream edit", async () => {
-    // Content-only hash: downstream anchors stay valid even after upstream changes
     const filePath = createTempFile("line 1\nline 2\nline 3\nline 4\nline 5");
-    const hash5 = getHash(filePath, 5); // hash for "line 5"
-
-    // First edit: insert a line at the top
+    const hash5 = getHash(filePath, 5);
     await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "insert_before", hash: getHash(filePath, 1), content: "line 0" }],
     });
-
-    // Second edit: edit what was originally line 5 (now line 6).
-    // With content-only hash, the anchor should still be valid
-    // even though the line number shifted from 5 to 6.
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "replace_line", hash: hash5, content: "LINE FIVE" }],
     });
-
     expect(result.details?.error).toBeUndefined();
     expect(readFile(filePath)).toBe("line 0\nline 1\nline 2\nline 3\nline 4\nLINE FIVE");
   });
 
-  // --- return summary with file_version and local diff ---
-
   it("should return operation summary with file_version, invalidation scope, and local diff", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3");
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
-      operations: [
-        { op: "insert_after", hash: getHash(filePath, 3), content: "line 4\nline 5" },
-      ],
+      operations: [{ op: "insert_after", hash: getHash(filePath, 3), content: "line 4\nline 5" }],
     });
-
     expect(result.details?.operations).toBe(1);
     expect(result.details?.linesBefore).toBe(3);
     expect(result.details?.linesAfter).toBe(5);
     expect(result.details?.addedLines).toBe(2);
     expect(result.details?.removedLines).toBe(0);
-    expect(result.details?.file_version).toBeDefined();
     expect(result.details?.file_version).toMatch(/^fv_[0-9a-f]{8}$/);
-    // v2: invalidation contract
     expect(result.details?.anchors_valid_through).toBeDefined();
     expect(result.details?.must_refresh_from_line).toBeDefined();
-
-    // Content should include local diff
     const text = result.content?.[0]?.text ?? "";
     expect(text).toContain("New file version");
     expect(text).toContain("Local diff");
-    expect(text).toContain("--- file");
-    expect(text).toContain("+++ file");
   });
 
-  // === v2: occurrence disambiguation ===
+  it("should return ok: true on success", async () => {
+    const filePath = createTempFile("line 1\nline 2\nline 3");
+    const hash = getHash(filePath, 2);
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "replace_line", hash, content: "LINE TWO" }],
+    });
+    expect(result.details?.ok).toBe(true);
+  });
+
+  it("should return new_anchors array with 6-char lineNum#hash strings", async () => {
+    const filePath = createTempFile("line 1\nline 2\nline 3\nline 4\nline 5");
+    const hash = getHash(filePath, 3);
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "replace_line", hash, content: "LINE THREE" }],
+    });
+    expect(result.details?.ok).toBe(true);
+    expect(Array.isArray(result.details?.new_anchors)).toBe(true);
+    expect(result.details?.new_anchors.length).toBeGreaterThan(0);
+    for (const anchor of result.details!.new_anchors!) {
+      expect(anchor).toMatch(/^\d+#[0-9a-f]{6}$/);
+    }
+  });
+
+  it("should return diff_preview array with v3 prefixed lines", async () => {
+    const filePath = createTempFile("line 1\nline 2\nline 3\nline 4\nline 5");
+    const hash = getHash(filePath, 3);
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "replace_line", hash, content: "LINE THREE" }],
+    });
+    expect(result.details?.ok).toBe(true);
+    expect(Array.isArray(result.details?.diff_preview)).toBe(true);
+    expect(result.details?.diff_preview.length).toBeGreaterThan(0);
+    for (const line of result.details!.diff_preview!) {
+      expect(line).toMatch(/^[-+ ]\d+#[0-9a-f]{6} \[(low|med|high)\]\|/);
+    }
+  });
+
+  it("should return new_anchors and diff_preview for insert_after", async () => {
+    const filePath = createTempFile("line 1\nline 2\nline 3");
+    const hash = getHash(filePath, 3);
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "insert_after", hash, content: "line 4\nline 5" }],
+    });
+    expect(result.details?.ok).toBe(true);
+    expect(result.details?.new_anchors.length).toBeGreaterThan(0);
+  });
+
+  it("should return new_anchors even for no-op replaces", async () => {
+    const filePath = createTempFile("line 1\nline 2\nline 3");
+    const hash = getHash(filePath, 2);
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "replace_line", hash, content: "line 2" }],
+    });
+    expect(result.details?.ok).toBe(true);
+    expect(result.details?.new_anchors).toBeDefined();
+  });
 
   it("should use occurrence to target specific duplicate line", async () => {
     const filePath = createTempFile("a\nb\na\nc");
-    const aHash = computeLineHash("a"); // matches lines 1 and 3
-
+    const aHash = computeLineHash("a");
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "replace_line", hash: aHash, occurrence: 2, content: "A2" }],
     });
-
     expect(result.details?.error).toBeUndefined();
     expect(readFile(filePath)).toBe("a\nb\nA2\nc");
   });
 
-  it("should reject single-line op with ambiguous hash and no occurrence", async () => {
+  it("should auto-resolve duplicate content without occurrence (first match)", async () => {
     const filePath = createTempFile("a\nb\na\nc");
-    const aHash = computeLineHash("a"); // matches lines 1 and 3
-
+    const aHash = computeLineHash("a");
     const result = await editTool.execute("test-id", {
       file_path: filePath,
-      operations: [{ op: "replace_line", hash: aHash, content: "should fail" }],
+      operations: [{ op: "replace_line", hash: aHash, content: "A1" }],
     });
-
-    expect(result.details?.error).toBe("anchor_ambiguous");
-    expect(result.details?.suggested_action).toBe("re-read_with_context");
-    expect(result.details?.ambiguous_anchors).toBeDefined();
-    expect(result.details.ambiguous_anchors[0].hash).toBe(aHash);
-    expect(result.details.ambiguous_anchors[0].candidates).toEqual([1, 3]);
-    // File should be unchanged
-    expect(readFile(filePath)).toBe("a\nb\na\nc");
+    expect(result.details?.error).toBeUndefined();
+    expect(readFile(filePath)).toBe("A1\nb\na\nc");
   });
 
-  it("should reject single-line op with occurrence out of range", async () => {
+  it("should resolve to first match when occurrence out of range", async () => {
     const filePath = createTempFile("a\nb\na\nc");
-    const aHash = computeLineHash("a"); // matches 2 lines
-
+    const aHash = computeLineHash("a");
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "replace_line", hash: aHash, occurrence: 5, content: "x" }],
     });
-
-    expect(result.details?.error).toBe("anchor_ambiguous");
-    expect(readFile(filePath)).toBe("a\nb\na\nc");
+    expect(result.details?.error).toBeUndefined();
+    expect(readFile(filePath)).toBe("x\nb\na\nc");
   });
 
   it("should use occurrence:1 (first match) for delete_line", async () => {
     const filePath = createTempFile("a\nb\na\nc");
     const aHash = computeLineHash("a");
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "delete_line", hash: aHash, occurrence: 1 }],
     });
-
     expect(result.details?.error).toBeUndefined();
     expect(readFile(filePath)).toBe("b\na\nc");
   });
@@ -468,71 +440,56 @@ describe("editTool", () => {
   it("should use occurrence for insert_after on duplicate line", async () => {
     const filePath = createTempFile("a\nb\na\nc");
     const aHash = computeLineHash("a");
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "insert_after", hash: aHash, occurrence: 2, content: "INSERTED" }],
     });
-
     expect(result.details?.error).toBeUndefined();
     expect(readFile(filePath)).toBe("a\nb\na\nINSERTED\nc");
   });
 
-  // === v2: range operation ambiguity rejection ===
-
-  it("should reject range op with ambiguous start_hash", async () => {
+  it("should auto-resolve range op with duplicate start_hash (first match)", async () => {
     const filePath = createTempFile("a\nb\na\nc\nd");
-    const aHash = computeLineHash("a"); // matches lines 1 and 3
-    const dHash = getHash(filePath, 5);  // unique
-
+    const aHash = computeLineHash("a");
+    const dHash = getHash(filePath, 5);
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "delete_range", start_hash: aHash, end_hash: dHash }],
     });
-
-    expect(result.details?.error).toBe("anchor_ambiguous");
-    expect(result.details?.ambiguous_anchors[0].hash).toBe(aHash);
-    expect(readFile(filePath)).toBe("a\nb\na\nc\nd");
+    expect(result.details?.error).toBeUndefined();
+    expect(readFile(filePath)).toBe("");
   });
 
-  it("should reject range op with ambiguous end_hash", async () => {
-    const filePath = createTempFile("a\nb\nc\na\nd");
-    const bHash = getHash(filePath, 2);  // unique
-    const aHash = computeLineHash("a"); // matches lines 1 and 4
-
+  it("should auto-resolve range op with duplicate end_hash (first match)", async () => {
+    const filePath = createTempFile("b\na\nc\na\nd");
+    const bHash = getHash(filePath, 1);
+    const aHash = computeLineHash("a");
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "replace_range", start_hash: bHash, end_hash: aHash, content: "X" }],
     });
-
-    expect(result.details?.error).toBe("anchor_ambiguous");
-    expect(readFile(filePath)).toBe("a\nb\nc\na\nd");
+    expect(result.details?.error).toBeUndefined();
+    expect(readFile(filePath)).toBe("X\nc\na\nd");
   });
 
-  it("should reject range op when both endpoints are ambiguous", async () => {
+  it("should auto-resolve range with both endpoints identical content", async () => {
     const filePath = createTempFile("a\nb\na\nc\na");
-    const aHash = computeLineHash("a"); // matches lines 1, 3, 5
-
+    const aHash = computeLineHash("a");
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "delete_range", start_hash: aHash, end_hash: aHash }],
     });
-
-    expect(result.details?.error).toBe("anchor_ambiguous");
-    expect(readFile(filePath)).toBe("a\nb\na\nc\na");
+    expect(result.details?.error).toBeUndefined();
+    expect(readFile(filePath)).toBe("b\na\nc\na");
   });
-
-  // === v2: invalidation contract ===
 
   it("should return anchors_valid_through and must_refresh_from_line for middle edit", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3\nline 4\nline 5");
     const hash = getHash(filePath, 3);
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "replace_line", hash, content: "LINE THREE" }],
     });
-
     expect(result.details?.error).toBeUndefined();
     expect(result.details?.anchors_valid_through).toBe(2);
     expect(result.details?.must_refresh_from_line).toBe(3);
@@ -541,12 +498,10 @@ describe("editTool", () => {
   it("should return anchors_valid_through: 0 for edit at top of file", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3");
     const hash = getHash(filePath, 1);
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "insert_before", hash, content: "line 0" }],
     });
-
     expect(result.details?.error).toBeUndefined();
     expect(result.details?.anchors_valid_through).toBe(0);
     expect(result.details?.must_refresh_from_line).toBe(1);
@@ -555,29 +510,23 @@ describe("editTool", () => {
   it("should include stale anchor warning with line range in text", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3\nline 4");
     const hash = getHash(filePath, 2);
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "replace_line", hash, content: "LINE TWO" }],
     });
-
     const text = result.content?.[0]?.text ?? "";
     expect(text).toContain("Anchors valid through line: 1");
     expect(text).toContain("Refresh required from line: 2");
   });
 
-  // === v2: error taxonomy ===
-
   it("should return invalid_range_order for reversed range", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3");
     const hash3 = getHash(filePath, 3);
     const hash1 = getHash(filePath, 1);
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "replace_range", start_hash: hash3, end_hash: hash1, content: "x" }],
     });
-
     expect(result.details?.error).toBe("invalid_range_order");
     expect(result.details?.suggested_action).toBe("re-read_file");
     expect(result.details?.start_line).toBe(3);
@@ -586,33 +535,26 @@ describe("editTool", () => {
 
   it("should return suggested_action on empty_operations", async () => {
     const filePath = createTempFile("content");
-
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [],
     });
-
     expect(result.details?.error).toBe("empty_operations");
     expect(result.details?.suggested_action).toBe("provide_at_least_one_operation");
   });
 
-  // === v2: batch atomicity with ambiguity ===
-
-  it("should reject entire batch if any op has ambiguous hash", async () => {
+  it("should auto-resolve batch with duplicate-content hashes", async () => {
     const filePath = createTempFile("a\nb\na\nc");
-    const bHash = getHash(filePath, 2);  // unique
-    const aHash = computeLineHash("a"); // ambiguous (lines 1 and 3)
-
+    const bHash = getHash(filePath, 2);
+    const aHash = computeLineHash("a");
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [
         { op: "replace_line", hash: bHash, content: "B" },
-        { op: "replace_line", hash: aHash, content: "A" },  // ambiguous, no occurrence
+        { op: "replace_line", hash: aHash, content: "A" },
       ],
     });
-
-    expect(result.details?.error).toBe("anchor_ambiguous");
-    // File should be unchanged — atomic rejection
-    expect(readFile(filePath)).toBe("a\nb\na\nc");
+    expect(result.details?.error).toBeUndefined();
+    expect(readFile(filePath)).toBe("A\nB\na\nc");
   });
 });
