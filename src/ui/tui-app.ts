@@ -363,6 +363,10 @@ export class TuiApp {
         this.handleCtrlC();
         return true;
       }
+      if (matchesKey(data, Key.super("v")) || matchesKey(data, Key.ctrl("v")) || data === "\x16") {
+        this.pasteClipboardImage();
+        return true;
+      }
     }
 
     return false;
@@ -636,6 +640,26 @@ export class TuiApp {
       .trim();
   }
 
+  private pasteClipboardImage(): void {
+    readClipboardImageNonBlocking().then((img) => {
+      if (img) {
+        this.pendingImages.push(img);
+        this.updateImageStatus();
+        this.conversation.addInlineImage(img.data, img.mimeType);
+        this.conversation.addInfo(
+          c.dim(`Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`),
+        );
+        if (!this.deps.modelSupportsImages) {
+          this.conversation.addInfo(
+            c.yellow(`${this.deps.modelName} does not support image input.`),
+          );
+        }
+      } else {
+        this.conversation.addInfo(c.dim("No image found in clipboard (macOS only). Use /image <path> to attach an image file."));
+      }
+    });
+  }
+
   private handleCtrlC(): void {
     if (this.resolvePermission) {
       this.resolvePermissionChoice({ decision: "deny" });
@@ -802,7 +826,24 @@ export class TuiApp {
     let images = this.pendingImages.length > 0 ? [...this.pendingImages] : undefined;
     const hasText = text.length > 0;
     const hasImages = Boolean(images?.length);
-    if (!hasText && !hasImages) return;
+    if (!hasText && !hasImages) {
+      readClipboardImageNonBlocking().then((img) => {
+        if (img) {
+          this.pendingImages.push(img);
+          this.updateImageStatus();
+          this.conversation.addInlineImage(img.data, img.mimeType);
+          this.conversation.addInfo(
+            c.dim(`Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`),
+          );
+          if (!this.deps.modelSupportsImages) {
+            this.conversation.addInfo(
+              c.yellow(`${this.deps.modelName} does not support image input.`),
+            );
+          }
+        }
+      });
+      return;
+    }
 
     this.editor.setText("");
 

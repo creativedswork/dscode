@@ -307,8 +307,22 @@ Always push the branch before creating a PR.
 | `/permissions` | View current permission grants |
 | `/cost` | Show token usage |
 | `/compact` | Manually trigger context compression |
-
+| `/image <path\|clipboard>` | Attach an image from file or clipboard |
 Exit: type `exit` or press `Ctrl+C` twice. Interrupt generation: single `Ctrl+C`. In Web UI, commands correspond to sidebar and button actions.
+
+## Image input
+
+Attach images to your messages — the model extracts text via OCR and incorporates it into the conversation.
+
+| Terminal | Paste shortcut | Notes |
+| --- | --- | --- |
+| **iTerm2 / Kitty / VSCode** | `Cmd+V` (macOS) / `Ctrl+Shift+V` (Linux) | Native image paste via terminal protocol |
+| **macOS Terminal.app** | `Ctrl+V` or empty editor `Enter` | macOS Terminal doesn't support inline image paste; use `Ctrl+V` or simply press `Enter` with an empty editor to auto-detect clipboard image |
+| **Windows / Linux** | `Ctrl+V` | Reads image from system clipboard |
+
+> On macOS, clipboard image reading uses `osascript` to extract PNG data. On Windows/Linux, use `/image <path>` to attach image files directly.
+
+> **Note:** For models that natively support image input (e.g., `deepseek-v4-pro`), images are passed directly to the model. For other models, OCR is used to extract text.
 
 ## Configuration reference
 
@@ -437,7 +451,7 @@ Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for philos
 
 - The `summarize-prefix` context compression strategy currently falls back to `sliding-window`
 - Automatic memory extraction is off by default; use `/memory add` manually
-- Image input is OCR-based, text extraction only — no visual understanding
+- Image input requires native model support (e.g., `deepseek-v4-pro`) for visual understanding; OCR fallback for text-only models
 - If there's no output on first launch, it's usually an invalid API Key or network issue
 
 ## More docs
