@@ -428,6 +428,34 @@ function validateOperations(
     };
   }
 
+  // P0-3: detect overlapping operations in same batch
+  if (ops.length > 1) {
+    const ranges: { startLine: number; endLine: number }[] = [];
+    for (const op of ops) {
+      if (isSingleLineOp(op)) {
+        const ln = resolvedMap.get(op.hash);
+        if (ln && "lineNum" in ln) ranges.push({ startLine: ln.lineNum, endLine: ln.lineNum });
+      } else {
+        const s = resolvedMap.get(op.start_hash);
+        const e = resolvedMap.get(op.end_hash);
+        if (s && "lineNum" in s && e && "lineNum" in e) {
+          ranges.push({ startLine: Math.min(s.lineNum, e.lineNum), endLine: Math.max(s.lineNum, e.lineNum) });
+        }
+      }
+    }
+    for (let i = 0; i < ranges.length; i++) {
+      for (let j = i + 1; j < ranges.length; j++) {
+        if (ranges[i].startLine <= ranges[j].endLine && ranges[j].startLine <= ranges[i].endLine) {
+          return {
+            valid: false,
+            error: "overlapping_operations",
+            suggested_action: "rewrite_as_single_block",
+          };
+        }
+      }
+    }
+  }
+
   return { valid: true };
 }
 
@@ -645,7 +673,78 @@ function generateLocalDiff(
 }
 
 
-// --- AgentTool ---
+// --- Sanity checks (4.1) ---
+
+interface SanityResult {
+  status: "clean" | "suspicious";
+  warnings: string[];
+}
+
+function runSanityChecks(
+  oldLines: string[],
+  newLines: string[],
+  affectedMinLine: number,
+  affectedMaxLine: number,
+): SanityResult {
+  const warnings: string[] = [];
+  const ctxStart = Math.max(0, affectedMinLine - 4);
+  const ctxEnd = Math.min(newLines.length, affectedMaxLine + 4);
+
+  // P0-8: duplicate-line guard
+  const seenHashes = new Map<string, number[]>();
+  for (let i = ctxStart; i < ctxEnd; i++) {
+    if (newLines[i].trim().length === 0) continue;
+    const h = computeLineHash(newLines[i]);
+    const existing = seenHashes.get(h);
+    if (existing) { existing.push(i + 1); }
+    else { seenHashes.set(h, [i + 1]); }
+  }
+  for (const [hash, lineNums] of seenHashes) {
+    if (lineNums.length > 1) {
+      warnings.push("duplicate_line: identical lines at " + lineNums.join(", "));
+    }
+  }
+
+  // P0-10: delimiter balance heuristic
+  let braces = 0, parens = 0, brackets = 0;
+  for (let i = ctxStart; i < ctxEnd; i++) {
+    for (const ch of newLines[i]) {
+      if (ch === "{") braces++; if (ch === "}") braces--;
+      if (ch === "(") parens++; if (ch === ")") parens--;
+      if (ch === "[") brackets++; if (ch === "]") brackets--;
+    }
+  }
+  if (Math.abs(braces) > 1) warnings.push("unbalanced_braces: net " + (braces > 0 ? "+" : "") + braces);
+  if (Math.abs(parens) > 2) warnings.push("unbalanced_parens: net " + (parens > 0 ? "+" : "") + parens);
+  if (Math.abs(brackets) > 2) warnings.push("unbalanced_brackets: net " + (brackets > 0 ? "+" : "") + brackets);
+
+  // P0-9: orphan-fragment guard
+  for (let i = ctxStart; i < ctxEnd; i++) {
+    const l = newLines[i].trim();
+    if (l === "else" || l === "else {") {
+      let hasIf = false;
+      for (let j = ctxStart; j < i; j++) {
+        if (/\bif\b/.test(newLines[j])) { hasIf = true; break; }
+      }
+      if (!hasIf) warnings.push("orphan_else at line " + (i + 1));
+    }
+    if (/^\s*}\s*$/.test(l) && l.length <= 3) {
+      let openCount = 0;
+      for (let j = ctxStart; j < i; j++) {
+        for (const ch of newLines[j]) {
+          if (ch === "{") openCount++;
+          if (ch === "}") openCount--;
+        }
+      }
+      if (openCount <= 0) warnings.push("suspicious_extra_brace at line " + (i + 1));
+    }
+  }
+
+  return {
+    status: warnings.length === 0 ? "clean" : "suspicious",
+    warnings,
+  };
+}
 
 export const editTool: AgentTool<typeof editParams> = {
   name: "edit",
@@ -775,6 +874,24 @@ export const editTool: AgentTool<typeof editParams> = {
         };
       }
 
+      if (validation.error === "overlapping_operations") {
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                "Edit rejected: overlapping operations detected.\n" +
+                "Multiple operations in this batch affect overlapping ranges.\n" +
+                "Hint: combine them into a single replace_range or re-organize into separate batches.",
+            },
+          ],
+          details: {
+            error: "overlapping_operations",
+            suggested_action: "rewrite_as_single_block",
+          },
+        };
+      }
+
       // anchor_stale (default)
       return {
         content: [
@@ -816,6 +933,8 @@ export const editTool: AgentTool<typeof editParams> = {
     writeFileSync(resolved, newContent);
 
     const newFileVersion = computeFileVersion(newContent);
+    const sanity = runSanityChecks(lines, resultLines, affectedMinLine,
+      Math.min(lines.length, resultLines.length));
     const diffResult = generateLocalDiff(lines, resultLines, operations, ctx);
 
     const mustRefreshFromLine = affectedMinLine > 0 ? affectedMinLine : 1;
@@ -867,6 +986,8 @@ export const editTool: AgentTool<typeof editParams> = {
         must_refresh_from_line: mustRefreshFromLine,
         new_anchors: diffResult.newAnchors,
         diff_preview: diffResult.diffPreview,
+        safety_status: sanity.status,
+        safety_warnings: sanity.warnings,
       },
     };
   },
