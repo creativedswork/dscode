@@ -20,7 +20,7 @@ import { inferLayout } from "../ui/mdx/inference.js";
 import { TuiBackend } from "../ui/tui-backend.js";
 import type { UiBackend } from "../ui/backend.js";
 import type { TuiDeps } from "../ui/tui-app.js";
-import { resolveModel, getThinkingLevel } from "../models/index.js";
+import { resolveModel, getThinkingLevel, getAllModels } from "../models/index.js";
 
 export class Harness {
   agent!: Agent;
@@ -178,6 +178,7 @@ export class Harness {
         config: this.config,
         onSetModel: (id: string) => this.setModel(id),
         onSetThinking: (level: string) => this.setThinking(level),
+        onSetProvider: (id: string) => this.setProvider(id),
       };
       ui = new TuiBackend(tuiDeps);
     }
@@ -262,6 +263,30 @@ export class Harness {
     }
   }
 
+
+  setProvider(providerId: string): void {
+    const oldProvider = this.config.provider;
+    if (oldProvider === providerId) return;
+
+    const models = getAllModels(providerId);
+    if (!models || models.length === 0) {
+      throw new Error(`Unknown provider: ${providerId}`);
+    }
+    const defaultModelId = models[0].id;
+    const model = resolveModel(providerId, defaultModelId);
+
+    this.config.provider = providerId;
+    this.config.modelId = defaultModelId;
+    this.config.thinkingLevel = getThinkingLevel(providerId, defaultModelId);
+    this.agent.state.model = model;
+    this.agent.state.thinkingLevel = this.config.thinkingLevel;
+    this.contextManager.updateModel(model.contextWindow, model.maxTokens);
+
+    saveUserConfig({ provider: providerId, modelId: defaultModelId, thinkingLevel: this.config.thinkingLevel });
+
+    this.agent.reset();
+    this.ui.clearConversationView();
+  }
   setThinking(level: string): void {
     this.config.thinkingLevel = level as any;
     this.agent.state.thinkingLevel = level as any;

@@ -4,7 +4,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ImageContent } from "@mariozechner/pi-ai";
-import { getProviders, getModels } from "@mariozechner/pi-ai";
+import { getAllProviders, getAllModels } from "../../models/index.js";
 import type { UiBackend } from "../backend.js";
 import type { HarnessConfig, PermissionPromptResult } from "../../core/types.js";
 import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig } from "../../core/config.js";
@@ -29,14 +29,6 @@ import type {
   ToolCallEntry,
 } from "./protocol.js";
 
-const QWEN_MODEL_LIST = [
-  { id: "qwen3.6-plus", name: "Qwen: Qwen3.6 Plus" },
-  { id: "qwen3-coder", name: "Qwen: Qwen3 Coder" },
-  { id: "qwq-32b", name: "Qwen: QwQ 32B" },
-  { id: "qwen-max", name: "Qwen: Qwen Max" },
-  { id: "qwen-plus", name: "Qwen: Qwen Plus" },
-  { id: "qwen-turbo", name: "Qwen: Qwen Turbo" },
-];
 export interface WebUiOptions {
   port: number;
   harness: Harness;
@@ -457,6 +449,7 @@ export class WebUiBackend implements UiBackend {
         config: this.config,
         onSetModel: (id: string) => (this.harness as any).setModel(id),
         onSetThinking: (level: string) => (this.harness as any).setThinking(level),
+        onSetProvider: (id: string) => (this.harness as any).setProvider(id),
       };
 
       const mockTui = {
@@ -658,15 +651,12 @@ export class WebUiBackend implements UiBackend {
   // ── Private: Helpers ──
 
   private buildConfigData(): ConfigData {
-    const providers = getProviders() as string[];
-    if (!providers.includes("qwen")) providers.push("qwen");
-    const models = this.config.provider === "qwen"
-      ? QWEN_MODEL_LIST.map((m) => ({ id: m.id, name: m.name }))
-      : getModels(this.config.provider as any).map((m: any) => ({
-        id: m.id,
-        name: m.name,
-      }));
+    const providers = getAllProviders();
+    const models = getAllModels(this.config.provider).map((m) => ({
+      id: m.id,
+      name: m.name,
 
+    }));
     return {
       provider: this.config.provider,
       modelId: this.config.modelId,

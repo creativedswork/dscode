@@ -1,21 +1,39 @@
-import { getModel } from "@mariozechner/pi-ai";
+import { getModel, getModels, getProviders } from "@mariozechner/pi-ai";
 import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ThinkingLevel } from "../core/types.js";
-import { buildQwenModel } from "./qwen.js";
+import { buildQwenModel, QWEN_MODELS } from "./qwen.js";
 
 type ModelFactory = (modelId: string) => Model<Api>;
 
-const providers = new Map<string, ModelFactory>();
+const providerFactories = new Map<string, ModelFactory>();
+const customModelDefs = new Map<string, { id: string; name: string }[]>();
 
-export function registerProvider(name: string, factory: ModelFactory): void {
-  providers.set(name, factory);
+export function registerProvider(
+  name: string,
+  factory: ModelFactory,
+  models?: { id: string; name: string }[],
+): void {
+  providerFactories.set(name, factory);
+  if (models) customModelDefs.set(name, models);
+}
+
+export function getAllProviders(): string[] {
+  const builtin = getProviders() as string[];
+  const custom = Array.from(providerFactories.keys());
+  return [...new Set([...builtin, ...custom])];
+}
+
+export function getAllModels(provider: string): { id: string; name: string }[] {
+  const builtin = getModels(provider as any) as { id: string; name: string }[];
+  if (builtin.length > 0) return builtin;
+  return customModelDefs.get(provider) ?? [];
 }
 
 export function resolveModel(provider: string, modelId: string): Model<Api> {
   const builtin = (getModel as (p: string, m: string) => Model<Api> | undefined)(provider, modelId);
   if (builtin) return builtin;
 
-  const factory = providers.get(provider);
+  const factory = providerFactories.get(provider);
   if (factory) {
     const model = factory(modelId);
     if (model) return model;
@@ -39,4 +57,11 @@ export function getThinkingLevel(provider: string, modelId: string): ThinkingLev
 }
 
 // Register built-in providers
-registerProvider("qwen", buildQwenModel);
+registerProvider(
+  "qwen",
+  buildQwenModel,
+  Object.entries(QWEN_MODELS).map(([id, def]) => ({
+    id,
+    name: `Qwen: ${id}`,
+  })),
+);

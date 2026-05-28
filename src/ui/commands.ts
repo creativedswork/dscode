@@ -13,6 +13,7 @@ import type { ContextManager } from "../context/manager.js";
 import type { MCPManager } from "../mcp/manager.js";
 import type { TuiApp } from "./tui-app.js";
 import { saveUserConfig, saveUserProjectCwd, maskApiKey, PROVIDER_ENV_VARS } from "../core/config.js";
+import { getAllProviders, getAllModels } from "../models/index.js";
 import { readImageFile, readClipboardImage } from "../utils/image.js";
 
 
@@ -29,6 +30,7 @@ interface CommandContext {
   config: HarnessConfig;
   onSetModel: (modelId: string) => void;
   onSetThinking: (level: string) => void;
+  onSetProvider: (providerId: string) => void;
   tui: TuiApp;
 }
 
@@ -250,7 +252,7 @@ const COMMANDS: SlashCommandDef[] = [
         case "help": {
           ctx.tui.addInfo([
             "/config                  Show current user command config",
-            "/config provider <id>     Switch provider (saved to ~/.dscode/config.json)",
+            "/config provider <id>     Switch provider (no restart needed)",
             "/config model <id>       Switch model (saved to ~/.dscode/config.json)",
             "/config thinking <level> Set thinking level (saved to ~/.dscode/config.json)",
             "/config key <api-key>    Set your API key",
@@ -267,18 +269,27 @@ const COMMANDS: SlashCommandDef[] = [
         case "provider": {
           const providerId = rest[0];
           if (!providerId) {
-            ctx.tui.addError("Usage: /config provider <provider-id>");
+            const available = getAllProviders();
+            const current = ctx.config.provider;
+            const lines = available.map((p) => p === current ? `  * ${p} (current)` : `  ${p}`);
+            ctx.tui.addInfo(`Available providers:\n${lines.join("\n")}\n\nUsage: /config provider <provider-id>`);
             return;
           }
-          saveUserConfig({ provider: providerId });
-          ctx.tui.addInfo(`Provider set to: ${providerId}. Restart required for changes to take effect.`);
+          try {
+            ctx.onSetProvider(providerId);
+            ctx.tui.addInfo(`Provider switched to: ${providerId}. Default model selected. Conversation reset.`);
+          } catch (err: any) {
+            ctx.tui.addError(err.message);
+          }
           break;
         }
 
         case "model": {
           const modelId = rest[0];
           if (!modelId) {
-            ctx.tui.addError("Usage: /config model <model-id>");
+            const available = getAllModels(ctx.config.provider);
+            const models = available.map((m) => `  ${m.id} — ${m.name}`);
+            ctx.tui.addInfo(`Models for ${ctx.config.provider}:\n${models.join("\n")}\n\nUsage: /config model <model-id>`);
             return;
           }
           ctx.onSetModel(modelId);
@@ -303,6 +314,7 @@ const COMMANDS: SlashCommandDef[] = [
             return;
           }
           saveUserConfig({ apiKey: key });
+          ctx.config.apiKey = key;
           const envVar = PROVIDER_ENV_VARS[ctx.config.provider] ?? "DEEPSEEK_API_KEY";
           process.env[envVar] = key;
           if (envVar !== "DEEPSEEK_API_KEY") {
@@ -326,7 +338,7 @@ const COMMANDS: SlashCommandDef[] = [
           const lines = [
             `  provider      ${ctx.config.provider}`,
             `  model         ${ctx.config.modelId}`,
-            `  apiKey        ${maskApiKey(ctx.config.apiKey)}`,
+            `  key           ${maskApiKey(ctx.config.apiKey)}`,
             `  cwd           ${ctx.config.projectPath}`,
             `  maxTokens     ${ctx.config.maxTokens}`,
             `  thinking      ${ctx.config.thinkingLevel}`,

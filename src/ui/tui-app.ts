@@ -54,6 +54,7 @@ export interface TuiDeps {
   config: HarnessConfig;
   onSetModel: (modelId: string) => void;
   onSetThinking: (level: string) => void;
+  onSetProvider: (providerId: string) => void;
 }
 
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;
