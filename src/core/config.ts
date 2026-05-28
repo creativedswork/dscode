@@ -20,6 +20,7 @@ export const PROVIDER_ENV_VARS: Record<string, string> = {
 import type { HarnessConfig, ThinkingLevel } from "./types.js";
 import type { MCPProtocolVersion, MCPServerConfig, MCPTransport } from "../mcp/types.js";
 import { DEFAULT_MCP_PROTOCOL_VERSION } from "../mcp/types.js";
+import { getThinkingLevel } from "../models/index.js";
 
 
 function dsConfigHome(): string {
@@ -176,7 +177,7 @@ export function loadConfig(): HarnessConfig {
 
   const userSkillsDir = join(configDir, "skills");
   const projectSkillsDir = join(projectPath, ".dscode", "skills");
-  const defaultThinkingLevel: ThinkingLevel = (provider === "qwen" || modelId.includes("thinking")) ? "high" : (modelId.includes("pro") ? "medium" : "off");
+  const defaultThinkingLevel: ThinkingLevel = getThinkingLevel(provider, modelId);
   const validThinkingLevels = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
   const rawThinkingLevel = process.env.AGENT_THINKING_LEVEL ?? userConfig.thinkingLevel ?? merged.thinkingLevel;
   const thinkingLevel: ThinkingLevel = rawThinkingLevel !== undefined && validThinkingLevels.has(rawThinkingLevel as string)

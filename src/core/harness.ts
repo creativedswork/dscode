@@ -1,6 +1,6 @@
 import { Agent } from "@mariozechner/pi-agent-core";
 import type { AfterToolCallContext, AfterToolCallResult, AgentMessage, AgentTool, BeforeToolCallContext } from "@mariozechner/pi-agent-core";
-import { getModel, streamSimple, Type } from "@mariozechner/pi-ai";
+import { streamSimple, Type } from "@mariozechner/pi-ai";
 import type { Api, AssistantMessage, Context, ImageContent, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
 
 import type { HarnessConfig } from "./types.js";
@@ -20,95 +20,8 @@ import { inferLayout } from "../ui/mdx/inference.js";
 import { TuiBackend } from "../ui/tui-backend.js";
 import type { UiBackend } from "../ui/backend.js";
 import type { TuiDeps } from "../ui/tui-app.js";
+import { resolveModel, getThinkingLevel } from "../models/index.js";
 
-const DASHSCOPE_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1";
-
-const QWEN_MODELS: Record<string, Omit<Model<Api>, "id" | "name">> = {
-  "qwen3.6-plus": {
-    api: "openai-completions",
-    provider: "qwen",
-    baseUrl: DASHSCOPE_BASE,
-    reasoning: true,
-    input: ["text", "image"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 1_000_000,
-    maxTokens: 65536,
-    compat: { supportsDeveloperRole: false },
-  },
-  "qwen3-coder": {
-    api: "openai-completions",
-    provider: "qwen",
-    baseUrl: DASHSCOPE_BASE,
-    reasoning: false,
-    input: ["text", "image"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 131_072,
-    maxTokens: 8192,
-    compat: { supportsDeveloperRole: false },
-  },
-  "qwq-32b": {
-    api: "openai-completions",
-    provider: "qwen",
-    baseUrl: DASHSCOPE_BASE,
-    reasoning: true,
-    input: ["text", "image"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 131_072,
-    maxTokens: 8192,
-    compat: { supportsDeveloperRole: false },
-  },
-  "qwen-max": {
-    api: "openai-completions",
-    provider: "qwen",
-    baseUrl: DASHSCOPE_BASE,
-    reasoning: true,
-    input: ["text", "image"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 32_768,
-    maxTokens: 8192,
-    compat: { supportsDeveloperRole: false },
-  },
-  "qwen-plus": {
-    api: "openai-completions",
-    provider: "qwen",
-    baseUrl: DASHSCOPE_BASE,
-    reasoning: false,
-    input: ["text", "image"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 131_072,
-    maxTokens: 8192,
-    compat: { supportsDeveloperRole: false },
-  },
-  "qwen-turbo": {
-    api: "openai-completions",
-    provider: "qwen",
-    baseUrl: DASHSCOPE_BASE,
-    reasoning: false,
-    input: ["text", "image"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 1_000_000,
-    maxTokens: 8192,
-    compat: { supportsDeveloperRole: false },
-  },
-};
-
-function buildQwenModel(modelId: string): Model<Api> {
-  const key = modelId.startsWith("qwen/") ? modelId.slice(5) : modelId;
-  const def = QWEN_MODELS[key];
-  if (def) return { id: modelId, name: `Qwen: ${modelId}`, ...def };
-  return {
-    id: modelId,
-    name: `Qwen: ${modelId}`,
-    api: "openai-completions" as const,
-    provider: "qwen",
-    baseUrl: DASHSCOPE_BASE,
-    reasoning: false,
-    input: ["text", "image"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 131_072,
-    maxTokens: 8192,
-  };
-}
 export class Harness {
   agent!: Agent;
   sessionManager: SessionManager;
@@ -126,18 +39,6 @@ export class Harness {
   private lastMcpProgress = new Map<string, { progress?: number; total?: number; message?: string }>();
   private mcpEventUnsubscribe?: () => void;
   private shuttingDown = false;
-
-  private resolveModel(modelId?: string): Model<Api> {
-    const id = modelId ?? this.config.modelId;
-    let model = (getModel as (p: string, m: string) => Model<Api>)(this.config.provider, id);
-    if (!model && this.config.provider === "qwen") {
-      model = buildQwenModel(id);
-    }
-    if (!model) {
-      throw new Error(`Unknown model: ${id} for provider ${this.config.provider}`);
-    }
-    return model;
-  }
 
   constructor(config: HarnessConfig) {
     this.config = config;
@@ -182,7 +83,7 @@ export class Harness {
     this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection);
     const systemPrompt = this.baseSystemPrompt;
 
-    const model = this.resolveModel();
+    const model = resolveModel(this.config.provider, this.config.modelId);
     this.contextManager.updateModel(model.contextWindow, model.maxTokens);
 
     const maxTokens = this.config.maxTokens;
@@ -256,7 +157,7 @@ export class Harness {
   }
   async run(ui?: UiBackend): Promise<void> {
     if (ui) this.ui = ui;
-    const model = this.resolveModel();
+    const model = resolveModel(this.config.provider, this.config.modelId);
     const nativeImageSupport = model.input.includes("image");
     const needsOcr = !nativeImageSupport && (this.config.provider === "deepseek" || this.config.provider === "kimi-coding");
     if (!ui) {
@@ -342,13 +243,12 @@ export class Harness {
 
   setModel(modelId: string): void {
     const oldModelId = this.config.modelId;
-    const model = this.resolveModel(modelId);
+    const model = resolveModel(this.config.provider, modelId);
     this.config.modelId = modelId;
     this.agent.state.model = model;
     this.contextManager.updateModel(model.contextWindow, model.maxTokens);
 
-    // Auto-adjust thinking level: "high" for reasoning-capable models, "off" otherwise
-    const thinkingLevel = (model.provider === "qwen" || modelId.includes("thinking")) ? "high" : (modelId.includes("pro") ? "medium" : "off");
+    const thinkingLevel = getThinkingLevel(this.config.provider, modelId);
     this.config.thinkingLevel = thinkingLevel;
     this.agent.state.thinkingLevel = thinkingLevel;
 
