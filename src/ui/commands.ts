@@ -67,36 +67,85 @@ const COMMANDS: SlashCommandDef[] = [
       const [sub, ...rest] = args.split(/\s+/);
       switch (sub) {
         case "list": {
-          const sessions = ctx.sessionManager.listSessions();
+          const all = rest[0] === "--all";
+          const sessions = all
+            ? ctx.sessionManager.listAllSessions()
+            : ctx.sessionManager.listSessions();
           if (sessions.length === 0) {
-            ctx.tui.addInfo("No saved sessions.");
+            const msg = all
+              ? "No saved sessions."
+              : "No sessions in this project. Start a conversation to create one.";
+            ctx.tui.addInfo(msg);
             return;
           }
-          const lines = sessions.slice(0, 20).map((s) => {
-            const date = new Date(s.updatedAt).toLocaleDateString();
-            return `  ${s.id.slice(0, 8)} ${s.title} (${date}, ${s.messageCount} msgs)`;
+          const currentId = ctx.sessionManager.getCurrentSessionId();
+          const header = all
+            ? "All sessions:"
+            : `Sessions (project: ${ctx.config.projectPath}):`;
+          const lines = sessions.slice(0, 30).map((s) => {
+            const date = new Date(s.updatedAt).toISOString().slice(0, 10);
+            const time = new Date(s.updatedAt).toISOString().slice(11, 16);
+            const marker = s.id === currentId ? "*" : " ";
+            const title = `"${s.title.slice(0, 60)}"`;
+            return `${marker} ${s.id.slice(0, 8)} ${title}  ${s.modelProvider}/${s.modelId}  ${date} ${time}  ${s.messageCount} msgs`;
           });
-          ctx.tui.addInfo("Sessions:\n" + lines.join("\n"));
+          ctx.tui.addInfo(header + "\n" + lines.join("\n"));
           break;
         }
         case "save":
-          ctx.sessionManager.saveSession(ctx.agent);
-          ctx.tui.addInfo("Session saved.");
+          try {
+            ctx.sessionManager.saveSession(ctx.agent);
+            ctx.tui.addInfo("Session saved.");
+          } catch (err: any) {
+            ctx.tui.addError(`Failed to save session: ${err.message}`);
+          }
           break;
         case "load": {
           const id = rest[0];
           if (!id) { ctx.tui.addError("Usage: /session load <id>"); return; }
           const sessions = ctx.sessionManager.listSessions();
-          const match = sessions.find((s) => s.id.startsWith(id));
-          if (!match) { ctx.tui.addError(`Session not found: ${id}`); return; }
-          ctx.sessionManager.loadSession(match.id, ctx.agent);
-          ctx.tui.addInfo(`Loaded session: ${match.title}`);
+          const matches = sessions.filter((s) => s.id.startsWith(id));
+          if (matches.length === 0) {
+            ctx.tui.addError(`Session not found: ${id}`);
+            return;
+          }
+          if (matches.length > 1) {
+            const matchLines = matches.map((s) =>
+              `  ${s.id.slice(0, 8)} "${s.title.slice(0, 60)}"  ${s.modelProvider}/${s.modelId}  ${s.messageCount} msgs`,
+            );
+            ctx.tui.addError(
+              `Ambiguous session ID prefix. Matching sessions:\n${matchLines.join("\n")}`,
+            );
+            return;
+          }
+          const match = matches[0];
+          const result = ctx.sessionManager.loadSession(match.id, ctx.agent);
+          if (!result.success) {
+            ctx.tui.addError(`Failed to load session: ${result.error}`);
+            return;
+          }
+          const lines = [
+            `Loaded session: ${match.id.slice(0, 8)}`,
+            `  Title:    "${match.title}"`,
+            `  Model:    ${match.modelProvider} / ${match.modelId}`,
+            `  Project:  ${match.projectPath || "(unscoped)"}`,
+            `  Created:  ${new Date(match.createdAt).toISOString().replace("T", " ").slice(0, 16)}`,
+            `  Activity: ${new Date(match.updatedAt).toISOString().replace("T", " ").slice(0, 16)}`,
+            `  Messages: ${match.messageCount}`,
+          ];
+          ctx.tui.addInfo(lines.join("\n"));
+          ctx.tui.clearConversationView();
+          ctx.tui.replayMessages(ctx.agent.state.messages as unknown[]);
           break;
         }
         case "delete": {
           const id = rest[0];
           if (!id) { ctx.tui.addError("Usage: /session delete <id>"); return; }
-          ctx.sessionManager.deleteSession(id);
+          const result = ctx.sessionManager.deleteSession(id);
+          if (!result.success) {
+            ctx.tui.addError(`Failed to delete session: ${result.error}`);
+            return;
+          }
           ctx.tui.addInfo("Session deleted.");
           break;
         }

@@ -3,18 +3,39 @@ import type { Agent } from "@mariozechner/pi-agent-core";
 import type { SerializedSession, SessionMetadata } from "../core/types.js";
 import { SessionStore } from "./store.js";
 
+export interface LoadResult {
+  success: boolean;
+  error?: string;
+}
+
 function ulid(): string {
   const t = Date.now().toString(36).padStart(10, "0");
   const r = Array.from({ length: 16 }, () => Math.random().toString(36)[2]).join("");
   return (t + r).toUpperCase().slice(0, 26);
 }
 
+function extractFirstUserMessage(messages: unknown[]): string {
+  for (const msg of messages) {
+    const m = msg as any;
+    if (m.role !== "user") continue;
+    const content = m.content;
+    if (typeof content === "string") return content.slice(0, 80);
+    if (Array.isArray(content)) {
+      const textBlock = content.find((b: any) => b.type === "text");
+      if (textBlock) return textBlock.text.slice(0, 80);
+    }
+  }
+  return "";
+}
+
 export class SessionManager {
   private store: SessionStore;
   private current: SessionMetadata | null = null;
+  private projectPath: string;
 
-  constructor(dataDir: string) {
-    this.store = new SessionStore(dataDir);
+  constructor(dataDir: string, projectPath: string) {
+    this.projectPath = projectPath;
+    this.store = new SessionStore(dataDir, projectPath);
   }
 
   createSession(provider: string, modelId: string): SessionMetadata {
@@ -26,12 +47,14 @@ export class SessionManager {
       modelProvider: provider,
       modelId,
       messageCount: 0,
+      projectPath: this.projectPath,
+      preview: "",
     };
     return this.current;
   }
 
-  saveSession(agent: Agent): boolean {
-    if (!this.current) return false;
+  saveSession(agent: Agent): void {
+    if (!this.current) return;
 
     const messages = agent.state.messages;
     this.current.updatedAt = Date.now();
@@ -50,18 +73,20 @@ export class SessionManager {
       }
     }
 
+    if (!this.current.preview && messages.length > 0) {
+      this.current.preview = extractFirstUserMessage(messages as unknown[]);
+    }
+
+    this.current.projectPath = this.projectPath;
+
     const session: SerializedSession = {
       version: 1,
       metadata: this.current,
       messages: messages as unknown[],
     };
-    return this.store.save(session);
+    this.store.save(session);
   }
 
-  /**
-   * Attempt to save the session, catching all errors.
-   * Safe to call from error handlers and shutdown hooks.
-   */
   trySaveSession(agent: Agent): void {
     try {
       this.saveSession(agent);
@@ -70,20 +95,32 @@ export class SessionManager {
     }
   }
 
-  loadSession(id: string, agent: Agent): boolean {
-    const session = this.store.load(id);
-    if (!session) return false;
-    agent.state.messages = session.messages as any;
-    this.current = session.metadata;
-    return true;
+  loadSession(id: string, agent: Agent): LoadResult {
+    try {
+      const session = this.store.load(id);
+      agent.state.messages = session.messages as any;
+      this.current = session.metadata;
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message ?? "Unknown error loading session" };
+    }
   }
 
   listSessions(): SessionMetadata[] {
     return this.store.list();
   }
 
-  deleteSession(id: string): void {
-    this.store.delete(id);
+  listAllSessions(): SessionMetadata[] {
+    return this.store.listAll();
+  }
+
+  deleteSession(id: string): LoadResult {
+    try {
+      this.store.delete(id);
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message ?? "Unknown error deleting session" };
+    }
   }
 
   getCurrentSessionId(): string | null {

@@ -42,7 +42,7 @@ export class Harness {
 
   constructor(config: HarnessConfig) {
     this.config = config;
-    this.sessionManager = new SessionManager(config.dataDir);
+    this.sessionManager = new SessionManager(config.dataDir, config.projectPath);
     this.contextManager = new ContextManager(config.context);
     this.memoryManager = new MemoryManager(config.dataDir, config.projectPath, config.memory);
     this.driverRegistry = new DriverRegistry();

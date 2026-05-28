@@ -550,14 +550,24 @@ export class WebUiBackend implements UiBackend {
           id: s.id,
           title: s.title,
           updatedAt: s.updatedAt,
+          createdAt: s.createdAt,
           messageCount: s.messageCount,
+          modelProvider: s.modelProvider,
+          modelId: s.modelId,
+          projectPath: s.projectPath || "",
+          preview: s.preview || "",
         }));
         client.send({ type: "sessions", data });
         break;
       }
       case "save": {
-        sessionManager.saveSession(agent);
-        client.send({ type: "info", text: "Session saved." });
+        try {
+          sessionManager.saveSession(agent);
+          client.send({ type: "info", text: "Session saved." });
+        } catch (err: any) {
+          client.send({ type: "error", text: `Failed to save session: ${err.message}` });
+          return;
+        }
         const sessions = sessionManager.listSessions();
         client.send({
           type: "sessions",
@@ -565,7 +575,12 @@ export class WebUiBackend implements UiBackend {
             id: s.id,
             title: s.title,
             updatedAt: s.updatedAt,
+            createdAt: s.createdAt,
             messageCount: s.messageCount,
+            modelProvider: s.modelProvider,
+            modelId: s.modelId,
+            projectPath: s.projectPath || "",
+            preview: s.preview || "",
           })),
         });
         break;
@@ -576,16 +591,36 @@ export class WebUiBackend implements UiBackend {
           return;
         }
         const sessions = sessionManager.listSessions();
-        const match = sessions.find((s: any) => s.id.startsWith(cmd.id!));
-        if (!match) {
+        const matches = sessions.filter((s: any) => s.id.startsWith(cmd.id!));
+        if (matches.length === 0) {
           client.send({ type: "error", text: `Session not found: ${cmd.id}` });
           return;
         }
-        sessionManager.loadSession(match.id, agent);
-        client.send({ type: "info", text: `Session loaded: ${match.title}` });
+        if (matches.length > 1) {
+          const matchList = matches.map((s: any) =>
+            `  ${s.id.slice(0, 8)} "${s.title.slice(0, 60)}"  ${s.modelProvider}/${s.modelId}  ${s.messageCount} msgs`
+          ).join("\n");
+          client.send({ type: "error", text: `Ambiguous session ID prefix. Matching sessions:\n${matchList}` });
+          return;
+        }
+        const match = matches[0];
+        const result = sessionManager.loadSession(match.id, agent);
+        if (!result.success) {
+          client.send({ type: "error", text: `Failed to load session: ${result.error}` });
+          return;
+        }
+        client.send({
+          type: "info",
+          text: [
+            `Loaded session: ${match.id.slice(0, 8)}`,
+            `  Title:    "${match.title}"`,
+            `  Model:    ${match.modelProvider} / ${match.modelId}`,
+            `  Project:  ${match.projectPath || "(unscoped)"}`,
+            `  Messages: ${match.messageCount}`,
+          ].join("\n"),
+        });
         client.send({ type: "clear_conversation" });
 
-        // Resync conversation history after load
         const messages = this.buildConversationHistory();
         const model = (agent.state.model as any)?.name ?? this.config.modelId;
         client.send({
@@ -601,7 +636,11 @@ export class WebUiBackend implements UiBackend {
           client.send({ type: "error", text: "Session ID required." });
           return;
         }
-        sessionManager.deleteSession(cmd.id);
+        const result = sessionManager.deleteSession(cmd.id);
+        if (!result.success) {
+          client.send({ type: "error", text: `Failed to delete session: ${result.error}` });
+          return;
+        }
         client.send({ type: "info", text: "Session deleted." });
         const sessions = sessionManager.listSessions();
         client.send({
@@ -610,7 +649,12 @@ export class WebUiBackend implements UiBackend {
             id: s.id,
             title: s.title,
             updatedAt: s.updatedAt,
+            createdAt: s.createdAt,
             messageCount: s.messageCount,
+            modelProvider: s.modelProvider,
+            modelId: s.modelId,
+            projectPath: s.projectPath || "",
+            preview: s.preview || "",
           })),
         });
         break;
@@ -670,7 +714,7 @@ export class WebUiBackend implements UiBackend {
   }
 
   private buildConversationHistory(): ConversationMessage[] {
-    const messages = (this.harness as any).sessionManager?.getCurrentMessages?.() ?? [];
+    const messages = this.harness.agent.state.messages as any[];
     return messages.map((m: any) => ({
       role: m.role,
       content: m.content ?? "",

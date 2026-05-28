@@ -27,6 +27,11 @@ export interface SessionInfo {
   id: string;
   title: string;
   updatedAt: number;
+  createdAt: number;
+  modelProvider: string;
+  modelId: string;
+  projectPath: string;
+  preview: string;
   messageCount: number;
 }
 

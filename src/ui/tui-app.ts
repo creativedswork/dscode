@@ -159,6 +159,8 @@ export class TuiApp {
   private exitResolve!: () => void;
   private stopping = false;
   private pendingImages: ImageContent[] = [];
+  private static readonly IMAGE_PLACEHOLDER = "[image]";
+  private imagePasteInFlight = false;
   private sigintHandler = () => this.handleCtrlC();
 
   constructor(deps: TuiDeps) {
@@ -570,11 +572,23 @@ export class TuiApp {
     const printableText = this.extractPrintableText(pasteContent);
 
     // Try to read the image from system clipboard (macOS only)
+    if (this.imagePasteInFlight) {
+      if (printableText.length > 0) {
+        return { data: printableText };
+      }
+      return { consume: true };
+    }
+    this.imagePasteInFlight = true;
     readClipboardImageNonBlocking().then((img) => {
+      this.imagePasteInFlight = false;
       if (img) {
         this.pendingImages.push(img);
         this.updateImageStatus();
+        this.insertImagePlaceholder();
         this.conversation.addInlineImage(img.data, img.mimeType);
+        this.conversation.addInfo(
+          c.dim(`Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`),
+        );
         if (!this.deps.modelSupportsImages) {
           this.conversation.addInfo(
             c.yellow(`${this.deps.modelName} does not support image input.`),
@@ -606,11 +620,18 @@ export class TuiApp {
     // The data might be a Kitty image transmission.
     // We consume it and try to read the clipboard image instead,
     // since extracting base64 from Kitty protocol chunks is fragile.
+    if (this.imagePasteInFlight) return true;
+    this.imagePasteInFlight = true;
     readClipboardImageNonBlocking().then((img) => {
+      this.imagePasteInFlight = false;
       if (img) {
         this.pendingImages.push(img);
         this.updateImageStatus();
+        this.insertImagePlaceholder();
         this.conversation.addInlineImage(img.data, img.mimeType);
+        this.conversation.addInfo(
+          c.dim(`Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`),
+        );
         if (!this.deps.modelSupportsImages) {
           this.conversation.addInfo(
             c.yellow(`${this.deps.modelName} does not support image input.`),
@@ -641,10 +662,14 @@ export class TuiApp {
   }
 
   private pasteClipboardImage(): void {
+    if (this.imagePasteInFlight) return;
+    this.imagePasteInFlight = true;
     readClipboardImageNonBlocking().then((img) => {
+      this.imagePasteInFlight = false;
       if (img) {
         this.pendingImages.push(img);
         this.updateImageStatus();
+        this.insertImagePlaceholder();
         this.conversation.addInlineImage(img.data, img.mimeType);
         this.conversation.addInfo(
           c.dim(`Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`),
@@ -658,6 +683,12 @@ export class TuiApp {
         this.conversation.addInfo(c.dim("No image found in clipboard (macOS only). Use /image <path> to attach an image file."));
       }
     });
+  }
+
+  private insertImagePlaceholder(): void {
+    if (this.editor.insertTextAtCursor) {
+      this.editor.insertTextAtCursor(TuiApp.IMAGE_PLACEHOLDER + " ");
+    }
   }
 
   private handleCtrlC(): void {
@@ -823,14 +854,19 @@ export class TuiApp {
   }
 
   private handleSubmit(text: string): void {
+    text = text.replace(/\[image\]\s*/g, "").trim();
     let images = this.pendingImages.length > 0 ? [...this.pendingImages] : undefined;
     const hasText = text.length > 0;
     const hasImages = Boolean(images?.length);
     if (!hasText && !hasImages) {
+      if (this.imagePasteInFlight) return;
+      this.imagePasteInFlight = true;
       readClipboardImageNonBlocking().then((img) => {
+        this.imagePasteInFlight = false;
         if (img) {
           this.pendingImages.push(img);
           this.updateImageStatus();
+            this.insertImagePlaceholder();
           this.conversation.addInlineImage(img.data, img.mimeType);
           this.conversation.addInfo(
             c.dim(`Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`),
@@ -1005,9 +1041,15 @@ export class TuiApp {
     this.tui.requestRender(true);
   }
 
+
+  replayMessages(messages: unknown[]): void {
+    this.conversation.replayMessages(messages);
+  }
+
   addPendingImage(image: ImageContent): void {
     this.pendingImages.push(image);
     this.updateImageStatus();
+    this.insertImagePlaceholder();
   }
 
   private updateImageStatus(): void {

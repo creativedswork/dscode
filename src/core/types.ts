@@ -75,6 +75,8 @@ export interface SessionMetadata {
   modelProvider: string;
   modelId: string;
   messageCount: number;
+  projectPath: string;
+  preview: string;
 }
 
 export interface SerializedSession {

@@ -13,6 +13,10 @@ interface ToolEntry {
   isError: boolean;
 }
 
+type ContentBlock =
+  | { type: "text"; content: string }
+  | { type: "image"; img: Image };
+
 function toolArgsPreview(args: unknown): string {
   if (typeof args === "string") return args.slice(0, 80);
   try {
@@ -38,6 +42,17 @@ function toolResultPreview(result: unknown): string {
   } catch {
     return String(result).slice(0, 120);
   }
+}
+
+function extractTextFromBlocks(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter((b: any) => b.type === "text")
+      .map((b: any) => b.text)
+      .join("");
+  }
+  return "";
 }
 
 export type PermOptionValue = "allow" | "always_allow" | "explain" | "deny";
@@ -66,14 +81,13 @@ export function findPermOptionByKey(input: string): PermOption | undefined {
 
 export class ConversationView {
   private box: Box;
-  private textComponent: Text;
-  private segments: string[] = [];
+  private blocks: ContentBlock[] = [];
+  private renderedBlockCount = 0;
   private thinkingBuffer = "";
   private currentAssistantText = "";
   private toolEntries: ToolEntry[] = [];
   private renderedToolCount = 0;
   private tui: TUI;
-  private inlineImages: Component[] = [];
 
   private permToolName = "";
   private permPreview = "";
@@ -86,8 +100,6 @@ export class ConversationView {
   constructor(tui: TUI) {
     this.tui = tui;
     this.box = new Box(1, 0);
-    this.textComponent = new Text("");
-    this.box.addChild(this.textComponent);
   }
 
   get component(): Box {
@@ -95,7 +107,8 @@ export class ConversationView {
   }
 
   clear(): void {
-    this.segments = [];
+    this.blocks = [];
+    this.renderedBlockCount = 0;
     this.thinkingBuffer = "";
     this.currentAssistantText = "";
     this.toolEntries = [];
@@ -103,11 +116,44 @@ export class ConversationView {
     this.permToolName = "";
     this.permPreview = "";
     this.permSelected = 0;
+    while (this.box.children.length > 0) { this.box.removeChild(this.box.children[0]); }
+    this.tui.requestRender(true);
+  }
+
+  replayMessages(messages: unknown[]): void {
+    const lines: string[] = [];
+    for (const msg of messages) {
+      const m = msg as any;
+      if (m.role === "user") {
+        const text = extractTextFromBlocks(m.content);
+        if (text) {
+          lines.push(c.green.bold("you › ") + text);
+        }
+      } else if (m.role === "assistant") {
+        const content = m.content;
+        if (Array.isArray(content)) {
+          for (const block of content) {
+            if (block.type === "thinking" && block.thinking) {
+              lines.push(c.dim("[thinking] ") + c.dim(String(block.thinking).slice(0, 500)));
+            } else if (block.type === "text" && block.text) {
+              lines.push(c.magenta.bold("agent ›") + "\n" + block.text);
+            } else if (block.type === "toolCall") {
+              lines.push(` ${c.cyan("⚙")} ${c.cyan(block.name)} ${c.dim(toolArgsPreview(block.arguments))}`);
+            }
+          }
+        } else if (typeof content === "string") {
+          lines.push(c.magenta.bold("agent ›") + "\n" + content);
+        }
+      }
+    }
+    if (lines.length > 0) {
+      this.pushText(lines.join("\n"));
+    }
     this.render();
   }
 
   addUserMessage(text: string): void {
-    this.segments.push(c.green.bold("you › ") + text);
+    this.pushText(c.green.bold("you › ") + text);
     this.render();
   }
 
@@ -120,17 +166,17 @@ export class ConversationView {
 
   thinkingDelta(delta: string): void {
     this.thinkingBuffer += delta;
-    this.render();
+    this.renderLive();
   }
 
   textDelta(delta: string): void {
     this.currentAssistantText += delta;
-    this.render();
+    this.renderLive();
   }
 
   toolStart(name: string, args: unknown): void {
     this.toolEntries.push({ name, args, result: "" as unknown, isError: false });
-    this.render();
+    this.renderLive();
   }
 
   toolEnd(_name: string, result: unknown, isError: boolean): void {
@@ -139,34 +185,31 @@ export class ConversationView {
       entry.result = result;
       entry.isError = isError;
     }
-    this.render();
+    this.renderLive();
   }
 
   finishAssistantMessage(): void {
+    const lines: string[] = [];
     if (this.thinkingBuffer) {
-      this.segments.push(
-        c.dim("[thinking] ") + c.dim(this.thinkingBuffer.slice(0, 500)),
-      );
+      lines.push(c.dim("[thinking] ") + c.dim(this.thinkingBuffer.slice(0, 500)));
     }
     if (this.currentAssistantText) {
-      this.segments.push(
-        c.magenta.bold("agent ›") + "\n" + this.currentAssistantText,
-      );
+      lines.push(c.magenta.bold("agent ›") + "\n" + this.currentAssistantText);
     }
     if (this.toolEntries.length > 0) {
-      this.segments.push("");
-      this.segments.push(c.dim("──── ⚙ Tools ────────────────────────"));
+      lines.push("");
+      lines.push(c.dim("──── ⚙ Tools ────────────────────────"));
       for (const t of this.toolEntries) {
         const icon = t.isError ? c.red("✗") : c.cyan("✓");
         const preview = toolResultPreview(t.result);
         const argsStr = toolArgsPreview(t.args);
-        this.segments.push(
-          ` ${icon} ${c.cyan(t.name)} ${c.dim(argsStr)}${preview ? c.dim(" → ") + preview : ""}`,
-        );
+        lines.push(` ${icon} ${c.cyan(t.name)} ${c.dim(argsStr)}${preview ? c.dim(" → ") + preview : ""}`);
       }
-      this.segments.push("");
     }
-    this.segments.push("");
+    if (lines.length > 0) {
+      lines.push("");
+      this.pushText(lines.join("\n"));
+    }
     this.currentAssistantText = "";
     this.thinkingBuffer = "";
     this.toolEntries = [];
@@ -175,26 +218,22 @@ export class ConversationView {
   }
 
   addInfo(text: string): void {
-    this.segments.push(c.dim(text));
+    this.pushText(c.dim(text));
     this.render();
   }
 
   addNotice(text: string): void {
-    this.segments.push(text);
+    this.pushText(text);
     this.render();
   }
 
   addInlineImage(base64Data: string, mimeType: string): void {
-    const caps = getCapabilities();
-    if (caps.images) {
+    if (getCapabilities().images) {
       const img = new Image(base64Data, mimeType, this.imageTheme, {
         maxHeightCells: 12,
         maxWidthCells: 40,
       });
-      this.inlineImages.push(img);
-      this.box.removeChild(this.textComponent);
-      this.box.addChild(img);
-      this.box.addChild(this.textComponent);
+      this.blocks.push({ type: "image", img });
     } else {
       const cacheDir = join(homedir(), ".dscode", "image-cache");
       mkdirSync(cacheDir, { recursive: true });
@@ -202,14 +241,13 @@ export class ConversationView {
       const filename = `${Date.now()}.${ext}`;
       const filePath = join(cacheDir, filename);
       writeFileSync(filePath, Buffer.from(base64Data, "base64"));
-      const linkText = c.dim(`[image: ${filePath}]`);
-      this.segments.push(hyperlink(linkText, `file://${filePath}`));
+      this.pushText(c.dim(`[image: ${filePath}]`));
     }
     this.render();
   }
 
   addError(text: string): void {
-    this.segments.push(c.red("[error] " + text));
+    this.pushText(c.red("[error] " + text));
     this.render();
   }
 
@@ -233,6 +271,10 @@ export class ConversationView {
     this.permToolName = "";
     this.permPreview = "";
     this.permSelected = 0;
+  }
+
+  private pushText(content: string): void {
+    this.blocks.push({ type: "text", content });
   }
 
   private renderPermPrompt(): string[] {
@@ -262,24 +304,43 @@ export class ConversationView {
   }
 
   private render(): void {
-    const lines: string[] = [];
+    const totalBlocks = this.blocks.length;
 
-    for (const s of this.segments) {
-      lines.push(...s.split("\n"));
+    // Add new blocks since last render
+    for (let i = this.renderedBlockCount; i < totalBlocks; i++) {
+      const block = this.blocks[i];
+      if (block.type === "text") {
+        this.box.addChild(new Text(block.content));
+      } else {
+        this.box.addChild(block.img);
+      }
     }
+    this.renderedBlockCount = totalBlocks;
 
+    // Live content: rebuild live section each time
+    this.renderLive();
+  }
+
+  private liveComponents: Component[] = [];
+
+  private renderLive(): void {
+    // Remove previous live components
+    for (const comp of this.liveComponents) {
+      this.box.removeChild(comp);
+    }
+    this.liveComponents = [];
+
+    const liveLines: string[] = [];
     if (this.thinkingBuffer) {
-      lines.push(c.dim("[thinking] " + this.thinkingBuffer.slice(0, 500)));
+      liveLines.push(c.dim("[thinking] " + this.thinkingBuffer.slice(0, 500)));
     }
-
     if (this.currentAssistantText) {
-      lines.push(c.magenta.bold("agent ›") + "\n" + this.currentAssistantText);
+      liveLines.push(c.magenta.bold("agent ›") + "\n" + this.currentAssistantText);
     }
-
     if (this.toolEntries.length > this.renderedToolCount) {
       if (this.renderedToolCount === 0) {
-        lines.push("");
-        lines.push(c.dim("──── ⚙ Tools ────────────────────────"));
+        liveLines.push("");
+        liveLines.push(c.dim("──── ⚙ Tools ────────────────────────"));
       }
       for (let i = this.renderedToolCount; i < this.toolEntries.length; i++) {
         const t = this.toolEntries[i];
@@ -288,11 +349,11 @@ export class ConversationView {
           const icon = t.isError ? c.red("✗") : c.cyan("✓");
           const preview = toolResultPreview(t.result);
           const argsStr = toolArgsPreview(t.args);
-          lines.push(
+          liveLines.push(
             ` ${icon} ${c.cyan(t.name)} ${c.dim(argsStr)}${preview ? c.dim(" → ") + preview : ""}`,
           );
         } else {
-          lines.push(
+          liveLines.push(
             ` ${c.yellow("⟳")} ${c.cyan(t.name)} ${c.dim(toolArgsPreview(t.args))} ${c.dim("...")}`,
           );
         }
@@ -302,11 +363,18 @@ export class ConversationView {
       ).length;
     }
 
-    if (this.permToolName) {
-      lines.push(...this.renderPermPrompt());
+    if (liveLines.length > 0) {
+      const liveText = new Text(liveLines.join("\n"));
+      this.box.addChild(liveText);
+      this.liveComponents.push(liveText);
     }
 
-    this.textComponent.setText(lines.join("\n"));
+    if (this.permToolName) {
+      const permText = new Text(this.renderPermPrompt().join("\n"));
+      this.box.addChild(permText);
+      this.liveComponents.push(permText);
+    }
+
     this.box.invalidate();
     this.tui.requestRender(true);
   }
