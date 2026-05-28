@@ -252,6 +252,11 @@ export function loadConfig(): HarnessConfig {
     skills,
     mcp,
     appHost: { enabled: true },
+    atFile: {
+      maxFiles: (merged.atFileMaxFiles as number) ?? 5,
+      maxFileSize: (merged.atFileMaxFileSize as number) ?? 50 * 1024,
+      maxTotalSize: (merged.atFileMaxTotalSize as number) ?? 200 * 1024,
+    },
     agentsMdContent: loadAgentsMd(projectPath),
   };
 

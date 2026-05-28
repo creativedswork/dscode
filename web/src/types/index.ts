@@ -16,6 +16,7 @@ export type ClientCommand =
   | { type: "config"; action: "set_key"; value: string }
   | { type: "config"; action: "set_provider"; value: string }
   | { type: "session"; action: "list" | "save" | "load" | "delete"; id?: string }
+  | { type: "file_list"; prefix: string }
   | { type: "mcp"; action: "list" | "refresh" };
 
 export interface SessionInfo {
@@ -96,7 +97,15 @@ export type ServerEvent =
   | { type: "slash_result"; text: string }
   | { type: "mcp_app"; app: McpAppInfo }
   | { type: "clear_conversation" }
+  | { type: "file_list_result"; prefix: string; items: FileListItem[] }
   | { type: "processing"; processing: boolean };
+
+export interface FileListItem {
+  path: string;
+  name: string;
+  isDir: boolean;
+  depth: number;
+}
 
 // ── Local UI Types ──
 

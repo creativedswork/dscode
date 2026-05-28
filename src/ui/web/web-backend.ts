@@ -16,6 +16,7 @@ import type { AppInstance } from "../../mcp/app/types.js";
 import { buildMcpServers } from "../mcp-browser.js";
 import { ocrImages } from "../../utils/ocr.js";
 import type { OcrResult } from "../../utils/ocr.js";
+import { resolveAtFileRefs, listProjectFiles } from "../../utils/at-file-resolver.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
 import type {
   ClientCommand,
@@ -115,9 +116,7 @@ export class WebUiBackend implements UiBackend {
           resolve();
           return;
         }
-        reject(err);
       });
-
       this.httpServer.listen(this.port, () => {
         console.log(`
   DSCode Web UI ready at http://localhost:${this.port}
@@ -293,8 +292,8 @@ export class WebUiBackend implements UiBackend {
   private async handleMessage(client: WebSocketClient, cmd: ClientCommand): Promise<void> {
     switch (cmd.type) {
       case "chat": {
-        const text = cmd.text;
-        const images = cmd.images;
+        let text = cmd.text;
+        let images = cmd.images;
 
         // Check model image support
         const model = (this.harness.agent.state.model as any);
@@ -318,6 +317,19 @@ export class WebUiBackend implements UiBackend {
           break;
         }
 
+        // Resolve @file references
+        const resolved = resolveAtFileRefs(this.config.projectPath, text, this.config.atFile ?? {});
+        text = resolved.text;
+        if (resolved.images.length > 0) {
+          const atImages = resolved.images.map((img) => ({
+            data: img.data,
+            mimeType: img.mimeType,
+          }));
+          images = [...(images ?? []), ...atImages];
+        }
+        for (const warn of resolved.warnings) {
+          client.send({ type: "info", text: `@${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}` });
+        }
         // Broadcast user message to client before sending to agent
         client.send({ type: "user_message", text, images: images && images.length > 0 ? images : undefined } as any);
 
@@ -418,6 +430,11 @@ export class WebUiBackend implements UiBackend {
         break;
       }
 
+      case "file_list": {
+        const items = listProjectFiles(this.config.projectPath, cmd.prefix);
+        client.send({ type: "file_list_result" as any, prefix: cmd.prefix, items });
+        break;
+      }
       case "mcp": {
         this.handleMcp(client, cmd);
         break;

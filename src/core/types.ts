@@ -25,6 +25,13 @@ export interface HarnessConfig {
   mcp: MCPServerConfig[];
   appHost: AppHostConfig;
   agentsMdContent?: string;
+  atFile?: AtFileConfig;
+}
+
+export interface AtFileConfig {
+  maxFiles: number;
+  maxFileSize: number;
+  maxTotalSize: number;
 }
 
 export interface AppHostConfig {

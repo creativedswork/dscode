@@ -7,6 +7,9 @@ import {
   Editor,
   CancellableLoader,
   CombinedAutocompleteProvider,
+  type AutocompleteProvider,
+  type AutocompleteSuggestions,
+  type AutocompleteItem,
   matchesKey,
   Key,
   decodeKittyPrintable,
@@ -29,6 +32,7 @@ import { c, editorTheme } from "./theme.js";
 import { ConversationView, findPermOptionByKey } from "./conversation.js";
 import { getSlashCommandAutocomplete, executeSlashCommand } from "./commands.js";
 import { buildMcpServers, getMcpVisibleRows, renderMcpServerList, renderMcpToolList } from "./mcp-browser.js";
+import { resolveAtFileRefs, listProjectFiles } from "../utils/at-file-resolver.js";
 import { readClipboardImageNonBlocking } from "../utils/image.js";
 import { ocrImages } from "../utils/ocr.js";
 import type { OcrResult } from "../utils/ocr.js";
@@ -53,6 +57,69 @@ export interface TuiDeps {
 }
 
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;
+
+class HybridAutocompleteProvider implements AutocompleteProvider {
+  private projectPath: string;
+  private slashProvider: CombinedAutocompleteProvider;
+
+  constructor(slashCommands: { name: string; description?: string }[], projectPath: string) {
+    this.projectPath = projectPath;
+    this.slashProvider = new CombinedAutocompleteProvider(slashCommands, projectPath, null);
+  }
+
+  async getSuggestions(
+    lines: string[],
+    cursorLine: number,
+    cursorCol: number,
+    options: { signal: AbortSignal; force?: boolean },
+  ): Promise<AutocompleteSuggestions | null> {
+    const currentLine = lines[cursorLine] || "";
+    const textBeforeCursor = currentLine.slice(0, cursorCol);
+
+    const atMatch = textBeforeCursor.match(/(?:^|[\s])@([^\s]*)$/);
+    if (atMatch) {
+      const query = atMatch[1];
+      const items = listProjectFiles(this.projectPath, query, 20);
+      if (items.length === 0) return null;
+      return {
+        prefix: atMatch[0],
+        items: items.map((i) => ({
+          value: i.path,
+          label: i.name + (i.isDir ? "/" : ""),
+          description: i.path,
+        })),
+      };
+    }
+
+    return this.slashProvider.getSuggestions(lines, cursorLine, cursorCol, options);
+  }
+
+  applyCompletion(
+    lines: string[],
+    cursorLine: number,
+    cursorCol: number,
+    item: AutocompleteItem,
+    prefix: string,
+  ): { lines: string[]; cursorLine: number; cursorCol: number } {
+    if (prefix.startsWith("@")) {
+      const currentLine = lines[cursorLine] || "";
+      const beforePrefix = currentLine.slice(0, cursorCol - prefix.length);
+      const afterCursor = currentLine.slice(cursorCol);
+      const isDir = item.label.endsWith("/");
+      const suffix = isDir ? "" : " ";
+      const newLine = `${beforePrefix}${item.value}${suffix}${afterCursor}`;
+      const newLines = [...lines];
+      newLines[cursorLine] = newLine;
+      return { lines: newLines, cursorLine, cursorCol: beforePrefix.length + item.value.length + suffix.length };
+    }
+    return this.slashProvider.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
+  }
+
+  shouldTriggerFileCompletion(): boolean {
+    return true;
+  }
+}
+
 
 export class TuiApp {
   private deps: TuiDeps;
@@ -102,12 +169,10 @@ export class TuiApp {
 
     this.loader = new CancellableLoader(this.tui, c.cyan, c.dim, "Waiting...");
 
-    const autocomplete = new CombinedAutocompleteProvider(
+    const autocomplete = new HybridAutocompleteProvider(
       getSlashCommandAutocomplete(),
       deps.projectPath,
-      null,
     );
-
     this.editor = new Editor(this.tui, editorTheme, { paddingX: 1 });
     this.editor.setAutocompleteProvider(autocomplete);
     this.editor.onSubmit = (text) => this.handleSubmit(text.trim());
@@ -147,9 +212,7 @@ export class TuiApp {
     this.tui.addChild(this.editor);
     this.tui.addChild(this.mcpPanel);
   }
-
-  getPromptPermission(): (
-    toolName: string,
+  getPromptPermission(): (toolName: string,
     preview: string,
     args: unknown,
   ) => Promise<PermissionPromptResult> {
@@ -735,7 +798,7 @@ export class TuiApp {
   }
 
   private handleSubmit(text: string): void {
-    const images = this.pendingImages.length > 0 ? [...this.pendingImages] : undefined;
+    let images = this.pendingImages.length > 0 ? [...this.pendingImages] : undefined;
     const hasText = text.length > 0;
     const hasImages = Boolean(images?.length);
     if (!hasText && !hasImages) return;
@@ -776,6 +839,21 @@ export class TuiApp {
       return;
     }
 
+    // Resolve @file references
+    const resolved = resolveAtFileRefs(this.deps.projectPath, text, this.deps.config.atFile ?? {});
+    if (resolved.warnings.length > 0) {
+      for (const warn of resolved.warnings) {
+        this.conversation.addInfo(c.yellow(`@${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}`));
+      }
+    }
+    text = resolved.text;
+    if (resolved.images.length > 0) {
+      const atImages: ImageContent[] = resolved.images.map((img) => ({
+        data: img.data,
+        mimeType: img.mimeType,
+      }) as ImageContent);
+      images = [...(images ?? []), ...atImages];
+    }
     if (this.pendingImages.length > 0 && !this.deps.modelSupportsImages) {
       this.conversation.addInfo(
         c.yellow(`${this.deps.modelName} does not support image input. Image will be omitted.`),

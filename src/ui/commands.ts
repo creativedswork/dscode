@@ -256,6 +256,11 @@ const COMMANDS: SlashCommandDef[] = [
             "/config key <api-key>    Set your API key",
             "/config cwd <path>       Set working directory for this project (saved to ~/.dscode/config.json)",
             "/config help             Show this help",
+            "",
+            "Settings via ~/.dscode/settings.json or .dscode/settings.json:",
+            "  atFileMaxFiles: number     Max files per @file message (default: 5)",
+            "  atFileMaxFileSize: number   Max bytes per @file (default: 51200)",
+            "  atFileMaxTotalSize: number  Max total bytes per message (default: 204800)",
           ].join("\n"));
           break;
         }

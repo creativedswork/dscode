@@ -1,21 +1,22 @@
-import { useState, useRef, useCallback } from "react";
-import type { ImageAttachment } from "../types";
+import { useState, useRef, useCallback, useEffect } from "react";
+import type { ImageAttachment, FileListItem } from "../types";
 
 interface MessageInputProps {
   onSend: (text: string, images?: ImageAttachment[]) => void;
   onAbort: () => void;
   onSlashCommand: (command: string) => void;
+  onCommand: (cmd: { type: "file_list"; prefix: string }) => void;
   processing: boolean;
   slashCommands: { name: string; description: string }[];
+  fileListItems: FileListItem[];
+  fileListPrefix: string;
 }
 
-/** Convert a File to a base64 ImageAttachment */
 function fileToImageAttachment(file: File): Promise<ImageAttachment> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
       const dataUrl = reader.result as string;
-      // data:image/png;base64,xxxx
       const commaIdx = dataUrl.indexOf(",");
       const mimeType = dataUrl.slice(5, dataUrl.indexOf(";"));
       const data = dataUrl.slice(commaIdx + 1);
@@ -26,7 +27,6 @@ function fileToImageAttachment(file: File): Promise<ImageAttachment> {
   });
 }
 
-/** Check if clipboard DataTransferItem is an image */
 function isImageItem(item: DataTransferItem): boolean {
   return item.type.startsWith("image/");
 }
@@ -35,19 +35,40 @@ export function MessageInput({
   onSend,
   onAbort,
   onSlashCommand,
+  onCommand,
   processing,
   slashCommands,
+  fileListItems,
+  fileListPrefix,
 }: MessageInputProps) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<ImageAttachment[]>([]);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
+  const [showFileMenu, setShowFileMenu] = useState(false);
+  const [fileFilter, setFileFilter] = useState("");
+  const [fileIndex, setFileIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const filteredCommands = slashCommands.filter(
     (c) => !slashFilter || c.name.startsWith(slashFilter.slice(1)),
   );
+
+  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => {
+    if (showFileMenu && fileFilter !== undefined) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        onCommand({ type: "file_list", prefix: fileFilter });
+      }, 150);
+    }
+    return () => clearTimeout(debounceRef.current);
+  }, [fileFilter, showFileMenu, onCommand]);
+
+  useEffect(() => {
+    setFileIndex(0);
+  }, [fileListItems]);
 
   const handleSubmit = useCallback(() => {
     const trimmed = text.trim();
@@ -60,9 +81,116 @@ export function MessageInput({
     setText("");
     setImages([]);
     setShowSlashMenu(false);
+    setShowFileMenu(false);
   }, [text, images, onSend, onSlashCommand]);
 
+  const navigateToDirectory = (dirPath: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const cursorPos = textarea.selectionStart ?? text.length;
+    const textBeforeCursor = text.slice(0, cursorPos);
+    const atMatch = textBeforeCursor.match(/(?:^|[\s])@("([^"]*)"?|([^\s]*))$/);
+    if (!atMatch) return;
+
+    const atIdx = textBeforeCursor.lastIndexOf("@");
+    if (atIdx === -1) return;
+
+    const before = text.slice(0, atIdx);
+    const after = text.slice(cursorPos);
+    const newPrefix = `@${dirPath}/`;
+    const newText = `${before}${newPrefix}${after}`;
+    setText(newText);
+    setFileFilter(dirPath + "/");
+
+    onCommand({ type: "file_list", prefix: dirPath + "/" });
+
+    requestAnimationFrame(() => {
+      const newPos = atIdx + newPrefix.length;
+      textarea.focus();
+      textarea.setSelectionRange(newPos, newPos);
+    });
+  };
+
+  const insertFilePath = (path: string, keepMenu: boolean) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+
+    const cursorPos = textarea.selectionStart ?? text.length;
+    const textBeforeCursor = text.slice(0, cursorPos);
+    const atIdx = textBeforeCursor.lastIndexOf("@");
+
+    if (atIdx === -1) return;
+
+    const before = text.slice(0, atIdx);
+    const after = text.slice(cursorPos);
+    if (keepMenu) {
+      const newText = `${before}@${path} @${after}`;
+      setText(newText);
+      setFileFilter("");
+      onCommand({ type: "file_list", prefix: "" });
+
+      requestAnimationFrame(() => {
+        const newPos = atIdx + path.length + 3;
+        textarea.focus();
+        textarea.setSelectionRange(newPos, newPos);
+      });
+    } else {
+      const newText = `${before}@${path} ${after}`;
+      setText(newText);
+      setShowFileMenu(false);
+
+      requestAnimationFrame(() => {
+        const newPos = atIdx + path.length + 2;
+        textarea.focus();
+        textarea.setSelectionRange(newPos, newPos);
+      });
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (showFileMenu) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setFileIndex((i) => Math.min(i + 1, fileListItems.length - 1));
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setFileIndex((i) => Math.max(i - 1, 0));
+        return;
+      }
+      if (e.key === "Enter") {
+        e.preventDefault();
+        const item = fileListItems[fileIndex];
+        if (item) {
+          if (item.isDir) {
+            navigateToDirectory(item.path);
+          } else {
+            insertFilePath(item.path, false);
+          }
+        }
+        return;
+      }
+      if (e.key === "Tab") {
+        e.preventDefault();
+        const item = fileListItems[fileIndex];
+        if (item) {
+          if (item.isDir) {
+            navigateToDirectory(item.path);
+          } else {
+            insertFilePath(item.path, true);
+          }
+        }
+        return;
+      }
+      if (e.key === "Escape") {
+        setShowFileMenu(false);
+        return;
+      }
+      return;
+    }
+
     if (showSlashMenu) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
@@ -88,7 +216,6 @@ export function MessageInput({
       e.preventDefault();
       if (!processing) handleSubmit();
     }
-    // Backspace with empty text - remove last image
     if (e.key === "Backspace" && !text && images.length > 0) {
       e.preventDefault();
       setImages((prev) => prev.slice(0, -1));
@@ -99,17 +226,29 @@ export function MessageInput({
     const val = e.target.value;
     setText(val);
 
-    // Slash command detection
     if (val === "/") {
       setShowSlashMenu(true);
       setSlashFilter("");
       setSlashIndex(0);
+      setShowFileMenu(false);
     } else if (val.startsWith("/") && !val.includes(" ")) {
       setShowSlashMenu(true);
       setSlashFilter(val);
       setSlashIndex(0);
+      setShowFileMenu(false);
     } else {
       setShowSlashMenu(false);
+    }
+
+    const cursorPos = e.target.selectionStart ?? val.length;
+    const textBeforeCursor = val.slice(0, cursorPos);
+    const atMatch = textBeforeCursor.match(/(?:^|[\s])@("([^"]*)"?|([^\s]*))$/);
+
+    if (atMatch) {
+      setShowFileMenu(true);
+      setFileFilter(atMatch[2] ?? atMatch[3] ?? "");
+    } else {
+      setShowFileMenu(false);
     }
   };
 
@@ -133,7 +272,7 @@ export function MessageInput({
             const img = await fileToImageAttachment(file);
             newImages.push(img);
           } catch {
-            // skip failed images
+            // skip
           }
         }
       }
@@ -145,7 +284,6 @@ export function MessageInput({
     setImages((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
-  // Auto-resize textarea
   const adjustHeight = () => {
     const ta = textareaRef.current;
     if (ta) {
@@ -156,7 +294,6 @@ export function MessageInput({
 
   return (
     <div className="border-t border-dscode-border bg-dscode-surface px-4 py-3 relative">
-      {/* Slash command dropdown */}
       {showSlashMenu && filteredCommands.length > 0 && (
         <div className="absolute bottom-full left-4 mb-1 w-72 bg-dscode-surface border border-dscode-border rounded-xl shadow-2xl overflow-hidden z-50">
           <div className="px-3 py-2 text-xs text-dscode-muted border-b border-dscode-border">
@@ -186,7 +323,46 @@ export function MessageInput({
         </div>
       )}
 
-      {/* Image previews */}
+      {showFileMenu && (
+        <div className="absolute bottom-full left-4 mb-1 w-80 bg-dscode-surface border border-dscode-border rounded-xl shadow-2xl overflow-hidden z-50">
+          <div className="px-3 py-2 text-xs text-dscode-muted border-b border-dscode-border">
+            Files {fileFilter ? `— @${fileFilter}` : ""}
+          </div>
+          <div className="max-h-48 overflow-y-auto">
+            {fileListItems.length > 0 ? (
+              fileListItems.map((item, i) => (
+                <button
+                  key={item.path}
+                  className={`w-full text-left px-3 py-2 text-sm transition-colors flex items-center gap-2 ${
+                    i === fileIndex
+                      ? "bg-dscode-accentDim/30 text-white"
+                      : "text-dscode-text hover:bg-gray-700/50"
+                  }`}
+                  style={{ paddingLeft: `${12 + (item.depth ?? 0) * 14}px` }}
+                  onMouseEnter={() => setFileIndex(i)}
+                  onClick={() => {
+                    if (item.isDir) {
+                      navigateToDirectory(item.path);
+                    } else {
+                      insertFilePath(item.path, false);
+                    }
+                  }}
+                >
+                  <span className="text-dscode-muted text-xs shrink-0">
+                    {item.isDir ? "📁" : "📄"}
+                  </span>
+                  <span className="font-mono text-dscode-accent text-xs truncate">{item.name}</span>
+                </button>
+              ))
+            ) : (
+              <div className="px-3 py-2 text-sm text-dscode-muted">
+                {fileFilter ? "No matching files" : "Type to search files..."}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2 max-w-4xl mx-auto">
           {images.map((img, i) => (
@@ -218,7 +394,7 @@ export function MessageInput({
           }}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          placeholder={processing ? "Processing..." : "Type a message... (Enter to send, Shift+Enter for new line, paste image from clipboard)"}
+          placeholder={processing ? "Processing..." : "Type a message... (@file, Tab for multi-file, Enter to send)"}
           disabled={processing}
           rows={1}
           className="input flex-1 resize-none font-mono text-sm min-h-[40px] max-h-[200px]"
@@ -244,7 +420,7 @@ export function MessageInput({
         )}
       </div>
       <div className="text-xs text-dscode-muted text-center mt-1.5">
-        DSCode Web · {processing ? "Press Stop to abort" : "Type / for commands · Ctrl+V to paste images"}
+        DSCode Web · {processing ? "Press Stop to abort" : "Type @ for files · Tab to add more · Enter to send · Ctrl+V for images"}
       </div>
     </div>
   );

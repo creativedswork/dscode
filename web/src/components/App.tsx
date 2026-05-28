@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { UIMessage, ServerEvent, ConfigData, SessionInfo, McpServerInfo, ImageAttachment } from "../types";
+import type { UIMessage, ServerEvent, ConfigData, SessionInfo, McpServerInfo, ImageAttachment, FileListItem } from "../types";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { ChatView } from "./ChatView";
 import { MessageInput } from "./MessageInput";
@@ -54,6 +54,8 @@ export function App() {
   const [sidebarTab, setSidebarTab] = useState<"sessions" | "mcp" | "settings">("sessions");
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
+  const [fileListItems, setFileListItems] = useState<FileListItem[]>([]);
+  const [fileListPrefix, setFileListPrefix] = useState("");
   const { toasts, addToast, removeToast } = useToasts();
 
   // Track when the current assistant turn started (for timer)
@@ -136,7 +138,6 @@ export function App() {
         break;
       }
 
-
       case "mcp_app": {
         setMessages((prev) => {
           const next = [...prev];
@@ -156,6 +157,7 @@ export function App() {
         });
         break;
       }
+
       case "assistant_end": {
         setMessages((prev) => {
           const next = [...prev];
@@ -165,7 +167,6 @@ export function App() {
           }
           return next;
         });
-        // Keep processing=true — agent is still working between turns
         break;
       }
 
@@ -190,6 +191,7 @@ export function App() {
         setProcessing(event.processing);
         break;
       }
+
       case "loader": {
         setProcessing(event.state === "show");
         break;
@@ -212,6 +214,12 @@ export function App() {
 
       case "model": {
         setModel(event.name);
+        break;
+      }
+
+      case "file_list_result": {
+        setFileListItems(event.items);
+        setFileListPrefix(event.prefix);
         break;
       }
 
@@ -254,6 +262,13 @@ export function App() {
   const handleSlashCommand = useCallback(
     (command: string) => {
       send({ type: "slash", command });
+    },
+    [send],
+  );
+
+  const handleCommand = useCallback(
+    (cmd: { type: "file_list"; prefix: string }) => {
+      send(cmd as any);
     },
     [send],
   );
@@ -346,8 +361,11 @@ export function App() {
             onSend={handleSend}
             onAbort={handleAbort}
             onSlashCommand={handleSlashCommand}
+            onCommand={handleCommand}
             processing={processing}
             slashCommands={SLASH_COMMANDS}
+            fileListItems={fileListItems}
+            fileListPrefix={fileListPrefix}
           />
         </main>
       </div>

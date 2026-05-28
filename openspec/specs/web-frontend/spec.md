@@ -20,7 +20,7 @@ The frontend SHALL display a scrollable conversation area showing user messages,
 - **THEN** each tool call appears as an inline card showing tool name, arguments, result preview, and success/error status
 
 ### Requirement: Input area
-The frontend SHALL provide a text input area at the bottom of the screen for composing messages and triggering slash commands.
+The frontend SHALL provide a text input area at the bottom of the screen for composing messages, triggering slash commands, and inserting file references via `@` autocomplete.
 
 #### Scenario: Text input and submit
 - **WHEN** user types text and presses Enter (or clicks send button)
@@ -29,6 +29,13 @@ The frontend SHALL provide a text input area at the bottom of the screen for com
 #### Scenario: Slash command autocomplete
 - **WHEN** user types `/` in the input field
 - **THEN** a dropdown appears listing available commands with descriptions, and typing filters the list
+
+#### Scenario: At-file autocomplete
+- **WHEN** user types `@` in the input field
+- **THEN** a dropdown appears listing files from the project directory matching the text after `@`, and typing filters the list
+- **AND** pressing Tab on a file inserts it and keeps the menu open for multi-file selection
+- **AND** pressing Enter on a file inserts it and closes the menu
+- **AND** clicking a directory navigates into it to show child files
 
 #### Scenario: Multi-line input
 - **WHEN** user presses Shift+Enter in the input field

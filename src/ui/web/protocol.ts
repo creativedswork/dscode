@@ -18,6 +18,7 @@ export type ClientCommand =
   | { type: "config"; action: "set_provider"; value: string }
   | { type: "session"; action: "list" | "save" | "load" | "delete"; id?: string }
   | { type: "mcp"; action: "list" | "refresh" }
+  | { type: "file_list"; prefix: string }
   | { type: "mcp_app"; action: "rpc"; appId: string; message: object };
 
 // ── Server → Client Events ──
@@ -84,7 +85,14 @@ export type ServerEvent =
   | { type: "slash_result"; text: string }
   | { type: "mcp_app"; app: McpAppInfo }
   | { type: "clear_conversation" }
+  | { type: "file_list_result"; prefix: string; items: FileListItem[] }
   | { type: "processing"; processing: boolean };
+export interface FileListItem {
+  path: string;
+  isDir: boolean;
+  name: string;
+  depth: number;
+}
 
 export interface ConversationMessage {
   role: "user" | "assistant" | "system";
