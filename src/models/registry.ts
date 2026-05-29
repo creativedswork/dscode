@@ -29,6 +29,22 @@ export function getAllModels(provider: string): { id: string; name: string }[] {
   return customModelDefs.get(provider) ?? [];
 }
 
+export function getVisionModels(provider: string): { id: string; name: string }[] {
+  const all = getAllModels(provider);
+  return all.filter((m) => {
+    try {
+      const model = resolveModel(provider, m.id);
+      return model.input.includes("image");
+    } catch {
+      return false;
+    }
+  });
+}
+
+export function getVisionProviders(): string[] {
+  return getAllProviders().filter((p) => getVisionModels(p).length > 0);
+}
+
 export function resolveModel(provider: string, modelId: string): Model<Api> {
   const builtin = (getModel as (p: string, m: string) => Model<Api> | undefined)(provider, modelId);
   if (builtin) return builtin;

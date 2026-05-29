@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-The `edit` tool provides content-addressable file editing using hash-based anchors. It replaces traditional line-number-based or string-replace editing with an anchor-guarded protocol where line identity is determined by content hash, and line numbers serve only as advisory snapshot positions.
-## Requirements
 ### Requirement: edit tool replaces a single line by hash
 
 The `edit` tool SHALL support `op: "replace_line"` which replaces exactly one line identified by its hash with new content. The hash SHALL be a 6-character hexadecimal string from read_file(hashes: true). If the hash matches multiple lines, the tool SHALL first attempt adaptive resolution (longer hash, context-augmented matching) before rejecting. If the resolved target line is classified as low-entropy, the operation SHALL be rejected with error `anchor_low_entropy`. The operation MUST fail if the hash does not match any line in the current file.
@@ -79,22 +77,6 @@ The `edit` tool SHALL support `op: "delete_range"` which removes all lines from 
 - **WHEN** the model calls `edit` with `op: "delete_range"`, `start_hash` uniquely matching line 2, `end_hash` uniquely matching line 4
 - **THEN** lines 2, 3, and 4 SHALL be removed and line 5 SHALL become the new line 2
 
-### Requirement: edit tool executes batch operations atomically
-
-The `edit` tool SHALL accept an array of `operations` and execute them sequentially in order. Before any modification, the tool SHALL verify all referenced hashes exist in the current file and that no ambiguous anchors are present (unless disambiguated via `occurrence`). If any hash is invalid or ambiguous without disambiguation, the entire batch MUST be rejected and the file MUST remain unchanged. All operations in a batch operate on the same initial file snapshot; later operations do NOT use the results of earlier operations within the same batch.
-
-#### Scenario: All-or-nothing batch rejection for invalid hash
-- **WHEN** the model calls `edit` with 3 operations where the first two reference valid hashes but the third references an invalid hash
-- **THEN** NO modifications SHALL be applied to the file, and the error SHALL list the invalid hash
-
-#### Scenario: All-or-nothing batch rejection for ambiguous hash
-- **WHEN** the model calls `edit` with 2 operations where the first has a unique hash and the second has an ambiguous hash without `occurrence`
-- **THEN** NO modifications SHALL be applied and the error SHALL be `anchor_ambiguous`
-
-#### Scenario: Sequential operations in batch use initial snapshot
-- **WHEN** the model calls `edit` with `[{op: "delete_line", hash: "a1b2"}, {op: "insert_after", hash: "c3d4", content: "new"}]`
-- **THEN** the deletion SHALL be applied first, and the insertion SHALL use the hash-to-line mapping from the file as it existed at the start of the batch (not the post-deletion state)
-
 ### Requirement: edit tool validates hashes before any file modification
 
 The `edit` tool SHALL re-read the target file and recompute hashes immediately before applying edits. This ensures the file has not been modified since the model last read it. The validation SHALL apply the full resolution ladder: 6-char hash → 8-char hash → context-augmented matching. It SHALL detect missing hashes (hash present at read time but not now), ambiguous anchors that exhaust all resolution levels, and low-entropy target lines.
@@ -115,23 +97,7 @@ Upon successful completion, the `edit` tool SHALL return a summary including the
 - **WHEN** `edit` successfully applies 2 operations (one replacement, one insertion) resulting in +3 lines and -1 line, affecting lines starting at line 12
 - **THEN** the return SHALL include "2 operations applied", the net line change, `anchors_valid_through: 11`, `must_refresh_from_line: 12`, and a localized diff with new 6-char anchors
 
-### Requirement: Edit operations support occurrence field for disambiguation
-Single-line edit operations (replace_line, insert_after, insert_before, delete_line) SHALL support an optional `occurrence` field (1-indexed integer) that specifies which matching line to target when the hash matches multiple lines. If `occurrence` is omitted and the hash has multiple candidates, the edit SHALL be rejected with error `anchor_ambiguous`.
-
-#### Scenario: replace_line with occurrence targets correct line
-- **WHEN** the model calls `edit` with `op: "replace_line"`, `hash: "d41d"`, `occurrence: 3`, `content: "new content"`, and `hash` matches lines 2, 5, 7, and 12
-- **THEN** line 7 (the 3rd occurrence) SHALL be replaced
-
-#### Scenario: delete_line with occurrence 1 targets first match
-- **WHEN** the model calls `edit` with `op: "delete_line"`, `hash: "d41d"`, `occurrence: 1`, and `hash` matches lines 2, 5, and 7
-- **THEN** line 2 (the 1st occurrence) SHALL be deleted
-
-### Requirement: Edit returns structured invalidation scope
-Upon successful completion, the `edit` tool SHALL return `anchors_valid_through` and `must_refresh_from_line` fields in its `details`. These fields SHALL indicate the exact boundary between valid and stale anchor regions.
-
-#### Scenario: Invalidation scope after middle-of-file edit
-- **WHEN** `edit` successfully modifies lines 20-22 of a file
-- **THEN** details SHALL contain `anchors_valid_through: 19` and `must_refresh_from_line: 20`
+## ADDED Requirements
 
 ### Requirement: edit tool uses context-augmented hash for disambiguation
 When the 6-char and 8-char hashes both produce multiple matches, the edit tool SHALL compute a context-augmented hash for each candidate line using the three-line window `prev_nonempty + current + next_nonempty`. If exactly one candidate matches the model-provided hash in context-augmented form, the tool SHALL resolve to that line silently.
@@ -149,4 +115,3 @@ When a single-line edit operation is rejected due to a low-entropy target line, 
 - **WHEN** `edit` rejects a `replace_line` targeting a `},` line at position 118
 - **AND** lines 119 and 120 are classified as `high`
 - **THEN** the error details SHALL include `neighbor_anchors: ["119#c812f1", "120#a3f1b2"]` suggesting those as alternative anchors
-

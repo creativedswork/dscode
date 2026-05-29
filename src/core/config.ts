@@ -163,6 +163,12 @@ export function loadConfig(): HarnessConfig {
   // fall back to DEEPSEEK_API_KEY for backward compat, then user config
   const envApiKey = getEnvApiKey(provider) ?? (provider === "qwen" ? process.env.DASHSCOPE_API_KEY : undefined) ?? process.env.DEEPSEEK_API_KEY;
   const apiKey = envApiKey ?? (userConfig.apiKey as string | undefined);
+
+  // Vision model config: env var > user config
+  const visionProvider = (process.env.AGENT_VISION_PROVIDER as string) ?? (userConfig.vision as any)?.provider;
+  const visionModel = (process.env.AGENT_VISION_MODEL as string) ?? (userConfig.vision as any)?.model;
+  const visionKey = (userConfig.vision as any)?.key as string | undefined;
+  const vision = visionProvider && visionModel ? { provider: visionProvider, model: visionModel, key: visionKey } : undefined;
   const maxTokens = Number(process.env.DSCODE_MAX_TOKENS) || (merged.maxTokens as number) || 16384;
 
   const userPermissionRules = ((userSettings.permissions as any)?.rules as Record<string, unknown>[]) ?? [];
@@ -259,6 +265,7 @@ export function loadConfig(): HarnessConfig {
       maxTotalSize: (merged.atFileMaxTotalSize as number) ?? 200 * 1024,
     },
     agentsMdContent: loadAgentsMd(projectPath),
+    vision,
   };
 
 }

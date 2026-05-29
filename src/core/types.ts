@@ -26,12 +26,20 @@ export interface HarnessConfig {
   appHost: AppHostConfig;
   agentsMdContent?: string;
   atFile?: AtFileConfig;
+  vision?: VisionConfig;
 }
 
 export interface AtFileConfig {
   maxFiles: number;
   maxFileSize: number;
   maxTotalSize: number;
+}
+
+
+export interface VisionConfig {
+  provider: string;
+  model: string;
+  key?: string;
 }
 
 export interface AppHostConfig {

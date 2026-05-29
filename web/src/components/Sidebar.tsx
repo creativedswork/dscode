@@ -309,6 +309,69 @@ function SettingsPanel({
         </div>
       </div>
 
+      {/* Vision Model Section */}
+      <div className="pt-2 border-t border-dscode-border">
+        <p className="text-xs text-dscode-muted mb-2">Vision Model</p>
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-xs text-dscode-muted mb-1 block">Vision Provider</label>
+            <select
+              value={config.vision?.provider ?? ""}
+              onChange={(e) => {
+                if (e.target.value) onChange("set_vision_provider", e.target.value);
+              }}
+              className="input text-xs w-full"
+            >
+              <option value="">(not set)</option>
+              {config.visionProviders.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs text-dscode-muted mb-1 block">Vision Model</label>
+            <select
+              value={config.vision?.model ?? ""}
+              onChange={(e) => {
+                if (e.target.value) onChange("set_vision_model", e.target.value);
+              }}
+              className="input text-xs w-full"
+            >
+              <option value="">(not set)</option>
+              {config.visionModels.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs text-dscode-muted mb-1 block">Vision Key</label>
+            <div className="flex gap-2">
+              <input
+                type="password"
+                id="vision-key-input"
+                className="input text-xs flex-1"
+                placeholder={config.vision?.key ? "sk-***hidden***" : "sk-..."}
+              />
+              <button
+                onClick={() => {
+                  const input = document.getElementById('vision-key-input') as HTMLInputElement;
+                  if (input?.value) {
+                    onChange("set_vision_key", input.value);
+                    input.value = '';
+                  }
+                }}
+                className="btn-primary text-xs px-3"
+              >
+                Set
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Info */}
       <div className="pt-2 border-t border-dscode-border space-y-1 text-xs text-dscode-muted">
         <div className="flex justify-between">

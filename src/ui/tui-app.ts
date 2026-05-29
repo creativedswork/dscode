@@ -34,9 +34,6 @@ import { getSlashCommandAutocomplete, executeSlashCommand } from "./commands.js"
 import { buildMcpServers, getMcpVisibleRows, renderMcpServerList, renderMcpToolList } from "./mcp-browser.js";
 import { resolveAtFileRefs, listProjectFiles } from "../utils/at-file-resolver.js";
 import { readClipboardImageNonBlocking } from "../utils/image.js";
-import { ocrImages } from "../utils/ocr.js";
-import type { OcrResult } from "../utils/ocr.js";
-
 export interface TuiDeps {
   agent: Agent;
   sessionManager: SessionManager;
@@ -49,12 +46,12 @@ export interface TuiDeps {
   mcpManager?: MCPManager;
   modelName: string;
   modelSupportsImages: boolean;
-  modelNeedsOcr?: boolean;
   projectPath: string;
   config: HarnessConfig;
   onSetModel: (modelId: string) => void;
   onSetThinking: (level: string) => void;
   onSetProvider: (providerId: string) => void;
+  promptWithImages: (text: string, images: ImageContent[]) => Promise<void>;
 }
 
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;
@@ -589,11 +586,7 @@ export class TuiApp {
         this.conversation.addInfo(
           c.dim(`Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`),
         );
-        if (!this.deps.modelSupportsImages) {
-          this.conversation.addInfo(
-            c.yellow(`${this.deps.modelName} does not support image input.`),
-          );
-        }
+
       }
     });
 
@@ -632,11 +625,7 @@ export class TuiApp {
         this.conversation.addInfo(
           c.dim(`Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`),
         );
-        if (!this.deps.modelSupportsImages) {
-          this.conversation.addInfo(
-            c.yellow(`${this.deps.modelName} does not support image input.`),
-          );
-        }
+
       }
     });
 
@@ -674,11 +663,7 @@ export class TuiApp {
         this.conversation.addInfo(
           c.dim(`Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`),
         );
-        if (!this.deps.modelSupportsImages) {
-          this.conversation.addInfo(
-            c.yellow(`${this.deps.modelName} does not support image input.`),
-          );
-        }
+
       } else {
         this.conversation.addInfo(c.dim("No image found in clipboard (macOS only). Use /image <path> to attach an image file."));
       }
@@ -871,11 +856,6 @@ export class TuiApp {
           this.conversation.addInfo(
             c.dim(`Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`),
           );
-          if (!this.deps.modelSupportsImages) {
-            this.conversation.addInfo(
-              c.yellow(`${this.deps.modelName} does not support image input.`),
-            );
-          }
         }
       });
       return;
@@ -927,6 +907,7 @@ export class TuiApp {
     text = resolved.text;
     if (resolved.images.length > 0) {
       const atImages: ImageContent[] = resolved.images.map((img) => ({
+        type: "image" as const,
         data: img.data,
         mimeType: img.mimeType,
       }) as ImageContent);
@@ -934,7 +915,7 @@ export class TuiApp {
     }
     if (this.pendingImages.length > 0 && !this.deps.modelSupportsImages) {
       this.conversation.addInfo(
-        c.yellow(`${this.deps.modelName} does not support image input. Image will be omitted.`),
+        c.dim(`${this.deps.modelName} does not support image input natively — using vision model or OCR.`),
       );
     }
 
@@ -950,37 +931,13 @@ export class TuiApp {
     this.pendingImages = [];
     this.updateImageStatus();
 
-    if (images && this.deps.modelNeedsOcr) {
-      ocrImages(images).then(
-        (result: OcrResult) => {
-          let promptText: string;
-          if (result.hasText) {
-            promptText = hasText
-              ? `${text}\n\n<image_text>\n${result.content}\n</image_text>`
-              : `<image_text>\n${result.content}\n</image_text>`;
-          } else {
-            promptText = hasText
-              ? `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`
-              : "(用户附带了一张图片，但图片中没有可识别的文字内容)";
-          }
-          this.deps.agent.prompt(promptText).then(
-            () => this.setProcessing(false),
-            (err) => {
-              this.setProcessing(false);
-              this.deps.sessionManager.trySaveSession(this.deps.agent);
-              this.addError(err instanceof Error ? err.message : String(err));
-            },
-          );
-        },
+    if (images && images.length > 0) {
+      this.deps.promptWithImages(text, images).then(
+        () => this.setProcessing(false),
         (err) => {
-          this.deps.agent.prompt(text).then(
-            () => this.setProcessing(false),
-            (e) => {
-              this.setProcessing(false);
-              this.deps.sessionManager.trySaveSession(this.deps.agent);
-              this.addError(e instanceof Error ? e.message : String(e));
-            },
-          );
+          this.setProcessing(false);
+          this.deps.sessionManager.trySaveSession(this.deps.agent);
+          this.addError(err instanceof Error ? err.message : String(err));
         },
       );
     } else {

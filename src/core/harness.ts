@@ -21,6 +21,9 @@ import { TuiBackend } from "../ui/tui-backend.js";
 import type { UiBackend } from "../ui/backend.js";
 import type { TuiDeps } from "../ui/tui-app.js";
 import { resolveModel, getThinkingLevel, getAllModels } from "../models/index.js";
+import { ocrImages } from "../utils/ocr.js";
+import type { OcrResult } from "../utils/ocr.js";
+import { getEnvApiKey } from "@mariozechner/pi-ai";
 
 export class Harness {
   agent!: Agent;
@@ -155,11 +158,111 @@ export class Harness {
   saveSessionNow(): void {
     this.sessionManager.trySaveSession(this.agent);
   }
+
+  private resolveVisionModel(): { model: Model<Api>; apiKey: string } | null {
+    const v = this.config.vision;
+    if (!v?.provider || !v?.model) return null;
+    try {
+      const model = resolveModel(v.provider, v.model);
+      if (!model.input.includes("image")) return null;
+      const apiKey = v.key ?? getEnvApiKey(v.provider) ?? this.config.apiKey;
+      if (!apiKey) return null;
+      return { model, apiKey };
+    } catch {
+      return null;
+    }
+  }
+
+  private async describeImagesViaVisionModel(
+    images: ImageContent[],
+    visionModel: Model<Api>,
+    apiKey: string,
+  ): Promise<string> {
+    const ctx: Context = {
+      systemPrompt: "You are an image description assistant. Describe the image in detail, including text, layout, and visual elements. Be thorough but concise.",
+      messages: [
+        { role: "user", content: [{ type: "text", text: "请详细描述这张图片的内容，包括文字、布局和视觉元素。" }, ...images], timestamp: Date.now() },
+      ],
+      tools: [],
+    };
+    const stream = streamSimple(visionModel, ctx, {
+      apiKey,
+      maxTokens: 4096,
+      timeoutMs: 60_000,
+      maxRetries: 0,
+      reasoning: "off" as any,
+    });
+    let text = "";
+    for await (const event of stream) {
+      if (event.type === "text_delta") {
+        text += event.delta;
+      }
+    }
+    return text;
+  }
+
+  async promptWithImages(text: string, images: ImageContent[]): Promise<void> {
+    // Normalize: ensure every image has type: "image" and proper fields
+    const normalizedImages: ImageContent[] = images.map((img) => ({
+      type: "image" as const,
+      data: img.data ?? "",
+      mimeType: img.mimeType ?? "image/png",
+    }));
+
+    // 1. Main model supports images natively → send directly
+    const mainModel = resolveModel(this.config.provider, this.config.modelId);
+    if (mainModel.input.includes("image")) {
+      await this.promptAndSave(text, normalizedImages);
+      return;
+    }
+
+    // 2. Vision model configured → use vision model for image description
+    const vision = this.resolveVisionModel();
+    if (vision) {
+      try {
+        this.ui.setProcessing(true);
+        this.ui.addInfo(`Analyzing ${normalizedImages.length} image(s) with vision model (${vision.model.name})...`);
+        const description = await this.describeImagesViaVisionModel(normalizedImages, vision.model, vision.apiKey);
+        this.ui.addInfo(`Image analysis complete, sending to main model...`);
+        const enrichedText = text
+          ? `${text}\n\n<image_description>\n${description}\n</image_description>`
+          : `<image_description>\n${description}\n</image_description>`;
+        await this.promptAndSave(enrichedText);
+        return;
+      } catch (err) {
+        this.ui.setProcessing(false);
+        this.ui.addInfo(`Vision model failed: ${err instanceof Error ? err.message : String(err)}. Falling back to OCR.`);
+      }
+    }
+
+    // 3. OCR fallback
+    try {
+      this.ui.setProcessing(true);
+      this.ui.addInfo(`Extracting text from ${normalizedImages.length} image(s) with OCR...`);
+      const result: OcrResult = await ocrImages(normalizedImages);
+      this.ui.addInfo(`OCR complete, sending to main model...`);
+      if (result.hasText) {
+        const ocrText = text
+          ? `${text}\n\n<image_text>\n${result.content}\n</image_text>`
+          : `<image_text>\n${result.content}\n</image_text>`;
+        await this.promptAndSave(ocrText);
+      } else {
+        const noText = text
+          ? `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`
+          : "(用户附带了一张图片，但图片中没有可识别的文字内容)";
+        await this.promptAndSave(noText);
+      }
+    } catch (err) {
+      this.ui.setProcessing(false);
+      this.ui.addInfo(`OCR failed: ${err instanceof Error ? err.message : String(err)}. Sending text only.`);
+      await this.promptAndSave(text);
+    }
+  }
+
   async run(ui?: UiBackend): Promise<void> {
     if (ui) this.ui = ui;
     const model = resolveModel(this.config.provider, this.config.modelId);
     const nativeImageSupport = model.input.includes("image");
-    const needsOcr = !nativeImageSupport && (this.config.provider === "deepseek" || this.config.provider === "kimi-coding");
     if (!ui) {
       const tuiDeps: TuiDeps = {
         agent: this.agent,
@@ -172,13 +275,13 @@ export class Harness {
         contextManager: this.contextManager,
         mcpManager: this.mcpManager,
         modelName: model.name,
-        modelSupportsImages: nativeImageSupport || needsOcr,
-        modelNeedsOcr: needsOcr,
+        modelSupportsImages: nativeImageSupport,
         projectPath: this.config.projectPath,
         config: this.config,
         onSetModel: (id: string) => this.setModel(id),
         onSetThinking: (level: string) => this.setThinking(level),
         onSetProvider: (id: string) => this.setProvider(id),
+        promptWithImages: (text: string, images: ImageContent[]) => this.promptWithImages(text, images),
       };
       ui = new TuiBackend(tuiDeps);
     }

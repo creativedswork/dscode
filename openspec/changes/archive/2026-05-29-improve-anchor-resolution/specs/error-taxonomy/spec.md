@@ -1,8 +1,5 @@
-# error-taxonomy Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change file-editing-harness-v2. Update Purpose after archive.
-## Requirements
 ### Requirement: Error codes use protocol-semantic taxonomy
 All file operation tools (read_file, write_file, overwrite_file, edit) SHALL return structured error information in their `details` field using a semantic error taxonomy. Each error response SHALL include an `error` field with one of the defined error codes and, where applicable, a `suggested_action` field indicating the recommended recovery strategy.
 
@@ -65,16 +62,7 @@ When a recoverable error occurs (one that can be resolved by the agent through a
 - **WHEN** `write_file` or `overwrite_file` returns `file_version_mismatch` or `write_conflict`
 - **THEN** `suggested_action` SHALL be `"re-read_file"`
 
-### Requirement: anchor_stale and anchor_not_found are distinct errors
-`anchor_stale` SHALL indicate that a hash was valid at read time but no longer matches (the file has been modified). `anchor_not_found` SHALL indicate that the hash format is unrecognized or the anchor has never existed. The distinction enables the agent to choose different recovery strategies: re-read for stale anchors vs. reformat for unrecognized anchors.
-
-#### Scenario: anchor_stale with missingHashes
-- **WHEN** `edit` validation finds hashes that are not in the current file's hash map
-- **THEN** details SHALL contain `error: "anchor_stale"` and `missingHashes: ["hash1", "hash2"]`
-
-#### Scenario: anchor_not_found for malformed anchor
-- **WHEN** `edit` receives an anchor in an unrecognized format that cannot be parsed as a valid hash
-- **THEN** details SHALL contain `error: "anchor_not_found"` describing the format issue
+## ADDED Requirements
 
 ### Requirement: anchor_prefix_ambiguous and anchor_context_ambiguous are distinct errors
 `anchor_prefix_ambiguous` SHALL indicate that the hash prefix matches multiple lines but progressive resolution may still succeed (the agent should try context-augmented anchors). `anchor_context_ambiguous` SHALL indicate that all resolution levels have been exhausted and the hash remains ambiguous even with context. The distinction enables the agent to choose different recovery strategies.
@@ -94,4 +82,3 @@ When an edit is rejected with `anchor_low_entropy`, the error details SHALL incl
 - **WHEN** `edit` rejects a `replace_line` with `anchor_low_entropy` targeting a `},` line at position 50
 - **AND** lines 48, 49, and 52 are classified as `high` and lines 47, 51, 53 are classified as `low` or `med`
 - **THEN** `details.neighbor_anchors` SHALL contain `["48#xxxxxx", "49#xxxxxx", "52#xxxxxx"]` (the high-quality lines within ±3 range)
-

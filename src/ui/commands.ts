@@ -13,7 +13,7 @@ import type { ContextManager } from "../context/manager.js";
 import type { MCPManager } from "../mcp/manager.js";
 import type { TuiApp } from "./tui-app.js";
 import { saveUserConfig, saveUserProjectCwd, maskApiKey, PROVIDER_ENV_VARS } from "../core/config.js";
-import { getAllProviders, getAllModels } from "../models/index.js";
+import { getAllProviders, getAllModels, getVisionModels, getVisionProviders } from "../models/index.js";
 import { readImageFile, readClipboardImage } from "../utils/image.js";
 
 
@@ -305,6 +305,9 @@ const COMMANDS: SlashCommandDef[] = [
             "/config model <id>       Switch model (saved to ~/.dscode/config.json)",
             "/config thinking <level> Set thinking level (saved to ~/.dscode/config.json)",
             "/config key <api-key>    Set your API key",
+            "/config vision-provider <id>  Set vision model provider",
+            "/config vision-model <id>    Set vision model",
+            "/config vision-key <key>     Set vision model API key",
             "/config cwd <path>       Set working directory for this project (saved to ~/.dscode/config.json)",
             "/config help             Show this help",
             "",
@@ -383,6 +386,68 @@ const COMMANDS: SlashCommandDef[] = [
           ctx.tui.addInfo(`Thinking level set to: ${level}`);
           break;
         }
+        case "vision-provider": {
+          const vpId = rest[0];
+          if (!vpId) {
+            const available = getVisionProviders();
+            const current = (ctx.config.vision as any)?.provider;
+            const lines = available.map((p) => p === current ? `  * ${p} (current)` : `  ${p}`);
+            ctx.tui.addInfo(`Available providers for vision model:\n${lines.join("\n")}\n\nUsage: /config vision-provider <provider-id>`);
+            return;
+          }
+          try {
+            const v = { provider: vpId } as any;
+            saveUserConfig({ vision: v });
+            ctx.config.vision = v;
+            ctx.tui.addInfo(`Vision provider set to: ${vpId}`);
+          } catch (err: any) {
+            ctx.tui.addError(err.message);
+          }
+          break;
+        }
+        case "vision-model": {
+          const vmId = rest[0];
+          if (!vmId) {
+            const vp = (ctx.config.vision as any)?.provider;
+            if (!vp) {
+              ctx.tui.addError("No vision provider configured. Set it first: /config vision-provider <id>");
+              return;
+            }
+            const available = getVisionModels(vp);
+            const models = available.map((m) => `  ${m.id} — ${m.name}`);
+            ctx.tui.addInfo(`Models for vision provider ${vp}:\n${models.join("\n")}\n\nUsage: /config vision-model <model-id>`);
+            return;
+          }
+          const vp = (ctx.config.vision as any)?.provider;
+          if (!vp) {
+            ctx.tui.addError("No vision provider configured. Set it first: /config vision-provider <id>");
+            return;
+          }
+          try {
+            const existingKey = (ctx.config.vision as any)?.key;
+            const v = { provider: vp, model: vmId, key: existingKey };
+            saveUserConfig({ vision: v });
+            ctx.config.vision = v;
+            ctx.tui.addInfo(`Vision model set to: ${vmId}`);
+          } catch (err: any) {
+            ctx.tui.addError(err.message);
+          }
+          break;
+        }
+        case "vision-key": {
+          const key = rest.join(" ");
+          if (!key) {
+            ctx.tui.addError("Usage: /config vision-key <api-key>");
+            return;
+          }
+          const vp = (ctx.config.vision as any)?.provider ?? "";
+          const vm = (ctx.config.vision as any)?.model ?? "";
+          const v = { provider: vp, model: vm, key };
+          saveUserConfig({ vision: v });
+          ctx.config.vision = v;
+          ctx.tui.addInfo(`Vision API key saved to ~/.dscode/config.json: ${maskApiKey(key)}`);
+          break;
+        }
         default: {
           const lines = [
             `  provider      ${ctx.config.provider}`,
@@ -391,6 +456,9 @@ const COMMANDS: SlashCommandDef[] = [
             `  cwd           ${ctx.config.projectPath}`,
             `  maxTokens     ${ctx.config.maxTokens}`,
             `  thinking      ${ctx.config.thinkingLevel}`,
+            `  vision-provider  ${(ctx.config.vision as any)?.provider ?? "(not set)"}`,
+            `  vision-model     ${(ctx.config.vision as any)?.model ?? "(not set)"}`,
+            `  vision-key       ${maskApiKey((ctx.config.vision as any)?.key)}`,
             "",
             "  command file  ~/.dscode/config.json",
             "  settings      ~/.dscode/settings.json",

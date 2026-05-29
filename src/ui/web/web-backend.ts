@@ -4,7 +4,7 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ImageContent } from "@mariozechner/pi-ai";
-import { getAllProviders, getAllModels } from "../../models/index.js";
+import { getAllProviders, getAllModels, getVisionModels, getVisionProviders } from "../../models/index.js";
 import type { UiBackend } from "../backend.js";
 import type { HarnessConfig, PermissionPromptResult } from "../../core/types.js";
 import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig } from "../../core/config.js";
@@ -14,8 +14,6 @@ import type { MCPManager } from "../../mcp/manager.js";
 import type { AppHostManager } from "../../mcp/app/host.js";
 import type { AppInstance } from "../../mcp/app/types.js";
 import { buildMcpServers } from "../mcp-browser.js";
-import { ocrImages } from "../../utils/ocr.js";
-import type { OcrResult } from "../../utils/ocr.js";
 import { resolveAtFileRefs, listProjectFiles } from "../../utils/at-file-resolver.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
 import type {
@@ -287,23 +285,7 @@ export class WebUiBackend implements UiBackend {
         let text = cmd.text;
         let images = cmd.images;
 
-        // Check model image support
-        const model = (this.harness.agent.state.model as any);
-        const nativeImageSupport = model?.input?.includes("image") ?? false;
-        const needsOcr = !nativeImageSupport && (this.config.provider === "deepseek" || this.config.provider === "kimi-coding");
-
-        if (images && images.length > 0) {
-          if (nativeImageSupport) {
-            // Model supports images natively — pass them through
-            for (const img of images) {
-              this.pendingImages.push({ data: img.data, mimeType: img.mimeType } as ImageContent);
-            }
-          }
-          // For models that need OCR, we handle it below before prompting
-        }
-
         if (text.startsWith("/")) {
-          // Clear pending images on slash commands
           this.pendingImages = [];
           this.handleSlashCommand(client, text);
           break;
@@ -326,40 +308,17 @@ export class WebUiBackend implements UiBackend {
         client.send({ type: "user_message", text, images: images && images.length > 0 ? images : undefined } as any);
 
         try {
-          if (images && images.length > 0 && needsOcr) {
-            // Model doesn't support images natively — run OCR and embed result in prompt
+          if (images && images.length > 0) {
             const imageContents: ImageContent[] = images.map((img) => ({
+              type: "image" as const,
               data: img.data,
               mimeType: img.mimeType,
             }) as ImageContent);
             this.pendingImages = [];
-
-            try {
-              const ocrResult: OcrResult = await ocrImages(imageContents);
-              let promptText: string;
-              if (ocrResult.hasText) {
-                promptText = text
-                  ? `${text}\n\n<image_text>\n${ocrResult.content}\n</image_text>`
-                  : `<image_text>\n${ocrResult.content}\n</image_text>`;
-              } else {
-                promptText = text
-                  ? `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`
-                  : "(用户附带了一张图片，但图片中没有可识别的文字内容)";
-              }
-              await this.harness.promptAndSave(promptText, undefined);
-            } catch {
-              // OCR failed — fall back to text-only prompt
-              client.send({
-                type: "info",
-                text: "OCR processing failed, sending text-only message.",
-              });
-              await this.harness.promptAndSave(text, undefined);
-            }
+            await this.harness.promptWithImages(text, imageContents);
           } else {
-            // Native image support or no images — pass through normally
-            const imageContents = this.pendingImages.length > 0 ? [...this.pendingImages] : undefined;
             this.pendingImages = [];
-            await this.harness.promptAndSave(text, imageContents as any);
+            await this.harness.promptAndSave(text);
           }
         } catch (err) {
           this.harness.saveSessionNow();
@@ -525,6 +484,33 @@ export class WebUiBackend implements UiBackend {
           const mn = (this.harness.agent.state.model as any)?.name ?? this.config.modelId;
           client.send({ type: "model", name: mn });
           client.send({ type: "info", text: `Provider set to: ${cmd.value}. Restart required for full effect.` });
+          break;
+        }
+        case "set_vision_provider": {
+          const vp = cmd.value;
+          this.config.vision = { provider: vp, model: "" as any };
+          saveUserConfig({ vision: this.config.vision });
+          client.send({ type: "config", data: this.buildConfigData() });
+          client.send({ type: "info", text: `Vision provider set to: ${vp}` });
+          break;
+        }
+        case "set_vision_model": {
+          const vm = cmd.value;
+          const vp = this.config.vision?.provider ?? "";
+          this.config.vision = { provider: vp, model: vm };
+          saveUserConfig({ vision: this.config.vision });
+          client.send({ type: "config", data: this.buildConfigData() });
+          client.send({ type: "info", text: `Vision model set to: ${vm}` });
+          break;
+        }
+        case "set_vision_key": {
+          const vk = cmd.value;
+          const vp = this.config.vision?.provider ?? "";
+          const vm = this.config.vision?.model ?? "";
+          this.config.vision = { provider: vp, model: vm, key: vk };
+          saveUserConfig({ vision: this.config.vision });
+          client.send({ type: "config", data: this.buildConfigData() });
+          client.send({ type: "info", text: "Vision API key updated" });
           break;
         }
       }
@@ -710,6 +696,11 @@ export class WebUiBackend implements UiBackend {
       maxTokens: this.config.maxTokens,
       providers,
       models,
+      vision: this.config.vision,
+      visionProviders: getVisionProviders(),
+      visionModels: this.config.vision?.provider
+        ? getVisionModels(this.config.vision.provider)
+        : [],
     };
   }
 

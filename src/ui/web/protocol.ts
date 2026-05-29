@@ -16,6 +16,9 @@ export type ClientCommand =
   | { type: "config"; action: "set_thinking"; value: string }
   | { type: "config"; action: "set_key"; value: string }
   | { type: "config"; action: "set_provider"; value: string }
+  | { type: "config"; action: "set_vision_provider"; value: string }
+  | { type: "config"; action: "set_vision_model"; value: string }
+  | { type: "config"; action: "set_vision_key"; value: string }
   | { type: "session"; action: "list" | "save" | "load" | "delete"; id?: string }
   | { type: "mcp"; action: "list" | "refresh" }
   | { type: "file_list"; prefix: string }
@@ -62,6 +65,9 @@ export interface ConfigData {
   maxTokens: number;
   providers: string[];
   models: { id: string; name: string }[];
+  vision?: { provider: string; model: string; key?: string };
+  visionProviders: string[];
+  visionModels: { id: string; name: string }[];
 }
 
 export interface McpAppInfo {

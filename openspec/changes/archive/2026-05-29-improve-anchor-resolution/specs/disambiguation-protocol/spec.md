@@ -1,8 +1,5 @@
-# disambiguation-protocol Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change file-editing-harness-v2. Update Purpose after archive.
-## Requirements
 ### Requirement: Single-line operations reject ambiguous anchors
 When a single-line edit operation (replace_line, insert_after, insert_before, delete_line) references a hash that matches multiple candidate lines in the current file, the edit SHALL attempt progressive disambiguation: 6-char hash → 8-char resolution hash → context-augmented matching. Only when all levels fail SHALL the edit be rejected with error `anchor_context_ambiguous`. If the hash matches multiple lines AND the target line is classified as low-entropy, the edit SHALL also be rejected with `anchor_low_entropy` regardless of uniqueness.
 
@@ -46,6 +43,8 @@ When an ambiguity error is returned after all resolution levels are exhausted, t
 - **WHEN** `edit` returns `anchor_context_ambiguous` for a batch with hash `"d41d00"` matching lines 3, 7, and 15 at all resolution levels
 - **THEN** details SHALL contain `ambiguous_anchors: [{hash: "d41d00", candidates: [{line: 3, preview: "  },"}, {line: 7, preview: "  },"}, {line: 15, preview: "  },"}]}]` and `suggested_action: "re-read_with_context"`
 
+## ADDED Requirements
+
 ### Requirement: Progressive resolution ladder
 The edit tool SHALL implement a resolution ladder that attempts increasingly precise disambiguation before returning an error. The ladder steps SHALL be: (1) match 6-char display hash, (2) match 8-char resolution hash, (3) match context-augmented hash using the three-line window. Each step SHALL be attempted transparently without agent involvement. Only when all steps fail SHALL the tool return an error.
 
@@ -64,4 +63,3 @@ The edit tool SHALL implement a resolution ladder that attempts increasingly pre
 #### Scenario: Resolution ladder exhausts all steps
 - **WHEN** all three steps (6-char, 8-char, context) produce ambiguous results
 - **THEN** the tool SHALL return error `anchor_context_ambiguous`
-

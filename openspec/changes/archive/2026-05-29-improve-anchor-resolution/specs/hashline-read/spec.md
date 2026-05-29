@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-The hashline-read capability enables `read_file` to return content-based hash anchors for each line, forming the unified entry point for the editing protocol. When `hashes: true`, each line is prefixed with `lineNumber#hash|content` where the hash is a content-only identity digest and the line number is an advisory snapshot position. It also returns `file_version` for stale-state protection and `anchor_format_version` for protocol version coordination.
-## Requirements
 ### Requirement: read_file supports hashline output mode
 
 The `read_file` tool SHALL accept an optional boolean parameter `hashes`. When `hashes` is `true`, each output line MUST be prefixed with `行号#哈希|` where 哈希 is a 6-character hexadecimal string derived from the line's trimmed content (NOT combined with line number). The tool SHALL also return `anchor_format_version`, `file_version`, and `recommended_anchors` in its details. Each line SHALL include a quality annotation `[quality]` between the hash and the content.
@@ -75,6 +73,8 @@ The display format for hashed lines SHALL be `lineNumber#hash [quality]|content`
 - **WHEN** `read_file(hashes: true)` outputs a line classified as high
 - **THEN** the format SHALL be `119#c812f1 [high]   name: "memory",`
 
+## ADDED Requirements
+
 ### Requirement: read_file returns recommended anchors in details
 When `hashes: true`, the `details` object SHALL include a `recommended_anchors` array containing up to 20 `"lineNum#hash"` strings, each representing a line classified as `high` quality. These anchors are pre-validated as suitable for use in edit operations.
 
@@ -85,4 +85,3 @@ When `hashes: true`, the `details` object SHALL include a `recommended_anchors` 
 #### Scenario: recommended_anchors capped at 20
 - **WHEN** `read_file(hashes: true)` reads a file with 50 high-quality lines
 - **THEN** `details.recommended_anchors` SHALL contain exactly 20 entries, selected to be evenly distributed across the file
-
