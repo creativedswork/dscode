@@ -304,28 +304,35 @@ function MessageBubble({ message, elapsed }: { message: UIMessage; elapsed: numb
 
         {message.images && message.images.length > 0 && (
           <div className={`flex flex-wrap gap-2 mb-2 ${isUser ? "justify-end" : "justify-start"}`}>
-            {message.images.map((img, i) => (
-              <img
-                key={i}
-                src={`data:${img.mimeType};base64,${img.data}`}
-                alt={`Attached image ${i + 1}`}
-                className="max-w-[200px] max-h-[200px] object-cover rounded cursor-pointer hover:opacity-90 transition-opacity"
-                style={{ border: "1px solid var(--color-border)" }}
-                onClick={() => window.open(`data:${img.mimeType};base64,${img.data}`, "_blank")}
-              />
-            ))}
+            {message.images.map((img, i) => {
+              // Backend restores ImageRef to ImageAttachment before sending.
+              // Handle both types for type safety / cache miss fallback.
+              const src = "data" in img
+                ? `data:${img.mimeType};base64,${(img as any).data}`
+                : undefined;
+              return (
+                <img
+                  key={i}
+                  src={src ?? "/placeholder-image.svg"}
+                  alt={`Attached image ${i + 1}`}
+                  className="max-w-[200px] max-h-[200px] object-cover rounded cursor-pointer hover:opacity-90 transition-opacity"
+                  style={{ border: "1px solid var(--color-border)" }}
+                  onClick={() => src && window.open(src, "_blank")}
+                />
+              );
+            })}
           </div>
         )}
 
         <div style={{ color: isUser ? "var(--color-user-bubble-text)" : "var(--color-text)" }}>
-          {safeContent ? (
+          {safeContent || (message.images && message.images.length > 0) ? (
             <Markdown className="text-sm leading-relaxed">{safeContent}</Markdown>
           ) : !message.thinking && !message.isStreaming ? (
             <span style={{ color: "var(--color-text-muted)", fontStyle: "italic" }}>(no content)</span>
           ) : null}
         </div>
 
-        {message.isStreaming && !safeContent && !message.thinking && (
+        {message.isStreaming && !safeContent && !message.thinking && (!message.images || message.images.length === 0) && (
           <span className="inline-block w-2 h-4 animate-pulse rounded-sm" style={{ backgroundColor: "var(--color-accent)" }} />
         )}
 

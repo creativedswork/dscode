@@ -307,6 +307,7 @@ function SettingsPanel({
   const [modelInput, setModelInput] = useState(config?.modelId ?? "");
   const [thinkingLevel, setThinkingLevel] = useState(config?.thinkingLevel ?? "off");
   const [providerInput, setProviderInput] = useState(config?.provider ?? "");
+  const [showVisionForm, setShowVisionForm] = useState(false);
   const prevConfigRef = useRef(config);
 
   useEffect(() => {
@@ -317,6 +318,12 @@ function SettingsPanel({
       prevConfigRef.current = config;
     }
   }, [config]);
+
+  useEffect(() => {
+    if (config?.vision) {
+      setShowVisionForm(false);
+    }
+  }, [config?.vision]);
 
   if (!config) {
     return (
@@ -439,88 +446,110 @@ function SettingsPanel({
       </div>
 
       {/* Vision Model Section */}
-      <div
-        className="pt-2 space-y-3"
-        style={{ borderTop: "1px solid var(--color-border)" }}
-      >
-        <p
-          className="text-xs mb-2"
-          style={{ color: "var(--color-text-muted)" }}
+      {config.vision != null || showVisionForm ? (
+        <div
+          className="pt-2 space-y-3"
+          style={{ borderTop: "1px solid var(--color-border)" }}
         >
-          Vision Model
-        </p>
-
-        <div>
-          <label
-            className="text-xs mb-1 block"
-            style={{ color: "var(--color-text-muted)" }}
-          >
-            Vision Provider
-          </label>
-          <select
-            value={config.vision?.provider ?? ""}
-            onChange={(e) => {
-              if (e.target.value) onChange("set_vision_provider", e.target.value);
-            }}
-            style={selectStyle}
-          >
-            <option value="">(not set)</option>
-            {config.visionProviders.map((p) => (
-              <option key={p} value={p}>{p}</option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label
-            className="text-xs mb-1 block"
-            style={{ color: "var(--color-text-muted)" }}
-          >
-            Vision Model
-          </label>
-          <select
-            value={config.vision?.model ?? ""}
-            onChange={(e) => {
-              if (e.target.value) onChange("set_vision_model", e.target.value);
-            }}
-            style={selectStyle}
-          >
-            <option value="">(not set)</option>
-            {config.visionModels.map((m) => (
-              <option key={m.id} value={m.id}>{m.name}</option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label
-            className="text-xs mb-1 block"
-            style={{ color: "var(--color-text-muted)" }}
-          >
-            Vision Key
-          </label>
-          <div className="flex gap-2">
-            <input
-              type="password"
-              id="vision-key-input"
-              className="input text-xs flex-1"
-              placeholder={config.vision?.key ? "sk-***hidden***" : "sk-..."}
-            />
-            <button
-              onClick={() => {
-                const input = document.getElementById("vision-key-input") as HTMLInputElement;
-                if (input?.value) {
-                  onChange("set_vision_key", input.value);
-                  input.value = "";
-                }
-              }}
-              className="btn-primary text-xs px-3"
+          <div className="flex items-center justify-between">
+            <p
+              className="text-xs"
+              style={{ color: "var(--color-text-muted)" }}
             >
-              Set
-            </button>
+              Vision Model
+            </p>
+            {!showVisionForm && (
+              <button
+                onClick={() => onChange("set_vision_delete", "")}
+                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-btn transition-colors"
+                style={{ color: "var(--color-error-text)" }}
+              >
+                <Trash size={12} weight="bold" />
+                Delete
+              </button>
+            )}
+          </div>
+
+          <div>
+            <label
+              className="text-xs mb-1 block"
+              style={{ color: "var(--color-text-muted)" }}
+            >
+              Vision Provider
+            </label>
+            <select
+              value={config.vision?.provider ?? ""}
+              onChange={(e) => {
+                if (e.target.value) onChange("set_vision_provider", e.target.value);
+              }}
+              style={selectStyle}
+            >
+              <option value="">(not set)</option>
+              {config.visionProviders.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label
+              className="text-xs mb-1 block"
+              style={{ color: "var(--color-text-muted)" }}
+            >
+              Vision Model
+            </label>
+            <select
+              value={config.vision?.model ?? ""}
+              onChange={(e) => {
+                if (e.target.value) onChange("set_vision_model", e.target.value);
+              }}
+              style={selectStyle}
+            >
+              <option value="">(not set)</option>
+              {config.visionModels.map((m) => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label
+              className="text-xs mb-1 block"
+              style={{ color: "var(--color-text-muted)" }}
+            >
+              Vision Key
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="password"
+                id="vision-key-input"
+                className="input text-xs flex-1"
+                placeholder={config.vision?.key ? "sk-***hidden***" : "sk-..."}
+              />
+              <button
+                onClick={() => {
+                  const input = document.getElementById("vision-key-input") as HTMLInputElement;
+                  if (input?.value) {
+                    onChange("set_vision_key", input.value);
+                    input.value = "";
+                  }
+                }}
+                className="btn-primary text-xs px-3"
+              >
+                Set
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      ) : (
+        <button
+          onClick={() => setShowVisionForm(true)}
+          className="btn-secondary text-xs w-full flex items-center justify-center gap-2"
+        >
+          <Plus size={14} weight="bold" style={{ color: "var(--color-accent)" }} />
+          Add Vision Model
+        </button>
+      )}
 
       {/* Info */}
       <div
