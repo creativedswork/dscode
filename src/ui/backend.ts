@@ -26,6 +26,9 @@ export interface UiBackend {
   addInfo(text: string): void;
   addError(text: string): void;
 
+  // ── Retry feedback ──
+  addRetry(info: { attempt: number; maxRetries: number; delayMs: number; error: string; level: "stream" | "turn" }): void;
+
   // ── Permission ──
   getPromptPermission(): (
     toolName: string,

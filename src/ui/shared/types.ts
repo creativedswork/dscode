@@ -158,6 +158,7 @@ export type ServerEvent =
   | { type: "assistant_end" }
   | { type: "info"; text: string }
   | { type: "error"; text: string }
+  | { type: "retry"; info: { attempt: number; maxRetries: number; delayMs: number; error: string; level: "stream" | "turn" } }
   | { type: "permission_prompt"; toolName: string; preview: string }
   | { type: "loader"; state: "show" | "hide"; text?: string }
   | { type: "config"; data: ConfigData }

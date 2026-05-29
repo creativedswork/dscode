@@ -250,6 +250,21 @@ export class ConversationView {
     this.render();
   }
 
+  addRetry(info: { attempt: number; maxRetries: number; delayMs: number; error: string; level: "stream" | "turn" }): void {
+    const exhausted = info.attempt > info.maxRetries;
+    const delaySec = Math.round(info.delayMs / 100) / 10;
+    if (exhausted) {
+      const reason = info.error ? `: ${info.error}` : "";
+      this.pushText(c.red(`✗ All retries exhausted${reason}`));
+    } else if (info.delayMs > 0) {
+      const errHint = info.error ? ` (${info.error})` : "";
+      this.pushText(c.yellow(`↻ Retry ${info.attempt}/${info.maxRetries} in ${delaySec}s...${errHint} [${info.level}]`));
+    } else {
+      this.pushText(c.red(`✗ Retry failed: ${info.error}`));
+    }
+    this.render();
+  }
+
   showPermissionPrompt(toolName: string, preview: string): void {
     this.activePermission = { toolName, preview };
     this.permSelected = 0;

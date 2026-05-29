@@ -107,7 +107,8 @@ export class Harness {
         apiKey: opts?.apiKey ?? self.config.apiKey,
         maxTokens,
         timeoutMs: 120_000,
-        maxRetries: 0,
+        maxRetries: self.config.retry.maxRetries,
+        maxRetryDelayMs: self.config.retry.maxDelayMs,
       }),
       transformContext: (msgs: AgentMessage[], signal?: AbortSignal) => {
         try {
@@ -142,18 +143,88 @@ export class Harness {
   }
 
   /**
-   * Prompt the agent and automatically save the session after the turn completes
-   * (whether successful or not). This provides an extra safety layer on top of
-   * the agent_end event handler.
+   * Prompt the agent with retry logic for transient errors.
+   * On success, saves the session. On failure, retries up to maxRetries
+   * with exponential backoff, then saves the failed state.
    */
   async promptAndSave(text: string, images?: ImageContent[]): Promise<void> {
-    try {
+    const maxRetries = this.config.retry.maxRetries;
+    const baseDelay = this.config.retry.baseDelayMs;
+    const maxDelay = this.config.retry.maxDelayMs;
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const preTurnLength = (this.agent.state.messages as any[]).length;
+
+      // On retry attempts, rollback messages and wait
+      if (attempt > 0) {
+        // Truncate messages to pre-turn state (removes failed assistant message)
+        (this.agent.state.messages as any[]).length = preTurnLength;
+
+        const delay = this.computeRetryDelay(attempt, baseDelay, maxDelay);
+        this.ui.addRetry({
+          attempt,
+          maxRetries,
+          delayMs: delay,
+          error: "",
+          level: "turn",
+        });
+        await this.sleep(delay);
+      }
+
       await this.agent.prompt(text, images);
-    } finally {
-      // Always save after each turn, regardless of success/failure
-      this.sessionManager.trySaveSession(this.agent);
+
+      // Check if last assistant message has an error
+      const msgs = this.agent.state.messages as any[];
+      const lastAssistantMsg = this.findLastAssistantMessage(msgs);
+
+      if (!lastAssistantMsg || lastAssistantMsg.stopReason !== "error") {
+        // Success — save and return
+        this.sessionManager.trySaveSession(this.agent);
+        return;
+      }
+
+      const errorMsg = lastAssistantMsg.errorMessage ?? "Unknown model error";
+
+      // Non-retryable errors: auth, invalid model, etc.
+      if (!this.isRetryableError(errorMsg)) {
+        this.ui.addRetry({
+          attempt: attempt + 1,
+          maxRetries,
+          delayMs: 0,
+          error: errorMsg,
+          level: "turn",
+        });
+        this.ui.addError(`Model error: ${errorMsg}`);
+        this.sessionManager.trySaveSession(this.agent);
+        return;
+      }
+
+      // Last retry attempt exhausted
+      if (attempt >= maxRetries) {
+        this.ui.addRetry({
+          attempt: attempt + 1,
+          maxRetries,
+          delayMs: 0,
+          error: errorMsg,
+          level: "turn",
+        });
+        this.ui.addError(`Model error: ${errorMsg}`);
+        this.ui.addError("✗ All retries exhausted");
+        this.sessionManager.trySaveSession(this.agent);
+        return;
+      }
+
+      // Will retry — show progress
+      this.ui.addRetry({
+        attempt: attempt + 1,
+        maxRetries,
+        delayMs: this.computeRetryDelay(attempt + 1, baseDelay, maxDelay),
+        error: errorMsg,
+        level: "turn",
+      });
     }
   }
+
   /**
    * Force a session save immediately. Safe to call from anywhere,
    * including error handlers and shutdown hooks.
@@ -167,6 +238,95 @@ export class Harness {
       if (messages[i]?.role === "user") return i;
     }
     return -1;
+  }
+
+  private findLastAssistantMessage(messages: any[]): any | null {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]?.role === "assistant") return messages[i];
+    }
+    return null;
+  }
+
+  /**
+   * Determine if an error message is transient and safe to retry.
+   * Permanent errors (auth, invalid model) are never retried.
+   */
+  private isRetryableError(errorMsg: string): boolean {
+    const cfg = this.config.retry;
+    const lower = errorMsg.toLowerCase();
+
+    // Never retry auth or configuration errors
+    if (
+      lower.includes("authentication") ||
+      lower.includes("api key") ||
+      lower.includes("invalid model") ||
+      lower.includes("model not found") ||
+      lower.includes("permission denied") ||
+      lower.includes("403") ||
+      lower.includes("401")
+    ) {
+      return false;
+    }
+
+    // Check specific retry categories
+    if (cfg.retryOnTimeout && (
+      lower.includes("timeout") ||
+      lower.includes("timed out") ||
+      lower.includes("deadline exceeded")
+    )) {
+      return true;
+    }
+
+    if (cfg.retryOnRateLimit && (
+      lower.includes("rate limit") ||
+      lower.includes("429") ||
+      lower.includes("too many requests")
+    )) {
+      return true;
+    }
+
+    if (cfg.retryOnServerError && (
+      lower.includes("5") ||
+      lower.includes("server error") ||
+      lower.includes("internal") ||
+      lower.includes("service unavailable") ||
+      lower.includes("gateway timeout") ||
+      lower.includes("bad gateway") ||
+      lower.includes("terminated")
+    )) {
+      return true;
+    }
+
+    // Default: retry on generic connection/network errors
+    if (
+      lower.includes("network") ||
+      lower.includes("connection") ||
+      lower.includes("econnrefused") ||
+      lower.includes("econnreset") ||
+      lower.includes("socket") ||
+      lower.includes("dns") ||
+      lower.includes("eof") ||
+      lower.includes("fetch failed") ||
+      lower.includes("terminated")
+    ) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Compute exponential backoff delay with jitter.
+   * delay = min(baseDelayMs * 2^(attempt-1) + random(0, 500), maxDelayMs)
+   */
+  private computeRetryDelay(attempt: number, baseDelayMs: number, maxDelayMs: number): number {
+    const jitter = Math.random() * 500;
+    const delay = baseDelayMs * Math.pow(2, attempt - 1) + jitter;
+    return Math.min(delay, maxDelayMs);
+  }
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   private resolveVisionModel(): { model: Model<Api>; apiKey: string } | null {
@@ -259,9 +419,42 @@ export class Harness {
           timestamp: Date.now(),
         };
         this.sessionManager.setVisionMessages([...this.sessionManager.visionMessages, vMsg]);
-        // Save again — promptAndSave already saved with enriched text,
-        // but vision message was recorded after. Re-save to persist it.
+
+        // Replace the enriched user message with original text + cached image refs.
+        // The model already processed the description, but the user should see
+        // their own text and the original images, not the machine-generated description.
+        const msgs2 = this.agent.state.messages as any[];
+        let userMsg: any = null;
+        for (let i = msgs2.length - 1; i >= 0; i--) {
+          if (msgs2[i]?.role === "user") {
+            userMsg = msgs2[i];
+            break;
+          }
+        }
+        if (userMsg) {
+          userMsg.content = text || (cachedRefs.length > 0 ? "📷 Image" : text);
+          // Restore images from cache for immediate display and store refs for session persistence
+          userMsg.images = cachedRefs.map((ref: ImageRef) => ({
+            type: "image_ref" as const,
+            hash: ref.hash,
+            mimeType: ref.mimeType,
+          }));
+        }
+        // Re-save to persist the cleaned message (promptAndSave already saved once
+        // with the enriched text).
         this.sessionManager.trySaveSession(this.agent);
+        // Restore images into agent state for the UI to render — reads from disk cache synchronously
+        const restoredImgs: ImageContent[] = [];
+        for (const ref of cachedRefs) {
+          const cached = ImageCache.getSync(ref);
+          if (cached) restoredImgs.push(cached);
+        }
+        if (restoredImgs.length > 0) {
+          userMsg.images = restoredImgs.map((img) => ({
+            data: img.data,
+            mimeType: img.mimeType,
+          }));
+        }
 
         return;
       } catch (err) {
@@ -698,7 +891,9 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
       try {
         if (event.type === "agent_end") {
           this.ui.setProcessing(false);
-          this.sessionManager.saveSession(this.agent);
+          // Session is saved by promptAndSave after retries are resolved.
+          // This save is a safety net for non-promptAndSave code paths.
+          this.sessionManager.trySaveSession(this.agent);
         }
         if (event.type === "agent_start") {
           this.ui.startAssistantMessage();
@@ -709,8 +904,11 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
           if (msg?.stopReason === "length") {
             this.ui.addInfo("Output truncated (hit max_tokens). Continue from where you left off.");
           }
+          // Turn-level errors are handled by promptAndSave's retry loop.
+          // Only display the error here if promptAndSave is not involved.
           if (msg?.stopReason === "error" && msg?.errorMessage) {
-            this.ui.addError(`Model error: ${msg.errorMessage}`);
+            // Don't display here — promptAndSave handles UI and retry logic.
+            // This avoids double-displaying errors during retries.
           }
         }
       } catch (err) {

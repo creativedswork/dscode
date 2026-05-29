@@ -186,6 +186,10 @@ export class WebUiBackend implements UiBackend {
     this.broadcast({ type: "error", text });
   }
 
+  addRetry(info: { attempt: number; maxRetries: number; delayMs: number; error: string; level: "stream" | "turn" }): void {
+    this.broadcast({ type: "retry", info });
+  }
+
   // ── MCP App Notification (called by Harness when app is registered) ──
 
   addAppNotification(app: AppInstance): void {

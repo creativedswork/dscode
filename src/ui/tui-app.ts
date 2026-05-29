@@ -758,6 +758,10 @@ export class TuiApp {
     this.conversation.addError(text);
   }
 
+  addRetry(info: { attempt: number; maxRetries: number; delayMs: number; error: string; level: "stream" | "turn" }): void {
+    this.conversation.addRetry(info);
+  }
+
   setProcessing(processing: boolean): void {
     this.processing = processing;
     this.editor.disableSubmit = processing && !this.permissionExplainMode;

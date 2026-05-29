@@ -36,6 +36,7 @@ export interface HarnessConfig {
   agentsMdContent?: string;
   atFile?: AtFileConfig;
   vision?: VisionConfig;
+  retry: RetryConfig;
 }
 
 export interface AtFileConfig {
@@ -80,6 +81,25 @@ export interface PermissionRuleConfig {
   decision: PermissionDecision;
   reason?: string;
   priority?: number;
+}
+
+// --- Retry ---
+
+export interface RetryConfig {
+  maxRetries: number;
+  baseDelayMs: number;
+  maxDelayMs: number;
+  retryOnTimeout: boolean;
+  retryOnRateLimit: boolean;
+  retryOnServerError: boolean;
+}
+
+export interface RetryInfo {
+  attempt: number;
+  maxRetries: number;
+  delayMs: number;
+  error: string;
+  level: "stream" | "turn";
 }
 
 // --- Memory ---

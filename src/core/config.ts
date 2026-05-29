@@ -198,6 +198,29 @@ export function loadConfig(): HarnessConfig {
     ? (rawThinkingLevel as ThinkingLevel)
     : defaultThinkingLevel;
 
+  // Retry config: env vars > settings.json > defaults
+  const retryFromEnv = {
+    maxRetries: process.env.DSCODE_RETRY_MAX_RETRIES ? Number(process.env.DSCODE_RETRY_MAX_RETRIES) : undefined,
+    baseDelayMs: process.env.DSCODE_RETRY_BASE_DELAY_MS ? Number(process.env.DSCODE_RETRY_BASE_DELAY_MS) : undefined,
+    maxDelayMs: process.env.DSCODE_RETRY_MAX_DELAY_MS ? Number(process.env.DSCODE_RETRY_MAX_DELAY_MS) : undefined,
+    retryOnTimeout: process.env.DSCODE_RETRY_ON_TIMEOUT !== undefined ? process.env.DSCODE_RETRY_ON_TIMEOUT !== "false" : undefined,
+    retryOnRateLimit: process.env.DSCODE_RETRY_ON_RATE_LIMIT !== undefined ? process.env.DSCODE_RETRY_ON_RATE_LIMIT !== "false" : undefined,
+    retryOnServerError: process.env.DSCODE_RETRY_ON_SERVER_ERROR !== undefined ? process.env.DSCODE_RETRY_ON_SERVER_ERROR !== "false" : undefined,
+  };
+  // Remove undefined entries so merged doesn't override with undefined
+  for (const k of Object.keys(retryFromEnv)) {
+    if ((retryFromEnv as any)[k] === undefined) delete (retryFromEnv as any)[k];
+  }
+  const mergedRetry = (merged.retry as Record<string, unknown>) ?? {};
+  const retry: import("./types.js").RetryConfig = {
+    maxRetries: retryFromEnv.maxRetries ?? (mergedRetry.maxRetries as number) ?? 3,
+    baseDelayMs: retryFromEnv.baseDelayMs ?? (mergedRetry.baseDelayMs as number) ?? 1000,
+    maxDelayMs: retryFromEnv.maxDelayMs ?? (mergedRetry.maxDelayMs as number) ?? 30000,
+    retryOnTimeout: retryFromEnv.retryOnTimeout ?? (mergedRetry.retryOnTimeout as boolean) ?? true,
+    retryOnRateLimit: retryFromEnv.retryOnRateLimit ?? (mergedRetry.retryOnRateLimit as boolean) ?? true,
+    retryOnServerError: retryFromEnv.retryOnServerError ?? (mergedRetry.retryOnServerError as boolean) ?? true,
+  };
+
   // load MCP server configs from both formats:
   // 1) { mcp: { servers: [{name, command, args, cwd, ...}] } }  (legacy array)
   // 2) { mcpServers: { "name": {command, args, cwd, ...} } }    (object with named keys)
@@ -274,6 +297,7 @@ export function loadConfig(): HarnessConfig {
     },
     agentsMdContent: loadAgentsMd(projectPath),
     vision,
+    retry,
   };
 
 }
