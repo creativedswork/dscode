@@ -5,6 +5,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { c } from "./theme.js";
+import type { PermissionPrompt } from "./shared/types.js";
 
 interface ToolEntry {
   name: string;
@@ -89,8 +90,7 @@ export class ConversationView {
   private renderedToolCount = 0;
   private tui: TUI;
 
-  private permToolName = "";
-  private permPreview = "";
+  private activePermission: PermissionPrompt | null = null;
   private permSelected = 0;
 
   private imageTheme: ImageTheme = {
@@ -113,8 +113,7 @@ export class ConversationView {
     this.currentAssistantText = "";
     this.toolEntries = [];
     this.renderedToolCount = 0;
-    this.permToolName = "";
-    this.permPreview = "";
+    this.activePermission = null;
     this.permSelected = 0;
     while (this.box.children.length > 0) { this.box.removeChild(this.box.children[0]); }
     this.tui.requestRender(true);
@@ -252,8 +251,7 @@ export class ConversationView {
   }
 
   showPermissionPrompt(toolName: string, preview: string): void {
-    this.permToolName = toolName;
-    this.permPreview = preview;
+    this.activePermission = { toolName, preview };
     this.permSelected = 0;
     this.render();
   }
@@ -264,12 +262,11 @@ export class ConversationView {
   }
 
   permSelect(): PermOption | null {
-    return this.permToolName ? PERM_OPTIONS[this.permSelected] : null;
+    return this.activePermission ? PERM_OPTIONS[this.permSelected] : null;
   }
 
   clearPermissionPrompt(): void {
-    this.permToolName = "";
-    this.permPreview = "";
+    this.activePermission = null;
     this.permSelected = 0;
   }
 
@@ -281,11 +278,13 @@ export class ConversationView {
     const lines: string[] = [];
     const maxLineLen = 60;
 
+    if (!this.activePermission) return lines;
+
     lines.push("");
     lines.push(c.yellow.bold(" Permissions ────────────────────────────────────"));
-    lines.push(c.yellow(` Tool: ${this.permToolName}`));
-    if (this.permPreview) {
-      for (const pl of this.permPreview.split("\n").slice(0, 6)) {
+    lines.push(c.yellow(` Tool: ${this.activePermission.toolName}`));
+    if (this.activePermission.preview) {
+      for (const pl of this.activePermission.preview.split("\n").slice(0, 6)) {
         lines.push(c.dim(`   ${pl.slice(0, maxLineLen)}`));
       }
     }
@@ -306,7 +305,6 @@ export class ConversationView {
   private render(): void {
     const totalBlocks = this.blocks.length;
 
-    // Add new blocks since last render
     for (let i = this.renderedBlockCount; i < totalBlocks; i++) {
       const block = this.blocks[i];
       if (block.type === "text") {
@@ -317,14 +315,12 @@ export class ConversationView {
     }
     this.renderedBlockCount = totalBlocks;
 
-    // Live content: rebuild live section each time
     this.renderLive();
   }
 
   private liveComponents: Component[] = [];
 
   private renderLive(): void {
-    // Remove previous live components
     for (const comp of this.liveComponents) {
       this.box.removeChild(comp);
     }
@@ -369,7 +365,7 @@ export class ConversationView {
       this.liveComponents.push(liveText);
     }
 
-    if (this.permToolName) {
+    if (this.activePermission) {
       const permText = new Text(this.renderPermPrompt().join("\n"));
       this.box.addChild(permText);
       this.liveComponents.push(permText);

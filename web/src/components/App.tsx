@@ -1,5 +1,6 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import type { UIMessage, ServerEvent, ConfigData, SessionInfo, McpServerInfo, ImageAttachment, FileListItem } from "../types";
+import { conversationReducer } from "@dscode/shared/reducer";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { ChatView } from "./ChatView";
 import { MessageInput } from "./MessageInput";
@@ -23,37 +24,10 @@ const SLASH_COMMANDS = [
   { name: "image", description: "Attach an image (file path or 'clipboard')" },
 ];
 
-function updateLastOrCreate(prev: UIMessage[], update: (msg: UIMessage) => Partial<UIMessage>): UIMessage[] {
-  const next = [...prev];
-  const last = next[next.length - 1];
-  if (last?.isStreaming) {
-    next[next.length - 1] = { ...last, ...update(last) };
-  } else {
-    next.push({
-      id: `assistant-${Date.now()}`,
-      role: "assistant",
-      content: "",
-      thinking: "",
-      tools: [],
-      isStreaming: true,
-      ...update({ id: "", role: "assistant" as const, content: "", thinking: "", tools: [] }),
-    });
-  }
-  return next;
-}
-
 function getInitialTheme(): "light" | "dark" {
   const saved = localStorage.getItem("dscode-theme");
   if (saved === "dark" || saved === "light") return saved;
   return "light";
-}
-
-function normalizeContent(c: unknown): string {
-  if (typeof c === "string") return c;
-  if (Array.isArray(c)) {
-    return (c as any[]).filter((b) => b.type === "text").map((b) => b.text).join("\n");
-  }
-  return "";
 }
 
 export function App() {
@@ -86,45 +60,22 @@ export function App() {
       case "ready": {
         setModel(event.model);
         setConfig(event.config);
-        setMessages((event.messages as any[]).map((m: any, i) => ({
-          id: `hist-${i}`, role: m.role,
-          content: normalizeContent(m.content),
-          thinking: typeof m.thinking === "string" ? m.thinking : "",
-          tools: Array.isArray(m.tools) ? m.tools : [],
-          images: Array.isArray(m.images) ? m.images : [],
-        })));
+        setMessages((prev) => conversationReducer(prev, event));
         break;
       }
       case "user_message":
-        setMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: "user", content: normalizeContent(event.text), images: (event as any).images ?? [] }]);
-        break;
-      case "assistant_start": turnStartRef.current = Date.now(); setProcessing(true); break;
-      case "thinking_delta": setMessages((prev) => updateLastOrCreate(prev, (msg) => ({ thinking: (msg.thinking ?? "") + event.delta }))); break;
-      case "text_delta": setMessages((prev) => updateLastOrCreate(prev, (msg) => ({ content: msg.content + event.delta }))); break;
+      case "thinking_delta":
+      case "text_delta":
       case "tool_start":
-        setMessages((prev) => updateLastOrCreate(prev, (msg) => {
-          const tools = [...(msg.tools ?? []), { name: event.name, args: typeof event.args === "string" ? event.args : JSON.stringify(event.args).slice(0, 80), result: "", isError: false }];
-          return { tools };
-        }));
-        break;
       case "tool_end":
-        setMessages((prev) => {
-          const next = [...prev]; const last = next[next.length - 1];
-          if (last?.isStreaming) { const tools = (last.tools ?? []).map((t) => t.name === event.name && !t.result ? { ...t, result: event.result, isError: event.isError } : t); next[next.length - 1] = { ...last, tools }; }
-          return next;
-        });
-        break;
       case "mcp_app":
-        setMessages((prev) => {
-          const next = [...prev];
-          for (let i = next.length - 1; i >= 0; i--) {
-            const msg = next[i]; if (msg.tools) { const idx = msg.tools.findIndex((t) => t.name === event.app.toolName); if (idx >= 0) { const nt = [...msg.tools]; nt[idx] = { ...nt[idx], mcpApp: event.app }; next[i] = { ...msg, tools: nt }; break; } }
-          }
-          return next;
-        });
-        break;
       case "assistant_end":
-        setMessages((prev) => { const n = [...prev]; const l = n[n.length - 1]; if (l?.isStreaming) n[n.length - 1] = { ...l, isStreaming: false }; return n; });
+      case "clear_conversation":
+        setMessages((prev) => conversationReducer(prev, event));
+        break;
+      case "assistant_start":
+        turnStartRef.current = Date.now();
+        setProcessing(true);
         break;
       case "info": {
         const txt = event.text;
@@ -144,7 +95,6 @@ export function App() {
       case "mcp_state": setMcpServers(event.servers); break;
       case "model": setModel(event.name); break;
       case "file_list_result": setFileListItems(event.items); setFileListPrefix(event.prefix); break;
-      case "clear_conversation": setMessages([]); setProcessing(false); turnStartRef.current = 0; break;
     }
   }, [addToast]);
 
