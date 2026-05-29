@@ -706,14 +706,32 @@ export class WebUiBackend implements UiBackend {
 
   private buildConversationHistory(): ConversationMessage[] {
     const messages = this.harness.agent.state.messages as any[];
-    return messages.map((m: any) => ({
-      role: m.role,
-      content: m.content ?? "",
-      thinking: m.thinking,
-      tools: m.tools,
-      images: m.images,
-    }));
+    return messages.map((m: any) => {
+      // Agent stores images inline in content array: [{type:"text",text:"..."}, {type:"image",data:"..."}]
+      // Extract to separate images field for the web UI
+      let images = m.images;
+      let content = m.content;
+      if (!images && Array.isArray(m.content)) {
+        const imageBlocks = m.content.filter((b: any) => b.type === "image");
+        if (imageBlocks.length > 0) {
+          images = imageBlocks.map((b: any) => ({
+            data: b.data,
+            mimeType: b.mimeType || "image/png",
+          }));
+          const textBlocks = m.content.filter((b: any) => b.type === "text");
+          content = textBlocks.map((b: any) => b.text).join("\n");
+        }
+      }
+      return {
+        role: m.role,
+        content: content ?? "",
+        thinking: m.thinking,
+        tools: m.tools,
+        images: images,
+      };
+    });
   }
+
 
   private broadcast(event: ServerEvent): void {
     this.wsServer.broadcast(event);

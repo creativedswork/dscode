@@ -25,13 +25,14 @@ process.on("unhandledRejection", (reason) => {
 });
 
 process.on("uncaughtException", (err) => {
-  console.error("[uncaughtException]", err);
+  const msg = err instanceof Error ? err.message : String(err);
+  console.error("\n  \u26a0 " + msg + "\n");
   emergencySaveSession();
   // Give I/O a brief moment to flush, then exit
   setTimeout(() => {
     process.exit(1);
   }, 500).unref();
-});
+})
 
 // ── Signal handlers for graceful shutdown ──
 

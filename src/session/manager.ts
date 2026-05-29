@@ -55,12 +55,16 @@ export class SessionManager {
 
   saveSession(agent: Agent): void {
     if (!this.current) return;
-
     const messages = agent.state.messages;
-    this.current.updatedAt = Date.now();
-    this.current.messageCount = messages.length;
+    // Never overwrite a session file with empty messages.
+    // This can happen when saveSession is called after agent.reset()
+    // (e.g. from agent_end error handler or promptAndSave finally block).
+    if (messages.length === 0) return;
 
-    if (messages.length > 0 && this.current.title === "New session") {
+    this.current.updatedAt = Date.now();
+    this.current.messageCount = messages.filter((m: any) => m.role === "user" || m.role === "assistant").length;
+
+    if (this.current.title === "New session") {
       const first = messages[0];
       const content = (first as any)?.content;
       if (Array.isArray(content)) {
@@ -73,7 +77,7 @@ export class SessionManager {
       }
     }
 
-    if (!this.current.preview && messages.length > 0) {
+    if (!this.current.preview) {
       this.current.preview = extractFirstUserMessage(messages as unknown[]);
     }
 

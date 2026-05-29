@@ -212,7 +212,16 @@ export class SessionStore {
         try {
           const raw = JSON.parse(readFileSync(join(dir, file), "utf8"));
           if (raw?.metadata && typeof raw.metadata.id === "string") {
-            entries.push(raw.metadata as SessionMetadata);
+            const meta = raw.metadata as SessionMetadata;
+            // Fix-up: recalculate messageCount from actual messages
+            // (fixes sessions that were corrupted by saveSession with empty messages)
+            if (meta.messageCount === 0 && Array.isArray(raw.messages) && raw.messages.length > 0) {
+              meta.messageCount = raw.messages.filter((m: any) => m.role === "user" || m.role === "assistant").length;
+            }
+            // Skip sessions that have no messages at all (empty/corrupted)
+            if (Array.isArray(raw.messages) && raw.messages.length > 0) {
+              entries.push(meta);
+            }
           }
         } catch {
           // Skip corrupted files during rebuild
