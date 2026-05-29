@@ -51,7 +51,7 @@ The frontend SHALL support warm light and warm dark themes using warm stone/taup
 - **THEN** backgrounds use warm deep gray-browns (≈ `#1e1c19`), surfaces are warm dark gray (≈ `#282622`), borders are warm dark (≈ `#3a3732`), and text is warm off-white (≈ `#e8e4dd`)
 
 ### Requirement: Conversation view
-The frontend SHALL display a scrollable conversation area showing user messages, assistant responses with streaming text, thinking blocks, and tool call results, all using the warm flat design system styling.
+The frontend SHALL display a scrollable conversation area showing user messages, assistant responses with streaming text, thinking blocks, and tool call results, all using the warm flat design system styling. Message state management SHALL use the shared `conversationReducer` from `@dscode/shared/reducer` instead of inline event handling logic.
 
 #### Scenario: User message display
 - **WHEN** user submits a message
@@ -59,7 +59,7 @@ The frontend SHALL display a scrollable conversation area showing user messages,
 
 #### Scenario: Streaming assistant response
 - **WHEN** the server sends `text_delta` events
-- **THEN** the assistant message bubble updates incrementally using the warm surface background, `1px solid` border, and warm text colors
+- **THEN** the assistant message bubble updates incrementally via `conversationReducer`, using the warm surface background, `1px solid` border, and warm text colors
 
 #### Scenario: Thinking block display
 - **WHEN** the server sends `thinking_delta` events
@@ -68,6 +68,17 @@ The frontend SHALL display a scrollable conversation area showing user messages,
 #### Scenario: Tool call display
 - **WHEN** the server sends `tool_start` and `tool_end` events
 - **THEN** each tool call appears as an inline flat card with `border-radius: 8px`, `1px solid` warm border, tool name in monospace with amber accent, and muted pastel success/error indicators
+
+### Requirement: Message types imported from shared module
+The frontend SHALL import `UIMessage`, `ToolCallEntry`, `ImageAttachment`, `ConversationMessage`, and `ToolCallEntry` types from the shared module (`@dscode/shared/types`) rather than defining them in `web/src/types/index.ts`.
+
+#### Scenario: Import shared UIMessage
+- **WHEN** any component references `UIMessage`
+- **THEN** the import is from `@dscode/shared/types` or a local re-export thereof
+
+#### Scenario: No duplicate type definitions
+- **WHEN** `web/src/types/index.ts` is inspected
+- **THEN** it contains no inline `interface UIMessage`, `interface ToolCallEntry`, or `interface ConversationMessage` definitions
 
 ### Requirement: Input area
 The frontend SHALL provide a text input area at the bottom of the screen with flat, rounded styling using the warm design system.
