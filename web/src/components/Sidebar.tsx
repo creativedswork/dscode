@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import type { SessionInfo, McpServerInfo, ConfigData } from "../types";
-import { X, Trash, CaretDown, CaretRight } from "@phosphor-icons/react";
+import { X, Trash, CaretDown, CaretRight, Plus } from "@phosphor-icons/react";
 
 interface SidebarProps {
   open: boolean;
@@ -13,6 +13,7 @@ interface SidebarProps {
   onSessionAction: (action: "list" | "save" | "load" | "delete", id?: string) => void;
   onMcpAction: (action: "list" | "refresh") => void;
   onConfigChange: (action: string, value: string) => void;
+  onNewSession: () => void;
 }
 
 export function Sidebar({
@@ -26,6 +27,7 @@ export function Sidebar({
   onSessionAction,
   onMcpAction,
   onConfigChange,
+  onNewSession,
 }: SidebarProps) {
   return (
     <>
@@ -89,6 +91,7 @@ export function Sidebar({
             <SessionsPanel
               sessions={sessions}
               onAction={onSessionAction}
+              onNewSession={onNewSession}
             />
           )}
           {activeTab === "mcp" && (
@@ -112,14 +115,23 @@ export function Sidebar({
 function SessionsPanel({
   sessions,
   onAction,
+  onNewSession,
 }: {
   sessions: SessionInfo[];
   onAction: (action: "list" | "save" | "load" | "delete", id?: string) => void;
+  onNewSession: () => void;
 }) {
   return (
     <div className="space-y-3">
-      <button onClick={() => onAction("save")} className="btn-primary w-full text-xs">
-        Save Current Session
+      <button
+        onClick={onNewSession}
+        className="w-full text-left px-3 py-1.5 text-sm transition-colors duration-200 flex items-center gap-2"
+        style={{ borderRadius: "8px" }}
+        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--color-surface-hover)"; }}
+        onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
+      >
+        <Plus size={14} weight="bold" style={{ color: "var(--color-accent)" }} />
+        <span style={{ color: "var(--color-accent)" }}>New Session</span>
       </button>
 
       {sessions.length === 0 ? (

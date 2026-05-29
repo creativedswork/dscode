@@ -5,6 +5,7 @@ import { ChatView } from "./ChatView";
 import { MessageInput } from "./MessageInput";
 import { Sidebar } from "./Sidebar";
 import { ToastContainer, useToasts } from "./Toast";
+import { CommandPanel } from "./CommandPanel";
 import { List, Sun, Moon } from "@phosphor-icons/react";
 
 const SLASH_COMMANDS = [
@@ -47,14 +48,10 @@ function getInitialTheme(): "light" | "dark" {
   return "light";
 }
 
-/** Server stores content as structured array [{type:"text",text:"..."}] or plain string */
 function normalizeContent(c: unknown): string {
   if (typeof c === "string") return c;
   if (Array.isArray(c)) {
-    return (c as any[])
-      .filter((b) => b.type === "text")
-      .map((b) => b.text)
-      .join("\n");
+    return (c as any[]).filter((b) => b.type === "text").map((b) => b.text).join("\n");
   }
   return "";
 }
@@ -64,10 +61,7 @@ export function App() {
   const [processing, setProcessing] = useState(false);
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [model, setModel] = useState("");
-  const [permissionPrompt, setPermissionPrompt] = useState<{
-    toolName: string;
-    preview: string;
-  } | null>(null);
+  const [permissionPrompt, setPermissionPrompt] = useState<{ toolName: string; preview: string } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<"sessions" | "mcp" | "settings">("sessions");
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -75,335 +69,140 @@ export function App() {
   const [fileListItems, setFileListItems] = useState<FileListItem[]>([]);
   const [fileListPrefix, setFileListPrefix] = useState("");
   const [theme, setTheme] = useState<"light" | "dark">(getInitialTheme);
+  const [commandPanel, setCommandPanel] = useState<string | null>(null);
   const { toasts, addToast, removeToast } = useToasts();
-
   const turnStartRef = useRef<number>(0);
 
   useEffect(() => {
     const root = document.documentElement;
-    if (theme === "dark") {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
-    }
+    theme === "dark" ? root.classList.add("dark") : root.classList.remove("dark");
     localStorage.setItem("dscode-theme", theme);
   }, [theme]);
 
-  const toggleTheme = useCallback(() => {
-    setTheme((prev) => (prev === "light" ? "dark" : "light"));
-  }, []);
+  const toggleTheme = useCallback(() => setTheme((p) => (p === "light" ? "dark" : "light")), []);
 
   const handleEvent = useCallback((event: ServerEvent) => {
     switch (event.type) {
       case "ready": {
         setModel(event.model);
         setConfig(event.config);
-        const msgs: UIMessage[] = (event.messages as any[]).map((m: any, i) => ({
-          id: `hist-${i}`,
-          role: m.role,
+        setMessages((event.messages as any[]).map((m: any, i) => ({
+          id: `hist-${i}`, role: m.role,
           content: normalizeContent(m.content),
           thinking: typeof m.thinking === "string" ? m.thinking : "",
           tools: Array.isArray(m.tools) ? m.tools : [],
           images: Array.isArray(m.images) ? m.images : [],
-        }));
-        setMessages(msgs);
-        break;
-      }
-
-      case "user_message": {
-        setMessages((prev) => [...prev, {
-          id: `user-${Date.now()}`,
-          role: "user",
-          content: normalizeContent(event.text),
-          images: (event as any).images ?? [],
-        }]);
-        break;
-      }
-
-      case "assistant_start": {
-        turnStartRef.current = Date.now();
-        setProcessing(true);
-        break;
-      }
-
-      case "thinking_delta": {
-        setMessages((prev) => updateLastOrCreate(prev, (msg) => ({
-          thinking: (msg.thinking ?? "") + event.delta,
         })));
         break;
       }
-
-      case "text_delta": {
-        setMessages((prev) => updateLastOrCreate(prev, (msg) => ({
-          content: msg.content + event.delta,
-        })));
+      case "user_message":
+        setMessages((prev) => [...prev, { id: `user-${Date.now()}`, role: "user", content: normalizeContent(event.text), images: (event as any).images ?? [] }]);
         break;
-      }
-
-      case "tool_start": {
+      case "assistant_start": turnStartRef.current = Date.now(); setProcessing(true); break;
+      case "thinking_delta": setMessages((prev) => updateLastOrCreate(prev, (msg) => ({ thinking: (msg.thinking ?? "") + event.delta }))); break;
+      case "text_delta": setMessages((prev) => updateLastOrCreate(prev, (msg) => ({ content: msg.content + event.delta }))); break;
+      case "tool_start":
         setMessages((prev) => updateLastOrCreate(prev, (msg) => {
-          const tools = [...(msg.tools ?? []), {
-            name: event.name,
-            args: typeof event.args === "string" ? event.args : JSON.stringify(event.args).slice(0, 80),
-            result: "",
-            isError: false,
-          }];
+          const tools = [...(msg.tools ?? []), { name: event.name, args: typeof event.args === "string" ? event.args : JSON.stringify(event.args).slice(0, 80), result: "", isError: false }];
           return { tools };
         }));
         break;
-      }
-
-      case "tool_end": {
+      case "tool_end":
         setMessages((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last?.isStreaming) {
-            const tools = (last.tools ?? []).map((t) =>
-              t.name === event.name && !t.result
-                ? { ...t, result: event.result, isError: event.isError }
-                : t
-            );
-            next[next.length - 1] = { ...last, tools };
-          }
+          const next = [...prev]; const last = next[next.length - 1];
+          if (last?.isStreaming) { const tools = (last.tools ?? []).map((t) => t.name === event.name && !t.result ? { ...t, result: event.result, isError: event.isError } : t); next[next.length - 1] = { ...last, tools }; }
           return next;
         });
         break;
-      }
-
-      case "mcp_app": {
+      case "mcp_app":
         setMessages((prev) => {
           const next = [...prev];
           for (let i = next.length - 1; i >= 0; i--) {
-            const msg = next[i];
-            if (msg.tools) {
-              const toolIdx = msg.tools.findIndex((t) => t.name === event.app.toolName);
-              if (toolIdx >= 0) {
-                const newTools = [...msg.tools];
-                newTools[toolIdx] = { ...newTools[toolIdx], mcpApp: event.app };
-                next[i] = { ...msg, tools: newTools };
-                break;
-              }
-            }
+            const msg = next[i]; if (msg.tools) { const idx = msg.tools.findIndex((t) => t.name === event.app.toolName); if (idx >= 0) { const nt = [...msg.tools]; nt[idx] = { ...nt[idx], mcpApp: event.app }; next[i] = { ...msg, tools: nt }; break; } }
           }
           return next;
         });
         break;
-      }
-
-      case "assistant_end": {
-        setMessages((prev) => {
-          const next = [...prev];
-          const last = next[next.length - 1];
-          if (last?.isStreaming) {
-            next[next.length - 1] = { ...last, isStreaming: false };
-          }
-          return next;
-        });
+      case "assistant_end":
+        setMessages((prev) => { const n = [...prev]; const l = n[n.length - 1]; if (l?.isStreaming) n[n.length - 1] = { ...l, isStreaming: false }; return n; });
         break;
-      }
-
       case "info": {
-        addToast({ type: "info", text: event.text });
+        const txt = event.text;
+        if (txt.includes("\n") || txt.startsWith("Available") || txt.startsWith("Drivers") || txt.startsWith("Skills") || txt.startsWith("Configuration") || txt.startsWith("Memories") || txt.startsWith("Session grants")) {
+          setCommandPanel(txt);
+        } else {
+          addToast({ type: "info", text: txt });
+        }
         break;
       }
-
-      case "error": {
-        addToast({ type: "error", text: event.text });
-        setProcessing(false);
-        turnStartRef.current = 0;
-        break;
-      }
-
-      case "permission_prompt": {
-        setPermissionPrompt({ toolName: event.toolName, preview: event.preview });
-        break;
-      }
-
-      case "processing": {
-        setProcessing(event.processing);
-        break;
-      }
-
-      case "loader": {
-        setProcessing(event.state === "show");
-        break;
-      }
-
-      case "config": {
-        setConfig(event.data);
-        break;
-      }
-
-      case "sessions": {
-        setSessions(event.data);
-        break;
-      }
-
-      case "mcp_state": {
-        setMcpServers(event.servers);
-        break;
-      }
-
-      case "model": {
-        setModel(event.name);
-        break;
-      }
-
-      case "file_list_result": {
-        setFileListItems(event.items);
-        setFileListPrefix(event.prefix);
-        break;
-      }
-
-      case "clear_conversation": {
-        setMessages([]);
-        setProcessing(false);
-        turnStartRef.current = 0;
-        break;
-      }
+      case "error": addToast({ type: "error", text: event.text }); setProcessing(false); turnStartRef.current = 0; break;
+      case "permission_prompt": setPermissionPrompt({ toolName: event.toolName, preview: event.preview }); break;
+      case "processing": setProcessing(event.processing); break;
+      case "loader": setProcessing(event.state === "show"); break;
+      case "config": setConfig(event.data); break;
+      case "sessions": setSessions(event.data); break;
+      case "mcp_state": setMcpServers(event.servers); break;
+      case "model": setModel(event.name); break;
+      case "file_list_result": setFileListItems(event.items); setFileListPrefix(event.prefix); break;
+      case "clear_conversation": setMessages([]); setProcessing(false); turnStartRef.current = 0; break;
     }
   }, [addToast]);
 
   const { connected, send } = useWebSocket(handleEvent);
 
-  const handleSend = useCallback(
-    (text: string, images?: ImageAttachment[]) => {
-      if (!text.trim() && (!images || images.length === 0)) return;
-      send({ type: "chat", text, images: images && images.length > 0 ? images : undefined });
-    },
-    [send],
-  );
-
-  const handlePermission = useCallback(
-    (decision: "allow" | "always_allow" | "deny", explainText?: string) => {
-      send({
-        type: explainText ? "permission_response" : "permission",
-        decision,
-        persistRule: decision === "always_allow",
-        denyReason: explainText,
-      });
-      setPermissionPrompt(null);
-    },
-    [send],
-  );
-
-  const handleAbort = useCallback(() => {
-    send({ type: "abort" });
+  const handleSend = useCallback((text: string, images?: ImageAttachment[]) => {
+    if (!text.trim() && (!images || images.length === 0)) return;
+    send({ type: "chat", text, images: images?.length ? images : undefined });
   }, [send]);
+  const handlePermission = useCallback((decision: "allow" | "always_allow" | "deny", explainText?: string) => {
+    send({ type: explainText ? "permission_response" : "permission", decision, persistRule: decision === "always_allow", denyReason: explainText });
+    setPermissionPrompt(null);
+  }, [send]);
+  const handleAbort = useCallback(() => send({ type: "abort" }), [send]);
+  const handleSlashCommand = useCallback((command: string) => send({ type: "slash", command }), [send]);
+  const handleCommand = useCallback((cmd: { type: "file_list"; prefix: string }) => send(cmd as any), [send]);
+  const handleConfigChange = useCallback((action: string, value: string) => send({ type: "config", action: action as any, value }), [send]);
+  const handleSessionAction = useCallback((action: "list" | "save" | "load" | "delete", id?: string) => send({ type: "session", action, id }), [send]);
+  const handleMcpAction = useCallback((action: "list" | "refresh") => send({ type: "mcp", action }), [send]);
+  const handleNewSession = useCallback(() => send({ type: "slash", command: "/reset" }), [send]);
 
-  const handleSlashCommand = useCallback(
-    (command: string) => {
-      send({ type: "slash", command });
-    },
-    [send],
-  );
-
-  const handleCommand = useCallback(
-    (cmd: { type: "file_list"; prefix: string }) => {
-      send(cmd as any);
-    },
-    [send],
-  );
-
-  const handleConfigChange = useCallback(
-    (action: string, value: string) => {
-      send({ type: "config", action: action as any, value });
-    },
-    [send],
-  );
-
-  const handleSessionAction = useCallback(
-    (action: "list" | "save" | "load" | "delete", id?: string) => {
-      send({ type: "session", action, id });
-    },
-    [send],
-  );
-
-  const handleMcpAction = useCallback(
-    (action: "list" | "refresh") => {
-      send({ type: "mcp", action });
-    },
-    [send],
-  );
-
-  useEffect(() => {
-    if (connected) {
-      handleSessionAction("list");
-      handleMcpAction("list");
-    }
-  }, [connected, handleSessionAction, handleMcpAction]);
+  useEffect(() => { if (connected) { handleSessionAction("list"); handleMcpAction("list"); } }, [connected, handleSessionAction, handleMcpAction]);
 
   const hasStreaming = messages.some((m) => m.isStreaming);
 
   return (
     <div className="h-screen flex flex-col" style={{ backgroundColor: "var(--color-bg)" }}>
-      <header
-        className="flex items-center justify-between px-4 py-2 shrink-0"
-        style={{ backgroundColor: "var(--color-surface)", borderBottom: "1px solid var(--color-border)" }}
-      >
+      <header className="flex items-center justify-between px-4 py-2 shrink-0" style={{ backgroundColor: "var(--color-surface)", borderBottom: "1px solid var(--color-border)" }}>
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-2 rounded-btn hover:brightness-95 transition-[filter] duration-200 md:hidden"
-            style={{ backgroundColor: "var(--color-surface-hover)" }}
-            aria-label="Toggle sidebar"
-          >
+          <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 rounded-btn hover:brightness-95 transition-[filter] duration-200 md:hidden" style={{ backgroundColor: "var(--color-surface-hover)" }} aria-label="Toggle sidebar">
             <List size={20} weight="bold" style={{ color: "var(--color-text)" }} />
           </button>
           <h1 className="font-bold text-lg" style={{ color: "var(--color-accent)" }}>DSCode</h1>
-          {model && (
-            <span className="text-sm hidden sm:inline" style={{ color: "var(--color-text-muted)" }}>{model}</span>
-          )}
+          {model && <span className="text-sm hidden sm:inline" style={{ color: "var(--color-text-muted)" }}>{model}</span>}
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={toggleTheme}
-            className="p-2 rounded-btn hover:brightness-95 transition-[filter] duration-200"
-            style={{ backgroundColor: "var(--color-surface-hover)" }}
-            aria-label="Toggle theme"
-          >
-            {theme === "light"
-              ? <Moon size={18} weight="bold" style={{ color: "var(--color-text)" }} />
-              : <Sun size={18} weight="bold" style={{ color: "var(--color-text)" }} />}
+          <button onClick={toggleTheme} className="p-2 rounded-btn hover:brightness-95 transition-[filter] duration-200" style={{ backgroundColor: "var(--color-surface-hover)" }} aria-label="Toggle theme">
+            {theme === "light" ? <Moon size={18} weight="bold" style={{ color: "var(--color-text)" }} /> : <Sun size={18} weight="bold" style={{ color: "var(--color-text)" }} />}
           </button>
-          <span
-            className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1"
-            style={{
-              borderRadius: "8px",
-              backgroundColor: connected ? "var(--color-success)" : "var(--color-error)",
-              color: connected ? "var(--color-success-text)" : "var(--color-error-text)",
-            }}
-          >
-            <span className="w-1.5 h-1.5 rounded-full"
-              style={{ backgroundColor: connected ? "var(--color-success-text)" : "var(--color-error-text)" }} />
+          <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1" style={{ borderRadius: "8px", backgroundColor: connected ? "var(--color-success)" : "var(--color-error)", color: connected ? "var(--color-success-text)" : "var(--color-error-text)" }}>
+            <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: connected ? "var(--color-success-text)" : "var(--color-error-text)" }} />
             {connected ? "Connected" : "Reconnecting..."}
           </span>
         </div>
       </header>
-
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar
-          open={sidebarOpen} onClose={() => setSidebarOpen(false)}
-          activeTab={sidebarTab} onTabChange={setSidebarTab}
+        <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} activeTab={sidebarTab} onTabChange={setSidebarTab}
           sessions={sessions} mcpServers={mcpServers} config={config}
           onSessionAction={handleSessionAction} onMcpAction={handleMcpAction}
-          onConfigChange={handleConfigChange}
-        />
+          onConfigChange={handleConfigChange} onNewSession={handleNewSession} />
         <main className="flex-1 flex flex-col min-w-0">
-          <ChatView
-            messages={messages} processing={processing} hasStreaming={hasStreaming}
-            permissionPrompt={permissionPrompt} onPermission={handlePermission}
-          />
-          <MessageInput
-            onSend={handleSend} onAbort={handleAbort}
-            onSlashCommand={handleSlashCommand} onCommand={handleCommand}
-            processing={processing} slashCommands={SLASH_COMMANDS}
-            fileListItems={fileListItems} fileListPrefix={fileListPrefix}
-          />
+          <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} permissionPrompt={permissionPrompt} onPermission={handlePermission} />
+          <MessageInput onSend={handleSend} onAbort={handleAbort} onSlashCommand={handleSlashCommand} onCommand={handleCommand}
+            processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} />
         </main>
       </div>
-
       <ToastContainer toasts={toasts} onRemove={removeToast} />
+      {commandPanel && <CommandPanel text={commandPanel} onClose={() => setCommandPanel(null)} />}
     </div>
   );
 }
