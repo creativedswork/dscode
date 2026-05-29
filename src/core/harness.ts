@@ -24,6 +24,8 @@ import { resolveModel, getThinkingLevel, getAllModels } from "../models/index.js
 import { ocrImages } from "../utils/ocr.js";
 import type { OcrResult } from "../utils/ocr.js";
 import { getEnvApiKey } from "@mariozechner/pi-ai";
+import { ImageCache } from "../utils/image-cache.js";
+import type { ImageRef, VisionMessage } from "./types.js";
 
 export class Harness {
   agent!: Agent;
@@ -42,6 +44,7 @@ export class Harness {
   private lastMcpProgress = new Map<string, { progress?: number; total?: number; message?: string }>();
   private mcpEventUnsubscribe?: () => void;
   private shuttingDown = false;
+  private turnIndex = 0;
 
   constructor(config: HarnessConfig) {
     this.config = config;
@@ -159,6 +162,13 @@ export class Harness {
     this.sessionManager.trySaveSession(this.agent);
   }
 
+  private findLastUserMessageIndex(messages: any[]): number {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i]?.role === "user") return i;
+    }
+    return -1;
+  }
+
   private resolveVisionModel(): { model: Model<Api>; apiKey: string } | null {
     const v = this.config.vision;
     if (!v?.provider || !v?.model) return null;
@@ -209,6 +219,10 @@ export class Harness {
       mimeType: img.mimeType ?? "image/png",
     }));
 
+    // Cache images before processing
+    const cachedRefs = await Promise.all(normalizedImages.map((img) => ImageCache.put(img)));
+    const turnIdx = this.turnIndex++;
+
     // 1. Main model supports images natively → send directly
     const mainModel = resolveModel(this.config.provider, this.config.modelId);
     if (mainModel.input.includes("image")) {
@@ -227,7 +241,28 @@ export class Harness {
         const enrichedText = text
           ? `${text}\n\n<image_description>\n${description}\n</image_description>`
           : `<image_description>\n${description}\n</image_description>`;
+
         await this.promptAndSave(enrichedText);
+
+        // Record vision model call — capture AFTER promptAndSave so we know
+        // the exact message index for session load restoration
+        const msgs = this.agent.state.messages as any[];
+        const msgId = this.findLastUserMessageIndex(msgs);
+        const vMsg: VisionMessage = {
+          turnIndex: turnIdx,
+          messageIndex: msgId,
+          images: cachedRefs,
+          prompt: "请详细描述这张图片的内容，包括文字、布局和视觉元素。",
+          description,
+          modelProvider: vision.model.provider ?? this.config.vision?.provider ?? "",
+          modelId: vision.model.id ?? this.config.vision?.model ?? "",
+          timestamp: Date.now(),
+        };
+        this.sessionManager.setVisionMessages([...this.sessionManager.visionMessages, vMsg]);
+        // Save again — promptAndSave already saved with enriched text,
+        // but vision message was recorded after. Re-save to persist it.
+        this.sessionManager.trySaveSession(this.agent);
+
         return;
       } catch (err) {
         this.ui.setProcessing(false);

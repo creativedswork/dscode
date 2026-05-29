@@ -119,7 +119,7 @@ const COMMANDS: SlashCommandDef[] = [
             return;
           }
           const match = matches[0];
-          const result = ctx.sessionManager.loadSession(match.id, ctx.agent);
+          const result = await ctx.sessionManager.loadSession(match.id, ctx.agent);
           if (!result.success) {
             ctx.tui.addError(`Failed to load session: ${result.error}`);
             return;

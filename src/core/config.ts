@@ -78,13 +78,21 @@ export function loadUserSettings(): Record<string, unknown> {
 export function saveUserSettings(partial: Record<string, unknown>): void {
   const path = userSettingsPath();
   const existing = loadUserSettings();
-  saveJsonSafe(path, { ...existing, ...partial });
+  const merged = { ...existing, ...partial };
+  for (const [k, v] of Object.entries(partial)) {
+    if (v === null) delete merged[k];
+  }
+  saveJsonSafe(path, merged);
 }
 
 export function saveUserConfig(partial: Record<string, unknown>): void {
   const path = userConfigPath();
   const existing = loadUserCommandConfig();
-  saveJsonSafe(path, { ...existing, ...partial });
+  const merged = { ...existing, ...partial };
+  for (const [k, v] of Object.entries(partial)) {
+    if (v === null) delete merged[k];
+  }
+  saveJsonSafe(path, merged);
 }
 
 export function saveUserProjectCwd(startupPath: string, cwd: string): void {

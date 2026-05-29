@@ -1,6 +1,8 @@
 import type { Agent } from "@mariozechner/pi-agent-core";
+import type { ImageContent } from "@mariozechner/pi-ai";
 
-import type { SerializedSession, SessionMetadata } from "../core/types.js";
+import type { ImageRef, SerializedSession, SessionMetadata, VisionMessage } from "../core/types.js";
+import { ImageCache } from "../utils/image-cache.js";
 import { SessionStore } from "./store.js";
 
 export interface LoadResult {
@@ -28,14 +30,47 @@ function extractFirstUserMessage(messages: unknown[]): string {
   return "";
 }
 
+/**
+ * Restore inline images from ImageRef[] for agent/frontend consumption.
+ * Mutates the message in-place: removes `images` field and injects
+ * ImageContent blocks back into `content`.
+ */
+async function restoreImagesFromCache(msg: any): Promise<void> {
+  const refs = msg.images as ImageRef[] | undefined;
+  if (!refs || refs.length === 0) return;
+
+  const restored: ImageContent[] = [];
+  for (const ref of refs) {
+    const cached = await ImageCache.get(ref);
+    if (cached) {
+      restored.push(cached);
+    }
+  }
+
+  if (restored.length === 0) return;
+
+  const content = Array.isArray(msg.content) ? msg.content : [{ type: "text", text: msg.content ?? "" }];
+  msg.content = [...content, ...restored];
+  delete msg.images;
+}
+
 export class SessionManager {
   private store: SessionStore;
   private current: SessionMetadata | null = null;
   private projectPath: string;
+  private _visionMessages: VisionMessage[] = [];
 
   constructor(dataDir: string, projectPath: string) {
     this.projectPath = projectPath;
     this.store = new SessionStore(dataDir, projectPath);
+  }
+
+  get visionMessages(): VisionMessage[] {
+    return this._visionMessages;
+  }
+
+  setVisionMessages(vms: VisionMessage[]): void {
+    this._visionMessages = vms;
   }
 
   createSession(provider: string, modelId: string): SessionMetadata {
@@ -49,16 +84,16 @@ export class SessionManager {
       messageCount: 0,
       projectPath: this.projectPath,
       preview: "",
+      hasImages: false,
+      imageCount: 0,
     };
+    this._visionMessages = [];
     return this.current;
   }
 
   saveSession(agent: Agent): void {
     if (!this.current) return;
-    const messages = agent.state.messages;
-    // Never overwrite a session file with empty messages.
-    // This can happen when saveSession is called after agent.reset()
-    // (e.g. from agent_end error handler or promptAndSave finally block).
+    const messages = agent.state.messages as any[];
     if (messages.length === 0) return;
 
     this.current.updatedAt = Date.now();
@@ -83,11 +118,43 @@ export class SessionManager {
 
     this.current.projectPath = this.projectPath;
 
+    // Build serializable copy: convert inline image blocks to ImageRef references
+    let totalImages = 0;
+    let hasImages = false;
+    const serializedMessages = messages.map((msg: any) => {
+      const copy = { ...msg };
+      if (!Array.isArray(copy.content)) return copy;
+
+      const imageBlocks = copy.content.filter((b: any) => b.type === "image" && b.data);
+      if (imageBlocks.length === 0) return copy;
+
+      hasImages = true;
+      totalImages += imageBlocks.length;
+
+      // Images were already cached by the harness before promptAndSave
+      // We store references instead of inline base64
+      copy.images = imageBlocks.map((b: any) => ({
+        type: "image_ref" as const,
+        hash: "",
+        mimeType: b.mimeType ?? "image/png",
+      }));
+      copy.content = copy.content.filter((b: any) => b.type !== "image");
+      return copy;
+    });
+
+    this.current.hasImages = hasImages;
+    this.current.imageCount = totalImages;
+
+    const version: 1 | 2 = hasImages || this._visionMessages.length > 0 ? 2 : 1;
+
     const session: SerializedSession = {
-      version: 1,
+      version,
       metadata: this.current,
-      messages: messages as unknown[],
+      messages: serializedMessages as unknown[],
     };
+    if (this._visionMessages.length > 0) {
+      session.visionMessages = this._visionMessages;
+    }
     this.store.save(session);
   }
 
@@ -99,11 +166,22 @@ export class SessionManager {
     }
   }
 
-  loadSession(id: string, agent: Agent): LoadResult {
+  async loadSession(id: string, agent: Agent): Promise<LoadResult> {
     try {
       const session = this.store.load(id);
-      agent.state.messages = session.messages as any;
+      const messages = session.messages as any[];
+
+      // Restore images from cache for any ImageRef entries
+      for (const msg of messages) {
+        await restoreImagesFromCache(msg);
+      }
+
+      // visionMessages preserved for display layer (display.ts).
+      // agent.state.messages content stays as-is for model inference context.
+
+      agent.state.messages = messages as any;
       this.current = session.metadata;
+      this._visionMessages = session.visionMessages ?? [];
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message ?? "Unknown error loading session" };
@@ -123,7 +201,7 @@ export class SessionManager {
       this.store.delete(id);
       return { success: true };
     } catch (err: any) {
-      return { success: false, error: err.message ?? "Unknown error deleting session" };
+      return { success: false, error: err.message ?? "Unknown error loading session" };
     }
   }
 

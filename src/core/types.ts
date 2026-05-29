@@ -1,6 +1,15 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { MCPServerConfig } from "../mcp/types.js";
 
+// Re-export session data layer types
+export type {
+  ImageRef,
+  VisionMessage,
+  SessionMetadata,
+  SerializedSession,
+  DisplayMessage,
+} from "../session/types.js";
+
 // --- Config ---
 
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -71,27 +80,6 @@ export interface PermissionRuleConfig {
   decision: PermissionDecision;
   reason?: string;
   priority?: number;
-}
-
-// --- Session ---
-
-export interface SessionMetadata {
-  id: string;
-  title: string;
-  createdAt: number;
-  updatedAt: number;
-  modelProvider: string;
-  modelId: string;
-  messageCount: number;
-  projectPath: string;
-  preview: string;
-}
-
-export interface SerializedSession {
-  version: 1;
-  metadata: SessionMetadata;
-  messages: unknown[];
-  compactedPrefix?: string;
 }
 
 // --- Memory ---

@@ -371,7 +371,6 @@ export class ConversationView {
       this.liveComponents.push(permText);
     }
 
-    this.box.invalidate();
     this.tui.requestRender(true);
   }
 }

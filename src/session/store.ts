@@ -33,6 +33,11 @@ function validateSession(raw: unknown, expectedId: string): SerializedSession {
 
   if (typeof data.version !== "number") {
     throw new SessionValidateError("Session file is corrupted: missing required field 'version'");
+  if (data.version !== 1 && data.version !== 2) {
+    throw new SessionValidateError(
+      `Session file has unsupported version: ${data.version}. Expected 1 or 2.`,
+    );
+  }
   }
   if (data.metadata === null || typeof data.metadata !== "object") {
     throw new SessionValidateError("Session file is corrupted: missing required field 'metadata'");

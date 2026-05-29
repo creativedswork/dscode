@@ -9,6 +9,12 @@ export interface ImageAttachment {
   mimeType: string;
 }
 
+export interface ImageRef {
+  type: "image_ref";
+  hash: string;
+  mimeType: string;
+}
+
 // ── MCP ──
 
 export interface McpToolInfo {
@@ -91,7 +97,7 @@ export interface ConversationMessage {
   content: string;
   thinking?: string;
   tools?: ToolCallEntry[];
-  images?: ImageAttachment[];
+  images?: (ImageAttachment | ImageRef)[];
 }
 
 export interface UIMessage {
@@ -101,7 +107,7 @@ export interface UIMessage {
   thinking?: string;
   tools?: ToolCallEntry[];
   isStreaming?: boolean;
-  images?: ImageAttachment[];
+  images?: (ImageAttachment | ImageRef)[];
 }
 
 // ── Permissions ──
@@ -135,6 +141,7 @@ export type ClientCommand =
   | { type: "config"; action: "set_vision_provider"; value: string }
   | { type: "config"; action: "set_vision_model"; value: string }
   | { type: "config"; action: "set_vision_key"; value: string }
+  | { type: "config"; action: "set_vision_delete" }
   | { type: "session"; action: "list" | "save" | "load" | "delete"; id?: string }
   | { type: "mcp"; action: "list" | "refresh" }
   | { type: "file_list"; prefix: string }

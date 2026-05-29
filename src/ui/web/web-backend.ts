@@ -15,6 +15,7 @@ import type { AppHostManager } from "../../mcp/app/host.js";
 import type { AppInstance } from "../../mcp/app/types.js";
 import { buildMcpServers } from "../mcp-browser.js";
 import { resolveAtFileRefs, listProjectFiles } from "../../utils/at-file-resolver.js";
+import { rebuildDisplayMessages } from "../../session/display.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
 import type {
   ClientCommand,
@@ -290,8 +291,6 @@ export class WebUiBackend implements UiBackend {
           this.handleSlashCommand(client, text);
           break;
         }
-
-        // Resolve @file references
         const resolved = resolveAtFileRefs(this.config.projectPath, text, this.config.atFile ?? {});
         text = resolved.text;
         if (resolved.images.length > 0) {
@@ -377,7 +376,7 @@ export class WebUiBackend implements UiBackend {
       }
 
       case "session": {
-        this.handleSession(client, cmd);
+        await this.handleSession(client, cmd);
         break;
       }
 
@@ -513,6 +512,13 @@ export class WebUiBackend implements UiBackend {
           client.send({ type: "info", text: "Vision API key updated" });
           break;
         }
+        case "set_vision_delete": {
+          this.config.vision = undefined;
+          saveUserConfig({ vision: null });
+          client.send({ type: "config", data: this.buildConfigData() });
+          client.send({ type: "info", text: "Vision model configuration removed" });
+          break;
+        }
       }
     } catch (err) {
       client.send({
@@ -522,10 +528,10 @@ export class WebUiBackend implements UiBackend {
     }
   }
 
-  private handleSession(
+  private async handleSession(
     client: WebSocketClient,
     cmd: ClientCommand & { type: "session" },
-  ): void {
+  ): Promise<void> {
     const sessionManager = (this.harness as any).sessionManager;
     const agent = this.harness.agent;
 
@@ -590,7 +596,7 @@ export class WebUiBackend implements UiBackend {
           return;
         }
         const match = matches[0];
-        const result = sessionManager.loadSession(match.id, agent);
+        const result = await sessionManager.loadSession(match.id, agent);
         if (!result.success) {
           client.send({ type: "error", text: `Failed to load session: ${result.error}` });
           return;
@@ -607,7 +613,7 @@ export class WebUiBackend implements UiBackend {
         });
         client.send({ type: "clear_conversation" });
 
-        const messages = this.buildConversationHistory();
+        const messages = await this.buildConversationHistory();
         const model = (agent.state.model as any)?.name ?? this.config.modelId;
         client.send({
           type: "ready",
@@ -706,30 +712,8 @@ export class WebUiBackend implements UiBackend {
 
   private buildConversationHistory(): ConversationMessage[] {
     const messages = this.harness.agent.state.messages as any[];
-    return messages.map((m: any) => {
-      // Agent stores images inline in content array: [{type:"text",text:"..."}, {type:"image",data:"..."}]
-      // Extract to separate images field for the web UI
-      let images = m.images;
-      let content = m.content;
-      if (!images && Array.isArray(m.content)) {
-        const imageBlocks = m.content.filter((b: any) => b.type === "image");
-        if (imageBlocks.length > 0) {
-          images = imageBlocks.map((b: any) => ({
-            data: b.data,
-            mimeType: b.mimeType || "image/png",
-          }));
-          const textBlocks = m.content.filter((b: any) => b.type === "text");
-          content = textBlocks.map((b: any) => b.text).join("\n");
-        }
-      }
-      return {
-        role: m.role,
-        content: content ?? "",
-        thinking: m.thinking,
-        tools: m.tools,
-        images: images,
-      };
-    });
+    const vms = (this.harness as any).sessionManager?.visionMessages ?? [];
+    return rebuildDisplayMessages(messages, vms) as any;
   }
 
 
