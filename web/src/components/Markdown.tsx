@@ -8,12 +8,20 @@ interface MarkdownProps {
 
 export function Markdown({ children, className = "" }: MarkdownProps) {
   return (
-    <div className={`prose prose-invert prose-sm max-w-none break-words ${className}`}>
+    <div className={`prose prose-sm max-w-none break-words ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
           pre: ({ children }) => (
-            <pre className="bg-dscode-bg rounded-lg p-3 overflow-x-auto text-xs my-2">
+            <pre
+              className="p-3 overflow-x-auto text-xs my-2"
+              style={{
+                borderRadius: "8px",
+                backgroundColor: "var(--color-bg)",
+                border: "1px solid var(--color-border)",
+                color: "var(--color-text)",
+              }}
+            >
               {children}
             </pre>
           ),
@@ -22,7 +30,13 @@ export function Markdown({ children, className = "" }: MarkdownProps) {
             if (isInline) {
               return (
                 <code
-                  className="bg-dscode-bg px-1.5 py-0.5 rounded text-xs text-dscode-accent"
+                  className="px-1.5 py-0.5 text-xs"
+                  style={{
+                    borderRadius: "4px",
+                    backgroundColor: "var(--color-surface-hover)",
+                    color: "var(--color-accent)",
+                    fontFamily: "Geist Mono, JetBrains Mono, monospace",
+                  }}
                   {...props}
                 >
                   {children}
@@ -37,18 +51,30 @@ export function Markdown({ children, className = "" }: MarkdownProps) {
           },
           table: ({ children }) => (
             <div className="overflow-x-auto my-2">
-              <table className="min-w-full border-collapse border border-dscode-border text-xs">
+              <table
+                className="min-w-full border-collapse text-xs"
+                style={{ border: "1px solid var(--color-border)" }}
+              >
                 {children}
               </table>
             </div>
           ),
           th: ({ children }) => (
-            <th className="border border-dscode-border px-3 py-1.5 bg-dscode-surface text-left font-medium">
+            <th
+              className="px-3 py-1.5 text-left font-medium"
+              style={{
+                border: "1px solid var(--color-border)",
+                backgroundColor: "var(--color-surface)",
+              }}
+            >
               {children}
             </th>
           ),
           td: ({ children }) => (
-            <td className="border border-dscode-border px-3 py-1.5">
+            <td
+              className="px-3 py-1.5"
+              style={{ border: "1px solid var(--color-border)" }}
+            >
               {children}
             </td>
           ),
@@ -57,7 +83,8 @@ export function Markdown({ children, className = "" }: MarkdownProps) {
               href={href}
               target="_blank"
               rel="noopener noreferrer"
-              className="text-dscode-accent underline hover:text-blue-400"
+              className="underline"
+              style={{ color: "var(--color-accent)" }}
             >
               {children}
             </a>
@@ -66,7 +93,11 @@ export function Markdown({ children, className = "" }: MarkdownProps) {
             <img
               src={src}
               alt={alt ?? "Image"}
-              className="max-w-full max-h-[400px] object-contain rounded-lg border border-dscode-border my-2 cursor-pointer hover:opacity-90 transition-opacity"
+              className="max-w-full max-h-[400px] object-contain my-2 cursor-pointer hover:opacity-90 transition-opacity"
+              style={{
+                borderRadius: "8px",
+                border: "1px solid var(--color-border)",
+              }}
               loading="lazy"
               onClick={() => src && window.open(src, "_blank")}
             />

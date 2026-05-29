@@ -1,4 +1,6 @@
+import { useState, useEffect, useRef } from "react";
 import type { SessionInfo, McpServerInfo, ConfigData } from "../types";
+import { X, Trash, CaretDown, CaretRight } from "@phosphor-icons/react";
 
 interface SidebarProps {
   open: boolean;
@@ -29,35 +31,52 @@ export function Sidebar({
     <>
       {/* Mobile overlay */}
       {open && (
-        <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={onClose} />
+        <div className="fixed inset-0 bg-black/30 z-40 md:hidden" onClick={onClose} />
       )}
 
       <aside
-        className={`fixed md:static inset-y-0 left-0 z-50 w-80 bg-dscode-surface border-r border-dscode-border flex flex-col transform transition-transform duration-200 ${
+        className={`fixed md:static inset-y-0 left-0 z-50 w-80 flex flex-col transform transition-transform duration-200 ${
           open ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         } ${!open && "hidden md:flex"}`}
+        style={{
+          backgroundColor: "var(--color-surface)",
+          borderRight: "1px solid var(--color-border)",
+        }}
       >
         {/* Close button (mobile) */}
-        <div className="flex items-center justify-between p-3 border-b border-dscode-border md:hidden">
-          <span className="font-semibold text-sm">DSCode</span>
-          <button onClick={onClose} className="p-1 hover:bg-gray-700 rounded-lg">
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-            </svg>
+        <div
+          className="flex items-center justify-between p-3 md:hidden"
+          style={{ borderBottom: "1px solid var(--color-border)" }}
+        >
+          <span
+            className="font-semibold text-sm"
+            style={{ color: "var(--color-accent)" }}
+          >
+            DSCode
+          </span>
+          <button
+            onClick={onClose}
+            className="p-1 rounded-btn hover:brightness-95 transition-[filter] duration-200"
+            style={{ backgroundColor: "var(--color-surface-hover)" }}
+          >
+            <X size={18} weight="bold" style={{ color: "var(--color-text)" }} />
           </button>
         </div>
 
         {/* Tabs */}
-        <div className="flex border-b border-dscode-border">
+        <div
+          className="flex"
+          style={{ borderBottom: "1px solid var(--color-border)" }}
+        >
           {(["sessions", "mcp", "settings"] as const).map((tab) => (
             <button
               key={tab}
               onClick={() => onTabChange(tab)}
-              className={`flex-1 py-2.5 text-xs font-medium transition-colors capitalize ${
-                activeTab === tab
-                  ? "text-dscode-accent border-b-2 border-dscode-accent"
-                  : "text-dscode-muted hover:text-dscode-text"
-              }`}
+              className="flex-1 py-2.5 text-xs font-medium transition-colors capitalize"
+              style={{
+                color: activeTab === tab ? "var(--color-accent)" : "var(--color-text-muted)",
+                borderBottom: activeTab === tab ? "2px solid var(--color-accent)" : "2px solid transparent",
+              }}
             >
               {tab === "sessions" ? "Sessions" : tab === "mcp" ? "MCP" : "Settings"}
             </button>
@@ -104,31 +123,44 @@ function SessionsPanel({
       </button>
 
       {sessions.length === 0 ? (
-        <p className="text-xs text-dscode-muted text-center py-8">No saved sessions</p>
+        <p
+          className="text-xs text-center py-8"
+          style={{ color: "var(--color-text-muted)" }}
+        >
+          No saved sessions
+        </p>
       ) : (
         <div className="space-y-1">
           {sessions.map((s) => (
             <div
               key={s.id}
-              className="flex items-center justify-between p-2 rounded-lg hover:bg-gray-700/50 transition-colors group"
+              className="flex items-center justify-between p-2 transition-colors group"
+              style={{ borderRadius: "8px" }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLElement).style.backgroundColor = "var(--color-surface-hover)";
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
+              }}
             >
               <button
                 onClick={() => onAction("load", s.id)}
                 className="flex-1 text-left min-w-0"
               >
-                <div className="text-sm truncate">{s.title}</div>
-                <div className="text-xs text-dscode-muted">
-                  {new Date(s.updatedAt).toLocaleDateString()} · {s.messageCount} msgs
+                <div className="text-sm truncate" style={{ color: "var(--color-text)" }}>
+                  {s.title}
+                </div>
+                <div className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+                  {new Date(s.updatedAt).toLocaleDateString()} &middot; {s.messageCount} msgs
                 </div>
               </button>
               <button
                 onClick={() => onAction("delete", s.id)}
-                className="opacity-0 group-hover:opacity-100 p-1 text-dscode-red hover:bg-red-900/30 rounded transition-all"
+                className="opacity-0 group-hover:opacity-100 p-1 rounded transition-all"
+                style={{ color: "var(--color-error-text)" }}
                 title="Delete"
               >
-                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
+                <Trash size={14} weight="bold" />
               </button>
             </div>
           ))}
@@ -154,29 +186,58 @@ function McpPanel({
       </button>
 
       {servers.length === 0 ? (
-        <p className="text-xs text-dscode-muted text-center py-8">No MCP servers configured</p>
+        <p
+          className="text-xs text-center py-8"
+          style={{ color: "var(--color-text-muted)" }}
+        >
+          No MCP servers configured
+        </p>
       ) : (
         <div className="space-y-1">
           {servers.map((s) => (
             <div key={s.name}>
               <button
                 onClick={() => setExpandedServer(expandedServer === s.name ? null : s.name)}
-                className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-gray-700/50 transition-colors text-left"
+                className="w-full flex items-center justify-between p-2 transition-colors text-left"
+                style={{ borderRadius: "8px" }}
+                onMouseEnter={(e) => {
+                  (e.currentTarget as HTMLElement).style.backgroundColor = "var(--color-surface-hover)";
+                }}
+                onMouseLeave={(e) => {
+                  (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
+                }}
               >
                 <div className="min-w-0">
-                  <div className="text-sm truncate">{s.name}</div>
-                  <div className="text-xs text-dscode-muted">{s.toolCount} tools</div>
+                  <div className="text-sm truncate" style={{ color: "var(--color-text)" }}>
+                    {s.name}
+                  </div>
+                  <div className="text-xs" style={{ color: "var(--color-text-muted)" }}>
+                    {s.toolCount} tools
+                  </div>
                 </div>
                 <StatusBadge status={s.status} />
               </button>
 
               {expandedServer === s.name && (
-                <div className="ml-3 mt-1 space-y-0.5 border-l-2 border-dscode-border pl-3">
+                <div
+                  className="ml-3 mt-1 space-y-0.5 pl-3"
+                  style={{ borderLeft: "2px solid var(--color-border)" }}
+                >
                   {s.tools.map((t) => (
                     <div key={t.name} className="text-xs py-1">
-                      <span className="font-mono text-dscode-accent">{t.name}</span>
+                      <span
+                        className="font-mono"
+                        style={{ color: "var(--color-accent)" }}
+                      >
+                        {t.name}
+                      </span>
                       {t.description && (
-                        <span className="text-dscode-muted ml-1">— {t.description}</span>
+                        <span
+                          className="ml-1"
+                          style={{ color: "var(--color-text-muted)" }}
+                        >
+                          {t.description}
+                        </span>
                       )}
                     </div>
                   ))}
@@ -191,15 +252,33 @@ function McpPanel({
 }
 
 function StatusBadge({ status }: { status: string }) {
-  const colors: Record<string, string> = {
-    connected: "bg-green-900/30 text-dscode-green",
-    connecting: "bg-yellow-900/30 text-dscode-yellow",
-    error: "bg-red-900/30 text-dscode-red",
-    disconnected: "bg-gray-700/50 text-dscode-muted",
+  const styleMap: Record<string, React.CSSProperties> = {
+    connected: {
+      backgroundColor: "var(--color-success)",
+      color: "var(--color-success-text)",
+    },
+    connecting: {
+      backgroundColor: "var(--color-warning)",
+      color: "var(--color-warning-text)",
+    },
+    error: {
+      backgroundColor: "var(--color-error)",
+      color: "var(--color-error-text)",
+    },
+    disconnected: {
+      backgroundColor: "var(--color-surface-hover)",
+      color: "var(--color-text-muted)",
+    },
   };
 
   return (
-    <span className={`text-xs px-1.5 py-0.5 rounded-full ${colors[status] || colors.disconnected}`}>
+    <span
+      className="text-xs px-1.5 py-0.5"
+      style={{
+        borderRadius: "8px",
+        ...(styleMap[status] || styleMap.disconnected),
+      }}
+    >
       {status}
     </span>
   );
@@ -228,14 +307,37 @@ function SettingsPanel({
   }, [config]);
 
   if (!config) {
-    return <p className="text-xs text-dscode-muted text-center py-8">Loading...</p>;
+    return (
+      <p
+        className="text-xs text-center py-8"
+        style={{ color: "var(--color-text-muted)" }}
+      >
+        Loading...
+      </p>
+    );
   }
+
+  const selectStyle: React.CSSProperties = {
+    borderRadius: "8px",
+    border: "1px solid var(--color-border)",
+    backgroundColor: "var(--color-bg)",
+    color: "var(--color-text)",
+    fontSize: "0.75rem",
+    width: "100%",
+    padding: "0.5rem 0.75rem",
+    outline: "none",
+  };
 
   return (
     <div className="space-y-4">
       {/* Provider */}
       <div>
-        <label className="text-xs text-dscode-muted mb-1 block">Provider</label>
+        <label
+          className="text-xs mb-1 block"
+          style={{ color: "var(--color-text-muted)" }}
+        >
+          Provider
+        </label>
         <select
           value={providerInput}
           onChange={(e) => {
@@ -243,7 +345,7 @@ function SettingsPanel({
             setProviderInput(value);
             if (value) onChange("set_provider", value);
           }}
-          className="input text-xs w-full"
+          style={selectStyle}
         >
           {config.providers.map((p) => (
             <option key={p} value={p}>{p}</option>
@@ -253,7 +355,12 @@ function SettingsPanel({
 
       {/* Model */}
       <div>
-        <label className="text-xs text-dscode-muted mb-1 block">Model</label>
+        <label
+          className="text-xs mb-1 block"
+          style={{ color: "var(--color-text-muted)" }}
+        >
+          Model
+        </label>
         <select
           value={modelInput}
           onChange={(e) => {
@@ -261,7 +368,7 @@ function SettingsPanel({
             setModelInput(value);
             if (value) onChange("set_model", value);
           }}
-          className="input text-xs w-full"
+          style={selectStyle}
         >
           {config.models.map((m) => (
             <option key={m.id} value={m.id}>{m.name}</option>
@@ -271,14 +378,19 @@ function SettingsPanel({
 
       {/* Thinking Level */}
       <div>
-        <label className="text-xs text-dscode-muted mb-1 block">Thinking Level</label>
+        <label
+          className="text-xs mb-1 block"
+          style={{ color: "var(--color-text-muted)" }}
+        >
+          Thinking Level
+        </label>
         <select
           value={thinkingLevel}
           onChange={(e) => {
             setThinkingLevel(e.target.value);
             onChange("set_thinking", e.target.value);
           }}
-          className="input text-xs"
+          style={selectStyle}
         >
           {["off", "minimal", "low", "medium", "high", "xhigh"].map((l) => (
             <option key={l} value={l}>{l}</option>
@@ -288,7 +400,12 @@ function SettingsPanel({
 
       {/* API Key */}
       <div>
-        <label className="text-xs text-dscode-muted mb-1 block">API Key</label>
+        <label
+          className="text-xs mb-1 block"
+          style={{ color: "var(--color-text-muted)" }}
+        >
+          API Key
+        </label>
         <div className="flex gap-2">
           <input
             type="password"
@@ -310,85 +427,115 @@ function SettingsPanel({
       </div>
 
       {/* Vision Model Section */}
-      <div className="pt-2 border-t border-dscode-border">
-        <p className="text-xs text-dscode-muted mb-2">Vision Model</p>
+      <div
+        className="pt-2 space-y-3"
+        style={{ borderTop: "1px solid var(--color-border)" }}
+      >
+        <p
+          className="text-xs mb-2"
+          style={{ color: "var(--color-text-muted)" }}
+        >
+          Vision Model
+        </p>
 
-        <div className="space-y-3">
-          <div>
-            <label className="text-xs text-dscode-muted mb-1 block">Vision Provider</label>
-            <select
-              value={config.vision?.provider ?? ""}
-              onChange={(e) => {
-                if (e.target.value) onChange("set_vision_provider", e.target.value);
+        <div>
+          <label
+            className="text-xs mb-1 block"
+            style={{ color: "var(--color-text-muted)" }}
+          >
+            Vision Provider
+          </label>
+          <select
+            value={config.vision?.provider ?? ""}
+            onChange={(e) => {
+              if (e.target.value) onChange("set_vision_provider", e.target.value);
+            }}
+            style={selectStyle}
+          >
+            <option value="">(not set)</option>
+            {config.visionProviders.map((p) => (
+              <option key={p} value={p}>{p}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label
+            className="text-xs mb-1 block"
+            style={{ color: "var(--color-text-muted)" }}
+          >
+            Vision Model
+          </label>
+          <select
+            value={config.vision?.model ?? ""}
+            onChange={(e) => {
+              if (e.target.value) onChange("set_vision_model", e.target.value);
+            }}
+            style={selectStyle}
+          >
+            <option value="">(not set)</option>
+            {config.visionModels.map((m) => (
+              <option key={m.id} value={m.id}>{m.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label
+            className="text-xs mb-1 block"
+            style={{ color: "var(--color-text-muted)" }}
+          >
+            Vision Key
+          </label>
+          <div className="flex gap-2">
+            <input
+              type="password"
+              id="vision-key-input"
+              className="input text-xs flex-1"
+              placeholder={config.vision?.key ? "sk-***hidden***" : "sk-..."}
+            />
+            <button
+              onClick={() => {
+                const input = document.getElementById("vision-key-input") as HTMLInputElement;
+                if (input?.value) {
+                  onChange("set_vision_key", input.value);
+                  input.value = "";
+                }
               }}
-              className="input text-xs w-full"
+              className="btn-primary text-xs px-3"
             >
-              <option value="">(not set)</option>
-              {config.visionProviders.map((p) => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-xs text-dscode-muted mb-1 block">Vision Model</label>
-            <select
-              value={config.vision?.model ?? ""}
-              onChange={(e) => {
-                if (e.target.value) onChange("set_vision_model", e.target.value);
-              }}
-              className="input text-xs w-full"
-            >
-              <option value="">(not set)</option>
-              {config.visionModels.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-xs text-dscode-muted mb-1 block">Vision Key</label>
-            <div className="flex gap-2">
-              <input
-                type="password"
-                id="vision-key-input"
-                className="input text-xs flex-1"
-                placeholder={config.vision?.key ? "sk-***hidden***" : "sk-..."}
-              />
-              <button
-                onClick={() => {
-                  const input = document.getElementById('vision-key-input') as HTMLInputElement;
-                  if (input?.value) {
-                    onChange("set_vision_key", input.value);
-                    input.value = '';
-                  }
-                }}
-                className="btn-primary text-xs px-3"
-              >
-                Set
-              </button>
-            </div>
+              Set
+            </button>
           </div>
         </div>
       </div>
 
       {/* Info */}
-      <div className="pt-2 border-t border-dscode-border space-y-1 text-xs text-dscode-muted">
+      <div
+        className="pt-2 space-y-1 text-xs"
+        style={{
+          borderTop: "1px solid var(--color-border)",
+          color: "var(--color-text-muted)",
+        }}
+      >
         <div className="flex justify-between">
           <span>Provider</span>
-          <span className="text-dscode-text">{config.provider}</span>
+          <span style={{ color: "var(--color-text)" }}>{config.provider}</span>
         </div>
         <div className="flex justify-between">
           <span>Project</span>
-          <span className="text-dscode-text font-mono truncate ml-2 max-w-[150px]">{config.projectPath}</span>
+          <span
+            className="font-mono truncate ml-2 max-w-[150px]"
+            style={{ color: "var(--color-text)" }}
+          >
+            {config.projectPath}
+          </span>
         </div>
         <div className="flex justify-between">
           <span>Max Tokens</span>
-          <span className="text-dscode-text">{config.maxTokens}</span>
+          <span style={{ color: "var(--color-text)" }}>{config.maxTokens}</span>
         </div>
       </div>
     </div>
   );
 }
-
-import { useState, useEffect, useRef } from "react";

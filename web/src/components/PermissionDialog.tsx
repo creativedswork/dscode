@@ -1,3 +1,5 @@
+import { Warning } from "@phosphor-icons/react";
+
 interface PermissionDialogProps {
   toolName: string;
   preview: string;
@@ -6,44 +8,55 @@ interface PermissionDialogProps {
 
 export function PermissionDialog({ toolName, preview, onDecision }: PermissionDialogProps) {
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="bg-dscode-surface border border-dscode-border rounded-2xl shadow-2xl max-w-md w-full p-6">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ backgroundColor: "rgba(0,0,0,0.4)" }}>
+      <div
+        className="max-w-md w-full p-6"
+        style={{
+          borderRadius: "12px",
+          border: "1px solid var(--color-border)",
+          backgroundColor: "var(--color-surface)",
+        }}
+      >
         <div className="flex items-center gap-3 mb-4">
-          <div className="w-10 h-10 rounded-full bg-yellow-900/30 flex items-center justify-center">
-            <svg className="w-5 h-5 text-dscode-yellow" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m0 0v2m0-2h2m-2 0H10m9.364-6.364a9 9 0 11-12.728 0 9 9 0 0112.728 0z" />
-            </svg>
+          <div
+            className="w-10 h-10 rounded flex items-center justify-center"
+            style={{ backgroundColor: "var(--color-warning)" }}
+          >
+            <Warning size={20} weight="bold" style={{ color: "var(--color-warning-text)" }} />
           </div>
           <div>
-            <h3 className="font-semibold text-white">Permission Required</h3>
-            <p className="text-sm text-dscode-muted">The agent wants to run a tool</p>
+            <h3 className="font-semibold" style={{ color: "var(--color-text)" }}>
+              Permission Required
+            </h3>
+            <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>
+              The agent wants to run a tool
+            </p>
           </div>
         </div>
 
         <div className="card mb-4">
-          <div className="text-sm font-mono text-dscode-accent mb-1">{toolName}</div>
-          <div className="text-xs text-dscode-muted font-mono break-all max-h-32 overflow-y-auto">
+          <div
+            className="text-sm font-mono mb-1"
+            style={{ color: "var(--color-accent)" }}
+          >
+            {toolName}
+          </div>
+          <div
+            className="text-xs font-mono break-all max-h-32 overflow-y-auto"
+            style={{ color: "var(--color-text-muted)" }}
+          >
             {preview}
           </div>
         </div>
 
         <div className="flex gap-2">
-          <button
-            onClick={() => onDecision("allow")}
-            className="btn-primary flex-1 text-sm"
-          >
+          <button onClick={() => onDecision("allow")} className="btn-primary flex-1 text-sm">
             Allow
           </button>
-          <button
-            onClick={() => onDecision("always_allow")}
-            className="btn-secondary flex-1 text-sm"
-          >
+          <button onClick={() => onDecision("always_allow")} className="btn-secondary flex-1 text-sm">
             Always Allow
           </button>
-          <button
-            onClick={() => onDecision("deny")}
-            className="btn-danger text-sm"
-          >
+          <button onClick={() => onDecision("deny")} className="btn-danger text-sm">
             Deny
           </button>
         </div>

@@ -5,6 +5,7 @@ import { ChatView } from "./ChatView";
 import { MessageInput } from "./MessageInput";
 import { Sidebar } from "./Sidebar";
 import { ToastContainer, useToasts } from "./Toast";
+import { List, Sun, Moon } from "@phosphor-icons/react";
 
 const SLASH_COMMANDS = [
   { name: "help", description: "Show available commands" },
@@ -21,7 +22,6 @@ const SLASH_COMMANDS = [
   { name: "image", description: "Attach an image (file path or 'clipboard')" },
 ];
 
-/** Always produce a new array; update last message immutably if streaming, else push new. */
 function updateLastOrCreate(prev: UIMessage[], update: (msg: UIMessage) => Partial<UIMessage>): UIMessage[] {
   const next = [...prev];
   const last = next[next.length - 1];
@@ -41,6 +41,24 @@ function updateLastOrCreate(prev: UIMessage[], update: (msg: UIMessage) => Parti
   return next;
 }
 
+function getInitialTheme(): "light" | "dark" {
+  const saved = localStorage.getItem("dscode-theme");
+  if (saved === "dark" || saved === "light") return saved;
+  return "light";
+}
+
+/** Server stores content as structured array [{type:"text",text:"..."}] or plain string */
+function normalizeContent(c: unknown): string {
+  if (typeof c === "string") return c;
+  if (Array.isArray(c)) {
+    return (c as any[])
+      .filter((b) => b.type === "text")
+      .map((b) => b.text)
+      .join("\n");
+  }
+  return "";
+}
+
 export function App() {
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [processing, setProcessing] = useState(false);
@@ -56,23 +74,37 @@ export function App() {
   const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
   const [fileListItems, setFileListItems] = useState<FileListItem[]>([]);
   const [fileListPrefix, setFileListPrefix] = useState("");
+  const [theme, setTheme] = useState<"light" | "dark">(getInitialTheme);
   const { toasts, addToast, removeToast } = useToasts();
 
-  // Track when the current assistant turn started (for timer)
   const turnStartRef = useRef<number>(0);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "dark") {
+      root.classList.add("dark");
+    } else {
+      root.classList.remove("dark");
+    }
+    localStorage.setItem("dscode-theme", theme);
+  }, [theme]);
+
+  const toggleTheme = useCallback(() => {
+    setTheme((prev) => (prev === "light" ? "dark" : "light"));
+  }, []);
 
   const handleEvent = useCallback((event: ServerEvent) => {
     switch (event.type) {
       case "ready": {
         setModel(event.model);
         setConfig(event.config);
-        const msgs: UIMessage[] = event.messages.map((m, i) => ({
+        const msgs: UIMessage[] = (event.messages as any[]).map((m: any, i) => ({
           id: `hist-${i}`,
           role: m.role,
-          content: m.content,
-          thinking: m.thinking,
-          tools: m.tools,
-          images: m.images,
+          content: normalizeContent(m.content),
+          thinking: typeof m.thinking === "string" ? m.thinking : "",
+          tools: Array.isArray(m.tools) ? m.tools : [],
+          images: Array.isArray(m.images) ? m.images : [],
         }));
         setMessages(msgs);
         break;
@@ -82,8 +114,8 @@ export function App() {
         setMessages((prev) => [...prev, {
           id: `user-${Date.now()}`,
           role: "user",
-          content: event.text,
-          images: event.images,
+          content: normalizeContent(event.text),
+          images: (event as any).images ?? [],
         }]);
         break;
       }
@@ -304,32 +336,46 @@ export function App() {
   const hasStreaming = messages.some((m) => m.isStreaming);
 
   return (
-    <div className="h-screen flex flex-col bg-dscode-bg">
-      <header className="flex items-center justify-between px-4 py-2 border-b border-dscode-border bg-dscode-surface shrink-0">
+    <div className="h-screen flex flex-col" style={{ backgroundColor: "var(--color-bg)" }}>
+      <header
+        className="flex items-center justify-between px-4 py-2 shrink-0"
+        style={{ backgroundColor: "var(--color-surface)", borderBottom: "1px solid var(--color-border)" }}
+      >
         <div className="flex items-center gap-3">
           <button
             onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-2 rounded-lg hover:bg-gray-700 transition-colors md:hidden"
+            className="p-2 rounded-btn hover:brightness-95 transition-[filter] duration-200 md:hidden"
+            style={{ backgroundColor: "var(--color-surface-hover)" }}
             aria-label="Toggle sidebar"
           >
-            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
+            <List size={20} weight="bold" style={{ color: "var(--color-text)" }} />
           </button>
-          <h1 className="font-bold text-dscode-accent text-lg">DSCode</h1>
+          <h1 className="font-bold text-lg" style={{ color: "var(--color-accent)" }}>DSCode</h1>
           {model && (
-            <span className="text-dscode-muted text-sm hidden sm:inline">
-              · {model}
-            </span>
+            <span className="text-sm hidden sm:inline" style={{ color: "var(--color-text-muted)" }}>{model}</span>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <span
-            className={`inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full ${
-              connected ? "bg-green-900/30 text-dscode-green" : "bg-red-900/30 text-dscode-red"
-            }`}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={toggleTheme}
+            className="p-2 rounded-btn hover:brightness-95 transition-[filter] duration-200"
+            style={{ backgroundColor: "var(--color-surface-hover)" }}
+            aria-label="Toggle theme"
           >
-            <span className={`w-1.5 h-1.5 rounded-full ${connected ? "bg-dscode-green" : "bg-dscode-red"}`} />
+            {theme === "light"
+              ? <Moon size={18} weight="bold" style={{ color: "var(--color-text)" }} />
+              : <Sun size={18} weight="bold" style={{ color: "var(--color-text)" }} />}
+          </button>
+          <span
+            className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1"
+            style={{
+              borderRadius: "8px",
+              backgroundColor: connected ? "var(--color-success)" : "var(--color-error)",
+              color: connected ? "var(--color-success-text)" : "var(--color-error-text)",
+            }}
+          >
+            <span className="w-1.5 h-1.5 rounded-full"
+              style={{ backgroundColor: connected ? "var(--color-success-text)" : "var(--color-error-text)" }} />
             {connected ? "Connected" : "Reconnecting..."}
           </span>
         </div>
@@ -337,35 +383,22 @@ export function App() {
 
       <div className="flex flex-1 overflow-hidden">
         <Sidebar
-          open={sidebarOpen}
-          onClose={() => setSidebarOpen(false)}
-          activeTab={sidebarTab}
-          onTabChange={setSidebarTab}
-          sessions={sessions}
-          mcpServers={mcpServers}
-          config={config}
-          onSessionAction={handleSessionAction}
-          onMcpAction={handleMcpAction}
+          open={sidebarOpen} onClose={() => setSidebarOpen(false)}
+          activeTab={sidebarTab} onTabChange={setSidebarTab}
+          sessions={sessions} mcpServers={mcpServers} config={config}
+          onSessionAction={handleSessionAction} onMcpAction={handleMcpAction}
           onConfigChange={handleConfigChange}
         />
-
         <main className="flex-1 flex flex-col min-w-0">
           <ChatView
-            messages={messages}
-            processing={processing}
-            hasStreaming={hasStreaming}
-            permissionPrompt={permissionPrompt}
-            onPermission={handlePermission}
+            messages={messages} processing={processing} hasStreaming={hasStreaming}
+            permissionPrompt={permissionPrompt} onPermission={handlePermission}
           />
           <MessageInput
-            onSend={handleSend}
-            onAbort={handleAbort}
-            onSlashCommand={handleSlashCommand}
-            onCommand={handleCommand}
-            processing={processing}
-            slashCommands={SLASH_COMMANDS}
-            fileListItems={fileListItems}
-            fileListPrefix={fileListPrefix}
+            onSend={handleSend} onAbort={handleAbort}
+            onSlashCommand={handleSlashCommand} onCommand={handleCommand}
+            processing={processing} slashCommands={SLASH_COMMANDS}
+            fileListItems={fileListItems} fileListPrefix={fileListPrefix}
           />
         </main>
       </div>

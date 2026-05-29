@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import type { ImageAttachment, FileListItem } from "../types";
+import { PaperPlaneTilt, Folder, File } from "@phosphor-icons/react";
 
 interface MessageInputProps {
   onSend: (text: string, images?: ImageAttachment[]) => void;
@@ -292,22 +293,46 @@ export function MessageInput({
     }
   };
 
+  const popoverStyle: React.CSSProperties = {
+    borderRadius: "8px",
+    border: "1px solid var(--color-border)",
+    backgroundColor: "var(--color-surface)",
+    color: "var(--color-text)",
+  };
+
   return (
-    <div className="border-t border-dscode-border bg-dscode-surface px-4 py-3 relative">
+    <div
+      className="px-4 py-3 relative"
+      style={{
+        borderTop: "1px solid var(--color-border)",
+        backgroundColor: "var(--color-surface)",
+      }}
+    >
+      {/* Slash command popover */}
       {showSlashMenu && filteredCommands.length > 0 && (
-        <div className="absolute bottom-full left-4 mb-1 w-72 bg-dscode-surface border border-dscode-border rounded-xl shadow-2xl overflow-hidden z-50">
-          <div className="px-3 py-2 text-xs text-dscode-muted border-b border-dscode-border">
+        <div
+          className="absolute bottom-full left-4 mb-1 w-72 overflow-hidden z-50"
+          style={popoverStyle}
+        >
+          <div
+            className="px-3 py-2 text-xs border-b"
+            style={{
+              color: "var(--color-text-muted)",
+              borderColor: "var(--color-border)",
+            }}
+          >
             Commands
           </div>
           <div className="max-h-48 overflow-y-auto">
             {filteredCommands.map((cmd, i) => (
               <button
                 key={cmd.name}
-                className={`w-full text-left px-3 py-2 text-sm transition-colors flex items-center gap-2 ${
-                  i === slashIndex
-                    ? "bg-dscode-accentDim/30 text-white"
-                    : "text-dscode-text hover:bg-gray-700/50"
-                }`}
+                className="w-full text-left px-3 py-2 text-sm transition-colors flex items-center gap-2"
+                style={{
+                  backgroundColor:
+                    i === slashIndex ? "var(--color-surface-hover)" : "transparent",
+                  color: "var(--color-text)",
+                }}
                 onMouseEnter={() => setSlashIndex(i)}
                 onClick={() => {
                   setText(`/${cmd.name} `);
@@ -315,30 +340,51 @@ export function MessageInput({
                   textareaRef.current?.focus();
                 }}
               >
-                <span className="font-mono text-dscode-accent text-xs">/{cmd.name}</span>
-                <span className="text-dscode-muted text-xs truncate">{cmd.description}</span>
+                <span
+                  className="font-mono text-xs"
+                  style={{ color: "var(--color-accent)" }}
+                >
+                  /{cmd.name}
+                </span>
+                <span
+                  className="text-xs truncate"
+                  style={{ color: "var(--color-text-muted)" }}
+                >
+                  {cmd.description}
+                </span>
               </button>
             ))}
           </div>
         </div>
       )}
 
+      {/* File picker popover */}
       {showFileMenu && (
-        <div className="absolute bottom-full left-4 mb-1 w-80 bg-dscode-surface border border-dscode-border rounded-xl shadow-2xl overflow-hidden z-50">
-          <div className="px-3 py-2 text-xs text-dscode-muted border-b border-dscode-border">
-            Files {fileFilter ? `— @${fileFilter}` : ""}
+        <div
+          className="absolute bottom-full left-4 mb-1 w-80 overflow-hidden z-50"
+          style={popoverStyle}
+        >
+          <div
+            className="px-3 py-2 text-xs border-b"
+            style={{
+              color: "var(--color-text-muted)",
+              borderColor: "var(--color-border)",
+            }}
+          >
+            Files {fileFilter ? `@${fileFilter}` : ""}
           </div>
           <div className="max-h-48 overflow-y-auto">
             {fileListItems.length > 0 ? (
               fileListItems.map((item, i) => (
                 <button
                   key={item.path}
-                  className={`w-full text-left px-3 py-2 text-sm transition-colors flex items-center gap-2 ${
-                    i === fileIndex
-                      ? "bg-dscode-accentDim/30 text-white"
-                      : "text-dscode-text hover:bg-gray-700/50"
-                  }`}
-                  style={{ paddingLeft: `${12 + (item.depth ?? 0) * 14}px` }}
+                  className="w-full text-left px-3 py-2 text-sm transition-colors flex items-center gap-2"
+                  style={{
+                    paddingLeft: `${12 + (item.depth ?? 0) * 14}px`,
+                    backgroundColor:
+                      i === fileIndex ? "var(--color-surface-hover)" : "transparent",
+                    color: "var(--color-text)",
+                  }}
                   onMouseEnter={() => setFileIndex(i)}
                   onClick={() => {
                     if (item.isDir) {
@@ -348,14 +394,24 @@ export function MessageInput({
                     }
                   }}
                 >
-                  <span className="text-dscode-muted text-xs shrink-0">
-                    {item.isDir ? "📁" : "📄"}
+                  {item.isDir ? (
+                    <Folder size={14} weight="bold" style={{ color: "var(--color-text-muted)" }} />
+                  ) : (
+                    <File size={14} weight="bold" style={{ color: "var(--color-text-muted)" }} />
+                  )}
+                  <span
+                    className="font-mono text-xs truncate"
+                    style={{ color: "var(--color-accent)" }}
+                  >
+                    {item.name}
                   </span>
-                  <span className="font-mono text-dscode-accent text-xs truncate">{item.name}</span>
                 </button>
               ))
             ) : (
-              <div className="px-3 py-2 text-sm text-dscode-muted">
+              <div
+                className="px-3 py-2 text-sm"
+                style={{ color: "var(--color-text-muted)" }}
+              >
                 {fileFilter ? "No matching files" : "Type to search files..."}
               </div>
             )}
@@ -363,6 +419,7 @@ export function MessageInput({
         </div>
       )}
 
+      {/* Image thumbnails */}
       {images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2 max-w-4xl mx-auto">
           {images.map((img, i) => (
@@ -370,20 +427,26 @@ export function MessageInput({
               <img
                 src={`data:${img.mimeType};base64,${img.data}`}
                 alt={`Pasted image ${i + 1}`}
-                className="h-16 w-16 object-cover rounded-lg border border-dscode-border"
+                className="h-16 w-16 object-cover rounded"
+                style={{ border: "1px solid var(--color-border)" }}
               />
               <button
                 onClick={() => removeImage(i)}
-                className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-red-600 text-white rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                style={{
+                  backgroundColor: "var(--color-error-text)",
+                  color: "#fff",
+                }}
                 title="Remove image"
               >
-                ×
+                &times;
               </button>
             </div>
           ))}
         </div>
       )}
 
+      {/* Input row */}
       <div className="flex items-end gap-2 max-w-4xl mx-auto">
         <textarea
           ref={textareaRef}
@@ -394,10 +457,21 @@ export function MessageInput({
           }}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
-          placeholder={processing ? "Processing..." : "Type a message... (@file, Tab for multi-file, Enter to send)"}
+          placeholder={
+            processing
+              ? "Processing..."
+              : "Type a message... (@file, Tab for multi-file, Enter to send)"
+          }
           disabled={processing}
           rows={1}
-          className="input flex-1 resize-none font-mono text-sm min-h-[40px] max-h-[200px]"
+          className="flex-1 resize-none text-sm min-h-[40px] max-h-[200px] px-4 py-2.5 focus:outline-none"
+          style={{
+            borderRadius: "12px",
+            border: "1px solid var(--color-border)",
+            backgroundColor: "var(--color-bg)",
+            color: "var(--color-text)",
+            fontFamily: "Geist Sans, system-ui, sans-serif",
+          }}
         />
         {processing ? (
           <button
@@ -413,14 +487,18 @@ export function MessageInput({
             disabled={!text.trim() && images.length === 0}
             className="btn-primary shrink-0"
           >
-            <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-            </svg>
+            <PaperPlaneTilt size={16} weight="bold" />
           </button>
         )}
       </div>
-      <div className="text-xs text-dscode-muted text-center mt-1.5">
-        DSCode Web · {processing ? "Press Stop to abort" : "Type @ for files · Tab to add more · Enter to send · Ctrl+V for images"}
+      <div
+        className="text-xs text-center mt-1.5"
+        style={{ color: "var(--color-text-muted)" }}
+      >
+        DSCode Web &middot;{" "}
+        {processing
+          ? "Press Stop to abort"
+          : "Type @ for files, Tab to add more, Enter to send, Ctrl+V for images"}
       </div>
     </div>
   );
