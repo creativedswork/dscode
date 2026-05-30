@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useResizablePanel } from "../hooks/useResizablePanel";
 import type { SessionInfo, McpServerInfo, ConfigData } from "../types";
 import { X, Trash, CaretDown, CaretRight, Plus } from "@phosphor-icons/react";
 
@@ -31,6 +32,10 @@ export function Sidebar({
   onNewSession,
   onMcpServerAction,
 }: SidebarProps) {
+  const { width, panelRef, handleProps } = useResizablePanel({
+    storageKey: "dscode-sidebar-width",
+  });
+
   return (
     <>
       {/* Mobile overlay */}
@@ -39,10 +44,13 @@ export function Sidebar({
       )}
 
       <aside
-        className={`fixed md:static inset-y-0 left-0 z-50 w-80 flex flex-col transform transition-transform duration-200 ${
+        ref={panelRef}
+        className={`fixed md:static inset-y-0 left-0 z-50 flex flex-col transform transition-transform duration-200 ${
           open ? "translate-x-0" : "-translate-x-full md:translate-x-0"
         } ${!open && "hidden md:flex"}`}
         style={{
+          width: `${width}px`,
+          minWidth: `${width}px`,
           backgroundColor: "var(--color-surface)",
           borderRight: "1px solid var(--color-border)",
         }}
@@ -110,6 +118,8 @@ export function Sidebar({
             />
           )}
         </div>
+
+        <div className="resize-handle hidden md:block" {...handleProps} />
       </aside>
     </>
   );

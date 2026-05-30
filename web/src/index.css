@@ -146,6 +146,29 @@
     @apply tool-card;
     border-left: 2px solid var(--color-error-text);
   }
+
+  .resize-handle {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 4px;
+    cursor: col-resize;
+    z-index: 10;
+    transition: background-color 0.15s ease;
+  }
+  .resize-handle:hover {
+    background-color: var(--color-border);
+  }
+  .resize-handle:active {
+    background-color: var(--color-accent);
+  }
+}
+
+@media (max-width: 767px) {
+  .resize-handle {
+    display: none;
+  }
 }
 
 /* ── Animations ── */
