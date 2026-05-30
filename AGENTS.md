@@ -111,7 +111,7 @@ new Agent({
 - Google TypeScript Style 子集：2 spaces, semicolons, named exports, camelCase
 - 文件 ≤300 行，一个文件一个职责
 - 不写注释除非解释 WHY
-- 详见 `docs/coding-style.md`
+- 详见 `docs/STYLE.md`
 
 ## 运行
 

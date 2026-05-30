@@ -21,9 +21,9 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@wangcan26/dscode">npm</a> ·
-  <a href="docs/Introduction.md">Philosophy</a> ·
+  <a href="docs/ARCHITECTURE.md">Philosophy</a> ·
   <a href="docs/">Architecture</a> ·
-  <a href="docs/roadmap.md">Roadmap</a>
+  <a href="docs/ROADMAP.md">Roadmap</a>
 </p>
 
 ---

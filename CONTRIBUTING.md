@@ -4,7 +4,7 @@
 
 ## 理念对齐
 
-dscode 的定位和设计理念与主流 AI Coding Agent 有所不同。在动手之前，请先阅读 **[Introduction.md](docs/Introduction.md)**，重点关注：
+dscode 的定位和设计理念与主流 AI Coding Agent 有所不同。在动手之前，请先阅读 **[ARCHITECTURE.md](docs/ARCHITECTURE.md)**，重点关注：
 
 - **服务创作者而非开发者**：dscode 的核心是通过 MCP 连接创作工具，而非围绕本地仓库做代码感知。
 - **Harness 与模型协同进化**：Harness 是模型的探索环境，功能重心会随模型能力迁移。

@@ -23,9 +23,9 @@
 
 <p align="center">
   <a href="https://www.npmjs.com/package/@wangcan26/dscode">npm</a> ·
-  <a href="docs/Introduction.md">设计理念</a> ·
+  <a href="docs/ARCHITECTURE.md">设计理念</a> ·
   <a href="docs/">架构文档</a> ·
-  <a href="docs/roadmap.md">Roadmap</a>
+  <a href="docs/ROADMAP.md">Roadmap</a>
 </p>
 
 ---
@@ -439,7 +439,7 @@ npm run dev:web
 ## 更多文档
 
 - [架构设计文档](docs/)
-- [Roadmap](docs/roadmap.md)
+- [Roadmap](docs/ROADMAP.md)
 
 ## License
 
