@@ -69,9 +69,12 @@ export function App() {
       case "tool_start":
       case "tool_end":
       case "mcp_app":
+        setMessages((prev) => conversationReducer(prev, event));
+        break;
       case "assistant_end":
       case "clear_conversation":
         setMessages((prev) => conversationReducer(prev, event));
+        setProcessing(false);
         break;
       case "assistant_start":
         turnStartRef.current = Date.now();
@@ -102,6 +105,7 @@ export function App() {
 
   const handleSend = useCallback((text: string, images?: ImageAttachment[]) => {
     if (!text.trim() && (!images || images.length === 0)) return;
+    setProcessing(true);
     send({ type: "chat", text, images: images?.length ? images : undefined });
   }, [send]);
   const handlePermission = useCallback((decision: "allow" | "always_allow" | "deny", explainText?: string) => {

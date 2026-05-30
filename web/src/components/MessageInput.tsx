@@ -213,6 +213,12 @@ export function MessageInput({
       return;
     }
 
+    if (e.key === "Escape" && processing) {
+      e.preventDefault();
+      onAbort();
+      return;
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (!processing) handleSubmit();
@@ -459,7 +465,7 @@ export function MessageInput({
           onPaste={handlePaste}
           placeholder={
             processing
-              ? "Processing..."
+              ? "Processing... (Esc to stop)"
               : "Type a message... (@file, Tab for multi-file, Enter to send)"
           }
           disabled={processing}
@@ -477,7 +483,7 @@ export function MessageInput({
           <button
             onClick={onAbort}
             className="btn-danger shrink-0"
-            title="Abort (Esc)"
+            title="Stop agent (Esc)"
           >
             Stop
           </button>
@@ -497,7 +503,7 @@ export function MessageInput({
       >
         DSCode Web &middot;{" "}
         {processing
-          ? "Press Stop to abort"
+          ? "Press Stop or Esc to abort"
           : "Type @ for files, Tab to add more, Enter to send, Ctrl+V for images"}
       </div>
     </div>
