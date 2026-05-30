@@ -1,361 +1,157 @@
 <p align="center">
   <img src="docs/assets/dscode-logo.svg" alt="dscode" width="460" />
 </p>
+
 <p align="center">
-  <strong>The open source spec-driven MCP-first AI agent for DeepSeek — built for digital creation, not just coding.</strong>
+  <strong>
+    MCP-first, spec-driven AI agent for DeepSeek.<br />
+    Built for digital creation — not just another coding CLI.
+  </strong>
 </p>
+
 <p align="center">
   <a href="https://www.npmjs.com/package/@wangcan26/dscode"><img src="docs/assets/badge-npm.svg" alt="npm version" /></a>
   <img src="docs/assets/badge-node.svg" alt="Node.js >=20" />
   <img src="docs/assets/badge-deepseek.svg" alt="DeepSeek native" />
   <img src="docs/assets/badge-spec-driven.svg" alt="spec driven" />
 </p>
+
 <p align="center">
   <sub><a href="README.zh-CN.md">中文文档</a></sub>
 </p>
 
+---
+
+## What makes dscode different
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+### 🔌 MCP-First
+
+We treat MCP as a **first-class extension mechanism**, not an afterthought. dscode tracks the latest MCP spec aggressively and prefers implementing capabilities through MCP servers — Blender 3D modeling, PlayCanvas, browser automation, document processing, spreadsheets. If a tool has an MCP server, dscode connects.
+
+**MCP is not a feature. It's the foundation.**
+
+</td>
+<td width="50%" valign="top">
+
+### 🧬 Spec-Driven Development
+
+dscode is built entirely through **spec coding** with [OpenSpec](https://github.com/anthropics/open-spec). Every feature begins as a formal spec — `openspec/specs/` is the source of truth, code is the implementation. We don't encourage manual commits; all design and development flows through the SDD pipeline.
+
+**Code is the implementation of specs — not the other way around.**
+
+</td>
+</tr>
+<tr>
+<td width="50%" valign="top">
+
+### 🔍 MCP Tool Search
+
+Too many MCP servers? Context explosion is a real problem when every tool schema competes for token budget. dscode ships with a built-in `search_tools` driver — MCP tools are discovered **on-demand** by the model, not pre-loaded. Only the tools actually needed enter the context window. Connect dozens of MCP servers without worrying about overhead.
+
+**All the tools. None of the bloat.**
+
+</td>
+<td width="50%" valign="top">
+
+### 🐋 DeepSeek Native
+
+dscode is purpose-built for DeepSeek. A **vision model fallback pipeline** transparently routes images to vision-capable models when the primary model lacks multimodal support. Prompt caching is tuned to maintain **97–99% cache hit rates** via `prompt_cache_key` affinity and prefix-stable message construction. Every optimization is measured against DeepSeek's API behavior.
+
+**Not just compatible. Optimized.**
+
+</td>
+</tr>
+</table>
+
+---
+
+## See it in action
+
 <p align="center">
-  Terminal or browser — one agent harness. MCP-native tooling, agentic workflows, purpose-built for DeepSeek.<br />
-  From context management to memory systems to permission control — everything you need in one tool.
+  <video src="docs/screen_shots/show_dscode.mp4" width="720" controls muted loop playsinline poster="docs/screen_shots/web-ui.gif"></video>
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@wangcan26/dscode">npm</a> ·
-  <a href="docs/ARCHITECTURE.md">Philosophy</a> ·
-  <a href="docs/">Architecture</a> ·
-  <a href="docs/ROADMAP.md">Roadmap</a>
+  <img src="docs/screen_shots/blender_show.jpg" alt="Blender MCP" width="360" />
+  <img src="docs/screen_shots/blender_show1.jpg" alt="Blender MCP demo" width="360" />
+</p>
+
+<p align="center">
+  <sub>Web UI with streaming chat, tool calls, and permission dialogs. Controlling Blender via MCP.</sub>
 </p>
 
 ---
 
-## Why dscode
-
-<table>
-<tr>
-<td width="33%" valign="top">
-  <strong>🔬 Spec-driven</strong><br />
-  Every feature starts as a spec — <code>openspec/specs/</code> is the source of truth, code is the implementation.
-</td>
-<td width="33%" valign="top">
-  <strong>Agent harness</strong><br />
-  File operations, shell, code search, permission control, context compression, session persistence, and memory system — all in one.
-</td>
-<td width="33%" valign="top">
-  <strong>MCP-first</strong><br />
-  Extend capabilities to browsers, 3D, documents, spreadsheets, and more external tools via MCP — not limited to code generation.
-</td>
-</tr>
-</table>
-
-## Spec-driven development
-dscode is built entirely through <strong>spec coding</strong> — every feature is first defined as a formal spec in <a href="https://github.com/anthropics/open-spec">OpenSpec</a>, then implemented by AI agents. <code>AGENTS.md</code> + <code>openspec/specs/</code> serve as the complete project blueprint.
-
-> <strong>Code is the implementation of specs — not the other way around.</strong>
-
-
-## Digital work, not just coding
-
-
-dscode connects external tools through **MCP (Model Context Protocol)**, extending DeepSeek's capabilities to broader digital workflows — from Blender 3D modeling to browser automation, from document and spreadsheet processing to design and content production.
-
-<table>
-<tr>
-<td width="50%"><img src="docs/screen_shots/blender_show.jpg" alt="Blender showcase" width="100%"></td>
-<td width="50%"><img src="docs/screen_shots/blender_show1.jpg" alt="Blender MCP demo" width="100%"></td>
-</table>
-
-The screenshots above demonstrate controlling Blender via `blender-mcp`, manipulating a 3D scene with natural language. Creative toolchains like this are just one example of digital work — dscode uses the standard MCP protocol to let DeepSeek models access a much broader ecosystem of digital tools.
-
-## Install in 30 seconds
-
-<table>
-<tr>
-<td width="50%" valign="top">
-
-### Install via npm
+## Install
 
 ```bash
-# Node.js >= 20
 npm install -g @wangcan26/dscode
-dscode --version
-dscode
+dscode              # Terminal UI
+dscode --web        # Web UI → http://localhost:3000
 ```
 
-Package: <https://www.npmjs.com/package/@wangcan26/dscode>
-
-</td>
-<td width="50%" valign="top">
-
-### Build from source
-
-```bash
-npm install
-npm run build
-node dist/dscode.mjs
-```
-
-Suitable for local development, debugging, and customization.
-
-</td>
-</tr>
-</table>
-
-> If you like this project, give it a ⭐ Star, 👀 Watch, and 👍 on GitHub! Your support keeps dscode evolving, and every piece of feedback is deeply appreciated.
-
-### First launch
-
-```bash
-/config key sk-your-deepseek-api-key
-/config model deepseek-v4-pro
-```
-
-Configuration written by the `/config` command is persisted to `~/.dscode/config.json` — no need to repeat setup on subsequent launches. The `cwd` field records the project directory associated with the current session; it is only reused when you manually run `/config cwd <path>`. Declarative settings go in `settings.json`: user-level at `~/.dscode/settings.json`, project-level at `<project>/.dscode/settings.json`.
-
-## Web UI
-
-In addition to terminal interaction, dscode also offers a clean, modern **browser interface** with full feature parity with the TUI.
-
-**Global npm install:**
-
-```bash
-dscode --web                  # Default port 3000
-dscode --web --web-port 8080  # Custom port
-```
+> First launch? Run `/config key <your-api-key>` and `/config model deepseek-v4-pro` to get started. Type `/help` for the full guide.
 
 **Build from source:**
 
 ```bash
-npm run build:web             # Build frontend first
-node dist/dscode.mjs --web    # Start web mode
+git clone https://github.com/wangcan26/dscode.git
+cd dscode && npm install && npm run build
+node dist/dscode.mjs
 ```
 
-Open `http://localhost:3000` in your browser:
+---
 
-<p align="center">
-  <img src="docs/screen_shots/web-ui.gif" alt="DSCode Web UI" width="720" />
-</p>
+## Capabilities
 
-Web UI features:
+<table>
+<tr>
+<td width="33%" valign="top">
+  <strong>🖥 Terminal + Web</strong><br />
+  <sub>Full TUI with streaming, thinking, tool calls. Modern React Web UI with identical feature parity via WebSocket.</sub>
+</td>
+<td width="33%" valign="top">
+  <strong>🔌 MCP Connector</strong><br />
+  <sub>Stdio, Streamable HTTP (MCP 2025-11-25), legacy SSE fallback. Auto transport inference. MCP App sandbox for server-driven UI.</sub>
+</td>
+<td width="33%" valign="top">
+  <strong>🛡 Agent Harness</strong><br />
+  <sub>Permission control, context compression (1M token window), session persistence, cross-session memory, retry with exponential backoff.</sub>
+</td>
+</tr>
+<tr>
+<td width="33%" valign="top">
+  <strong>📦 Skills System</strong><br />
+  <sub>Declarative third-party extensions via SKILL.md. On-demand activation. User-level + project-level scopes.</sub>
+</td>
+<td width="33%" valign="top">
+  <strong>👁 Vision Pipeline</strong><br />
+  <sub>Auto-routing to vision-capable models. tesseract OCR fallback (ENG + CHI). Drag, paste, or @-file images.</sub>
+</td>
+<td width="33%" valign="top">
+  <strong>🔧 Built-in Drivers</strong><br />
+  <sub><code>read_file</code>, <code>write_file</code>, <code>edit</code> (hash-anchor), <code>bash</code>, <code>grep</code>, <code>glob</code>. MCP tools discovered on-demand via <code>search_tools</code>.</sub>
+</td>
+</tr>
+</table>
 
-| Feature | Description |
-| --- | --- |
-| Streaming chat | Real-time display of thinking + text output, consistent with TUI |
-| Tool calls | Inline cards showing tool name, parameters, and result (success/failure icons) |
-| Permission confirm | Graphical dialogs: Allow / Always Allow / Deny |
-| Slash commands | Type `/` for command palette with keyboard navigation and click |
-| Session management | Sidebar with visual browse, save, load, delete sessions |
-| MCP browser | View connected MCP servers and tool lists |
-| Config management | Graphical model switching, thinking level, and API key settings |
-| Image upload | Drag & drop / paste / click to upload images |
-| Responsive layout | Adapts to desktop and mobile |
-| Dark theme | Default GitHub-style dark theme, easy on the eyes |
+---
 
-> Web UI and CLI share the same Agent backend — all features are fully consistent. No reconfiguration needed when switching modes.
-
-## What you get
-
-| Capability | Description |
-| --- | --- |
-| Multi-turn chat | Streaming output + thinking (reasoning models) |
-| Built-in drivers | fs, shell, search — always available |
-| Permission control | Dangerous ops require confirmation; glob patterns to deny read/write of sensitive files |
-| Session persistence | Auto-save, resume historical conversations |
-| Context management | Auto-compress long conversations to prevent token overflow; 1M token window |
-| Memory system | Cross-session memory of user preferences and project context |
-| Skills system | Declarative third-party skill extensions (SKILL.md), on-demand activation |
-| MCP protocol | MCP Client connecting to external tool servers (stdio / streamable-http / legacy SSE) |
-| Image OCR | Text extraction via tesseract.js, supports Chinese and English |
-| Two-level config | User-level + project-level config, environment variable overrides |
-| Web UI | Browser GUI with real-time streaming, permission dialogs, sidebar management |
-
-## MCP connector
-
-| Capability | Description |
-| --- | --- |
-| **Stdio transport** | Launch local process as MCP Server, zero network overhead |
-| **Streamable HTTP transport** | Connect to remote MCP Server, prefers 2025-11-25 MCP spec |
-| **Legacy SSE compatibility** | Explicit passthrough or auto-fallback to legacy SSE when remote doesn't support new transport |
-| **Auto transport inference** | `command` present → stdio, `url` only → streamable-http, zero config |
-| **Tool namespacing** | `mcp_<server>_<tool>` format, avoids conflicts |
-| **Graceful degradation** | Server connection failure doesn't block startup, errors are observable |
-
-### MCP configuration example
-
-Place MCP config in `~/.dscode/settings.json` or `<project>/.dscode/settings.json`, not in the `/config`-managed `config.json`.
+## MCP in 30 seconds
 
 ```jsonc
+// ~/.dscode/settings.json
 {
   "mcpServers": {
     "blender": {
-      "description": "Blender 3D modeling via MCP",
       "command": "uvx",
       "args": ["blender-mcp"]
     },
     "playwright": {
-      "description": "Browser automation",
-      "command": "npx",
-      "args": ["@anthropic/mcp-playwright"]
-    },
-    "custom-api": {
-      "description": "Remote API server",
-      "url": "http://localhost:3000/mcp"
-    }
-  }
-}
-```
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `command` | string | Required for stdio | Launch command |
-| `args` | string[] | No | Command arguments |
-| `url` | string | Required for remote | Remote MCP Server URL |
-| `transport` | `"stdio" \| "streamable-http" \| "sse"` | No | Transport method; when unspecified, `url` defaults to `streamable-http` |
-| `description` | string | No | Description |
-| `env` | object | No | Custom environment variables |
-| `headers` | object | No | Remote MCP request headers |
-| `preferredProtocolVersion` | string | No | Preferred MCP protocol version, default `2025-11-25` |
-| `allowLegacySseFallback` | boolean | No | Whether to allow fallback to legacy SSE when remote doesn't support new transport |
-| `requestTimeoutMs` / `connectTimeoutMs` | number | No | Request / connection timeout |
-
-MCP tools are registered as Drivers with naming format `mcp_<server>_<tool>`, e.g. `mcp_blender_get_scene_info`. Connection failures don't block startup; error messages are output to the console.
-
-Type `/mcp` in the TUI to open the interactive browser: select an MCP server, then view its tool list, load status, transport, protocol version, compatibility mode, and refresh status.
-
-## Model configuration
-
-Manage configuration in the TUI with `/config` — no file editing or environment variables needed:
-
-```bash
-/config                     # View current config
-/config model <id>          # Switch model (immediate)
-/config thinking <level>    # Set thinking intensity
-/config key <api-key>       # Set API Key
-/config cwd <path>          # Set working directory for current project (restart to apply)
-/config help                # Show help
-```
-
-Defaults to `deepseek-v4-flash`. Recommended to switch to `deepseek-v4-pro` for stronger reasoning/thinking:
-
-| Model | Characteristics |
-| --- | --- |
-| `deepseek-v4-flash` | Default, fast, suitable for daily coding |
-| `deepseek-v4-pro` | Supports reasoning/thinking, stronger on complex tasks, image OCR |
-
-> DeepSeek V4 series all support a **1 million token** context window with a maximum output of 384K tokens.
-
-Under the hood is `pi-ai`, extensible to 25+ providers including OpenAI, Anthropic, Google, and more.
-
-### Thinking levels
-
-DeepSeek reasoning models control thinking intensity via `thinkingLevel`. The default is automatically set when switching models (pro → `medium`, others → `off`), and can be manually overridden:
-
-| Level | Behavior |
-| --- | --- |
-| `off` | Thinking disabled, direct output |
-| `minimal` / `low` / `medium` / `high` | Thinking enabled, mapped to `reasoning_effort: "high"` |
-| `xhigh` | Maximum thinking intensity, mapped to `reasoning_effort: "max"` |
-
-```bash
-/config thinking xhigh
-```
-
-## Skills system
-
-dscode uses an **Agent as OS** architecture: Drivers (kernel modules, always loaded) and Skills (user-mode programs, activated on demand).
-
-```text
-~/.dscode/skills/
-├── git-workflow/
-│   └── SKILL.md
-└── docker/
-    └── SKILL.md
-```
-
-**SKILL.md format:**
-
-```yaml
----
-name: git-workflow
-description: Advanced git operations for PR workflows
-tools:
-  - read_file
-  - list_files
-  - grep
-  - bash
----
-## Instructions
-When the user asks about git workflows, use these tools.
-Always push the branch before creating a PR.
-```
-
-- YAML frontmatter declares `name`, `description`, `tools` whitelist
-- When activated, instructions are injected into the system prompt; tools are filtered from loaded Drivers by the whitelist
-- All scanned Skills are auto-activated at startup; manual activation via `/skills activate <name>` is also supported
-
-## CLI commands
-
-| Command | Description |
-| --- | --- |
-| `/help` | Show all commands |
-| `/config` | View or modify user config (model / key / thinking / cwd) |
-| `/reset` | Clear conversation history |
-| `/session list/save/load/delete` | Session management |
-| `/memory list/add/remove/clear` | Memory management |
-| `/skills` | List skills and status |
-| `/drivers` | List loaded drivers |
-| `/mcp` | Interactive MCP server & tool browser |
-| `/permissions` | View current permission grants |
-| `/cost` | Show token usage |
-| `/compact` | Manually trigger context compression |
-| `/image <path\|clipboard>` | Attach an image from file or clipboard |
-Exit: type `exit` or press `Ctrl+C` twice. Interrupt generation: single `Ctrl+C`. In Web UI, commands correspond to sidebar and button actions.
-
-## Image input
-
-Attach images to your messages — the model extracts text via OCR and incorporates it into the conversation.
-
-| Terminal | Paste shortcut | Notes |
-| --- | --- | --- |
-| **iTerm2 / Kitty / VSCode** | `Cmd+V` (macOS) / `Ctrl+Shift+V` (Linux) | Native image paste via terminal protocol |
-| **macOS Terminal.app** | `Ctrl+V` or empty editor `Enter` | macOS Terminal doesn't support inline image paste; use `Ctrl+V` or simply press `Enter` with an empty editor to auto-detect clipboard image |
-| **Windows / Linux** | `Ctrl+V` | Reads image from system clipboard |
-
-> On macOS, clipboard image reading uses `osascript` to extract PNG data. On Windows/Linux, use `/image <path>` to attach image files directly.
-
-> **Note:** For models that natively support image input (e.g., `deepseek-v4-pro`), images are passed directly to the model. For other models, OCR is used to extract text.
-
-## Configuration reference
-
-We recommend separating configuration into two categories:
-
-- User command config written by `/config`: `~/.dscode/config.json` (includes cwd record for current project)
-- Declarative settings:
-  - User-level: `~/.dscode/settings.json`
-  - Project-level: `<project>/.dscode/settings.json`
-
-Project-level configuration always uses `<project>/.dscode/settings.json`.
-
-### `/config` command config
-
-```jsonc
-{
-  "modelId": "deepseek-v4-flash",
-  "thinkingLevel": "high",
-  "cwd": "/absolute/path/to/project/subdir",
-  "cwdProjectPath": "/absolute/path/to/project"
-}
-```
-
-### `settings.json`
-
-```jsonc
-{
-  "skills": ["git-workflow"],
-  "permissions": {
-    "deny": ["**/.env", "**/.env.*", "**/secrets/**"]
-  },
-  "mcpServers": {
-    "playwright": {
       "command": "npx",
       "args": ["@anthropic/mcp-playwright"]
     }
@@ -363,102 +159,21 @@ Project-level configuration always uses `<project>/.dscode/settings.json`.
 }
 ```
 
-### Environment variables
+dscode auto-connects on launch. Tools appear as `mcp_blender_*` and `mcp_playwright_*`. MCP servers can also serve sandboxed UI via the App Host — no boilerplate, no SDK, no glue code.
 
-| Env Variable | Corresponding Config |
-| --- | --- |
-| `DEEPSEEK_API_KEY` | API Key |
-| `AGENT_MODEL` / `DEEPSEEK_MODEL` | modelId |
-| `AGENT_THINKING_LEVEL` | thinkingLevel |
-| `DSCODE_MAX_TOKENS` | maxTokens |
-| `DSCODE_PROJECT_PATH` | Working directory (defaults to current directory) |
-| `DSCODE_CONFIG_HOME` | Custom config directory (default `~/.dscode`) |
-| `DSCODE_DATA_HOME` | Custom data directory (default `~/.dscode`) |
+---
 
-## Examples
+## Learn more
 
-`examples/` provides runnable sample projects demonstrating dscode's MCP integration and interactive UI capabilities.
+| Document | What's inside |
+|----------|---------------|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Full architecture: Agent as OS, 6-layer design, Driver/Skill model, source tree |
+| [ROADMAP.md](docs/ROADMAP.md) | What's next: Sub-Agent system, System Prompt modularization, Diff-based editing |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute: philosophy alignment, OpenSpec SDD workflow, coding conventions |
+| [STYLE.md](docs/STYLE.md) | TypeScript coding style: naming, imports, module structure, error handling |
 
-### MCP App
-
-| Example | Description | Quick Start |
-| --- | --- | --- |
-| `examples/scenario-modeler` | A SaaS scenario modeling MCP Server. Demonstrates how dscode renders MCP Apps when a tool returns `structuredContent` / `isError`; uses MDX when no server HTML is present, and prefers server-provided pages when an HTML resource is available. | `cd examples/scenario-modeler && npm install && npm start` |
+---
 
 <p align="center">
-  <img src="docs/screen_shots/mcp-app.gif" alt="MCP App demo" width="720" />
+  <sub>If you like this project, give it a ⭐ Star — it keeps dscode evolving.</sub>
 </p>
-
-> The screenshot above shows scenario-modeler rendering an MCP App HTML inline in the Web UI — click "Open App ▼" to expand an interactive SaaS financial modeling dashboard.
-
-More usage instructions in:
-- `examples/scenario-modeler/README.md`
-
-## Project structure
-
-```text
-src/
-├── core/           # Entry, host assembly, config, shared types
-├── session/        # Session persistence
-├── context/        # Token estimation, context compression
-├── memory/         # Cross-session memory
-├── drivers/        # Driver registry + built-in drivers (fs, shell, search)
-├── skills/         # Skill manager + SKILL.md loader
-├── mcp/            # MCP client (stdio / streamable-http / legacy SSE) + manager + MCP App host/runtime
-├── permissions/    # Permission interception
-└── ui/             # TUI (terminal), Web UI (browser), streaming renderer, slash commands
-```
-
-## Permission model
-
-| Tool | Default Policy |
-| --- | --- |
-| `read_file`, `list_files`, `grep`, `glob` | Auto-allow |
-| `write_file` | Requires confirmation |
-| `bash` | Requires confirmation; `sudo`, `rm -rf`, etc. are directly denied |
-
-When confirming, you can choose: **Y** (allow this time), **N** (deny), **A** (always allow this tool for the current session).
-
-Configure `permissions.deny` with glob patterns to block reading/writing sensitive files. User-level and project-level deny lists are merged.
-
-## Development
-
-```bash
-npm start
-npm run typecheck
-npm test
-```
-
-**Web UI development:**
-
-```bash
-# Install frontend dependencies
-cd web && npm install && cd ..
-
-# Build frontend + start web mode
-npm run build:web
-dscode --web
-
-# Development mode (frontend HMR + backend hot reload)
-npm run dev:web
-```
-
-**Tech stack:** TypeScript + tsx · React + Vite + Tailwind CSS (Web UI) · [pi-agent-core](https://www.npmjs.com/package/@mariozechner/pi-agent-core) · [pi-ai](https://www.npmjs.com/package/@mariozechner/pi-ai) · DeepSeek API
-
-Contributions welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for philosophy alignment and PR process.
-
-## Known limitations
-
-- The `summarize-prefix` context compression strategy currently falls back to `sliding-window`
-- Automatic memory extraction is off by default; use `/memory add` manually
-- Image input requires native model support (e.g., `deepseek-v4-pro`) for visual understanding; OCR fallback for text-only models
-- If there's no output on first launch, it's usually an invalid API Key or network issue
-
-## More docs
-
-- [Architecture docs](docs/)
-- [Roadmap](docs/roadmap.md)
-
-## License
-
-MIT

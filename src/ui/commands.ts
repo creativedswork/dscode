@@ -43,13 +43,171 @@ interface SlashCommandDef {
 const COMMANDS: SlashCommandDef[] = [
   {
     name: "help",
-    description: "Show available commands",
-    execute: async (_args, ctx) => {
-      const lines: string[] = [];
-      for (const cmd of COMMANDS) {
-        lines.push(`  /${cmd.name}  ${cmd.description}`);
+    description: "Show help (/help config | mcp | session | memory | skills | drivers | permissions | image | commands)",
+    execute: async (args, ctx) => {
+      const topic = args.trim();
+
+      const overview = [
+        "Type a message to chat with the AI. Use slash commands for operations.",
+        "",
+        "Quick start:",
+        "  /config key <api-key>      Set your API key",
+        "  /config model <model-id>   Choose a model",
+        "",
+        "Commands:",
+        ...COMMANDS.filter(c => c.name !== "help").map((c) => `  /${c.name.padEnd(14)} ${c.description}`),
+        "",
+        "Type /help <topic> for details: config  mcp  session  memory  skills  drivers  permissions  image  commands",
+      ];
+
+      const topics: Record<string, string[]> = {
+        config: [
+          "/config                  Show current configuration",
+          "/config key <api-key>     Set your DeepSeek (or other provider) API key",
+          "/config model <id>        Switch model (e.g. deepseek-v4-pro, deepseek-v4-flash)",
+          "/config provider <id>     Switch provider (deepseek, openai, kimi-coding, qwen, ...)",
+          "/config thinking <level>  Set reasoning effort: off | minimal | low | medium | high | xhigh",
+          "/config vision-provider <id>  Set provider for image understanding",
+          "/config vision-model <id>     Set model for image understanding",
+          "/config vision-key <key>      Set API key for vision model",
+          "/config cwd <path>        Set working directory for this project",
+          "",
+          "Configuration files:",
+          "  ~/.dscode/config.json          Runtime config (managed by /config)",
+          "  ~/.dscode/settings.json        User-level settings (MCP, permissions, skills)",
+          "  <project>/.dscode/settings.json  Project-level settings (overrides user-level)",
+          "",
+          "Settings example (~/.dscode/settings.json):",
+          "  {\"permissions\": {\"deny\": [\"*.env\", \"*.secret\"]}}",
+          "  {\"skills\": [\"my-custom-skill\"]}",
+          "See docs/ARCHITECTURE.md for the full settings schema.",
+        ],
+        mcp: [
+          "dscode is MCP-first. Configure MCP servers in ~/.dscode/settings.json:",
+          "",
+          "  {\"mcpServers\": {",
+          "    \"blender\": {\"command\": \"uvx\", \"args\": [\"blender-mcp\"]},",
+          "    \"playwright\": {\"command\": \"npx\", \"args\": [\"@anthropic/mcp-playwright\"]},",
+          "    \"remote-api\": {\"url\": \"https://api.example.com/mcp\"}",
+          "  }}",
+          "",
+          "Transport auto-detection:",
+          "  command present           → stdio",
+          "  url only, no command      → Streamable HTTP (MCP 2025-11-25)",
+          "  url + transport: \"sse\"    → Legacy SSE fallback",
+          "",
+          "Tools appear as mcp_<server>_<tool>. Use /mcp to browse connected servers.",
+          "",
+          "Tool Search:",
+          "  MCP tools are NOT all loaded at once. The model calls search_tools",
+          "  to discover tools on-demand, preventing context explosion even with",
+          "  dozens of MCP servers connected.",
+        ],
+        session: [
+          "Session management — conversations are auto-saved and resumable.",
+          "",
+          "/session list              List sessions for current project",
+          "/session list --all        List all sessions across all projects",
+          "/session load <id>         Resume a previous session",
+          "/session save              Force-save current session",
+          "/session delete <id>       Delete a session",
+          "",
+          "Sessions are stored in ~/.dscode/data/sessions/ as JSON files.",
+          "Each session has a ULID (time-sortable, 26 chars). Use the first 8 chars",
+          "as a shorthand for load/delete commands.",
+        ],
+        memory: [
+          "Memory system — persistent knowledge across sessions.",
+          "",
+          "/memory list               List memories (current project)",
+          "/memory list global        List global memories",
+          "/memory list project       List project memories",
+          "/memory add <content>      Add a project memory",
+          "/memory add global <text>  Add a global memory",
+          "/memory remove <id>        Remove a memory",
+          "/memory clear              Clear all project memories",
+          "",
+          "Memories are automatically injected into the system prompt at session",
+          "start. Categories: preference (user habits), fact (project facts),",
+          "instruction (persistent directives).",
+          "",
+          "Data: ~/.dscode/data/memory/global.json + projects/<hash>.json",
+        ],
+        skills: [
+          "Skills — declarative third-party extensions via SKILL.md.",
+          "",
+          "/skills                    List all available skills (active/inactive)",
+          "/skills activate <name>    Activate a skill (adds its instructions to",
+          "                            system prompt + enables its allowed tools)",
+          "/skills deactivate <name>  Deactivate a skill",
+          "",
+          "Skills are loaded from:",
+          "  ~/.dscode/skills/<name>/SKILL.md        User-level",
+          "  <project>/.dscode/skills/<name>/SKILL.md  Project-level",
+          "",
+          "A SKILL.md declares: name, description, allowed tools, and instructions",
+          "that get injected into the system prompt when activated.",
+        ],
+        drivers: [
+          "Drivers are kernel-level tool providers, always loaded.",
+          "",
+          "Built-in drivers:",
+          "  fs      read_file, write_file, overwrite_file, list_files",
+          "  shell   bash",
+          "  search  grep, glob",
+          "  edit    edit (hash-anchor based: replace, insert, delete by content hash)",
+          "  discovery  search_tools (on-demand MCP tool loading)",
+          "",
+          "MCP servers also register as drivers at runtime. Use /drivers to list all.",
+        ],
+        permissions: [
+          "Permission system — intercepts tool calls before execution.",
+          "",
+          "/permissions               Show session-level grants",
+          "",
+          "Read tools (read_file, list_files, grep, glob) are always allowed.",
+          "Write tools (write_file, edit) ask for confirmation.",
+          "Dangerous bash patterns (rm -rf, sudo, chmod 777, mkfs, dd) are blocked.",
+          "Other bash commands ask for confirmation.",
+          "",
+          "During a permission prompt you can choose:",
+          "  Y)es  — allow this once",
+          "  N)o   — deny this once",
+          "  A)lways allow — grant for the rest of this session",
+          "",
+          "Configure in ~/.dscode/settings.json:",
+          "  {\"permissions\": {\"deny\": [\"*.env\", \"*.key\"]}}",
+        ],
+        image: [
+          "Image / vision input:",
+          "",
+          "/image <filepath>          Attach an image file to the next message",
+          "/image clipboard           Attach image from clipboard (macOS)",
+          "",
+          "In Web UI: drag & drop, paste, or click to upload images.",
+          "",
+          "Vision pipeline:",
+          "  If the primary model supports images → routed directly.",
+          "  If not → transparently routed to a configured vision model (GPT-4o,",
+          "           Claude, Gemini, etc.) via /config vision-provider / vision-model.",
+          "  OCR fallback: tesseract.js for text extraction (ENG + CHI).",
+        ],
+        commands: [
+          "Full command reference:",
+          "",
+          ...COMMANDS.map((c) => `  /${c.name.padEnd(14)} ${c.description}`),
+        ],
+      };
+
+      if (topic && topics[topic]) {
+        ctx.tui.addInfo(topics[topic].join("\n"));
+        return;
       }
-      ctx.tui.addInfo("Available commands:\n" + lines.join("\n"));
+      if (topic) {
+        ctx.tui.addError(`Unknown help topic: ${topic}. Try: ${Object.keys(topics).join("  ")}`);
+        return;
+      }
+      ctx.tui.addInfo(overview.join("\n"));
     },
   },
   {
