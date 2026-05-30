@@ -188,6 +188,14 @@ export class SessionManager {
     }
   }
 
+  updateProjectPath(dataDir: string, projectPath: string): void {
+    this.projectPath = projectPath;
+    this.store = new SessionStore(dataDir, projectPath);
+    if (this.current) {
+      this.current.projectPath = projectPath;
+    }
+  }
+
   listSessions(): SessionMetadata[] {
     return this.store.list();
   }

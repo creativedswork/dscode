@@ -48,5 +48,6 @@ export interface UiBackend {
 
   // ── MCP ──
   setMcpManager(mcpManager?: MCPManager): void;
+  pushMcpState?(): void;
   openMcpBrowser(): void;
 }

@@ -12,6 +12,7 @@ interface SidebarProps {
   config: ConfigData | null;
   onSessionAction: (action: "list" | "save" | "load" | "delete", id?: string) => void;
   onMcpAction: (action: "list" | "refresh") => void;
+  onMcpServerAction: (action: "connect" | "disconnect", serverName: string) => void;
   onConfigChange: (action: string, value: string) => void;
   onNewSession: () => void;
 }
@@ -28,6 +29,7 @@ export function Sidebar({
   onMcpAction,
   onConfigChange,
   onNewSession,
+  onMcpServerAction,
 }: SidebarProps) {
   return (
     <>
@@ -98,6 +100,7 @@ export function Sidebar({
             <McpPanel
               servers={mcpServers}
               onAction={onMcpAction}
+              onServerAction={onMcpServerAction}
             />
           )}
           {activeTab === "settings" && (
@@ -184,10 +187,12 @@ function SessionsPanel({
 
 function McpPanel({
   servers,
+  onServerAction,
   onAction,
 }: {
-  servers: McpServerInfo[];
   onAction: (action: "list" | "refresh") => void;
+  onServerAction: (action: "connect" | "disconnect", serverName: string) => void;
+  servers: McpServerInfo[];
 }) {
   const [expandedServer, setExpandedServer] = useState<string | null>(null);
 
@@ -227,7 +232,56 @@ function McpPanel({
                     {s.toolCount} tools
                   </div>
                 </div>
-                <StatusBadge status={s.status} />
+                <div className="flex items-center gap-1.5">
+                  <button
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    if (s.status === "connected" || s.status === "connecting") {
+                      onServerAction("disconnect", s.name);
+                    } else {
+                      onServerAction("connect", s.name);
+                    }
+                  }}
+                  className="flex-shrink-0"
+                  style={{
+                    position: "relative",
+                    width: "36px",
+                    height: "22px",
+                    borderRadius: "11px",
+                    border:
+                      (s.status === "connected" || s.status === "connecting")
+                        ? "none"
+                        : "1px solid var(--color-border)",
+                    cursor: "pointer",
+                    backgroundColor:
+                      s.status === "connected" ? "var(--color-accent)" :
+                      s.status === "connecting" ? "var(--color-accent)" :
+                      s.status === "error" ? "var(--color-error-text)" :
+                      "var(--color-surface)",
+                    opacity: s.status === "connecting" ? 0.7 : 1,
+                    transition: "background-color 250ms ease, border-color 250ms ease, opacity 250ms ease",
+                  }}
+                  title={
+                    s.status === "connected" || s.status === "connecting"
+                      ? `Disconnect ${s.name}`
+                      : `Connect ${s.name}`
+                  }
+                >
+                  <span
+                    style={{
+                      position: "absolute",
+                      top: "3px",
+                      left: s.status === "connected" || s.status === "connecting" ? "18px" : "2px",
+                      width: "16px",
+                      height: "16px",
+                      borderRadius: "50%",
+                      backgroundColor: "#ffffff",
+                      boxShadow: "0 1px 2px rgba(0,0,0,0.12)",
+                      transition: "left 200ms cubic-bezier(0.34, 1.56, 0.64, 1)",
+                    }}
+                  />
+                </button>
+                </div>
               </button>
 
               {expandedServer === s.name && (
@@ -263,39 +317,6 @@ function McpPanel({
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const styleMap: Record<string, React.CSSProperties> = {
-    connected: {
-      backgroundColor: "var(--color-success)",
-      color: "var(--color-success-text)",
-    },
-    connecting: {
-      backgroundColor: "var(--color-warning)",
-      color: "var(--color-warning-text)",
-    },
-    error: {
-      backgroundColor: "var(--color-error)",
-      color: "var(--color-error-text)",
-    },
-    disconnected: {
-      backgroundColor: "var(--color-surface-hover)",
-      color: "var(--color-text-muted)",
-    },
-  };
-
-  return (
-    <span
-      className="text-xs px-1.5 py-0.5"
-      style={{
-        borderRadius: "8px",
-        ...(styleMap[status] || styleMap.disconnected),
-      }}
-    >
-      {status}
-    </span>
-  );
-}
-
 function SettingsPanel({
   config,
   onChange,
@@ -307,6 +328,7 @@ function SettingsPanel({
   const [modelInput, setModelInput] = useState(config?.modelId ?? "");
   const [thinkingLevel, setThinkingLevel] = useState(config?.thinkingLevel ?? "off");
   const [providerInput, setProviderInput] = useState(config?.provider ?? "");
+  const [projectPath, setProjectPath] = useState(config?.projectPath ?? "");
   const [showVisionForm, setShowVisionForm] = useState(false);
   const prevConfigRef = useRef(config);
 
@@ -437,6 +459,33 @@ function SettingsPanel({
             onClick={() => {
               if (apiKey) onChange("set_key", apiKey);
               setApiKey("");
+            }}
+            className="btn-primary text-xs px-3"
+          >
+            Set
+          </button>
+        </div>
+      </div>
+
+      {/* Project Path */}
+      <div>
+        <label
+          className="text-xs mb-1 block"
+          style={{ color: "var(--color-text-muted)" }}
+        >
+          Project Path
+        </label>
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={projectPath}
+            onChange={(e) => setProjectPath(e.target.value)}
+            className="input text-xs flex-1"
+            placeholder={config.projectPath}
+          />
+          <button
+            onClick={() => {
+              if (projectPath) onChange("set_project_path", projectPath);
             }}
             className="btn-primary text-xs px-3"
           >

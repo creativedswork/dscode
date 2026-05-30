@@ -525,6 +525,7 @@ export class Harness {
         await this.mcpManager.initialize();
         this.mcpEventUnsubscribe = this.mcpManager.onEvent((event) => this.handleMcpEvent(event));
         await this.mcpManager.registerDrivers(this.driverRegistry);
+        this.ui.pushMcpState?.();
 
         if (this.appHostManager) {
           this.appHostManager.setMcpManager(this.mcpManager);
@@ -622,6 +623,18 @@ export class Harness {
     this.config.thinkingLevel = level as any;
     this.agent.state.thinkingLevel = level as any;
     saveUserConfig({ thinkingLevel: level });
+  }
+
+  updateProjectPath(cwd: string): void {
+    this.config.projectPath = cwd;
+    this.sessionManager.updateProjectPath(this.config.dataDir, cwd);
+    this.memoryManager.updateProjectPath(this.config.dataDir, cwd);
+
+    // Refresh system prompt with new project memories
+    const memories = this.memoryManager.getRelevantMemories();
+    const skillSection = this.skillManager.getSystemPromptSection();
+    this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection);
+    this.agent.state.systemPrompt = this.baseSystemPrompt + this.toolRegistry.buildDeferredToolsHint();
   }
 
   private async shutdown(): Promise<void> {

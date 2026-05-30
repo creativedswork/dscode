@@ -113,7 +113,7 @@ export function App() {
   const handleCommand = useCallback((cmd: { type: "file_list"; prefix: string }) => send(cmd as any), [send]);
   const handleConfigChange = useCallback((action: string, value: string) => send({ type: "config", action: action as any, value }), [send]);
   const handleSessionAction = useCallback((action: "list" | "save" | "load" | "delete", id?: string) => send({ type: "session", action, id }), [send]);
-  const handleMcpAction = useCallback((action: "list" | "refresh") => send({ type: "mcp", action }), [send]);
+  const handleMcpAction = useCallback((action: "list" | "refresh" | "connect" | "disconnect", serverName?: string) => send({ type: "mcp", action, serverName } as any), [send]);
   const handleNewSession = useCallback(() => send({ type: "slash", command: "/reset" }), [send]);
 
   useEffect(() => { if (connected) { handleSessionAction("list"); handleMcpAction("list"); } }, [connected, handleSessionAction, handleMcpAction]);
@@ -143,7 +143,7 @@ export function App() {
       <div className="flex flex-1 overflow-hidden">
         <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} activeTab={sidebarTab} onTabChange={setSidebarTab}
           sessions={sessions} mcpServers={mcpServers} config={config}
-          onSessionAction={handleSessionAction} onMcpAction={handleMcpAction}
+          onSessionAction={handleSessionAction} onMcpAction={handleMcpAction} onMcpServerAction={handleMcpAction}
           onConfigChange={handleConfigChange} onNewSession={handleNewSession} />
         <main className="flex-1 flex flex-col min-w-0">
           <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} permissionPrompt={permissionPrompt} onPermission={handlePermission} />

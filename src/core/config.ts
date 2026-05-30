@@ -39,7 +39,7 @@ export function userSettingsPath(): string {
   return join(dsConfigHome(), "settings.json");
 }
 
-function projectSettingsPath(projectPath: string): string {
+export function projectSettingsPath(projectPath: string): string {
   return join(projectPath, ".dscode", "settings.json");
 }
 
@@ -67,7 +67,7 @@ function loadUserCommandConfig(): Record<string, unknown> {
   return loadJsonSafe(userConfigPath());
 }
 
-function loadScopedSettings(settingsPath: string): Record<string, unknown> {
+export function loadScopedSettings(settingsPath: string): Record<string, unknown> {
   return loadJsonSafe(settingsPath);
 }
 
@@ -102,7 +102,7 @@ export function saveUserProjectCwd(startupPath: string, cwd: string): void {
   });
 }
 
-function normalizeTransport(rawTransport: unknown, hasCommand: boolean, hasUrl: boolean): MCPTransport {
+export function normalizeTransport(rawTransport: unknown, hasCommand: boolean, hasUrl: boolean): MCPTransport {
   if (rawTransport === "stdio" || rawTransport === "sse" || rawTransport === "streamable-http") {
     return rawTransport;
   }
@@ -115,7 +115,7 @@ function normalizeTransport(rawTransport: unknown, hasCommand: boolean, hasUrl: 
   return "stdio";
 }
 
-function normalizeProtocolVersion(rawVersion: unknown): MCPProtocolVersion {
+export function normalizeProtocolVersion(rawVersion: unknown): MCPProtocolVersion {
   if (rawVersion === "2024-11-05" || rawVersion === "2025-03-26" || rawVersion === "2025-11-25") {
     return rawVersion;
   }

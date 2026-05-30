@@ -14,6 +14,10 @@ export class MemoryManager {
     this.config = config;
   }
 
+  updateProjectPath(dataDir: string, projectPath: string): void {
+    this.store = new MemoryStore(dataDir, projectPath);
+  }
+
   getRelevantMemories(): string {
     if (!this.config.enabled) return "";
 

@@ -142,8 +142,9 @@ export type ClientCommand =
   | { type: "config"; action: "set_vision_model"; value: string }
   | { type: "config"; action: "set_vision_key"; value: string }
   | { type: "config"; action: "set_vision_delete" }
+  | { type: "config"; action: "set_project_path"; value: string }
   | { type: "session"; action: "list" | "save" | "load" | "delete"; id?: string }
-  | { type: "mcp"; action: "list" | "refresh" }
+  | { type: "mcp"; action: "list" | "refresh" | "connect" | "disconnect"; serverName?: string }
   | { type: "file_list"; prefix: string }
   | { type: "mcp_app"; action: "rpc"; appId: string; message: object };
 

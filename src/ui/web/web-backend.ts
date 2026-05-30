@@ -1,13 +1,13 @@
 import { createServer, request as httpRequest } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
-import { join, extname } from "node:path";
+import { join, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { getAllProviders, getAllModels, getVisionModels, getVisionProviders } from "../../models/index.js";
 import type { UiBackend } from "../backend.js";
 import type { HarnessConfig, PermissionPromptResult } from "../../core/types.js";
-import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig } from "../../core/config.js";
+import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig, saveUserProjectCwd, normalizeTransport, normalizeProtocolVersion, loadScopedSettings, projectSettingsPath } from "../../core/config.js";
 import { executeSlashCommand } from "../commands.js";
 import type { Harness } from "../../core/harness.js";
 import type { MCPManager } from "../../mcp/manager.js";
@@ -49,6 +49,7 @@ export class WebUiBackend implements UiBackend {
   private exitPromise!: Promise<void>;
   private exitResolve!: () => void;
   private appHostManager?: AppHostManager;
+  private mcpManager?: MCPManager;
 
   // Pending permission state
   private permissionResolve: ((result: PermissionPromptResult) => void) | null = null;
@@ -249,8 +250,20 @@ export class WebUiBackend implements UiBackend {
 
   // ── UiBackend MCP ──
 
-  setMcpManager(_mcpManager?: MCPManager): void {
-    // MCP state sent on demand via mcp command
+  setMcpManager(mcpManager?: MCPManager): void {
+    this.mcpManager = mcpManager;
+    if (mcpManager) {
+      this.pushMcpState();
+    }
+  }
+
+  pushMcpState(): void {
+    if (!this.mcpManager) return;
+    const driverRegistry = (this.harness as any).driverRegistry;
+    const toolRegistry = (this.harness as any).toolRegistry;
+    if (!driverRegistry || !toolRegistry) return;
+    const servers = buildMcpServers(this.mcpManager.getStates(), driverRegistry, toolRegistry);
+    this.broadcast({ type: "mcp_state", servers });
   }
 
   openMcpBrowser(): void {
@@ -272,6 +285,10 @@ export class WebUiBackend implements UiBackend {
       config: configData,
       messages,
     });
+
+    if (this.mcpManager) {
+      this.pushMcpState();
+    }
   }
 
   private handleDisconnect(): void {
@@ -439,10 +456,10 @@ export class WebUiBackend implements UiBackend {
     }
   }
 
-  private handleConfig(
+  private async handleConfig(
     client: WebSocketClient,
     cmd: ClientCommand & { type: "config" },
-  ): void {
+  ): Promise<void> {
     try {
       switch (cmd.action) {
         case "set_model": {
@@ -521,6 +538,118 @@ export class WebUiBackend implements UiBackend {
           saveUserConfig({ vision: null });
           client.send({ type: "config", data: this.buildConfigData() });
           client.send({ type: "info", text: "Vision model configuration removed" });
+          break;
+        }
+        case "set_project_path": {
+          const cwd = cmd.value;
+          if (!cwd) {
+            client.send({ type: "error", text: "Project path is required." });
+            break;
+          }
+          saveUserProjectCwd(this.config.startupPath, cwd);
+          this.config.projectPath = cwd;
+
+          // Update harness-level project path (reloads sessions, memories, system prompt)
+          (this.harness as any).updateProjectPath?.(cwd);
+
+          // Reload MCP and skills from new project settings
+          try {
+            const resolvedCwd = resolve(cwd);
+            const newProjectSettings = loadScopedSettings(projectSettingsPath(resolvedCwd));
+
+            // Reload MCP servers — parse both formats matching loadConfig()
+            const mcpManager = (this.harness as any).mcpManager;
+            if (mcpManager) {
+              await mcpManager.shutdown();
+            }
+
+            let mcpServersRaw: unknown[] = [];
+            const mcpConfig = (newProjectSettings.mcp as Record<string, unknown>) ?? {};
+            if (Array.isArray(mcpConfig.servers)) {
+              mcpServersRaw.push(...(mcpConfig.servers as unknown[]));
+            }
+            const mcpObj = newProjectSettings.mcpServers as Record<string, Record<string, unknown>> | undefined;
+            if (mcpObj && typeof mcpObj === "object" && !Array.isArray(mcpObj)) {
+              for (const [name, cfg] of Object.entries(mcpObj)) {
+                if (cfg && typeof cfg === "object" && !Array.isArray(cfg)) {
+                  mcpServersRaw.push({ name, ...cfg });
+                }
+              }
+            }
+
+            const mcpServers: any[] = mcpServersRaw.filter((s: any) => s && typeof s === "object").map((s: any) => {
+              const hasCommand = typeof s.command === "string" && s.command.length > 0;
+              const hasUrl = typeof s.url === "string" && s.url.length > 0;
+              const transport = normalizeTransport(s.transport ?? s.type, hasCommand, hasUrl);
+              return {
+                name: s.name,
+                description: s.description,
+                transport,
+                command: s.command,
+                args: s.args,
+                url: s.url,
+                env: s.env,
+                headers: s.headers,
+                preferredProtocolVersion: normalizeProtocolVersion(s.preferredProtocolVersion ?? s.protocolVersion),
+                allowLegacySseFallback: s.allowLegacySseFallback !== false,
+                requestTimeoutMs: typeof s.requestTimeoutMs === "number" ? s.requestTimeoutMs : undefined,
+                connectTimeoutMs: typeof s.connectTimeoutMs === "number" ? s.connectTimeoutMs : undefined,
+              };
+            });
+
+            if (mcpServers.length > 0) {
+              this.config.mcp = mcpServers;
+              const { MCPManager } = await import("../../mcp/manager.js");
+              const newMcpManager = new MCPManager(mcpServers);
+              (this.harness as any).mcpManager = newMcpManager;
+              this.setMcpManager(newMcpManager);
+              await newMcpManager.initialize();
+              const driverRegistry = (this.harness as any).driverRegistry;
+              await newMcpManager.registerDrivers(driverRegistry);
+              this.pushMcpState();
+              (this.harness as any).agent.state.tools = (this.harness as any).toolRegistry.buildToolsForRequest();
+            } else {
+              (this.harness as any).mcpManager = undefined;
+              this.setMcpManager(undefined);
+            }
+
+            // Reload project skills
+            const skillManager = (this.harness as any).skillManager;
+            if (skillManager) {
+              const newProjectSkills = ((newProjectSettings.skills as string[]) ?? []);
+              const driverRegistry = (this.harness as any).driverRegistry;
+              const projectSkillsDir = join(resolvedCwd, ".dscode", "skills");
+              const { scanSkillDirs } = await import("../../skills/loader.js");
+              const manifests = scanSkillDirs((this.harness as any).skillManager?.userSkillsDir, projectSkillsDir);
+              for (const m of manifests) {
+                try { skillManager.activate(m.name, driverRegistry); } catch {}
+              }
+            }
+          } catch (reloadErr: any) {
+            client.send({ type: "error", text: `Failed to reload project config: ${reloadErr.message}` });
+          }
+
+          client.send({ type: "config", data: this.buildConfigData() });
+          // Push updated session list
+          const sessionManager = (this.harness as any).sessionManager;
+          if (sessionManager) {
+            const sessions = sessionManager.listSessions();
+            client.send({
+              type: "sessions",
+              data: sessions.slice(0, 50).map((s: any) => ({
+                id: s.id,
+                title: s.title,
+                updatedAt: s.updatedAt,
+                createdAt: s.createdAt,
+                messageCount: s.messageCount,
+                modelProvider: s.modelProvider,
+                modelId: s.modelId,
+                projectPath: s.projectPath || "",
+                preview: s.preview || "",
+              })),
+            });
+          }
+          client.send({ type: "info", text: `Project path set to: ${cwd}` });
           break;
         }
       }
@@ -658,11 +787,11 @@ export class WebUiBackend implements UiBackend {
     }
   }
 
-  private handleMcp(
+  private async handleMcp(
     client: WebSocketClient,
     cmd: ClientCommand & { type: "mcp" },
-  ): void {
-    const mcpManager = (this.harness as any).mcpManager as MCPManager | undefined;
+  ): Promise<void> {
+    const mcpManager = this.mcpManager ?? (this.harness as any).mcpManager as MCPManager | undefined;
     if (!mcpManager) {
       client.send({ type: "error", text: "No MCP manager available." });
       return;
@@ -683,6 +812,36 @@ export class WebUiBackend implements UiBackend {
         }).catch((err: Error) => {
           client.send({ type: "error", text: `MCP refresh failed: ${err.message}` });
         });
+        break;
+      }
+      case "connect": {
+        if (!cmd.serverName) {
+          client.send({ type: "error", text: "serverName is required for connect action." });
+          return;
+        }
+        try {
+          await mcpManager.connectServer(cmd.serverName);
+          this.pushMcpState();
+          client.send({ type: "info", text: `MCP server "${cmd.serverName}" connected.` });
+        } catch (err: any) {
+          this.pushMcpState();
+          client.send({ type: "error", text: `MCP connect failed: ${err.message}` });
+        }
+        break;
+      }
+      case "disconnect": {
+        if (!cmd.serverName) {
+          client.send({ type: "error", text: "serverName is required for disconnect action." });
+          return;
+        }
+        try {
+          await mcpManager.disconnectServer(cmd.serverName);
+          this.pushMcpState();
+          client.send({ type: "info", text: `MCP server "${cmd.serverName}" disconnected.` });
+        } catch (err: any) {
+          this.pushMcpState();
+          client.send({ type: "error", text: `MCP disconnect failed: ${err.message}` });
+        }
         break;
       }
     }

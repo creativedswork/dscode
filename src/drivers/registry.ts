@@ -65,4 +65,8 @@ export class DriverRegistry {
   getDriversBySource(source: "builtin" | "mcp"): Driver[] {
     return [...this.drivers.values()].filter((d) => d.source === source);
   }
+
+  unregister(name: string): boolean {
+    return this.drivers.delete(name);
+  }
 }

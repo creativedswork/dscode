@@ -2,6 +2,87 @@
 
 本文件描述项目的 Agent 架构，供 AI Agent（Claude Code、Cursor 等）快速理解代码结构与项目定位。
 
+## Web UI 设计规范
+
+> **对 dscode 的 Web 前端进行任何 UI 设计、组件修改、样式调整时，必须遵守以下规范。**
+> 禁止自由发挥，禁止引入新设计范式（如 Material、shadcn、Tailwind UI 等第三方体系）。
+
+### 必读 Spec
+
+**`openspec/specs/web-frontend/spec.md`** — Web 前端的权威设计契约，定义了所有组件的视觉规范。任何 UI 改动前必须确认不违反现有 scenario。
+
+### 推荐激活的 Skills
+
+进行 UI 设计任务时，优先激活以下 Skill：
+
+| Skill | 用途 |
+|-------|------|
+| `high-end-visual-design` | 提供高端 agency 级别的字体、间距、卡片结构、动画指导，确保不落入廉价 AI 风格 |
+| `design-taste-frontend` | 反 slop 审计，确保界面不模板化 |
+| `minimalist-ui` | 约束在 warm monochrome + flat bento grid 美学范围内 |
+
+### 暖色系设计系统 (Warm Design System)
+
+所有颜色必须使用 `web/src/index.css` 中定义的 CSS 自定义属性（`--color-*`），禁止硬编码 hex 值。
+
+**亮色模式基准色：**
+
+| Token | 色值 | 用途 |
+|-------|------|------|
+| `--color-bg` | `#f8f7f5` | 页面背景 |
+| `--color-surface` | `#f3f2ef` | 卡片/面板/侧边栏背景 |
+| `--color-surface-hover` | `#ebe9e5` | hover 态 |
+| `--color-border` | `#e6e4e0` | 1px solid 分隔 |
+| `--color-text` | `#2d2a26` | 正文 |
+| `--color-text-muted` | `#8a8580` | 辅助文字 |
+| `--color-accent` | `#ca8a04` | 琥珀色强调（唯一彩色） |
+| `--color-success` | `#edf4ed` | 成功态背景 |
+| `--color-success-text` | `#347539` | 成功态文字 |
+| `--color-error` | `#fdebec` | 错误态背景 |
+| `--color-error-text` | `#9f2f2d` | 错误态文字 |
+| `--color-warning` | `#fbf3db` | 警告态背景 |
+| `--color-warning-text` | `#956400` | 警告态文字 |
+
+### 组件 Shape 规范
+
+| 组件类型 | border-radius | 边框 | 阴影 |
+|----------|--------------|------|------|
+| 消息气泡 | 12px | 无 | 无 |
+| 卡片/面板 | 8px | `1px solid var(--color-border)` | 无 |
+| 按钮 | 6px | 按需 | 无 |
+| 输入框 | 12px | `1px solid var(--color-border)` | 无 |
+| Toggle 开关 | 11px（胶囊） | 关闭态 1px border | thumb 微阴影 |
+
+**核心原则：扁平、无渐变、无大阴影。层次感通过颜色深浅和边框区分，不通过阴影。**
+
+### 排版
+
+- UI chrome / label / body：Geist Sans（比例字体）
+- 代码块 / inline code / 工具名 / 文件路径：Geist Mono 或 JetBrains Mono
+- 禁止 6 行以上的文本块不换行
+
+### 交互反馈
+
+- 所有可点击元素 hover 时使用 `var(--color-surface-hover)` 背景变化
+- 使用 CSS transition（200-300ms），禁用 `prefers-reduced-motion` 时跳过
+- Toast 通知：flat 暖色，`border-radius: 8px`，`1px solid` 边框，info 3s 自动消失，error 需手动关闭
+- 琥珀色 (`--color-accent`) 是**唯一的彩色强调色**——不要在成功/错误态以外引入蓝/紫/绿等额外色相
+
+### 图标
+
+- 统一使用 Phosphor Icons Bold weight
+- 禁止混用其他图标库或 inline SVG path
+
+### 按钮层级
+
+| 层级 | class | 样式 |
+|------|-------|------|
+| Primary | `.btn-primary` | 琥珀底 + 白色字 |
+| Secondary | `.btn-secondary` | surface 底 + border + text 色字 |
+| Danger | `.btn-danger` | error 底 + error-text 色字 |
+
+新增按钮必须复用这三层，禁止自定义颜色。
+
 ## LSP MCP — 代码上下文感知
 
 本项目通过 `.dscode/settings.json` 配置了 LSP MCP 服务器（TypeScript Language Server），提供对仓库的深度代码智能感知。

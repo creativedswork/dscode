@@ -330,6 +330,68 @@ export class MCPManager {
     this.clients.clear();
   }
 
+  async connectServer(name: string): Promise<void> {
+    const existing = this.clients.get(name);
+    if (existing) return;
+
+    const cfg = this.configs.find((c) => c.name === name);
+    if (!cfg) throw new Error(`MCP server "${name}" not found in config`);
+
+    const state = this.states.get(name)!;
+    state.status = "connecting";
+
+    try {
+      const client = new MCPClient(cfg);
+      client.onEvent((event) => this.handleClientEvent(event));
+      await client.connect();
+      this.clients.set(name, client);
+
+      const tools = await client.listTools();
+      this.registerDriver(name, tools);
+
+      state.status = "connected";
+      state.error = undefined;
+      state.toolCount = tools.length;
+      state.negotiatedProtocolVersion = client.getNegotiatedProtocolVersion() ?? undefined;
+      state.resolvedTransport = client.getResolvedTransport();
+      state.compatibilityMode = client.getCompatibilityMode();
+      state.refreshState = "idle";
+      state.refreshError = undefined;
+      state.lastRefreshAt = Date.now();
+    } catch (err: any) {
+      state.status = "error";
+      state.error = err.message ?? "Unknown error";
+      state.refreshState = "error";
+      state.refreshError = err.message ?? "Unknown error";
+      state.toolCount = 0;
+      throw err;
+    }
+  }
+
+  async disconnectServer(name: string): Promise<void> {
+    const client = this.clients.get(name);
+    if (!client) return;
+
+    const state = this.states.get(name)!;
+
+    try {
+      await client.close();
+    } catch {
+      // best-effort close
+    }
+
+    this.clients.delete(name);
+    if (this.driverRegistry) {
+      this.driverRegistry.unregister(`mcp_${name}`);
+    }
+
+    state.status = "disconnected";
+    state.error = undefined;
+    state.toolCount = 0;
+    state.refreshState = "idle";
+    state.refreshError = undefined;
+  }
+
   private buildAgentTool(serverName: string, def: MCPToolDefinition, client: MCPClient): AgentTool<any> {
     const toolName = `mcp_${serverName}_${def.name}`;
     if (def.alwaysLoad) {
