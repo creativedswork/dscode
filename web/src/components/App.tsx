@@ -74,10 +74,8 @@ export function App() {
       case "assistant_end":
       case "clear_conversation":
         setMessages((prev) => conversationReducer(prev, event));
-        setProcessing(false);
         break;
       case "assistant_start":
-        turnStartRef.current = Date.now();
         setProcessing(true);
         break;
       case "info": {
@@ -91,9 +89,14 @@ export function App() {
       }
       case "error": addToast({ type: "error", text: event.text }); setProcessing(false); turnStartRef.current = 0; break;
       case "permission_prompt": setPermissionPrompt({ toolName: event.toolName, preview: event.preview }); break;
-      case "processing": setProcessing(event.processing); break;
-      case "loader": setProcessing(event.state === "show"); break;
-      case "config": setConfig(event.data); break;
+      case "loader":
+        setProcessing(event.state === "show");
+        if (event.state === "show") {
+          if (!turnStartRef.current) turnStartRef.current = Date.now();
+        } else {
+          turnStartRef.current = 0;
+        }
+        break;
       case "sessions": setSessions(event.data); break;
       case "mcp_state": setMcpServers(event.servers); break;
       case "model": setModel(event.name); break;
@@ -105,6 +108,7 @@ export function App() {
 
   const handleSend = useCallback((text: string, images?: ImageAttachment[]) => {
     if (!text.trim() && (!images || images.length === 0)) return;
+    turnStartRef.current = Date.now();
     setProcessing(true);
     send({ type: "chat", text, images: images?.length ? images : undefined });
   }, [send]);
@@ -150,7 +154,7 @@ export function App() {
           onSessionAction={handleSessionAction} onMcpAction={handleMcpAction} onMcpServerAction={handleMcpAction}
           onConfigChange={handleConfigChange} onNewSession={handleNewSession} />
         <main className="flex-1 flex flex-col min-w-0">
-          <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} permissionPrompt={permissionPrompt} onPermission={handlePermission} />
+          <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} turnStartRef={turnStartRef} permissionPrompt={permissionPrompt} onPermission={handlePermission} />
           <MessageInput onSend={handleSend} onAbort={handleAbort} onSlashCommand={handleSlashCommand} onCommand={handleCommand}
             processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} />
         </main>

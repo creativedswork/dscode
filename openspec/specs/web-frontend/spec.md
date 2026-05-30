@@ -33,6 +33,33 @@ The frontend SHALL use exactly one icon library (Phosphor Icons Bold weight reco
 - **WHEN** any icon is rendered in the UI (sidebar toggle, close buttons, warning icons, status indicators, expand/collapse arrows)
 - **THEN** it uses the chosen icon library with consistent `strokeWidth`
 
+### Requirement: Processing timer driven by turn start anchor
+The frontend SHALL compute elapsed processing time from the `turnStartRef` anchor, set by `handleSend` and the `loader { state: "show" }` event, not from the `processing` state flag. The timer SHALL update every animation frame while the anchor is non-zero and reset to 0 when the turn ends.
+
+#### Scenario: Timer starts on user submit
+- **WHEN** the user sends a message (via Send button or Enter key)
+- **THEN** `turnStartRef.current` is set to `Date.now()` in `handleSend` and the elapsed timer begins incrementing from 0s
+
+#### Scenario: Timer increments during thinking
+- **WHEN** the model sends `thinking_delta` events and `turnStartRef.current > 0`
+- **THEN** the `ThinkingBlock` summary displays `Thinking... (Xs)` where X increments approximately every second
+
+#### Scenario: Timer increments during waiting
+- **WHEN** `processing` is true but no streaming message has arrived yet (hasStreaming is false)
+- **THEN** the `WaitingBubble` displays the elapsed time from `turnStartRef`, incrementing approximately every second
+
+#### Scenario: Timer stops on agent end
+- **WHEN** the server sends `loader` event with `state: "hide"` (from `agent_end`)
+- **THEN** `turnStartRef.current` is set to 0 and the elapsed timer stops
+
+#### Scenario: Timer starts on vision/OCR pre-processing
+- **WHEN** the server sends `loader` event with `state: "show"` and `turnStartRef.current` is 0
+- **THEN** `turnStartRef.current` is set to `Date.now()` and the elapsed timer begins incrementing
+
+#### Scenario: Timer resets on error
+- **WHEN** the server sends an `error` event
+- **THEN** `turnStartRef.current` is set to 0 and the elapsed timer is reset
+
 ## MODIFIED Requirements
 
 ### Requirement: Theme support
@@ -51,7 +78,7 @@ The frontend SHALL support warm light and warm dark themes using warm stone/taup
 - **THEN** backgrounds use warm deep gray-browns (≈ `#1e1c19`), surfaces are warm dark gray (≈ `#282622`), borders are warm dark (≈ `#3a3732`), and text is warm off-white (≈ `#e8e4dd`)
 
 ### Requirement: Conversation view
-The frontend SHALL display a scrollable conversation area showing user messages, assistant responses with streaming text, thinking blocks, and tool call results, all using the warm flat design system styling. Message state management SHALL use the shared `conversationReducer` from `@dscode/shared/reducer` instead of inline event handling logic.
+The frontend SHALL display a scrollable conversation area showing user messages, assistant responses with streaming text, thinking blocks with elapsed time indicators, and tool call results, all using the warm flat design system styling. Message state management SHALL use the shared `conversationReducer` from `@dscode/shared/reducer` instead of inline event handling logic. The elapsed time display SHALL be derived from `turnStartRef` (set by `handleSend` or `loader { state: "show" }`) rather than the `processing` state flag.
 
 #### Scenario: User message display
 - **WHEN** user submits a message
@@ -61,9 +88,9 @@ The frontend SHALL display a scrollable conversation area showing user messages,
 - **WHEN** the server sends `text_delta` events
 - **THEN** the assistant message bubble updates incrementally via `conversationReducer`, using the warm surface background, `1px solid` border, and warm text colors
 
-#### Scenario: Thinking block display
+#### Scenario: Thinking block display with timer
 - **WHEN** the server sends `thinking_delta` events
-- **THEN** the thinking content appears in a collapsible block with muted warm styling and a subtle left border accent, distinct from the main response
+- **THEN** the thinking content appears in a collapsible `<details>` block (open during streaming) with muted warm styling and a subtle left border accent, and the summary shows `Thinking... (Xs)` where X is the elapsed seconds since `turnStartRef` was set by `handleSend`
 
 #### Scenario: Tool call display
 - **WHEN** the server sends `tool_start` and `tool_end` events
@@ -81,11 +108,11 @@ The frontend SHALL import `UIMessage`, `ToolCallEntry`, `ImageAttachment`, `Conv
 - **THEN** it contains no inline `interface UIMessage`, `interface ToolCallEntry`, or `interface ConversationMessage` definitions
 
 ### Requirement: Input area
-The frontend SHALL provide a text input area at the bottom of the screen with flat, rounded styling using the warm design system.
+The frontend SHALL provide a text input area at the bottom of the screen with flat, rounded styling using the warm design system. The send button SHALL switch to a Stop button while the agent is processing (when `processing` is true, controlled exclusively by `handleSend` and the `loader` event from `agent_end`). The `assistant_end` event SHALL NOT affect the `processing` state — it only finalizes the streaming message.
 
 #### Scenario: Text input and submit
 - **WHEN** user types text and presses Enter (or clicks send button)
-- **THEN** a `chat` command is sent via WebSocket with the input text
+- **THEN** a `chat` command is sent via WebSocket with the input text, and `processing` is set to `true` immediately
 
 #### Scenario: Input styling
 - **WHEN** the input field is rendered
@@ -106,6 +133,14 @@ The frontend SHALL provide a text input area at the bottom of the screen with fl
 #### Scenario: Input disabled during processing
 - **WHEN** the agent is processing a request
 - **THEN** the input field is disabled with a muted appearance
+
+#### Scenario: Send button becomes Stop button during processing
+- **WHEN** `processing` becomes true (via `handleSend`)
+- **THEN** the send button is replaced by a Stop button that calls `onAbort` when clicked
+
+#### Scenario: Stop button reverts to Send when processing ends
+- **WHEN** the `loader` event with `state: "hide"` is received from the server
+- **THEN** `processing` is set to `false` and the Stop button reverts to the Send button
 
 ### Requirement: Image upload
 The frontend SHALL support attaching images to messages via paste from clipboard, with flat, warm-toned thumbnail previews.

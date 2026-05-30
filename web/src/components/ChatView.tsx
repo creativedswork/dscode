@@ -13,32 +13,28 @@ interface ChatViewProps {
   messages: UIMessage[];
   processing: boolean;
   hasStreaming: boolean;
+  turnStartRef: React.MutableRefObject<number>;
   permissionPrompt: PermissionPrompt | null;
   onPermission: (decision: "allow" | "always_allow" | "deny", explainText?: string) => void;
 }
-
-export function ChatView({ messages, processing, hasStreaming, permissionPrompt, onPermission }: ChatViewProps) {
+export function ChatView({ messages, processing, hasStreaming, turnStartRef, permissionPrompt, onPermission }: ChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const [elapsed, setElapsed] = useState(0);
 
-  // Debug: log messages to console
+  // Elapsed timer driven by turnStartRef (set on handleSend / loader:show, reset on loader:hide / error)
   useEffect(() => {
-    if (messages.length > 0) {
-      console.log("[ChatView] messages:", messages.length, "first:", messages[0]?.role, messages[0]?.content?.slice(0, 80));
-    }
-  }, [messages]);
-
-  useEffect(() => {
-    if (!processing) {
+    if (!turnStartRef.current) {
       setElapsed(0);
       return;
     }
-    const start = Date.now();
-    const timer = setInterval(() => {
-      setElapsed(Math.floor((Date.now() - start) / 1000));
-    }, 500);
-    return () => clearInterval(timer);
-  }, [processing]);
+    let raf: number;
+    const tick = () => {
+      setElapsed(Math.floor((Date.now() - turnStartRef.current) / 1000));
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [turnStartRef.current]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
