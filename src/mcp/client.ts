@@ -3,6 +3,7 @@ import { createInterface, type Interface } from "node:readline";
 import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { homedir } from "node:os";
+import { join } from "node:path";
 
 import type {
   MCPCancelledNotificationParams,
@@ -25,7 +26,7 @@ const TOOL_CALL_TIMEOUT = 60_000;
 
 function expandTilde(p: string): string {
   if (p.startsWith("~")) {
-    return homedir() + p.slice(1);
+    return join(homedir(), p.slice(1));
   }
   return p;
 }

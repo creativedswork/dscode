@@ -9,7 +9,7 @@ const MAX_INDEX_ENTRIES = 100;
 function projectSlug(projectPath: string): string {
   const sanitized = projectPath
     .replace(/^[\/\\]+/, "")
-    .replace(/[\/\\]/g, "_");
+    .replace(/[\/\\:]/g, "_");
   const hash = createHash("sha256").update(projectPath).digest("hex").slice(0, 8);
   return `${sanitized}-${hash}`;
 }
