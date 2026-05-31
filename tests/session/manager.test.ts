@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, existsSync, readFileSync } from "node:fs";
+import { mkdtempSync, existsSync, readFileSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { SessionManager } from "../../src/session/manager.js";
+import { SessionStore } from "../../src/session/store.js";
 
 // Minimal Agent mock
 function createMockAgent(messages: unknown[] = []) {
@@ -11,13 +12,15 @@ function createMockAgent(messages: unknown[] = []) {
   } as any;
 }
 
+const TEST_PROJECT = "/test/project";
+
 describe("SessionManager", () => {
   let dataDir: string;
   let manager: SessionManager;
 
   beforeEach(() => {
     dataDir = mkdtempSync(join(tmpdir(), "session-test-"));
-    manager = new SessionManager(dataDir);
+    manager = new SessionManager(dataDir, TEST_PROJECT);
   });
 
   afterEach(() => {
@@ -41,7 +44,7 @@ describe("SessionManager", () => {
     expect(s1.id).not.toBe(s2.id);
   });
 
-  it("should save and load a session", () => {
+  it("should save and load a session", async () => {
     const session = manager.createSession("deepseek", "deepseek-v4-flash");
     const agent = createMockAgent([
       { role: "user", content: "hello" },
@@ -51,14 +54,18 @@ describe("SessionManager", () => {
 
     // Verify file was created
     const sessionDir = join(dataDir, "sessions");
-    const filePath = join(sessionDir, `${session.id}.json`);
-    expect(existsSync(filePath)).toBe(true);
+    const sessionFile = join(sessionDir, `${session.id}.json`);
+    // Session is saved in by-project/<slug>/ not directly in sessions/
+    const slug = require("node:crypto").createHash("sha256").update(TEST_PROJECT).digest("hex").slice(0, 8);
+    const projDir = join(sessionDir, "by-project", `test_project-${slug}`);
+    const projSessionFile = join(projDir, `${session.id}.json`);
+    expect(existsSync(projSessionFile)).toBe(true);
 
     // Load into a new manager
-    const manager2 = new SessionManager(dataDir);
+    const manager2 = new SessionManager(dataDir, TEST_PROJECT);
     const agent2 = createMockAgent();
-    const loaded = manager2.loadSession(session.id, agent2);
-    expect(loaded).toBe(true);
+    const result = await manager2.loadSession(session.id, agent2);
+    expect(result.success).toBe(true);
     expect(agent2.state.messages).toEqual([
       { role: "user", content: "hello" },
       { role: "assistant", content: "hi" },
@@ -92,10 +99,11 @@ describe("SessionManager", () => {
     expect(meta!.title).toBe("Hello from content blocks");
   });
 
-  it("should return false when loading non-existent session", () => {
+  it("should return error when loading non-existent session", async () => {
     const agent = createMockAgent();
-    const loaded = manager.loadSession("nonexistent-id", agent);
-    expect(loaded).toBe(false);
+    const result = await manager.loadSession("nonexistent-id", agent);
+    expect(result.success).toBe(false);
+    expect(result.error).toBeTruthy();
   });
 
   it("should list sessions", () => {
@@ -113,7 +121,8 @@ describe("SessionManager", () => {
     const agent = createMockAgent([{ role: "user", content: "hi" }]);
     manager.saveSession(agent);
 
-    manager.deleteSession(session.id);
+    const result = manager.deleteSession(session.id);
+    expect(result.success).toBe(true);
     expect(manager.listSessions().length).toBe(0);
   });
 
@@ -149,5 +158,80 @@ describe("SessionManager", () => {
     const agent = createMockAgent([{ role: "user", content: "hi" }]);
     // Should not throw
     expect(() => manager.saveSession(agent)).not.toThrow();
+  });
+
+  // ── New tests for persistEmptySession and ENOENT fix ──
+
+  it("persistEmptySession should save an empty session to disk", () => {
+    const session = manager.createSession("p1", "m1");
+    manager.persistEmptySession();
+
+    // Should appear in list even with 0 messages
+    const sessions = manager.listSessions();
+    expect(sessions.length).toBe(1);
+    expect(sessions[0].id).toBe(session.id);
+    expect(sessions[0].messageCount).toBe(0);
+  });
+
+  it("persistEmptySession should not throw with no current session", () => {
+    expect(() => manager.persistEmptySession()).not.toThrow();
+  });
+
+  it("should recreate directory when saving after delete removes project dir", () => {
+    const session = manager.createSession("p1", "m1");
+    const agent = createMockAgent([{ role: "user", content: "hi" }]);
+    manager.saveSession(agent);
+
+    // Delete the session (and the project dir since it was the only session)
+    manager.deleteSession(session.id);
+
+    // Now save again — should recreate dir without ENOENT
+    const session2 = manager.createSession("p1", "m2");
+    const agent2 = createMockAgent([{ role: "user", content: "hello again" }]);
+    expect(() => manager.saveSession(agent2)).not.toThrow();
+
+    // Verify the new session was saved
+    const sessions = manager.listSessions();
+    expect(sessions.length).toBe(1);
+    expect(sessions[0].id).toBe(session2.id);
+  });
+});
+
+describe("SessionStore directory resilience", () => {
+  let dataDir: string;
+
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "store-test-"));
+  });
+
+  it("save should recreate project dir if deleted", () => {
+    const store = new SessionStore(dataDir, TEST_PROJECT);
+    const metadata = {
+      id: "test-session-id",
+      title: "Test",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      modelProvider: "p",
+      modelId: "m",
+      messageCount: 1,
+      projectPath: TEST_PROJECT,
+      preview: "",
+      hasImages: false,
+      imageCount: 0,
+    };
+    const session = { version: 1 as const, metadata, messages: [{ role: "user", content: "hi" }] };
+
+    // First save
+    store.save(session);
+
+    // Manually delete the project directory
+    const slug = require("node:crypto").createHash("sha256").update(TEST_PROJECT).digest("hex").slice(0, 8);
+    const projDir = join(dataDir, "sessions", "by-project", `test_project-${slug}`);
+    rmdirSync(projDir, { recursive: true });
+    expect(existsSync(projDir)).toBe(false);
+
+    // Save again — should not throw
+    expect(() => store.save(session)).not.toThrow();
+    expect(existsSync(projDir)).toBe(true);
   });
 });
