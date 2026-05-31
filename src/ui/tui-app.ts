@@ -31,7 +31,8 @@ import type { AppInstance } from "../mcp/app/types.js";
 import { c, editorTheme } from "./theme.js";
 import { ConversationView, findPermOptionByKey } from "./conversation.js";
 import { getSlashCommandAutocomplete, executeSlashCommand } from "./commands.js";
-import { buildMcpServers, getMcpVisibleRows, renderMcpServerList, renderMcpToolList } from "./mcp-browser.js";
+import { buildMcpServers, createInitialMcpBrowserState, getMcpVisibleRows, reduceMcpBrowserState, renderMcpServerList, renderMcpToolList } from "./mcp-browser.js";
+import type { McpBrowserState } from "./mcp-browser.js";
 import { resolveAtFileRefs, listProjectFiles } from "../utils/at-file-resolver.js";
 import { readClipboardImageNonBlocking } from "../utils/image.js";
 export interface TuiDeps {
@@ -454,75 +455,29 @@ export class TuiApp {
     const servers = this.getMcpServers();
 
     if (matchesKey(data, Key.escape)) {
-      if (this.mcpSelectedServerIndex == null) {
-        this.closeMcpBrowser();
-      } else {
-        this.mcpSelectedServerIndex = null;
-        this.mcpToolSelection = 0;
-        this.mcpToolWindowStart = 0;
-        this.updateMcpPanel();
-      }
-      return true;
+      return this.applyMcpBrowserResult(
+        reduceMcpBrowserState(this.getMcpBrowserState(), { type: "escape" }, servers.length, this.getMcpToolCount(servers)),
+      );
     }
 
     if (matchesKey(data, Key.up)) {
-      if (!this.canNavigateMenu("up")) {
-        return true;
-      }
-      if (this.mcpSelectedServerIndex == null) {
-        const prev = this.mcpServerSelection;
-        this.mcpServerSelection = Math.max(0, this.mcpServerSelection - 1);
-        if (this.mcpServerSelection < prev) {
-          this.mcpServerWindowStart = this.mcpServerSelection;
-        }
-      } else {
-        const prev = this.mcpToolSelection;
-        this.mcpToolSelection = Math.max(0, this.mcpToolSelection - 1);
-        if (this.mcpToolSelection < prev) {
-          this.mcpToolWindowStart = this.mcpToolSelection;
-        }
-      }
-      this.updateMcpPanel();
-      return true;
+      if (!this.canNavigateMenu("up")) return true;
+      return this.applyMcpBrowserResult(
+        reduceMcpBrowserState(this.getMcpBrowserState(), { type: "up" }, servers.length, this.getMcpToolCount(servers)),
+      );
     }
 
     if (matchesKey(data, Key.down)) {
-      if (!this.canNavigateMenu("down")) {
-        return true;
-      }
-      if (this.mcpSelectedServerIndex == null) {
-        const toolCount = servers.length;
-        const visibleRows = getMcpVisibleRows(toolCount);
-        const prev = this.mcpServerSelection;
-        this.mcpServerSelection = Math.min(Math.max(toolCount - 1, 0), this.mcpServerSelection + 1);
-        if (this.mcpServerSelection > prev && this.mcpServerSelection >= this.mcpServerWindowStart + visibleRows) {
-          this.mcpServerWindowStart = this.mcpServerSelection - visibleRows + 1;
-        }
-      } else {
-        const toolCount = servers[this.mcpSelectedServerIndex]?.tools.length ?? 0;
-        const visibleRows = getMcpVisibleRows(toolCount);
-        const prev = this.mcpToolSelection;
-        this.mcpToolSelection = Math.min(Math.max(toolCount - 1, 0), this.mcpToolSelection + 1);
-        if (this.mcpToolSelection > prev && this.mcpToolSelection >= this.mcpToolWindowStart + visibleRows) {
-          this.mcpToolWindowStart = this.mcpToolSelection - visibleRows + 1;
-        }
-      }
-      this.updateMcpPanel();
-      return true;
+      if (!this.canNavigateMenu("down")) return true;
+      return this.applyMcpBrowserResult(
+        reduceMcpBrowserState(this.getMcpBrowserState(), { type: "down" }, servers.length, this.getMcpToolCount(servers)),
+      );
     }
 
     if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
-      if (this.mcpSelectedServerIndex == null) {
-        if (servers.length === 0) {
-          this.closeMcpBrowser();
-        } else {
-          this.mcpSelectedServerIndex = this.mcpServerSelection;
-          this.mcpToolSelection = 0;
-          this.mcpToolWindowStart = 0;
-          this.updateMcpPanel();
-        }
-      }
-      return true;
+      return this.applyMcpBrowserResult(
+        reduceMcpBrowserState(this.getMcpBrowserState(), { type: "enter" }, servers.length, this.getMcpToolCount(servers)),
+      );
     }
 
     if (matchesKey(data, "ctrl+c") || data === "\x03") {
@@ -531,6 +486,34 @@ export class TuiApp {
     }
 
     return true;
+  }
+
+  private applyMcpBrowserResult(result: { state: McpBrowserState; shouldClose: boolean }): boolean {
+    if (result.shouldClose) {
+      this.closeMcpBrowser();
+      return true;
+    }
+    this.mcpSelectedServerIndex = result.state.selectedServerIndex;
+    this.mcpServerSelection = result.state.serverSelection;
+    this.mcpServerWindowStart = result.state.serverWindowStart;
+    this.mcpToolSelection = result.state.toolSelection;
+    this.mcpToolWindowStart = result.state.toolWindowStart;
+    this.updateMcpPanel();
+    return true;
+  }
+
+  private getMcpBrowserState(): McpBrowserState {
+    return {
+      selectedServerIndex: this.mcpSelectedServerIndex,
+      serverSelection: this.mcpServerSelection,
+      serverWindowStart: this.mcpServerWindowStart,
+      toolSelection: this.mcpToolSelection,
+      toolWindowStart: this.mcpToolWindowStart,
+    };
+  }
+
+  private getMcpToolCount(servers: ReturnType<typeof this.getMcpServers>): number {
+    return servers[this.mcpSelectedServerIndex ?? -1]?.tools.length ?? 0;
   }
 
   /**

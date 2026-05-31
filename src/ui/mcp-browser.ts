@@ -12,6 +12,118 @@ const PREVIEW_LINES = 4;
 const PANEL_WIDTH = 78;
 const SHORT_RULE = "────────────────────────────────────────";
 
+export interface McpBrowserState {
+  selectedServerIndex: number | null;
+  serverSelection: number;
+  serverWindowStart: number;
+  toolSelection: number;
+  toolWindowStart: number;
+}
+
+export type McpBrowserAction =
+  | { type: "enter" }
+  | { type: "escape" }
+  | { type: "up" }
+  | { type: "down" };
+
+export interface McpBrowserActionResult {
+  state: McpBrowserState;
+  shouldClose: boolean;
+}
+
+export function createInitialMcpBrowserState(): McpBrowserState {
+  return {
+    selectedServerIndex: null,
+    serverSelection: 0,
+    serverWindowStart: 0,
+    toolSelection: 0,
+    toolWindowStart: 0,
+  };
+}
+
+function clampWindowStart(selection: number, windowStart: number, total: number): number {
+  const visibleRows = getMcpVisibleRows(total);
+  if (visibleRows <= 0) return 0;
+  return Math.max(0, Math.min(windowStart, Math.max(total - visibleRows, 0)));
+}
+
+function moveUp(selection: number, windowStart: number, total: number): { selection: number; windowStart: number } {
+  const prev = selection;
+  const newSelection = Math.max(0, prev - 1);
+  const newWindowStart = newSelection < prev ? newSelection : windowStart;
+  return { selection: newSelection, windowStart: clampWindowStart(newSelection, newWindowStart, total) };
+}
+
+function moveDown(selection: number, windowStart: number, total: number): { selection: number; windowStart: number } {
+  const visibleRows = getMcpVisibleRows(total);
+  const prev = selection;
+  const maxIndex = Math.max(total - 1, 0);
+  const newSelection = Math.min(maxIndex, prev + 1);
+  let newWindowStart = windowStart;
+  if (newSelection > prev && newSelection >= windowStart + visibleRows) {
+    newWindowStart = newSelection - visibleRows + 1;
+  }
+  return { selection: newSelection, windowStart: clampWindowStart(newSelection, newWindowStart, total) };
+}
+
+/** Pure reducer for MCP browser keyboard navigation state machine. */
+export function reduceMcpBrowserState(
+  state: McpBrowserState,
+  action: McpBrowserAction,
+  serverCount: number,
+  toolCount: number,
+): McpBrowserActionResult {
+  switch (action.type) {
+    case "escape": {
+      if (state.selectedServerIndex == null) {
+        return { state, shouldClose: true };
+      }
+      return {
+        state: {
+          ...state,
+          selectedServerIndex: null,
+          toolSelection: 0,
+          toolWindowStart: 0,
+        },
+        shouldClose: false,
+      };
+    }
+    case "enter": {
+      if (state.selectedServerIndex == null) {
+        if (serverCount === 0) {
+          return { state, shouldClose: true };
+        }
+        return {
+          state: {
+            ...state,
+            selectedServerIndex: state.serverSelection,
+            toolSelection: 0,
+            toolWindowStart: 0,
+          },
+          shouldClose: false,
+        };
+      }
+      return { state, shouldClose: false };
+    }
+    case "up": {
+      if (state.selectedServerIndex == null) {
+        const { selection, windowStart } = moveUp(state.serverSelection, state.serverWindowStart, serverCount);
+        return { state: { ...state, serverSelection: selection, serverWindowStart: windowStart }, shouldClose: false };
+      }
+      const { selection, windowStart } = moveUp(state.toolSelection, state.toolWindowStart, toolCount);
+      return { state: { ...state, toolSelection: selection, toolWindowStart: windowStart }, shouldClose: false };
+    }
+    case "down": {
+      if (state.selectedServerIndex == null) {
+        const { selection, windowStart } = moveDown(state.serverSelection, state.serverWindowStart, serverCount);
+        return { state: { ...state, serverSelection: selection, serverWindowStart: windowStart }, shouldClose: false };
+      }
+      const { selection, windowStart } = moveDown(state.toolSelection, state.toolWindowStart, toolCount);
+      return { state: { ...state, toolSelection: selection, toolWindowStart: windowStart }, shouldClose: false };
+    }
+  }
+}
+
 export interface McpToolViewModel {
   name: string;
   label: string;
