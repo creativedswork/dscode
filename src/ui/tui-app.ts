@@ -421,6 +421,7 @@ export class TuiApp {
     }
     if (servers.length === 0) {
       this.mcpPanel.setText(renderMcpServerList([], 0, 0));
+      this.tui.requestRender(true);
       return;
     }
 
@@ -432,6 +433,7 @@ export class TuiApp {
         Math.min(this.mcpServerWindowStart, Math.max(servers.length - visibleRows, 0)),
       );
       this.mcpPanel.setText(renderMcpServerList(servers, this.mcpServerSelection, this.mcpServerWindowStart));
+      this.tui.requestRender(true);
       return;
     }
 
@@ -445,6 +447,7 @@ export class TuiApp {
       Math.min(this.mcpToolWindowStart, Math.max(server.tools.length - visibleRows, 0)),
     );
     this.mcpPanel.setText(renderMcpToolList(server, this.mcpToolSelection, this.mcpToolWindowStart));
+    this.tui.requestRender(true);
   }
 
   private handleMcpBrowserInput(data: string): boolean {
