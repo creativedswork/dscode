@@ -36,11 +36,17 @@ function extractFirstUserMessage(messages: unknown[]): string {
  * ImageContent blocks back into `content`.
  */
 async function restoreImagesFromCache(msg: any): Promise<void> {
-  const refs = msg.images as ImageRef[] | undefined;
+  const refs = msg.images as any[] | undefined;
   if (!refs || refs.length === 0) return;
 
   const restored: ImageContent[] = [];
   for (const ref of refs) {
+    // Handle inline format ({data, mimeType}) — directly convert to ImageContent
+    if (ref.data && typeof ref.data === "string") {
+      restored.push({ type: "image", data: ref.data, mimeType: ref.mimeType ?? "image/png" });
+      continue;
+    }
+    // Handle ImageRef format ({type: "image_ref", hash, mimeType}) — restore from cache
     const cached = await ImageCache.get(ref);
     if (cached) {
       restored.push(cached);
@@ -141,13 +147,11 @@ export class SessionManager {
       hasImages = true;
       totalImages += imageBlocks.length;
 
-      // Images were already cached by the harness before promptAndSave
-      // We store references instead of inline base64
-      copy.images = imageBlocks.map((b: any) => ({
-        type: "image_ref" as const,
-        hash: "",
-        mimeType: b.mimeType ?? "image/png",
-      }));
+      // Cache images synchronously and store references instead of inline base64
+      copy.images = imageBlocks.map((b: any) => {
+        const ref = ImageCache.putSync({ type: "image", data: b.data, mimeType: b.mimeType ?? "image/png" });
+        return { type: "image_ref" as const, hash: ref.hash, mimeType: ref.mimeType };
+      });
       copy.content = copy.content.filter((b: any) => b.type !== "image");
       return copy;
     });

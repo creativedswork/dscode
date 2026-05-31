@@ -294,7 +294,7 @@ export class WebUiBackend implements UiBackend {
     const messages = this.buildConversationHistory();
     const model = (this.harness.agent.state.model as any)?.name ?? this.config.modelId;
 
-    client.send({
+      client.send({
       type: "ready",
       model,
       config: configData,
@@ -359,10 +359,11 @@ export class WebUiBackend implements UiBackend {
           this.harness.saveSessionNow();
           client.send({
             type: "error",
-            text: err instanceof Error ? err.message : String(err),
+        text: err instanceof Error ? err.message : String(err),
           });
         }
         this.pushSessionList(client);
+
         break;
       }
 
@@ -385,6 +386,7 @@ export class WebUiBackend implements UiBackend {
               type: "error",
               text: err instanceof Error ? err.message : String(err),
             });
+      client.send({ type: "loader", state: "hide" });
           });
         }
       }
@@ -454,6 +456,17 @@ export class WebUiBackend implements UiBackend {
         addPendingImage: () => {},
         openMcpBrowser: () => {},
         clearConversationView: () => this.clearConversationView(),
+        replayMessages: async () => {
+          this.clearConversationView();
+          const messages = await this.buildConversationHistory();
+          const model = (this.harness.agent.state.model as any)?.name ?? this.config.modelId;
+          client.send({
+            type: "ready",
+            model,
+            config: this.buildConfigData(),
+            messages,
+          });
+        },
         focusEditor: () => {},
         setProcessing: () => {},
         getPromptPermission: () => () => Promise.resolve({ decision: "deny" } as PermissionPromptResult),
@@ -464,6 +477,8 @@ export class WebUiBackend implements UiBackend {
       // Push updated session list so sidebar auto-refreshes
       this.pushSessionList(client);
 
+
+      client.send({ type: "loader", state: "hide" });
       setTimeout(() => {
         client.send({ type: "config", data: this.buildConfigData() });
       }, 100);

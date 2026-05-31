@@ -128,6 +128,22 @@ export class ConversationView {
         if (text) {
           lines.push(c.green.bold("you › ") + text);
         }
+        // Render image blocks from content (restored by restoreImagesFromCache)
+        if (Array.isArray(m.content)) {
+          for (const block of m.content) {
+            if (block.type === "image" && block.data) {
+              this.addInlineImage(block.data, block.mimeType ?? "image/png");
+            }
+          }
+        }
+        // Also render images from msg.images (non-restored inline format)
+        if (m.images && Array.isArray(m.images)) {
+          for (const img of m.images) {
+            if (img && typeof img === "object" && img.data) {
+              this.addInlineImage(img.data, img.mimeType ?? "image/png");
+            }
+          }
+        }
       } else if (m.role === "assistant") {
         const content = m.content;
         if (Array.isArray(content)) {
@@ -138,6 +154,8 @@ export class ConversationView {
               lines.push(c.magenta.bold("agent ›") + "\n" + block.text);
             } else if (block.type === "toolCall") {
               lines.push(` ${c.cyan("⚙")} ${c.cyan(block.name)} ${c.dim(toolArgsPreview(block.arguments))}`);
+            } else if (block.type === "image" && block.data) {
+              this.addInlineImage(block.data, block.mimeType ?? "image/png");
             }
           }
         } else if (typeof content === "string") {
@@ -198,6 +216,7 @@ export class ConversationView {
     }
     this.renderLive();
   }
+
   finishAssistantMessage(): void {
     const lines: string[] = [];
     if (this.thinkingBuffer) {
@@ -238,20 +257,28 @@ export class ConversationView {
   }
 
   addInlineImage(base64Data: string, mimeType: string): void {
-    if (getCapabilities().images) {
-      const img = new Image(base64Data, mimeType, this.imageTheme, {
-        maxHeightCells: 12,
-        maxWidthCells: 40,
-      });
-      this.blocks.push({ type: "image", img });
-    } else {
-      const cacheDir = join(homedir(), ".dscode", "image-cache");
-      mkdirSync(cacheDir, { recursive: true });
-      const ext = mimeType.split("/")[1] || "png";
-      const filename = `${Date.now()}.${ext}`;
-      const filePath = join(cacheDir, filename);
-      writeFileSync(filePath, Buffer.from(base64Data, "base64"));
-      this.pushText(c.dim(`[image: ${filePath}]`));
+    // Always save to file — reliable across all terminals
+    const cacheDir = join(homedir(), ".dscode", "image-cache");
+    mkdirSync(cacheDir, { recursive: true });
+    const ext = mimeType.split("/")[1] || "png";
+    const filename = `${Date.now()}.${ext}`;
+    const filePath = join(cacheDir, filename);
+    writeFileSync(filePath, Buffer.from(base64Data, "base64"));
+    this.pushText(c.dim(`[image: ${filePath}]`));
+
+    // Attempt terminal-native image rendering (Kitty, iTerm2, Ghostty, etc.)
+    // Skip JPEG — terminal graphics protocols have inconsistent JPEG format support
+    const isJpeg = mimeType === "image/jpeg" || mimeType === "image/jpg";
+    if (!isJpeg) {
+      try {
+        const img = new Image(base64Data, mimeType, this.imageTheme, {
+          maxHeightCells: 12,
+          maxWidthCells: 40,
+        });
+        this.blocks.push({ type: "image", img });
+      } catch {
+        // Image creation failed — fallback to file path only
+      }
     }
     this.render();
   }

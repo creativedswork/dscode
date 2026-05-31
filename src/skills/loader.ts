@@ -39,10 +39,24 @@ function scanDir(dir: string, source: "user" | "project"): SkillManifest[] {
   return results;
 }
 
+function stripBomAndDecode(buf: Buffer): string {
+  if (buf.length >= 3 && buf[0] === 0xEF && buf[1] === 0xBB && buf[2] === 0xBF) {
+    return buf.subarray(3).toString("utf8");
+  }
+  if (buf.length >= 2 && buf[0] === 0xFF && buf[1] === 0xFE) {
+    return buf.subarray(2).toString("utf16le");
+  }
+  if (buf.length >= 2 && buf[0] === 0xFE && buf[1] === 0xFF) {
+    return buf.subarray(2).swap16().toString("utf16le");
+  }
+  return buf.toString("utf8");
+}
+
 export function parseSkillManifest(filePath: string, source: "user" | "project"): SkillManifest | null {
   let raw: string;
   try {
-    raw = readFileSync(filePath, "utf8");
+    const buf = readFileSync(filePath);
+    raw = stripBomAndDecode(buf);
   } catch {
     return null;
   }

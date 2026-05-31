@@ -6,7 +6,6 @@ import type { ImageContent } from "@mariozechner/pi-ai";
 import type { ImageRef } from "../core/types.js";
 
 const CACHE_SUBDIR = join(homedir(), ".dscode", "data", "images");
-const JPEG_QUALITY = 85;
 const MAX_HEIGHT = 480;
 
 let sharpAvailable = true;
@@ -37,20 +36,20 @@ function contentHash(data: string): string {
 
 export class ImageCache {
   /**
-   * Compress an image to height=480px and write to cache directory.
+   * Compress an image and write to cache directory as PNG.
+   * PNG is used because terminal graphics protocols (Kitty, iTerm2)
+   * universally support PNG but have inconsistent JPEG support.
    * Returns an ImageRef referencing the cached file.
-   * If sharp is unavailable or processing fails, falls back to storing the original
-   * image data as-is.
    */
   static async put(image: ImageContent): Promise<ImageRef> {
     ensureCacheDir();
     const hash = contentHash(image.data);
-    const filename = `${hash}.jpg`;
+    const filename = `${hash}.png`;
     const filepath = join(CACHE_SUBDIR, filename);
 
     // Already cached — deduplication
     if (existsSync(filepath)) {
-      return { type: "image_ref", hash: filename, mimeType: "image/jpeg" };
+      return { type: "image_ref", hash: filename, mimeType: "image/png" };
     }
 
     const sharp = await getSharp();
@@ -65,22 +64,19 @@ export class ImageCache {
           pipeline = pipeline.resize({ height: MAX_HEIGHT, withoutEnlargement: true });
         }
 
-        await pipeline.jpeg({ quality: JPEG_QUALITY }).toFile(filepath);
-        return { type: "image_ref", hash: filename, mimeType: "image/jpeg" };
+        await pipeline.png().toFile(filepath);
+        return { type: "image_ref", hash: filename, mimeType: "image/png" };
       } catch (err) {
         console.error("[image-cache] sharp processing failed, storing original:", err);
         // Fall through to fallback
       }
     }
 
-    // Fallback: store original as-is
-    const mimeExt = mimeToExt(image.mimeType);
-    const fallbackFilename = `${hash}${mimeExt}`;
-    const fallbackPath = join(CACHE_SUBDIR, fallbackFilename);
-    if (!existsSync(fallbackPath)) {
-      writeFileSync(fallbackPath, Buffer.from(image.data, "base64"));
+    // Fallback: store original as-is (PNG extension, may not be valid PNG)
+    if (!existsSync(filepath)) {
+      writeFileSync(filepath, Buffer.from(image.data, "base64"));
     }
-    return { type: "image_ref", hash: fallbackFilename, mimeType: image.mimeType };
+    return { type: "image_ref", hash: filename, mimeType: "image/png" };
   }
 
   /**
@@ -93,6 +89,7 @@ export class ImageCache {
 
   /** Synchronous version of get() for use in non-async contexts. */
   static getSync(ref: ImageRef): ImageContent | null {
+    if (!ref || !ref.hash) return null;
     const filepath = join(CACHE_SUBDIR, ref.hash);
     if (!existsSync(filepath)) return null;
     try {
@@ -107,6 +104,23 @@ export class ImageCache {
   static cacheDir(): string {
     return CACHE_SUBDIR;
   }
+
+  /**
+   * Synchronous fallback: store raw image data to cache.
+   * Uses original format extension from mimeType.
+   * Returns an ImageRef with the cache filename as hash.
+   */
+  static putSync(image: ImageContent): ImageRef {
+    ensureCacheDir();
+    const hash = contentHash(image.data);
+    const mimeExt = mimeToExt(image.mimeType);
+    const filename = `${hash}${mimeExt}`;
+    const filepath = join(CACHE_SUBDIR, filename);
+    if (!existsSync(filepath)) {
+      writeFileSync(filepath, Buffer.from(image.data, "base64"));
+    }
+    return { type: "image_ref", hash: filename, mimeType: image.mimeType };
+  }
 }
 
 function mimeToExt(mime: string): string {
@@ -117,5 +131,5 @@ function mimeToExt(mime: string): string {
     "image/webp": ".webp",
     "image/bmp": ".bmp",
   };
-  return map[mime] ?? ".jpg";
+  return map[mime] ?? ".png";
 }
