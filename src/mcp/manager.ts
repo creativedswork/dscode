@@ -16,6 +16,7 @@ import { MCPClient } from "./client.js";
 import type { DriverRegistry } from "../drivers/registry.js";
 import type { Driver } from "../core/types.js";
 import { ImageCache } from "../utils/image-cache.js";
+import type { AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
 
 function extractToolResultPreview(result: unknown): string {
   if (typeof result === "string") return result;
@@ -210,6 +211,8 @@ export class MCPManager {
   private uiToolMap = new Map<string, ToolUiInfo>();
   private eventListeners = new Set<(event: MCPClientEvent) => void>();
   private driverRegistry?: DriverRegistry;
+  public visionResolve: (() => { model: any; apiKey: string } | null) | null = null;
+  public visionDescribe: ((images: ImageContent[], model: any, apiKey: string) => Promise<string>) | null = null;
 
   constructor(private configs: MCPServerConfig[]) {
     for (const cfg of configs) {
@@ -445,28 +448,83 @@ export class MCPManager {
       label: `${serverName}: ${def.title ?? def.name}`,
       description: def.description ?? "",
       parameters: convertJsonSchema(def.inputSchema),
-      execute: async (_id: string, args: any) => {
+      execute: async (_id: string, args: any, _signal?: AbortSignal, onUpdate?: AgentToolUpdateCallback) => {
         try {
           const result = await client.callTool(def.name, args) as MCPToolResult;
-          const content = await buildToolResultContent(result);
           const structuredContent = result?.structuredContent;
           const isError = Boolean(result?.isError);
-          return {
-            content,
-            details: {
-              server: serverName,
-              tool: def.name,
-              error: isError,
-              structuredContent,
-              mcpResult: result,
-            },
-            terminate: false,
-          };
+
+          const hasImages = Array.isArray(result?.content) &&
+            result.content.some((c: any) => c.type === "image" && c.data);
+
+          if (hasImages && this.visionDescribe) {
+            const rawContent = result.content as MCPToolContent[];
+            const textBlocks = rawContent
+              .filter((c) => c.type === "text" && c.text)
+              .map((c) => ({ type: "text" as const, text: (c as any).text }));
+            const imageBlocks = rawContent
+              .filter((c) => c.type === "image" && c.data)
+              .map((c) => ({ type: "image" as const, data: (c as any).data, mimeType: (c as any).mimeType ?? "image/png" } as ImageContent));
+
+            const compressedImages: ImageContent[] = [];
+            for (const img of imageBlocks) {
+              try {
+                const ref = await ImageCache.put(img);
+                const cached = ImageCache.getSync(ref);
+                compressedImages.push(cached || img);
+              } catch {
+                compressedImages.push(img);
+              }
+            }
+
+            if (onUpdate && compressedImages.length > 0) {
+              onUpdate({
+                content: [
+                  ...textBlocks,
+                  ...compressedImages,
+                  { type: "text", text: "\n[Analyzing " + imageBlocks.length + " image(s)...]" },
+                ],
+                details: { server: serverName, tool: def.name, error: isError, structuredContent, mcpResult: result },
+              });
+            }
+
+            let description = "";
+            const vision = this.visionResolve?.();
+            if (vision) {
+              try {
+                description = await this.visionDescribe(imageBlocks, vision.model, vision.apiKey);
+              } catch {
+                // fall through
+              }
+            }
+
+            if (description) {
+              return {
+                content: [
+                  ...textBlocks,
+                  ...compressedImages,
+                  { type: "text", text: "\n[Description:\n" + description + "\n]" },
+                ],
+                details: { server: serverName, tool: def.name, error: isError, structuredContent, mcpResult: result },
+                terminate: false,
+              };
+            } else {
+              return {
+                content: [
+                  ...textBlocks,
+                  ...compressedImages,
+                  { type: "text", text: "\n[Received " + imageBlocks.length + " image(s). No vision model configured.]" },
+                ],
+                details: { server: serverName, tool: def.name, error: isError, structuredContent, mcpResult: result },
+                terminate: false,
+              };
+            }
+          }
+
+          const content = await buildToolResultContent(result);
+          return { content, details: { server: serverName, tool: def.name, error: isError, structuredContent, mcpResult: result }, terminate: false };
         } catch (err: any) {
-          return {
-            content: [{ type: "text", text: `Error: ${err.message}` }],
-            details: { server: serverName, tool: def.name, error: true },
-          };
+          return { content: [{ type: "text", text: `Error: ${err.message}` }], details: { server: serverName, tool: def.name, error: true } };
         }
       },
     };
