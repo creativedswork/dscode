@@ -45,6 +45,7 @@ export class Harness {
   private mcpEventUnsubscribe?: () => void;
   private shuttingDown = false;
   private turnIndex = 0;
+  private pendingToolImages: ImageContent[] = [];
 
   constructor(config: HarnessConfig) {
     this.config = config;
@@ -134,9 +135,8 @@ export class Harness {
         } catch (err) {
           console.error("[harness] afterToolCall error:", err);
         }
-        return undefined as AfterToolCallResult | undefined;
-      },
-    });
+        return undefined;
+      },    });
 
     this.bindEvents();
     this.sessionManager.createSession(this.config.provider, this.config.modelId);
@@ -867,6 +867,93 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
     }
   }
 
+
+  private async processDeferredToolImages(): Promise<void> {
+    const images = this.pendingToolImages;
+    if (images.length === 0) return;
+
+    // Check if main model supports images natively
+    const mainModel = resolveModel(this.config.provider, this.config.modelId);
+    if (mainModel.input.includes("image")) return;
+
+    let description = "";
+    let visionUsed = false;
+
+    // Try vision model
+    const vision = this.resolveVisionModel();
+    if (vision) {
+      try {
+        this.ui.addInfo(`⏱ Analyzing ${images.length} tool result image(s) with vision model (${vision.model.name})...`);
+        description = await this.describeImagesViaVisionModel(images, vision.model, vision.apiKey);
+        visionUsed = true;
+
+        // Log VisionMessage
+        const cachedRefs = await Promise.all(images.map((img) => ImageCache.put(img)));
+        const msgs = this.agent.state.messages as any[];
+        const msgId = this.findLastUserMessageIndex(msgs);
+        const vMsg: VisionMessage = {
+          turnIndex: this.turnIndex,
+          messageIndex: msgId,
+          images: cachedRefs,
+          prompt: "请详细描述这张图片的内容，包括文字、布局和视觉元素。",
+          description,
+          modelProvider: vision.model.provider ?? this.config.vision?.provider ?? "",
+          modelId: vision.model.id ?? this.config.vision?.model ?? "",
+          timestamp: Date.now(),
+        };
+        this.sessionManager.setVisionMessages([...this.sessionManager.visionMessages, vMsg]);
+      } catch (err) {
+        this.ui.addInfo(`❌ Vision model failed: ${err instanceof Error ? err.message : String(err)}. Falling back to OCR...`);
+      }
+    }
+
+    // Fall back to OCR if vision not available or failed
+    if (!visionUsed) {
+      try {
+        this.ui.addInfo(`⏱ Extracting text from ${images.length} tool result image(s) with OCR...`);
+        const ocrResult: OcrResult = await ocrImages(images);
+        if (ocrResult.hasText) {
+          description = ocrResult.content;
+        }
+      } catch (err) {
+        this.ui.addInfo(`❌ OCR failed: ${err instanceof Error ? err.message : String(err)}.`);
+      }
+    }
+
+    // Clear pending images to prevent re-processing
+    this.pendingToolImages = [];
+
+    // Show processing state for the agent turn
+    this.ui.setProcessing(true);
+
+    // Inject description into the conversation
+    if (description) {
+      this.ui.addInfo(`✅ Image analysis complete, sending to main model...`);
+      const steerMsg = {
+        role: "user" as const,
+        content: `<tool_image_description>\n${description}\n</tool_image_description>\n\n(以上是对工具返回图片的描述，请基于此描述继续回答)`,
+        timestamp: Date.now(),
+      };
+      this.agent.steer(steerMsg);
+      try {
+        await this.agent.continue();
+      } catch {
+        this.ui.setProcessing(false);
+      }
+    } else {
+      const steerMsg = {
+        role: "user" as const,
+        content: `工具返回了 ${images.length} 张图片。当前模型不支持图片输入，且未配置 vision model。请考虑配置 vision model 或在支持图片的模型下重新运行。`,
+        timestamp: Date.now(),
+      };
+      this.agent.steer(steerMsg);
+      try {
+        await this.agent.continue();
+      } catch {
+        this.ui.setProcessing(false);
+      }
+    }
+  }
   private bindEvents(): void {
     this.agent.subscribe((event) => {
       switch (event.type) {
@@ -895,6 +982,17 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
             effectiveIsError,
           );
           this.checkAndRegisterApp(event.toolName, event.result);
+          // Collect images from tool results for deferred vision/OCR processing
+          const result = event.result as any;
+          const content = result?.content;
+          if (Array.isArray(content)) {
+            for (const item of content) {
+              if (item?.type === "image" && item?.data) {
+                this.pendingToolImages.push({ type: "image", data: item.data, mimeType: item.mimeType ?? "image/png" });
+              }
+            }
+          }
+          break;
           break;
         }
       }
@@ -910,6 +1008,7 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
         }
         if (event.type === "agent_start") {
           this.ui.startAssistantMessage();
+          this.pendingToolImages = [];
         }
         if (event.type === "turn_end") {
           this.ui.finishAssistantMessage();
@@ -917,11 +1016,12 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
           if (msg?.stopReason === "length") {
             this.ui.addInfo("Output truncated (hit max_tokens). Continue from where you left off.");
           }
-          // Turn-level errors are handled by promptAndSave's retry loop.
-          // Only display the error here if promptAndSave is not involved.
           if (msg?.stopReason === "error" && msg?.errorMessage) {
             // Don't display here — promptAndSave handles UI and retry logic.
-            // This avoids double-displaying errors during retries.
+          }
+          // Process any tool images that were collected during this turn
+          if (this.pendingToolImages.length > 0) {
+            this.processDeferredToolImages();
           }
         }
       } catch (err) {

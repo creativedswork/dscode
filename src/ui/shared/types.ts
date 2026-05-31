@@ -87,6 +87,7 @@ export interface ToolCallEntry {
   args: string;
   result: string;
   isError: boolean;
+  images?: ImageAttachment[];
   mcpApp?: McpAppInfo;
 }
 
@@ -155,7 +156,7 @@ export type ServerEvent =
   | { type: "thinking_delta"; delta: string }
   | { type: "text_delta"; delta: string }
   | { type: "tool_start"; name: string; args: unknown }
-  | { type: "tool_end"; name: string; result: string; isError: boolean }
+  | { type: "tool_end"; name: string; result: string; isError: boolean; images?: ImageAttachment[] }
   | { type: "assistant_end" }
   | { type: "info"; text: string }
   | { type: "error"; text: string }

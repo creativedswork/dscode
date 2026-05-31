@@ -1,5 +1,6 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
+import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
 
 import type {
   MCPClientEvent,
@@ -14,8 +15,9 @@ import type { ToolUiInfo, McpUiResourceCsp, McpUiResourcePermissions } from "./a
 import { MCPClient } from "./client.js";
 import type { DriverRegistry } from "../drivers/registry.js";
 import type { Driver } from "../core/types.js";
+import { ImageCache } from "../utils/image-cache.js";
 
-function extractToolResultText(result: unknown): string {
+function extractToolResultPreview(result: unknown): string {
   if (typeof result === "string") return result;
 
   if (result && typeof result === "object") {
@@ -47,6 +49,40 @@ function extractToolResultText(result: unknown): string {
   }
 
   return JSON.stringify(result, null, 2);
+}
+
+async function buildToolResultContent(result: unknown): Promise<(TextContent | ImageContent)[]> {
+  if (typeof result === "string") {
+    return [{ type: "text", text: result.slice(0, 50000) }];
+  }
+
+  if (result && typeof result === "object") {
+    const obj = result as MCPToolResult;
+    if (Array.isArray(obj.content)) {
+      const items: (TextContent | ImageContent)[] = [];
+      for (const item of obj.content as MCPToolContent[]) {
+        if (item.type === "text" && item.text) {
+          items.push({ type: "text", text: item.text });
+        } else if (item.type === "image" && item.data) {
+          try {
+            const img: ImageContent = { type: "image", data: item.data, mimeType: item.mimeType ?? "image/png" };
+            const cached = await ImageCache.put(img);
+            const compressed = ImageCache.getSync(cached);
+            if (compressed) {
+              items.push(compressed);
+            } else {
+              items.push(img);
+            }
+          } catch {
+            items.push({ type: "image", data: item.data, mimeType: item.mimeType ?? "image/png" });
+          }
+        }
+      }
+      if (items.length > 0) return items;
+    }
+  }
+
+  return [{ type: "text", text: JSON.stringify(result, null, 2).slice(0, 50000) }];
 }
 
 function convertJsonSchema(inputSchema: MCPJsonSchema): any {
@@ -412,11 +448,11 @@ export class MCPManager {
       execute: async (_id: string, args: any) => {
         try {
           const result = await client.callTool(def.name, args) as MCPToolResult;
-          const text = extractToolResultText(result);
+          const content = await buildToolResultContent(result);
           const structuredContent = result?.structuredContent;
           const isError = Boolean(result?.isError);
           return {
-            content: [{ type: "text", text: text.slice(0, 50000) }],
+            content,
             details: {
               server: serverName,
               tool: def.name,

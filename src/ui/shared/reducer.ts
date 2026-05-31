@@ -76,6 +76,7 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
             args: typeof event.args === "string" ? event.args : JSON.stringify(event.args).slice(0, 80),
             result: "",
             isError: false,
+            images: [],
           },
         ];
         return { tools };
@@ -87,7 +88,7 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
       if (last?.isStreaming) {
         const tools = (last.tools ?? []).map((t) =>
           t.name === event.name && !t.result
-            ? { ...t, result: event.result, isError: event.isError }
+            ? { ...t, result: event.result, isError: event.isError, images: (event as any).images ?? t.images }
             : t,
         );
         next[next.length - 1] = { ...last, tools };

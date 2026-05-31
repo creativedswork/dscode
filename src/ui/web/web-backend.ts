@@ -27,7 +27,21 @@ import type {
   McpAppInfo,
   ToolCallEntry,
 } from "./protocol.js";
+import type { ImageAttachment } from "./protocol.js";
 
+function extractImagesFromToolResult(result: unknown): ImageAttachment[] | undefined {
+  if (!result || typeof result !== "object") return undefined;
+  const r = result as Record<string, unknown>;
+  const content = r.content;
+  if (!Array.isArray(content)) return undefined;
+  const images: ImageAttachment[] = [];
+  for (const item of content) {
+    if (item && typeof item === "object" && (item as any).type === "image" && (item as any).data) {
+      images.push({ data: (item as any).data, mimeType: (item as any).mimeType ?? "image/png" });
+    }
+  }
+  return images.length > 0 ? images : undefined;
+}
 export interface WebUiOptions {
   port: number;
   harness: Harness;
@@ -160,6 +174,7 @@ export class WebUiBackend implements UiBackend {
 
   toolEnd(name: string, result: unknown, isError: boolean): void {
     const resultStr = typeof result === "string" ? result.slice(0, 5000) : JSON.stringify(result).slice(0, 5000);
+    const images = extractImagesFromToolResult(result);
     if (this.currentAssistant) {
       this.currentAssistant.tools = this.currentAssistant.tools.filter((t) => t.name !== name || t.result !== "");
       this.currentAssistant.tools.push({
@@ -167,11 +182,11 @@ export class WebUiBackend implements UiBackend {
         args: "",
         result: resultStr,
         isError,
+        images,
       });
     }
-    this.broadcast({ type: "tool_end", name, result: resultStr, isError });
+    this.broadcast({ type: "tool_end", name, result: resultStr, isError, images });
   }
-
   finishAssistantMessage(): void {
     this.currentAssistant = null;
     this.broadcast({ type: "assistant_end" });

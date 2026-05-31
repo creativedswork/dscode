@@ -183,10 +183,21 @@ export class ConversationView {
     if (entry) {
       entry.result = result;
       entry.isError = isError;
+
+      // Extract and render images from tool result
+      if (result && typeof result === "object") {
+        const r = result as Record<string, unknown>;
+        if (Array.isArray(r.content)) {
+          for (const item of r.content) {
+            if (item && typeof item === "object" && (item as any).type === "image" && (item as any).data) {
+              this.addInlineImage((item as any).data, (item as any).mimeType ?? "image/png");
+            }
+          }
+        }
+      }
     }
     this.renderLive();
   }
-
   finishAssistantMessage(): void {
     const lines: string[] = [];
     if (this.thinkingBuffer) {
