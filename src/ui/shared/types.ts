@@ -164,7 +164,7 @@ export type ServerEvent =
   | { type: "permission_prompt"; toolName: string; preview: string }
   | { type: "loader"; state: "show" | "hide"; text?: string }
   | { type: "config"; data: ConfigData }
-  | { type: "sessions"; data: SessionInfo[] }
+  | { type: "sessions"; data: SessionInfo[]; currentSessionId?: string }
   | { type: "mcp_state"; servers: McpServerInfo[] }
   | { type: "model"; name: string }
   | { type: "slash_result"; text: string }

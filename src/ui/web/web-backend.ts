@@ -362,6 +362,7 @@ export class WebUiBackend implements UiBackend {
             text: err instanceof Error ? err.message : String(err),
           });
         }
+        this.pushSessionList(client);
         break;
       }
 
@@ -460,6 +461,9 @@ export class WebUiBackend implements UiBackend {
 
       executeSlashCommand(text, ctx, mockTui as any);
 
+      // Push updated session list so sidebar auto-refreshes
+      this.pushSessionList(client);
+
       setTimeout(() => {
         client.send({ type: "config", data: this.buildConfigData() });
       }, 100);
@@ -469,6 +473,28 @@ export class WebUiBackend implements UiBackend {
         text: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  private pushSessionList(client: WebSocketClient): void {
+    const sessionManager = (this.harness as any).sessionManager;
+    if (!sessionManager) return;
+    const sessions = sessionManager.listSessions();
+    const currentId = sessionManager.getCurrentSessionId?.() ?? undefined;
+    client.send({
+      type: "sessions",
+      currentSessionId: currentId,
+      data: sessions.slice(0, 50).map((s: any) => ({
+        id: s.id,
+        title: s.title,
+        updatedAt: s.updatedAt,
+        createdAt: s.createdAt,
+        messageCount: s.messageCount,
+        modelProvider: s.modelProvider,
+        modelId: s.modelId,
+        projectPath: s.projectPath || "",
+        preview: s.preview || "",
+      })),
+    });
   }
 
   private async handleConfig(

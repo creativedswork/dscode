@@ -39,6 +39,7 @@ export function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<"sessions" | "mcp" | "settings">("sessions");
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
   const [fileListItems, setFileListItems] = useState<FileListItem[]>([]);
   const [fileListPrefix, setFileListPrefix] = useState("");
@@ -97,7 +98,7 @@ export function App() {
           turnStartRef.current = 0;
         }
         break;
-      case "sessions": setSessions(event.data); break;
+      case "sessions": setSessions(event.data); setCurrentSessionId((event as any).currentSessionId ?? null); break;
       case "mcp_state": setMcpServers(event.servers); break;
       case "model": setModel(event.name); break;
       case "file_list_result": setFileListItems(event.items); setFileListPrefix(event.prefix); break;
@@ -150,7 +151,7 @@ export function App() {
       </header>
       <div className="flex flex-1 overflow-hidden">
         <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} activeTab={sidebarTab} onTabChange={setSidebarTab}
-          sessions={sessions} mcpServers={mcpServers} config={config}
+          sessions={sessions} currentSessionId={currentSessionId} mcpServers={mcpServers} config={config}
           onSessionAction={handleSessionAction} onMcpAction={handleMcpAction} onMcpServerAction={handleMcpAction}
           onConfigChange={handleConfigChange} onNewSession={handleNewSession} />
         <main className="flex-1 flex flex-col min-w-0">

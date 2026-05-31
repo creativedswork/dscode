@@ -9,6 +9,7 @@ interface SidebarProps {
   activeTab: "sessions" | "mcp" | "settings";
   onTabChange: (tab: "sessions" | "mcp" | "settings") => void;
   sessions: SessionInfo[];
+  currentSessionId: string | null;
   mcpServers: McpServerInfo[];
   config: ConfigData | null;
   onSessionAction: (action: "list" | "save" | "load" | "delete", id?: string) => void;
@@ -24,6 +25,7 @@ export function Sidebar({
   activeTab,
   onTabChange,
   sessions,
+  currentSessionId,
   mcpServers,
   config,
   onSessionAction,
@@ -100,6 +102,7 @@ export function Sidebar({
           {activeTab === "sessions" && (
             <SessionsPanel
               sessions={sessions}
+              currentSessionId={currentSessionId}
               onAction={onSessionAction}
               onNewSession={onNewSession}
             />
@@ -127,10 +130,12 @@ export function Sidebar({
 
 function SessionsPanel({
   sessions,
+  currentSessionId,
   onAction,
   onNewSession,
 }: {
   sessions: SessionInfo[];
+  currentSessionId: string | null;
   onAction: (action: "list" | "save" | "load" | "delete", id?: string) => void;
   onNewSession: () => void;
 }) {
@@ -156,16 +161,21 @@ function SessionsPanel({
         </p>
       ) : (
         <div className="space-y-1">
-          {sessions.map((s) => (
+          {sessions.map((s) => {
+            const isActive = s.id === currentSessionId;
+            return (
             <div
               key={s.id}
-              className="flex items-center justify-between p-2 transition-colors group"
-              style={{ borderRadius: "8px" }}
+              className={`flex items-center justify-between p-2 transition-colors group`}
+              style={{
+                borderRadius: "8px",
+                backgroundColor: isActive ? "var(--color-accent-bg)" : "transparent",
+              }}
               onMouseEnter={(e) => {
-                (e.currentTarget as HTMLElement).style.backgroundColor = "var(--color-surface-hover)";
+                if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "var(--color-surface-hover)";
               }}
               onMouseLeave={(e) => {
-                (e.currentTarget as HTMLElement).style.backgroundColor = "transparent";
+                (e.currentTarget as HTMLElement).style.backgroundColor = isActive ? "var(--color-accent-bg)" : "transparent";
               }}
             >
               <button
@@ -188,7 +198,8 @@ function SessionsPanel({
                 <Trash size={14} weight="bold" />
               </button>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
@@ -433,19 +444,21 @@ function SettingsPanel({
           className="text-xs mb-1 block"
           style={{ color: "var(--color-text-muted)" }}
         >
-          Thinking Level
+          Thinking
         </label>
         <select
           value={thinkingLevel}
           onChange={(e) => {
-            setThinkingLevel(e.target.value);
-            onChange("set_thinking", e.target.value);
+            const value = e.target.value;
+            setThinkingLevel(value);
+            onChange("set_thinking", value);
           }}
           style={selectStyle}
         >
-          {["off", "minimal", "low", "medium", "high", "xhigh"].map((l) => (
-            <option key={l} value={l}>{l}</option>
-          ))}
+          <option value="off">Off</option>
+          <option value="low">Low</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
         </select>
       </div>
 
@@ -457,24 +470,24 @@ function SettingsPanel({
         >
           API Key
         </label>
-        <div className="flex gap-2">
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            className="input text-xs flex-1"
-            placeholder={config.apiKey || "sk-..."}
-          />
-          <button
-            onClick={() => {
-              if (apiKey) onChange("set_key", apiKey);
-              setApiKey("");
-            }}
-            className="btn-primary text-xs px-3"
-          >
-            Set
-          </button>
-        </div>
+        <input
+          type="password"
+          value={apiKey}
+          placeholder={config.apiKey || "Enter API key"}
+          onChange={(e) => setApiKey(e.target.value)}
+          onBlur={() => {
+            if (apiKey.trim()) onChange("set_key", apiKey.trim());
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && apiKey.trim()) {
+              onChange("set_key", apiKey.trim());
+            }
+          }}
+          style={{
+            ...selectStyle,
+            fontFamily: "Geist Mono, JetBrains Mono, monospace",
+          }}
+        />
       </div>
 
       {/* Project Path */}
@@ -485,157 +498,114 @@ function SettingsPanel({
         >
           Project Path
         </label>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={projectPath}
-            onChange={(e) => setProjectPath(e.target.value)}
-            className="input text-xs flex-1"
-            placeholder={config.projectPath}
-          />
-          <button
-            onClick={() => {
-              if (projectPath) onChange("set_project_path", projectPath);
-            }}
-            className="btn-primary text-xs px-3"
-          >
-            Set
-          </button>
-        </div>
+        <input
+          type="text"
+          value={projectPath}
+          placeholder={config.projectPath}
+          onChange={(e) => setProjectPath(e.target.value)}
+          onBlur={() => {
+            if (projectPath.trim() && projectPath !== config.projectPath) {
+              onChange("set_project_path", projectPath.trim());
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && projectPath.trim() && projectPath !== config.projectPath) {
+              onChange("set_project_path", projectPath.trim());
+            }
+          }}
+          style={{
+            ...selectStyle,
+            fontFamily: "Geist Mono, JetBrains Mono, monospace",
+          }}
+        />
       </div>
 
-      {/* Vision Model Section */}
-      {config.vision != null || showVisionForm ? (
-        <div
-          className="pt-2 space-y-3"
-          style={{ borderTop: "1px solid var(--color-border)" }}
-        >
-          <div className="flex items-center justify-between">
-            <p
-              className="text-xs"
-              style={{ color: "var(--color-text-muted)" }}
-            >
-              Vision Model
-            </p>
-            {!showVisionForm && (
-              <button
-                onClick={() => onChange("set_vision_delete", "")}
-                className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded-btn transition-colors"
-                style={{ color: "var(--color-error-text)" }}
-              >
-                <Trash size={12} weight="bold" />
-                Delete
-              </button>
-            )}
-          </div>
-
-          <div>
-            <label
-              className="text-xs mb-1 block"
-              style={{ color: "var(--color-text-muted)" }}
-            >
-              Vision Provider
-            </label>
-            <select
-              value={config.vision?.provider ?? ""}
-              onChange={(e) => {
-                if (e.target.value) onChange("set_vision_provider", e.target.value);
-              }}
-              style={selectStyle}
-            >
-              <option value="">(not set)</option>
-              {config.visionProviders.map((p) => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label
-              className="text-xs mb-1 block"
-              style={{ color: "var(--color-text-muted)" }}
-            >
-              Vision Model
-            </label>
-            <select
-              value={config.vision?.model ?? ""}
-              onChange={(e) => {
-                if (e.target.value) onChange("set_vision_model", e.target.value);
-              }}
-              style={selectStyle}
-            >
-              <option value="">(not set)</option>
-              {config.visionModels.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label
-              className="text-xs mb-1 block"
-              style={{ color: "var(--color-text-muted)" }}
-            >
-              Vision Key
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="password"
-                id="vision-key-input"
-                className="input text-xs flex-1"
-                placeholder={config.vision?.key ? "sk-***hidden***" : "sk-..."}
-              />
-              <button
-                onClick={() => {
-                  const input = document.getElementById("vision-key-input") as HTMLInputElement;
-                  if (input?.value) {
-                    onChange("set_vision_key", input.value);
-                    input.value = "";
-                  }
-                }}
-                className="btn-primary text-xs px-3"
-              >
-                Set
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : (
+      {/* Vision */}
+      {!showVisionForm && !config.vision && (
         <button
           onClick={() => setShowVisionForm(true)}
-          className="btn-secondary text-xs w-full flex items-center justify-center gap-2"
+          className="w-full text-left px-3 py-1.5 text-sm transition-colors duration-200 flex items-center gap-2"
+          style={{ borderRadius: "8px" }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--color-surface-hover)"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
         >
           <Plus size={14} weight="bold" style={{ color: "var(--color-accent)" }} />
-          Add Vision Model
+          <span style={{ color: "var(--color-accent)" }}>Add Vision Model</span>
         </button>
       )}
 
-      {/* Info */}
-      <div
-        className="pt-2 space-y-1 text-xs"
-        style={{
-          borderTop: "1px solid var(--color-border)",
-          color: "var(--color-text-muted)",
-        }}
-      >
-        <div className="flex justify-between">
-          <span>Provider</span>
-          <span style={{ color: "var(--color-text)" }}>{config.provider}</span>
+      {(showVisionForm || config.vision) && (
+        <div className="space-y-2 p-3" style={{ borderRadius: "8px", border: "1px solid var(--color-border)" }}>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium" style={{ color: "var(--color-text)" }}>Vision Model</span>
+            <button
+              onClick={() => {
+                setShowVisionForm(false);
+                onChange("set_vision_delete", "");
+              }}
+              className="text-xs"
+              style={{ color: "var(--color-error-text)" }}
+            >
+              Remove
+            </button>
+          </div>
+
+          {showVisionForm && (
+            <>
+              <div>
+                <label className="text-xs mb-1 block" style={{ color: "var(--color-text-muted)" }}>Provider</label>
+                <select
+                  value={config.vision?.provider ?? ""}
+                  onChange={(e) => onChange("set_vision_provider", e.target.value)}
+                  style={selectStyle}
+                >
+                  <option value="">Select...</option>
+                  {config.visionProviders.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs mb-1 block" style={{ color: "var(--color-text-muted)" }}>Model</label>
+                <select
+                  value={config.vision?.model ?? ""}
+                  onChange={(e) => onChange("set_vision_model", e.target.value)}
+                  style={selectStyle}
+                >
+                  <option value="">Select...</option>
+                  {config.visionModels.map((m) => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs mb-1 block" style={{ color: "var(--color-text-muted)" }}>API Key</label>
+                <input
+                  type="password"
+                  placeholder="Enter vision API key"
+                  defaultValue={config.vision?.key ?? ""}
+                  onBlur={(e) => {
+                    if (e.target.value.trim()) onChange("set_vision_key", e.target.value.trim());
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && (e.target as HTMLInputElement).value.trim()) {
+                      onChange("set_vision_key", (e.target as HTMLInputElement).value.trim());
+                    }
+                  }}
+                  style={{ ...selectStyle, fontFamily: "Geist Mono, JetBrains Mono, monospace" }}
+                />
+              </div>
+            </>
+          )}
+
+          {!showVisionForm && config.vision && (
+            <div className="text-xs space-y-0.5" style={{ color: "var(--color-text-muted)" }}>
+              <div>Provider: {config.vision.provider}</div>
+              <div>Model: {config.vision.model}</div>
+            </div>
+          )}
         </div>
-        <div className="flex justify-between">
-          <span>Project</span>
-          <span
-            className="font-mono truncate ml-2 max-w-[150px]"
-            style={{ color: "var(--color-text)" }}
-          >
-            {config.projectPath}
-          </span>
-        </div>
-        <div className="flex justify-between">
-          <span>Max Tokens</span>
-          <span style={{ color: "var(--color-text)" }}>{config.maxTokens}</span>
-        </div>
-      </div>
+      )}
     </div>
   );
 }

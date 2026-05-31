@@ -88,6 +88,7 @@ export class SessionStore {
     const projPath = join(this.projectDir, `${id}.json`);
     const tmp = projPath + ".tmp";
 
+    mkdirSync(this.projectDir, { recursive: true });
     writeFileSync(tmp, JSON.stringify(session, null, 2));
     renameSync(tmp, projPath);
 
@@ -186,7 +187,6 @@ export class SessionStore {
       return this.rebuildIndex(dir);
     }
   }
-
   private writeIndex(dir: string, index: SessionMetadata[]): void {
     const indexPath = join(dir, "index.json");
     try {

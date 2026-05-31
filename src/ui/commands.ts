@@ -212,8 +212,14 @@ const COMMANDS: SlashCommandDef[] = [
   },
   {
     name: "reset",
-    description: "Clear conversation history",
+    description: "Clear conversation history and start a new session",
     execute: async (_args, ctx) => {
+      // Save the current session before resetting
+      ctx.sessionManager.trySaveSession(ctx.agent);
+      // Create and persist a new empty session so it shows in the list
+      ctx.sessionManager.createSession(ctx.config.provider, ctx.config.modelId);
+      ctx.sessionManager.persistEmptySession();
+      // Clear agent state and UI
       ctx.agent.reset();
       ctx.tui.clearConversationView();
     },

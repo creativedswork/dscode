@@ -91,6 +91,16 @@ export class SessionManager {
     return this.current;
   }
 
+  persistEmptySession(): void {
+    if (!this.current) return;
+    const session: SerializedSession = {
+      version: 1,
+      metadata: this.current,
+      messages: [],
+    };
+    this.store.save(session);
+  }
+
   saveSession(agent: Agent): void {
     if (!this.current) return;
     const messages = agent.state.messages as any[];
