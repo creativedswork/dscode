@@ -43,3 +43,5 @@ Upon successful completion, the `edit` tool SHALL include a note in its output t
 - **WHEN** `edit` successfully modifies a file
 - **THEN** the output text SHALL contain a notice equivalent to "anchors outside the displayed diff may be stale. Re-read if you need to edit other regions."
 
+
+The contract SHALL also include `baseline_continuity` (one of `"clean"` or `"mixed"`) indicating whether the file's writer history is consistent.

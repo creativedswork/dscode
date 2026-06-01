@@ -149,6 +149,7 @@ const ReplaceLineOp = Type.Object({
   hash: Type.String({ description: "Hash of the line to replace" }),
   content: Type.String({ description: "New content for the line" }),
   occurrence: Type.Optional(Type.Number({ description: "When hash matches multiple lines, specifies which occurrence (1-indexed) to target. Omit if hash is unique." })),
+  line: Type.Optional(Type.Number({ description: "Advisory line number from read_file snapshot. When hash is ambiguous, selects the candidate closest to this line." })),
 });
 
 const ReplaceRangeOp = Type.Object({
@@ -163,6 +164,7 @@ const InsertAfterOp = Type.Object({
   hash: Type.String({ description: "Hash of the line to insert after" }),
   content: Type.String({ description: "Content to insert (use \\n for multiple lines)" }),
   occurrence: Type.Optional(Type.Number({ description: "When hash matches multiple lines, specifies which occurrence (1-indexed) to target. Omit if hash is unique." })),
+  line: Type.Optional(Type.Number({ description: "Advisory line number from read_file snapshot. When hash is ambiguous, selects the candidate closest to this line." })),
 });
 
 const InsertBeforeOp = Type.Object({
@@ -170,12 +172,14 @@ const InsertBeforeOp = Type.Object({
   hash: Type.String({ description: "Hash of the line to insert before" }),
   content: Type.String({ description: "Content to insert (use \\n for multiple lines)" }),
   occurrence: Type.Optional(Type.Number({ description: "When hash matches multiple lines, specifies which occurrence (1-indexed) to target. Omit if hash is unique." })),
+  line: Type.Optional(Type.Number({ description: "Advisory line number from read_file snapshot. When hash is ambiguous, selects the candidate closest to this line." })),
 });
 
 const DeleteLineOp = Type.Object({
   op: Type.Literal("delete_line"),
   hash: Type.String({ description: "Hash of the line to delete" }),
   occurrence: Type.Optional(Type.Number({ description: "When hash matches multiple lines, specifies which occurrence (1-indexed) to target. Omit if hash is unique." })),
+  line: Type.Optional(Type.Number({ description: "Advisory line number from read_file snapshot. When hash is ambiguous, selects the candidate closest to this line." })),
 });
 
 const DeleteRangeOp = Type.Object({
@@ -194,11 +198,11 @@ const EditOperation = Type.Union([
 ]);
 
 export type EditOperation =
-  | { op: "replace_line"; hash: string; content: string; occurrence?: number }
+  | { op: "replace_line"; hash: string; content: string; occurrence?: number; line?: number }
   | { op: "replace_range"; start_hash: string; end_hash: string; content: string }
-  | { op: "insert_after"; hash: string; content: string; occurrence?: number }
-  | { op: "insert_before"; hash: string; content: string; occurrence?: number }
-  | { op: "delete_line"; hash: string; occurrence?: number }
+  | { op: "insert_after"; hash: string; content: string; occurrence?: number; line?: number }
+  | { op: "insert_before"; hash: string; content: string; occurrence?: number; line?: number }
+  | { op: "delete_line"; hash: string; occurrence?: number; line?: number }
   | { op: "delete_range"; start_hash: string; end_hash: string };
 
 const editParams = Type.Object({
@@ -259,6 +263,7 @@ function resolveAnchor(
   displayHash: string,
   ctx: ResolutionContext,
   occurrence?: number,
+  line?: number,
 ): ResolvedAnchor | { error: string; candidates: CandidateInfo[] } {
   const resHashes = ctx.displayIndex.get(displayHash);
 
@@ -267,11 +272,12 @@ function resolveAnchor(
     return { error: "anchor_stale", candidates: [] };
   }
 
-  // Step 2: display hash maps to exactly one resolution hash → unique
+  // Step 2: display hash maps to exactly one resolution hash
   if (resHashes.length === 1) {
     const lineNums = ctx.resolutionMap.get(resHashes[0])!;
-    const lineNum = resolveSingleLineTarget(lineNums, occurrence);
-    return { lineNum, level: "display" };
+    const resolved = resolveSingleLineTarget(lineNums, occurrence, line);
+    if (resolved !== null) return { lineNum: resolved, level: "display" };
+    // line-hint was ambiguous (equidistant) — collect candidates and fall through to error
   }
 
   // Step 3: multiple resolution hashes — try occurrence disambiguation
@@ -286,7 +292,7 @@ function resolveAnchor(
     }
   }
 
-  // Step 4: all disambiguation failed
+  // Collect all candidates for error reporting and line-hint disambiguation
   const candidates: CandidateInfo[] = [];
   for (const rh of resHashes) {
     const lineNums = ctx.resolutionMap.get(rh) ?? [];
@@ -303,15 +309,70 @@ function resolveAnchor(
     return { lineNum: candidates[0].line, level: "resolution" };
   }
 
+  // Step 4: line-hint disambiguation — pick candidate closest to advisory line number
+  if (line !== undefined && candidates.length > 0) {
+    candidates.sort((a, b) => a.line - b.line);
+    let bestIdx = 0;
+    let bestDist = Math.abs(candidates[0].line - line);
+    let unique = true;
+    for (let i = 1; i < candidates.length; i++) {
+      const dist = Math.abs(candidates[i].line - line);
+      if (dist < bestDist) { bestIdx = i; bestDist = dist; unique = true; }
+      else if (dist === bestDist) { unique = false; }
+    }
+    if (unique) {
+      return { lineNum: candidates[bestIdx].line, level: "context" };
+    }
+  }
+
+  // Step 5: context-augmented matching — each candidate gets a unique hash from surrounding lines.
+  // If all context hashes are distinct AND line hint is provided, use line to select.
+  if (line !== undefined && candidates.length > 1) {
+    const ctxHashes = candidates.map(c => ({
+      ...c,
+      ctxHash: computeContextHash(ctx.lines, c.line - 1),
+    }));
+    // Check all context hashes are unique
+    const seen = new Set<string>();
+    let allUnique = true;
+    for (const c of ctxHashes) { if (seen.has(c.ctxHash)) { allUnique = false; break; } seen.add(c.ctxHash); }
+    if (allUnique) {
+      // Use line hint to pick among uniquely-contextualized candidates
+      let best = ctxHashes[0];
+      let bestDist = Math.abs(best.line - line);
+      let unique = true;
+      for (let i = 1; i < ctxHashes.length; i++) {
+        const dist = Math.abs(ctxHashes[i].line - line);
+        if (dist < bestDist) { best = ctxHashes[i]; bestDist = dist; unique = true; }
+        else if (dist === bestDist) { unique = false; }
+      }
+      if (unique) return { lineNum: best.line, level: "context" };
+    }
+  }
+
   return { error: "anchor_prefix_ambiguous", candidates };
 }
 
 function resolveSingleLineTarget(
   lineNums: number[],
   occurrence?: number,
-): number {
+  line?: number,
+): number | null {
   if (occurrence !== undefined && occurrence >= 1 && occurrence <= lineNums.length) {
     return lineNums[occurrence - 1];
+  }
+  // Line-hint: pick closest candidate
+  if (line !== undefined && lineNums.length > 1) {
+    let best = lineNums[0];
+    let bestDist = Math.abs(best - line);
+    let unique = true;
+    for (let i = 1; i < lineNums.length; i++) {
+      const dist = Math.abs(lineNums[i] - line);
+      if (dist < bestDist) { best = lineNums[i]; bestDist = dist; unique = true; }
+      else if (dist === bestDist) { unique = false; }
+    }
+    if (unique) return best;
+    return null; // equidistant — caller should reject
   }
   return lineNums[0];
 }
@@ -328,6 +389,52 @@ function computeNeighborAnchors(lineNum: number, ctx: ResolutionContext): string
   }
   return result;
 }
+
+/**
+ * Proximity-based resolution for range endpoints.
+ * When one endpoint is unique and the other is ambiguous, resolve the ambiguous
+ * one to the closest candidate in the correct direction.
+ * Example: start=unique(line 182), end=ambiguous(`}` matches 50 lines)
+ *   → resolve end to the nearest `}` at or after line 182.
+ */
+function tryProximityResolve(
+  startHash: string,
+  endHash: string,
+  ctx: ResolutionContext,
+  resolvedMap: Map<string, ResolvedAnchor>,
+  ambiguousAnchors: AmbiguousAnchor[],
+): void {
+  const startRes = resolvedMap.get(startHash);
+  const endRes = resolvedMap.get(endHash);
+  const unresolvedStart = !startRes || "error" in startRes ? startHash : null;
+  const unresolvedEnd = !endRes || "error" in endRes ? endHash : null;
+  if (!unresolvedStart && !unresolvedEnd) return;
+  if (unresolvedStart && unresolvedEnd) return;
+  const unresolvedHash = unresolvedStart ?? unresolvedEnd!;
+  const resolvedLineNum = unresolvedStart
+    ? (endRes as ResolvedAnchor).lineNum
+    : (startRes as ResolvedAnchor).lineNum;
+  const isStart = unresolvedStart !== null;
+  const ambIdx = ambiguousAnchors.findIndex(a => a.hash === unresolvedHash);
+  if (ambIdx < 0) return;
+  const candidates = ambiguousAnchors[ambIdx].candidates.slice().sort((a, b) => a - b);
+  if (candidates.length === 0) return;
+  let best: number | null = null;
+  if (isStart) {
+    for (let i = candidates.length - 1; i >= 0; i--) {
+      if (candidates[i] <= resolvedLineNum) { best = candidates[i]; break; }
+    }
+  } else {
+    for (const c of candidates) {
+      if (c >= resolvedLineNum) { best = c; break; }
+    }
+  }
+  if (best !== null) {
+    resolvedMap.set(unresolvedHash, { lineNum: best, level: "context" });
+    ambiguousAnchors.splice(ambIdx, 1);
+  }
+}
+
 
 function validateOperations(
   ops: EditOperation[],
@@ -357,6 +464,10 @@ function validateOperations(
           resolvedMap.set(hash, result);
         }
       }
+      // 4.0+: Proximity-based resolution — if one endpoint unique and other ambiguous,
+      // resolve ambiguous one to closest candidate in the correct direction.
+      tryProximityResolve(op.start_hash, op.end_hash, ctx, resolvedMap, ambiguousAnchors);
+
       // Check range order
       const startRes = resolvedMap.get(op.start_hash);
       const endRes = resolvedMap.get(op.end_hash);
@@ -373,7 +484,7 @@ function validateOperations(
     } else if (isSingleLineOp(op)) {
       const hash = op.hash;
       if (resolvedMap.has(hash)) continue;
-      const result = resolveAnchor(hash, ctx, op.occurrence);
+      const result = resolveAnchor(hash, ctx, op.occurrence, op.line);
       if ("error" in result) {
         if (result.error === "anchor_stale") {
           missingHashes.push(hash);
@@ -386,16 +497,25 @@ function validateOperations(
         }
       } else {
         resolvedMap.set(hash, result);
-        // Check low-entropy for single-line ops
+        // Check low-entropy for single-line ops — only reject when AMBIGUOUS
         const lineNum = result.lineNum;
         const quality = ctx.qualities[lineNum - 1];
         if (quality === "low") {
-          lowEntropyAnchors.push({
-            hash,
-            line: lineNum,
-            content: ctx.lines[lineNum - 1].trim(),
-            neighborAnchors: computeNeighborAnchors(lineNum, ctx),
-          });
+          // Count total candidates for this hash across all resolution entries
+          const resHashes = ctx.displayIndex.get(hash) ?? [];
+          let totalCandidates = 0;
+          for (const rh of resHashes) {
+            totalCandidates += (ctx.resolutionMap.get(rh)?.length ?? 0);
+          }
+          // Only reject if ambiguous AND no occurrence to disambiguate
+          if (totalCandidates > 1 && op.occurrence === undefined) {
+            lowEntropyAnchors.push({
+              hash,
+              line: lineNum,
+              content: ctx.lines[lineNum - 1].trim(),
+              neighborAnchors: computeNeighborAnchors(lineNum, ctx),
+            });
+          }
         }
       }
     }
@@ -474,7 +594,7 @@ function applyEditOperations(
   for (const op of ops) {
     if (isSingleLineOp(op)) {
       if (!resolved.has(op.hash)) {
-        const r = resolveAnchor(op.hash, ctx, op.occurrence);
+        const r = resolveAnchor(op.hash, ctx, op.occurrence, op.line);
         if (!("error" in r)) resolved.set(op.hash, r.lineNum);
       }
     } else {
@@ -553,7 +673,7 @@ function computeAffectedRange(
   for (const op of ops) {
     if (isSingleLineOp(op)) {
       if (!resolved.has(op.hash)) {
-        const r = resolveAnchor(op.hash, ctx, op.occurrence);
+        const r = resolveAnchor(op.hash, ctx, op.occurrence, op.line);
         if (!("error" in r)) resolved.set(op.hash, r.lineNum);
       }
     } else {
@@ -688,50 +808,69 @@ function runSanityChecks(
   affectedMaxLine: number,
 ): SanityResult {
   const warnings: string[] = [];
-  const ctxStart = Math.max(0, affectedMinLine - 4);
-  const ctxEnd = Math.min(newLines.length, affectedMaxLine + 4);
 
-  // P0-8: duplicate-line guard
-  const seenHashes = new Map<string, number[]>();
-  for (let i = ctxStart; i < ctxEnd; i++) {
-    if (newLines[i].trim().length === 0) continue;
-    const h = computeLineHash(newLines[i]);
-    const existing = seenHashes.get(h);
-    if (existing) { existing.push(i + 1); }
-    else { seenHashes.set(h, [i + 1]); }
+  // Build hash set of old lines to identify truly new content.
+  // Insertions cause position shifts, so positional comparison (oldLines[i] !== newLines[i])
+  // would incorrectly mark shifted lines as "changed".
+  const oldHashSet = new Set<string>();
+  for (const line of oldLines) {
+    if (line.trim().length > 0) oldHashSet.add(computeLineHash(line));
   }
-  for (const [hash, lineNums] of seenHashes) {
+
+  // P0-8: duplicate-line guard — only check GENUINELY NEW lines (hash not in oldLines)
+  const newLineDups = new Map<string, number[]>();
+  for (let i = 0; i < newLines.length; i++) {
+    const trimmed = newLines[i].trim();
+    if (trimmed.length === 0) continue;
+    const h = computeLineHash(newLines[i]);
+    if (!oldHashSet.has(h)) {
+      const existing = newLineDups.get(h);
+      if (existing) { existing.push(i + 1); }
+      else { newLineDups.set(h, [i + 1]); }
+    }
+  }
+  for (const [, lineNums] of newLineDups) {
     if (lineNums.length > 1) {
       warnings.push("duplicate_line: identical lines at " + lineNums.join(", "));
     }
   }
 
-  // P0-10: delimiter balance heuristic
-  let braces = 0, parens = 0, brackets = 0;
-  for (let i = ctxStart; i < ctxEnd; i++) {
-    for (const ch of newLines[i]) {
-      if (ch === "{") braces++; if (ch === "}") braces--;
-      if (ch === "(") parens++; if (ch === ")") parens--;
-      if (ch === "[") brackets++; if (ch === "]") brackets--;
+  // P0-10: delimiter balance — compare WHOLE file totals (immune to position shifts)
+  function countDelims(lines: string[]): [number, number, number] {
+    let b = 0, p = 0, br = 0;
+    for (const line of lines) {
+      for (const ch of line) {
+        if (ch === "{") b++; if (ch === "}") b--;
+        if (ch === "(") p++; if (ch === ")") p--;
+        if (ch === "[") br++; if (ch === "]") br--;
+      }
     }
+    return [b, p, br];
   }
-  if (Math.abs(braces) > 1) warnings.push("unbalanced_braces: net " + (braces > 0 ? "+" : "") + braces);
-  if (Math.abs(parens) > 2) warnings.push("unbalanced_parens: net " + (parens > 0 ? "+" : "") + parens);
-  if (Math.abs(brackets) > 2) warnings.push("unbalanced_brackets: net " + (brackets > 0 ? "+" : "") + brackets);
+  const [oldB, oldP, oldBr] = countDelims(oldLines);
+  const [newB, newP, newBr] = countDelims(newLines);
+  const bDelta = newB - oldB, pDelta = newP - oldP, brDelta = newBr - oldBr;
+  if (Math.abs(bDelta) > 1) warnings.push("unbalanced_braces: net " + (bDelta > 0 ? "+" : "") + bDelta);
+  if (Math.abs(pDelta) > 2) warnings.push("unbalanced_parens: net " + (pDelta > 0 ? "+" : "") + pDelta);
+  if (Math.abs(brDelta) > 2) warnings.push("unbalanced_brackets: net " + (brDelta > 0 ? "+" : "") + brDelta);
 
-  // P0-9: orphan-fragment guard
-  for (let i = ctxStart; i < ctxEnd; i++) {
-    const l = newLines[i].trim();
-    if (l === "else" || l === "else {") {
+  // P0-9: orphan-fragment guard — only check genuinely new lines
+  for (let i = 0; i < newLines.length; i++) {
+    const trimmed = newLines[i].trim();
+    if (trimmed.length === 0) continue;
+    const h = computeLineHash(newLines[i]);
+    if (oldHashSet.has(h)) continue; // pre-existing line, skip
+
+    if (trimmed === "else" || trimmed === "else {") {
       let hasIf = false;
-      for (let j = ctxStart; j < i; j++) {
+      for (let j = 0; j < i; j++) {
         if (/\bif\b/.test(newLines[j])) { hasIf = true; break; }
       }
       if (!hasIf) warnings.push("orphan_else at line " + (i + 1));
     }
-    if (/^\s*}\s*$/.test(l) && l.length <= 3) {
+    if (/^\s*}\s*$/.test(trimmed) && trimmed.length <= 3) {
       let openCount = 0;
-      for (let j = ctxStart; j < i; j++) {
+      for (let j = 0; j < i; j++) {
         for (const ch of newLines[j]) {
           if (ch === "{") openCount++;
           if (ch === "}") openCount--;
@@ -761,6 +900,7 @@ export const editTool: AgentTool<typeof editParams> = {
     "later operations within the batch do NOT see the results of earlier operations. " +
     "If any hash is invalid, ambiguous, or out of order, the entire batch is rejected and no changes are made. " +
     "For duplicate-content lines, use the `occurrence` field (1-indexed) to specify which matching line to target. " +
+    "For ambiguous hashes, use the `line` field (advisory line number from read_file) to select the candidate closest to that line. " +
     "Range operations (replace_range, delete_range) require both endpoint hashes to be unique and will be rejected if ambiguous. " +
     "The edit tool resolves ambiguous short hashes automatically via longer hash and context matching. " +
     "Example: { op: \"replace_line\", hash: \"a1b2c3\", content: \"new line content\" }",
@@ -835,13 +975,13 @@ export const editTool: AgentTool<typeof editParams> = {
       if (validation.error === "anchor_prefix_ambiguous" || validation.error === "anchor_context_ambiguous") {
         const ambDetails = validation.ambiguousAnchors!.map(a => {
           const previews = a.candidatePreviews && a.candidatePreviews.length > 0
-            ? a.candidatePreviews.map(c => `  line ${c.line}: "${c.preview}"`).join("\n")
+            ? a.candidatePreviews.map((c, idx) => `  #${idx + 1} line ${c.line}: "${c.preview}"`).join("\n")
             : `  lines [${a.candidates.join(", ")}]`;
-          return `  hash "${a.hash}" matches:\n${previews}`;
+          return `  hash "${a.hash}" matches (use occurrence to select):\n${previews}`;
         }).join("\n");
         const hint = validation.error === "anchor_prefix_ambiguous"
-          ? `Hint: the hash prefix is ambiguous. Try re-reading with context or use a neighboring unique line as anchor.`
-          : `Hint: all disambiguation levels failed. Re-read the file and use different anchors.`;
+          ? `Hint: use occurrence field to target the correct match (e.g., occurrence: 3 for #3 above).`
+          : `Hint: all disambiguation levels failed. Re-read the file and use different anchors, or use occurrence to select.`;
         return {
           content: [
             {
