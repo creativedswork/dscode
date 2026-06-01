@@ -503,7 +503,6 @@ export class MCPManager {
               return {
                 content: [
                   ...textBlocks,
-                  ...compressedImages,
                   { type: "text", text: "\n[Description:\n" + description + "\n]" },
                 ],
                 details: { server: serverName, tool: def.name, error: isError, structuredContent, mcpResult: result },
@@ -516,7 +515,6 @@ export class MCPManager {
               return {
                 content: [
                   ...textBlocks,
-                  ...compressedImages,
                   { type: "text", text: "\n[Received " + imageBlocks.length + " image(s). " + reason + ".]" },
                 ],
                 details: { server: serverName, tool: def.name, error: isError, structuredContent, mcpResult: result },

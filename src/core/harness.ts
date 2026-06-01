@@ -559,7 +559,7 @@ export class Harness {
         this.ui.addInfo(`Connecting ${this.config.mcp.length} MCP server(s)...`);
         this.mcpManager = new MCPManager(this.config.mcp);
         this.mcpManager.visionResolve = () => this.resolveVisionModel();
-        this.mcpManager.visionDescribe = (images, model, apiKey) => this.describeImagesViaVisionModel(images, model, apiKey);
+        this.mcpManager.visionDescribe = (images: ImageContent[], model: Model<Api>, apiKey: string) => this.describeImagesViaVisionModel(images, model, apiKey);
         this.ui.setMcpManager(this.mcpManager);
         await this.mcpManager.initialize();
         this.mcpEventUnsubscribe = this.mcpManager.onEvent((event) => this.handleMcpEvent(event));
@@ -730,6 +730,8 @@ export class Harness {
       if (mcpServers.length > 0) {
         this.configStore.setMcpServers(mcpServers);
         this.mcpManager = new MCPManager(mcpServers);
+        this.mcpManager.visionResolve = () => this.resolveVisionModel();
+        this.mcpManager.visionDescribe = (images, model, apiKey) => this.describeImagesViaVisionModel(images, model, apiKey);
         await this.mcpManager.initialize();
         await this.mcpManager.registerDrivers(this.driverRegistry);
 
