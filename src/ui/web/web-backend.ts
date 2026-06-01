@@ -928,8 +928,11 @@ export class WebUiBackend implements UiBackend {
   }
 
   private serveSpa(req: IncomingMessage, res: ServerResponse): void {
-    const __dirname = fileURLToPath(new URL(".", import.meta.url));
-    const webDist = join(__dirname, "web");
+    // Resolve web dist: try dist/web relative to project root first (for tsx/source mode),
+    // then fall back to __dirname-relative (for bundled mode).
+    const projectDist = join(resolve(process.cwd()), "dist", "web");
+    const moduleDist = join(fileURLToPath(new URL(".", import.meta.url)), "web");
+    const webDist = existsSync(projectDist) ? projectDist : moduleDist;
 
     let filePath = join(webDist, req.url === "/" ? "index.html" : req.url!);
 

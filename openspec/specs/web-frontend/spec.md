@@ -108,11 +108,11 @@ The frontend SHALL import `UIMessage`, `ToolCallEntry`, `ImageAttachment`, `Conv
 - **THEN** it contains no inline `interface UIMessage`, `interface ToolCallEntry`, or `interface ConversationMessage` definitions
 
 ### Requirement: Input area
-The frontend SHALL provide a text input area at the bottom of the screen with flat, rounded styling using the warm design system. The send button SHALL switch to a Stop button while the agent is processing (when `processing` is true, controlled exclusively by `handleSend` and the `loader` event from `agent_end`). The `assistant_end` event SHALL NOT affect the `processing` state — it only finalizes the streaming message. All text input SHALL be sent via the `chat` command channel; the server determines whether the text is a slash command or a regular chat message.
+The frontend SHALL provide a text input area at the bottom of the screen with flat, rounded styling using the warm design system. The send button SHALL switch to a Stop button while the agent is processing (when `processing` is true, controlled exclusively by `handleSend` and the `loader` event from `agent_end`). The `assistant_end` event SHALL NOT affect the `processing` state — it only finalizes the streaming message. All text input SHALL be sent via the `chat` command channel; the server determines whether the text is a slash command or a regular chat message. The input SHALL maintain a session-scoped history buffer navigable via ArrowUp/ArrowDown.
 
 #### Scenario: Text input and submit
 - **WHEN** user types text and presses Enter (or clicks send button)
-- **THEN** a `chat` command is sent via WebSocket with the input text, and `processing` is set to `true` immediately
+- **THEN** a `chat` command is sent via WebSocket with the input text, `processing` is set to `true` immediately, and the submitted text is recorded in the input history buffer before the textarea is cleared
 
 #### Scenario: Input styling
 - **WHEN** the input field is rendered
@@ -132,7 +132,19 @@ The frontend SHALL provide a text input area at the bottom of the screen with fl
 
 #### Scenario: Input disabled during processing
 - **WHEN** the agent is processing a request
-- **THEN** the input field is disabled with a muted appearance
+- **THEN** the input field is disabled with a muted appearance, and ArrowUp/ArrowDown history navigation is suppressed
+
+#### Scenario: Input history navigation with ArrowUp
+- **WHEN** the user presses ArrowUp while the textarea is focused, no popover menu is open, and the input is not processing
+- **THEN** the previous submitted text is recalled into the textarea
+
+#### Scenario: Input history navigation with ArrowDown
+- **WHEN** the user presses ArrowDown while navigating history and no popover menu is open
+- **THEN** the next (more recent) submitted text is recalled, or the user's current draft is restored when past the newest entry
+
+#### Scenario: History navigation reset on typing
+- **WHEN** the user recalls a history entry and then types or modifies the text
+- **THEN** the history navigation position resets; the next ArrowUp recalls the most recent entry
 
 #### Scenario: Send button becomes Stop button during processing
 - **WHEN** `processing` becomes true (via `handleSend`)

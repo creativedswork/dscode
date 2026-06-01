@@ -859,6 +859,7 @@ export class TuiApp {
       return;
     }
 
+    this.editor.addToHistory(text);
     this.editor.setText("");
 
     if (this.permissionExplainMode) {

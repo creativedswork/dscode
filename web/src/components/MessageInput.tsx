@@ -32,6 +32,7 @@ function isImageItem(item: DataTransferItem): boolean {
   return item.type.startsWith("image/");
 }
 
+
 export function MessageInput({
   onSend,
   onAbort,
@@ -51,6 +52,10 @@ export function MessageInput({
   const [fileFilter, setFileFilter] = useState("");
   const [fileIndex, setFileIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const historyRef = useRef<string[]>([]);
+  const historyCursorRef = useRef<number>(-1);
+  const draftRef = useRef<string>("");
+  const MAX_HISTORY = 100;
 
   const filteredCommands = slashCommands.filter(
     (c) => !slashFilter || c.name.startsWith(slashFilter.slice(1)),
@@ -74,6 +79,14 @@ export function MessageInput({
   const handleSubmit = useCallback(() => {
     const trimmed = text.trim();
     if (!trimmed && images.length === 0) return;
+    // Push to history if non-empty and not duplicate of last entry
+    if (trimmed && historyRef.current[0] !== trimmed) {
+      historyRef.current.unshift(trimmed);
+      if (historyRef.current.length > MAX_HISTORY) {
+        historyRef.current.pop();
+      }
+    }
+    historyCursorRef.current = -1;
     onSend(trimmed, images.length > 0 ? images : undefined);
     setText("");
     setImages([]);
@@ -209,6 +222,54 @@ export function MessageInput({
       return;
     }
 
+    // Input history navigation (ArrowUp/ArrowDown)
+    if (!processing && historyRef.current.length > 0) {
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        if (historyCursorRef.current === -1) {
+          // First ArrowUp: save draft, go to newest
+          draftRef.current = text;
+          historyCursorRef.current = 0;
+        } else {
+          // Subsequent: go older (higher index)
+          historyCursorRef.current = Math.min(
+            historyCursorRef.current + 1,
+            historyRef.current.length - 1,
+          );
+        }
+        setText(historyRef.current[historyCursorRef.current]);
+        // Move cursor to end
+        requestAnimationFrame(() => {
+          const ta = textareaRef.current;
+          if (ta) {
+            ta.focus();
+            ta.setSelectionRange(ta.value.length, ta.value.length);
+          }
+        });
+        return;
+      }
+      if (e.key === "ArrowDown" && historyCursorRef.current >= 0) {
+        e.preventDefault();
+        historyCursorRef.current--;
+        if (historyCursorRef.current === -1) {
+          // Past newest: restore draft
+          setText(draftRef.current);
+        } else {
+          setText(historyRef.current[historyCursorRef.current]);
+        }
+        // Move cursor to end
+        requestAnimationFrame(() => {
+          const ta = textareaRef.current;
+          if (ta) {
+            ta.focus();
+            ta.setSelectionRange(ta.value.length, ta.value.length);
+          }
+        });
+        return;
+      }
+    }
+
+
     if (e.key === "Escape" && processing) {
       e.preventDefault();
       onAbort();
@@ -228,6 +289,9 @@ export function MessageInput({
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setText(val);
+    // Reset history cursor when user manually edits text
+    historyCursorRef.current = -1;
+    draftRef.current = "";
 
     if (val === "/") {
       setShowSlashMenu(true);
