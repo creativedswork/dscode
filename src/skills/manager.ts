@@ -7,8 +7,12 @@ import { scanSkillDirs } from "./loader.js";
 export class SkillManager {
   private manifests = new Map<string, SkillManifest>();
   private activeSkills = new Map<string, Skill>();
+  private userSkillsDir: string;
+  private projectSkillsDir: string;
 
   constructor(userSkillsDir: string, projectSkillsDir: string) {
+    this.userSkillsDir = userSkillsDir;
+    this.projectSkillsDir = projectSkillsDir;
     const externalManifests = scanSkillDirs(userSkillsDir, projectSkillsDir);
     for (const m of externalManifests) {
       this.manifests.set(m.name, m);
@@ -71,6 +75,40 @@ export class SkillManager {
 
   deactivate(name: string): void {
     this.activeSkills.delete(name);
+  }
+
+  /**
+   * Reload skill manifests from new directory paths.
+   * Previously active skills are re-activated if they still exist;
+   * skills that no longer exist are automatically deactivated.
+   * Must provide driverRegistry so re-activated skills get correct tools.
+   */
+  reloadDirs(userSkillsDir: string, projectSkillsDir: string, driverRegistry: DriverRegistry): void {
+    this.userSkillsDir = userSkillsDir;
+    this.projectSkillsDir = projectSkillsDir;
+
+    // Remember which skills were active before reload
+    const prevActive = new Set(this.activeSkills.keys());
+
+    // Clear and re-scan
+    this.manifests.clear();
+    this.activeSkills.clear();
+
+    const externalManifests = scanSkillDirs(userSkillsDir, projectSkillsDir);
+    for (const m of externalManifests) {
+      this.manifests.set(m.name, m);
+    }
+
+    // Re-activate skills that still exist
+    for (const name of prevActive) {
+      if (this.manifests.has(name)) {
+        try {
+          this.activate(name, driverRegistry);
+        } catch {
+          // Skill exists but activation failed — silently skip
+        }
+      }
+    }
   }
 
   getTools(): AgentTool<any>[] {

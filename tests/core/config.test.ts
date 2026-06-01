@@ -21,7 +21,7 @@ describe("config and settings loading", () => {
     else process.env.DSCODE_DATA_HOME = originalDataHome;
   });
 
-  it("defaults to startup path and records it in user config", () => {
+  it("defaults to startup path and does not persist cwd to user config", () => {
     const root = mkdtempSync(join(tmpdir(), "dscode-config-"));
     const configHome = join(root, "home");
     const workspace = join(root, "workspace");
@@ -34,16 +34,17 @@ describe("config and settings loading", () => {
     process.env.DSCODE_DATA_HOME = configHome;
 
     const config = loadConfig();
-    const saved = JSON.parse(readFileSync(join(configHome, "config.json"), "utf8"));
 
     expect(realpathSync(config.projectPath)).toBe(realpathSync(workspace));
     expect(realpathSync(process.cwd())).toBe(realpathSync(workspace));
-    expect(saved).toMatchObject({ cwd: workspace, cwdProjectPath: workspace });
 
+    // config.json may or may not exist after loadConfig (saveUserProjectCwd removed)
+    // If it does exist from a previous run, cwd/cwdProjectPath should not be present
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("switches projectPath using persisted cwd for the same startup project", () => {
+
+  it("ignores persisted cwd in user config and uses startup path", () => {
     const root = mkdtempSync(join(tmpdir(), "dscode-config-"));
     const configHome = join(root, "home");
     const workspace = join(root, "workspace");
@@ -63,8 +64,10 @@ describe("config and settings loading", () => {
 
     const config = loadConfig();
 
-    expect(realpathSync(config.projectPath)).toBe(realpathSync(target));
-    expect(realpathSync(process.cwd())).toBe(realpathSync(target));
+    // Old cwd/cwdProjectPath in config.json should be ignored
+    // projectPath should remain at startupPath (workspace), not the old persisted cwd (target)
+    expect(realpathSync(config.projectPath)).toBe(realpathSync(workspace));
+    expect(realpathSync(process.cwd())).toBe(realpathSync(workspace));
     expect(config.modelId).toBe("deepseek-v4-pro");
 
     rmSync(root, { recursive: true, force: true });

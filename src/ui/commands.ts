@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import type { Agent } from "@mariozechner/pi-agent-core";
 import type { SlashCommand as AutocompleteSlashCommand } from "@earendil-works/pi-tui";
 
@@ -12,7 +11,7 @@ import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
 import type { MCPManager } from "../mcp/manager.js";
 import type { TuiApp } from "./tui-app.js";
-import { saveUserConfig, saveUserProjectCwd, maskApiKey, PROVIDER_ENV_VARS } from "../core/config.js";
+import { saveUserConfig, maskApiKey, PROVIDER_ENV_VARS } from "../core/config.js";
 import { getAllProviders, getAllModels, getVisionModels, getVisionProviders } from "../models/index.js";
 import { readImageFile, readClipboardImage } from "../utils/image.js";
 
@@ -31,6 +30,7 @@ interface CommandContext {
   onSetModel: (modelId: string) => void;
   onSetThinking: (level: string) => void;
   onSetProvider: (providerId: string) => void;
+  onSetCwd: (cwd: string) => Promise<{ success: boolean; error?: string }>;
   tui: TuiApp;
 }
 
@@ -472,7 +472,7 @@ const COMMANDS: SlashCommandDef[] = [
             "/config vision-provider <id>  Set vision model provider",
             "/config vision-model <id>    Set vision model",
             "/config vision-key <key>     Set vision model API key",
-            "/config cwd <path>       Set working directory for this project (saved to ~/.dscode/config.json)",
+            "/config cwd <path>       Set working directory for this session (takes effect immediately)",
             "/config help             Show this help",
             "",
             "Settings via ~/.dscode/settings.json or .dscode/settings.json:",
@@ -515,12 +515,15 @@ const COMMANDS: SlashCommandDef[] = [
         case "cwd": {
           const cwd = rest.join(" ");
           if (!cwd) {
-            ctx.tui.addError("Usage: /config cwd <path>");
+            ctx.tui.addInfo(`Current working directory: ${ctx.config.projectPath}\n\nUsage: /config cwd <path>`);
             return;
           }
-          const resolvedCwd = resolve(cwd);
-          saveUserProjectCwd(ctx.config.startupPath, resolvedCwd);
-          ctx.tui.addInfo(`CWD set to: ${resolvedCwd} (saved to ~/.dscode/config.json for this project, restart required)`);
+          const result = await ctx.onSetCwd(cwd);
+          if (result.success) {
+            ctx.tui.addInfo(`Working directory changed to: ${ctx.config.projectPath}`);
+          } else {
+            ctx.tui.addError(result.error ?? "Failed to change working directory");
+          }
           break;
         }
         case "key": {

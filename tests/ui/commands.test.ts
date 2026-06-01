@@ -5,7 +5,7 @@ import { executeSlashCommand } from "../../src/ui/commands.js";
 function makeContext(overrides: Record<string, unknown> = {}) {
   return {
     agent: { reset: vi.fn(), state: { messages: [] } },
-    sessionManager: {},
+    sessionManager: { trySaveSession: vi.fn(), createSession: vi.fn(), persistEmptySession: vi.fn(), getCurrentSessionId: () => null },
     memoryManager: {},
     driverRegistry: {},
     toolRegistry: {},
@@ -15,6 +15,7 @@ function makeContext(overrides: Record<string, unknown> = {}) {
     config: {},
     onSetModel: vi.fn(),
     onSetThinking: vi.fn(),
+    onSetCwd: vi.fn(),
     ...overrides,
   } as any;
 }
@@ -72,7 +73,7 @@ describe("slash commands", () => {
     executeSlashCommand(
       "/reset",
       makeContext({ agent: { reset, state: { messages: [] } } }),
-      { clearConversationView, addInfo } as any,
+      { clearConversationView, addInfo, addError: vi.fn() } as any,
     );
 
     await Promise.resolve();

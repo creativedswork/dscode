@@ -95,13 +95,6 @@ export function saveUserConfig(partial: Record<string, unknown>): void {
   saveJsonSafe(path, merged);
 }
 
-export function saveUserProjectCwd(startupPath: string, cwd: string): void {
-  saveUserConfig({
-    cwd: resolve(cwd),
-    cwdProjectPath: resolve(startupPath),
-  });
-}
-
 export function normalizeTransport(rawTransport: unknown, hasCommand: boolean, hasUrl: boolean): MCPTransport {
   if (rawTransport === "stdio" || rawTransport === "sse" || rawTransport === "streamable-http") {
     return rawTransport;
@@ -140,22 +133,7 @@ export function loadConfig(): HarnessConfig {
   const userConfig = loadUserCommandConfig();
   const userSettings = loadScopedSettings(userSettingsPath());
 
-  let projectPath = startupPath;
-  const configuredCwd = userConfig.cwd;
-  const configuredCwdProjectPath = userConfig.cwdProjectPath;
-  if (
-    typeof configuredCwd === "string" &&
-    configuredCwd.trim() !== "" &&
-    typeof configuredCwdProjectPath === "string" &&
-    resolve(configuredCwdProjectPath) === startupPath
-  ) {
-    const nextProjectPath = resolve(configuredCwd);
-    if (existsSync(nextProjectPath)) {
-      projectPath = nextProjectPath;
-    }
-  }
-
-  saveUserProjectCwd(startupPath, projectPath);
+  const projectPath = startupPath;
 
   if (projectPath !== process.cwd()) {
     process.chdir(projectPath);
@@ -166,7 +144,6 @@ export function loadConfig(): HarnessConfig {
 
   const provider = (process.env.AGENT_PROVIDER as string) ?? (userConfig.provider as string) ?? (merged.provider as string) ?? "deepseek";
   const modelId = (process.env.AGENT_MODEL as string) ?? (process.env.DEEPSEEK_MODEL as string) ?? (userConfig.modelId as string) ?? (merged.modelId as string) ?? "deepseek-v4-flash";
-  // API key: env var > user config (never project config for security)
   // Use provider-specific env var (e.g. KIMI_API_KEY, DEEPSEEK_API_KEY) via pi-ai,
   // fall back to DEEPSEEK_API_KEY for backward compat, then user config
   const envApiKey = getEnvApiKey(provider) ?? (provider === "qwen" ? process.env.DASHSCOPE_API_KEY : undefined) ?? process.env.DEEPSEEK_API_KEY;

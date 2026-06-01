@@ -129,9 +129,13 @@ describe("permission prompt navigation", () => {
       permissionExplainMode: false,
       editor: { setText: vi.fn() },
       deps: {
-        agent: { prompt },
+        agent: { prompt: vi.fn() },
         modelSupportsImages: true,
         modelNeedsOcr: false,
+        config: { atFile: { maxFiles: 5, maxFileSize: 51200, maxTotalSize: 204800 } },
+        projectPath: "/tmp",
+        onSetCwd: vi.fn(),
+        promptWithImages: prompt,
       },
       conversation: { addInfo: vi.fn() },
       addUserMessage: vi.fn(),
@@ -158,7 +162,7 @@ describe("permission prompt navigation", () => {
     const state = {
       pendingImages: [],
       editor: { setText: vi.fn() },
-      deps: { agent: { prompt: vi.fn() } },
+      deps: { agent: { prompt: vi.fn() }, config: { atFile: {} }, projectPath: "/tmp", onSetCwd: vi.fn(), promptWithImages: vi.fn().mockResolvedValue(undefined) },
       addUserMessage: vi.fn(),
       setProcessing: vi.fn(),
     };

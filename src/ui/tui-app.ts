@@ -53,6 +53,7 @@ export interface TuiDeps {
   onSetThinking: (level: string) => void;
   onSetProvider: (providerId: string) => void;
   promptWithImages: (text: string, images: ImageContent[]) => Promise<void>;
+  onSetCwd: (cwd: string) => Promise<{ success: boolean; error?: string }>;
 }
 
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;

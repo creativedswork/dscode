@@ -1,10 +1,12 @@
+import { existsSync } from "node:fs";
+import { resolve, join } from "node:path";
 import { Agent } from "@mariozechner/pi-agent-core";
 import type { AfterToolCallContext, AfterToolCallResult, AgentMessage, AgentTool, BeforeToolCallContext } from "@mariozechner/pi-agent-core";
 import { streamSimple, Type } from "@mariozechner/pi-ai";
 import type { Api, AssistantMessage, Context, ImageContent, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
 
 import type { HarnessConfig } from "./types.js";
-import { saveUserConfig } from "./config.js";
+import { saveUserConfig, loadScopedSettings, projectSettingsPath, normalizeTransport, normalizeProtocolVersion } from "./config.js";
 import { SessionManager } from "../session/manager.js";
 import { ContextManager } from "../context/manager.js";
 import { MemoryManager } from "../memory/manager.js";
@@ -509,6 +511,7 @@ export class Harness {
         onSetThinking: (level: string) => this.setThinking(level),
         onSetProvider: (id: string) => this.setProvider(id),
         promptWithImages: (text: string, images: ImageContent[]) => this.promptWithImages(text, images),
+        onSetCwd: (cwd: string) => this.updateProjectPath(cwd),
       };
       ui = new TuiBackend(tuiDeps);
     }
@@ -626,16 +629,95 @@ export class Harness {
     saveUserConfig({ thinkingLevel: level });
   }
 
-  updateProjectPath(cwd: string): void {
-    this.config.projectPath = cwd;
-    this.sessionManager.updateProjectPath(this.config.dataDir, cwd);
-    this.memoryManager.updateProjectPath(this.config.dataDir, cwd);
+  async updateProjectPath(cwd: string): Promise<{ success: boolean; error?: string }> {
+    const resolvedPath = resolve(cwd);
 
-    // Refresh system prompt with new project memories
+    if (!existsSync(resolvedPath)) {
+      return { success: false, error: `Path does not exist: ${resolvedPath}` };
+    }
+
+    // Save current session before switching
+    this.sessionManager.trySaveSession(this.agent);
+
+    // Change working directory
+    process.chdir(resolvedPath);
+    this.config.projectPath = resolvedPath;
+
+    // Update session and memory managers for new project
+    this.sessionManager.updateProjectPath(this.config.dataDir, resolvedPath);
+    this.memoryManager.updateProjectPath(this.config.dataDir, resolvedPath);
+
+    // Reload skills from new project directory
+    const projectSkillsDir = join(resolvedPath, ".dscode", "skills");
+    this.skillManager.reloadDirs(this.config.userSkillsDir, projectSkillsDir, this.driverRegistry);
+
+    // Reload MCP servers from new project settings
+    try {
+      const newProjectSettings = loadScopedSettings(projectSettingsPath(resolvedPath));
+
+      if (this.mcpManager) {
+        await this.mcpManager.shutdown();
+      }
+
+      let mcpServersRaw: unknown[] = [];
+      const mcpConfig = (newProjectSettings.mcp as Record<string, unknown>) ?? {};
+      if (Array.isArray(mcpConfig.servers)) {
+        mcpServersRaw.push(...(mcpConfig.servers as unknown[]));
+      }
+      const mcpObj = newProjectSettings.mcpServers as Record<string, Record<string, unknown>> | undefined;
+      if (mcpObj && typeof mcpObj === "object" && !Array.isArray(mcpObj)) {
+        for (const [name, cfg] of Object.entries(mcpObj)) {
+          if (cfg && typeof cfg === "object" && !Array.isArray(cfg)) {
+            mcpServersRaw.push({ name, ...cfg });
+          }
+        }
+      }
+
+      const mcpServers: import("../mcp/types.js").MCPServerConfig[] = mcpServersRaw
+        .filter((s: any) => s && typeof s === "object")
+        .map((s: any) => {
+          const hasCommand = typeof s.command === "string" && s.command.length > 0;
+          const hasUrl = typeof s.url === "string" && s.url.length > 0;
+          const transport = normalizeTransport(s.transport ?? s.type, hasCommand, hasUrl);
+          return {
+            name: s.name,
+            description: s.description,
+            transport,
+            command: s.command,
+            args: s.args,
+            url: s.url,
+            env: s.env,
+            headers: s.headers,
+            preferredProtocolVersion: normalizeProtocolVersion(s.preferredProtocolVersion ?? s.protocolVersion),
+            allowLegacySseFallback: s.allowLegacySseFallback !== false,
+            requestTimeoutMs: typeof s.requestTimeoutMs === "number" ? s.requestTimeoutMs : undefined,
+            connectTimeoutMs: typeof s.connectTimeoutMs === "number" ? s.connectTimeoutMs : undefined,
+          };
+        });
+
+      if (mcpServers.length > 0) {
+        this.config.mcp = mcpServers;
+        this.mcpManager = new MCPManager(mcpServers);
+        await this.mcpManager.initialize();
+        await this.mcpManager.registerDrivers(this.driverRegistry);
+      } else {
+        this.mcpManager = undefined;
+      }
+    } catch (err) {
+      console.error("[harness] MCP reload error:", err);
+      // Non-fatal: continue with updated path even if MCP reload fails
+    }
+
+    // Update agent tools after driver changes
+    this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
+
+    // Refresh system prompt with new project memories and skills
     const memories = this.memoryManager.getRelevantMemories();
     const skillSection = this.skillManager.getSystemPromptSection();
     this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection);
     this.agent.state.systemPrompt = this.baseSystemPrompt + this.toolRegistry.buildDeferredToolsHint();
+
+    return { success: true };
   }
 
   private async shutdown(): Promise<void> {
