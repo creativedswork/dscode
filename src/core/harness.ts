@@ -6,7 +6,7 @@ import { streamSimple, Type } from "@mariozechner/pi-ai";
 import type { Api, AssistantMessage, Context, ImageContent, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
 
 import type { HarnessConfig } from "./types.js";
-import { saveUserConfig, loadScopedSettings, projectSettingsPath, normalizeTransport, normalizeProtocolVersion } from "./config.js";
+import { saveUserConfig, loadScopedSettings, projectSettingsPath, userSettingsPath, normalizeTransport, normalizeProtocolVersion } from "./config.js";
 import { SessionManager } from "../session/manager.js";
 import { ContextManager } from "../context/manager.js";
 import { MemoryManager } from "../memory/manager.js";
@@ -664,18 +664,20 @@ export class Harness {
 
     // Reload MCP servers from new project settings
     try {
+      const userSettings = loadScopedSettings(userSettingsPath());
       const newProjectSettings = loadScopedSettings(projectSettingsPath(resolvedPath));
+      const mergedSettings = { ...userSettings, ...newProjectSettings };
 
       if (this.mcpManager) {
         await this.mcpManager.shutdown();
       }
 
       let mcpServersRaw: unknown[] = [];
-      const mcpConfig = (newProjectSettings.mcp as Record<string, unknown>) ?? {};
+      const mcpConfig = (mergedSettings.mcp as Record<string, unknown>) ?? {};
       if (Array.isArray(mcpConfig.servers)) {
         mcpServersRaw.push(...(mcpConfig.servers as unknown[]));
       }
-      const mcpObj = newProjectSettings.mcpServers as Record<string, Record<string, unknown>> | undefined;
+      const mcpObj = mergedSettings.mcpServers as Record<string, Record<string, unknown>> | undefined;
       if (mcpObj && typeof mcpObj === "object" && !Array.isArray(mcpObj)) {
         for (const [name, cfg] of Object.entries(mcpObj)) {
           if (cfg && typeof cfg === "object" && !Array.isArray(cfg)) {
@@ -711,9 +713,24 @@ export class Harness {
         this.mcpManager = new MCPManager(mcpServers);
         await this.mcpManager.initialize();
         await this.mcpManager.registerDrivers(this.driverRegistry);
+
+        // Re-initialize ToolRegistry to pick up new MCP AgentTool objects
+        const appOnlyNames = new Set(this.mcpManager.getAppOnlyToolNames());
+        this.toolRegistry.initialize(
+          this.makeSkillTool(),
+          this.mcpManager.getAlwaysLoadToolNames(),
+          appOnlyNames,
+        );
+
+        if (this.appHostManager) {
+          this.appHostManager.setMcpManager(this.mcpManager);
+        }
       } else {
         this.configStore.setMcpServers([]);
         this.mcpManager = undefined;
+
+        // Re-initialize ToolRegistry to clear old MCP tools
+        this.toolRegistry.initialize(this.makeSkillTool());
       }
 
       // Notify UI of updated MCP state

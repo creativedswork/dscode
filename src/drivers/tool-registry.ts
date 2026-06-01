@@ -21,12 +21,14 @@ export class ToolRegistry {
     this.driverRegistry = driverRegistry;
   }
 
-  /** Scan all drivers and classify tools as base/deferred. Call once after MCP init. */
+  /** Scan all drivers and classify tools as base/deferred. Supports re-entry. */
   initialize(
     skillTool: AgentTool<any>,
     alwaysLoadNames?: Set<string>,
     appOnlyNames?: Set<string>,
   ): void {
+    this.clearMcpEntries();
+
     // 1. Builtin driver tools — always sent (non-deferred)
     for (const driver of this.driverRegistry.getDriversBySource("builtin")) {
       for (const tool of driver.tools) {
@@ -70,6 +72,17 @@ export class ToolRegistry {
     });
 
     this.initialized = true;
+  }
+
+  private clearMcpEntries(): void {
+    // Remove MCP-sourced tool entries from allTools
+    for (const driver of this.driverRegistry.getDriversBySource("mcp")) {
+      for (const tool of driver.tools) {
+        this.allTools.delete(tool.name);
+      }
+    }
+    this.deferredToolNames.clear();
+    this.discoveredToolNames.clear();
   }
 
   isDeferred(name: string): boolean {

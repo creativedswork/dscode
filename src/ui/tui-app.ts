@@ -707,6 +707,7 @@ export class TuiApp {
   }
 
   thinkingDelta(delta: string): void {
+    this.markActivity();
     this.conversation.thinkingDelta(delta);
   }
 
@@ -945,7 +946,7 @@ export class TuiApp {
         },
       );
     } else {
-      this.deps.agent.prompt(text, images).then(
+      this.deps.agent.prompt(text, images ?? undefined).then(
         () => {
           this.setProcessing(false);
         },
