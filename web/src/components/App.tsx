@@ -101,6 +101,7 @@ export function App() {
       case "sessions": setSessions(event.data); setCurrentSessionId((event as any).currentSessionId ?? null); break;
       case "mcp_state": setMcpServers(event.servers); break;
       case "model": setModel(event.name); break;
+      case "config": setConfig(event.data); break;
       case "file_list_result": setFileListItems(event.items); setFileListPrefix(event.prefix); break;
     }
   }, [addToast]);

@@ -323,3 +323,17 @@ The frontend SHALL use quiet, restrained animations for message appearance. All 
 #### Scenario: Tool card expansion
 - **WHEN** a tool card is expanded or collapsed
 - **THEN** the content area transitions smoothly over 200ms
+
+## MODIFIED Requirements
+
+### Requirement: Config event handling
+
+The frontend SHALL handle `config` events from the server in its `handleEvent` switch, updating the local config state so that all config changes (including project path, API key, vision settings, and MCP servers) are immediately reflected in the UI.
+
+#### Scenario: Config event updates local state
+- **WHEN** the server broadcasts a `config` event (triggered by ConfigWatch.onChange via onConfigChange)
+- **THEN** the `handleEvent` switch matches `case "config":` and calls `setConfig(event.data)`
+
+#### Scenario: Project path change reflected immediately
+- **WHEN** the project path is changed via `set_project_path` config action or `/config cwd` slash command
+- **THEN** the frontend receives a `config` event and the sidebar/settings panel updates to show the new project path without requiring a page refresh

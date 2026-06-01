@@ -26,6 +26,7 @@ import type { SkillManager } from "../skills/manager.js";
 import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
 import type { HarnessConfig, PermissionPromptResult, PermissionRuleConfig } from "../core/types.js";
+import type { ConfigWatch } from "../core/config-watch.js";
 import type { MCPManager } from "../mcp/manager.js";
 import type { AppInstance } from "../mcp/app/types.js";
 import { c, editorTheme } from "./theme.js";
@@ -49,6 +50,7 @@ export interface TuiDeps {
   modelSupportsImages: boolean;
   projectPath: string;
   config: HarnessConfig;
+  configStore: ConfigWatch;
   onSetModel: (modelId: string) => void;
   onSetThinking: (level: string) => void;
   onSetProvider: (providerId: string) => void;

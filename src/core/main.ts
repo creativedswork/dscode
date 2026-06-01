@@ -124,6 +124,7 @@ async function main(): Promise<void> {
       port: webPort,
       harness,
       config,
+      configStore: harness.configStore,
     });
     // Pass AppHostManager to web backend so MCP apps can be served
     if (harness.appHostManager) {

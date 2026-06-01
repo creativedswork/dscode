@@ -166,4 +166,10 @@ export interface UiBackend {
   pushMcpState?(): void;
   /** Open the MCP browser panel. */
   openMcpBrowser(): void;
+
+  // ── Config Watch ──
+  /** Config change notification. Called by Harness when ConfigWatch fires.
+   *  TuiBackend: no-op (shared reference already synced).
+   *  WebUiBackend: broadcasts config event to frontend. */
+  onConfigChange?(): void;
 }

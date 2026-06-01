@@ -29,6 +29,7 @@ import { getEnvApiKey } from "@mariozechner/pi-ai";
 import { ImageCache } from "../utils/image-cache.js";
 import type { ImageRef, VisionMessage } from "./types.js";
 import { initCheckpointSystem, shutdownCheckpointSystem } from "../checkpoint/index.js";
+import { ConfigWatch } from "./config-watch.js";
 
 export class Harness {
   agent!: Agent;
@@ -41,7 +42,8 @@ export class Harness {
   permissionManager: PermissionManager;
   mcpManager?: MCPManager;
   public appHostManager?: AppHostManager;
-  private config: HarnessConfig;
+  configStore: ConfigWatch;
+  config: HarnessConfig;
   private ui!: UiBackend;
   private baseSystemPrompt = "";
   private lastMcpProgress = new Map<string, { progress?: number; total?: number; message?: string }>();
@@ -50,7 +52,8 @@ export class Harness {
   private turnIndex = 0;
 
   constructor(config: HarnessConfig) {
-    this.config = config;
+    this.configStore = new ConfigWatch(config);
+    this.config = this.configStore.get() as HarnessConfig;
     this.sessionManager = new SessionManager(config.dataDir, config.projectPath);
     this.contextManager = new ContextManager(config.context);
     this.memoryManager = new MemoryManager(config.dataDir, config.projectPath, config.memory);
@@ -515,6 +518,7 @@ export class Harness {
         modelSupportsImages: nativeImageSupport,
         projectPath: this.config.projectPath,
         config: this.config,
+        configStore: this.configStore,
         onSetModel: (id: string) => this.setModel(id),
         onSetThinking: (level: string) => this.setThinking(level),
         onSetProvider: (id: string) => this.setProvider(id),
@@ -524,6 +528,10 @@ export class Harness {
       ui = new TuiBackend(tuiDeps);
     }
     this.ui = ui;
+    // Register config change notification → UI
+    this.configStore.onChange(() => {
+      this.ui.onConfigChange?.();
+    });
 
     await this.ui.start();
 
@@ -589,12 +597,10 @@ export class Harness {
   setModel(modelId: string): void {
     const oldModelId = this.config.modelId;
     const model = resolveModel(this.config.provider, modelId);
-    this.config.modelId = modelId;
+    const thinkingLevel = getThinkingLevel(this.config.provider, modelId);
+    this.configStore.setModelConfig(this.config.provider, modelId, thinkingLevel);
     this.agent.state.model = model;
     this.contextManager.updateModel(model.contextWindow, model.maxTokens);
-
-    const thinkingLevel = getThinkingLevel(this.config.provider, modelId);
-    this.config.thinkingLevel = thinkingLevel;
     this.agent.state.thinkingLevel = thinkingLevel;
 
     saveUserConfig({ modelId, thinkingLevel });
@@ -619,9 +625,7 @@ export class Harness {
     const defaultModelId = models[0].id;
     const model = resolveModel(providerId, defaultModelId);
 
-    this.config.provider = providerId;
-    this.config.modelId = defaultModelId;
-    this.config.thinkingLevel = getThinkingLevel(providerId, defaultModelId);
+    this.configStore.setModelConfig(providerId, defaultModelId, getThinkingLevel(providerId, defaultModelId));
     this.agent.state.model = model;
     this.agent.state.thinkingLevel = this.config.thinkingLevel;
     this.contextManager.updateModel(model.contextWindow, model.maxTokens);
@@ -632,7 +636,7 @@ export class Harness {
     this.ui.clearConversationView();
   }
   setThinking(level: string): void {
-    this.config.thinkingLevel = level as any;
+    this.configStore.setThinkingLevel(level as any);
     this.agent.state.thinkingLevel = level as any;
     saveUserConfig({ thinkingLevel: level });
   }
@@ -649,9 +653,8 @@ export class Harness {
 
     // Change working directory
     process.chdir(resolvedPath);
-    this.config.projectPath = resolvedPath;
 
-    // Update session and memory managers for new project
+    this.configStore.setProjectPath(resolvedPath);
     this.sessionManager.updateProjectPath(this.config.dataDir, resolvedPath);
     this.memoryManager.updateProjectPath(this.config.dataDir, resolvedPath);
 
@@ -704,13 +707,18 @@ export class Harness {
         });
 
       if (mcpServers.length > 0) {
-        this.config.mcp = mcpServers;
+        this.configStore.setMcpServers(mcpServers);
         this.mcpManager = new MCPManager(mcpServers);
         await this.mcpManager.initialize();
         await this.mcpManager.registerDrivers(this.driverRegistry);
       } else {
+        this.configStore.setMcpServers([]);
         this.mcpManager = undefined;
       }
+
+      // Notify UI of updated MCP state
+      this.ui.setMcpManager(this.mcpManager);
+      this.ui.pushMcpState?.();
     } catch (err) {
       console.error("[harness] MCP reload error:", err);
       // Non-fatal: continue with updated path even if MCP reload fails

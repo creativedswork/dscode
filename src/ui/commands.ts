@@ -2,6 +2,7 @@ import type { Agent } from "@mariozechner/pi-agent-core";
 import type { SlashCommand as AutocompleteSlashCommand } from "@earendil-works/pi-tui";
 
 import type { HarnessConfig } from "../core/types.js";
+import type { ConfigWatch } from "../core/config-watch.js";
 import type { SessionManager } from "../session/manager.js";
 import type { MemoryManager } from "../memory/manager.js";
 import type { DriverRegistry } from "../drivers/registry.js";
@@ -27,6 +28,7 @@ interface CommandContext {
   contextManager: ContextManager;
   mcpManager?: MCPManager;
   config: HarnessConfig;
+  configStore: ConfigWatch;
   onSetModel: (modelId: string) => void;
   onSetThinking: (level: string) => void;
   onSetProvider: (providerId: string) => void;
@@ -531,7 +533,7 @@ const COMMANDS: SlashCommandDef[] = [
             return;
           }
           saveUserConfig({ apiKey: key });
-          ctx.config.apiKey = key;
+          ctx.configStore.setApiKey(key);
           const envVar = PROVIDER_ENV_VARS[ctx.config.provider] ?? "DEEPSEEK_API_KEY";
           process.env[envVar] = key;
           if (envVar !== "DEEPSEEK_API_KEY") {
@@ -563,7 +565,7 @@ const COMMANDS: SlashCommandDef[] = [
           try {
             const v = { provider: vpId } as any;
             saveUserConfig({ vision: v });
-            ctx.config.vision = v;
+            ctx.configStore.updateVision({ provider: vpId });
             ctx.tui.addInfo(`Vision provider set to: ${vpId}`);
           } catch (err: any) {
             ctx.tui.addError(err.message);
@@ -592,7 +594,7 @@ const COMMANDS: SlashCommandDef[] = [
             const existingKey = (ctx.config.vision as any)?.key;
             const v = { provider: vp, model: vmId, key: existingKey };
             saveUserConfig({ vision: v });
-            ctx.config.vision = v;
+            ctx.configStore.updateVision({ model: vmId });
             ctx.tui.addInfo(`Vision model set to: ${vmId}`);
           } catch (err: any) {
             ctx.tui.addError(err.message);
@@ -609,7 +611,7 @@ const COMMANDS: SlashCommandDef[] = [
           const vm = (ctx.config.vision as any)?.model ?? "";
           const v = { provider: vp, model: vm, key };
           saveUserConfig({ vision: v });
-          ctx.config.vision = v;
+          ctx.configStore.updateVision({ key });
           ctx.tui.addInfo(`Vision API key saved to ~/.dscode/config.json: ${maskApiKey(key)}`);
           break;
         }

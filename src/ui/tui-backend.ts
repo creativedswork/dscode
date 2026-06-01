@@ -107,4 +107,9 @@ export class TuiBackend implements UiBackend {
   openMcpBrowser(): void {
     this.tui.openMcpBrowser();
   }
+
+  // ── Config Watch ──
+  onConfigChange(): void {
+    // TUI shares the same config reference — already synced
+  }
 }

@@ -7,6 +7,7 @@ import type { ImageContent } from "@mariozechner/pi-ai";
 import { getAllProviders, getAllModels, getVisionModels, getVisionProviders } from "../../models/index.js";
 import type { UiBackend } from "../backend.js";
 import type { HarnessConfig, PermissionPromptResult } from "../../core/types.js";
+import type { ConfigWatch } from "../../core/config-watch.js";
 import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig, normalizeTransport, normalizeProtocolVersion, loadScopedSettings, projectSettingsPath } from "../../core/config.js";
 import { executeSlashCommand, getSlashCommandAutocomplete } from "../commands.js";
 import type { Harness } from "../../core/harness.js";
@@ -45,6 +46,7 @@ function extractImagesFromToolResult(result: unknown): ImageAttachment[] | undef
 export interface WebUiOptions {
   port: number;
   harness: Harness;
+  configStore: ConfigWatch;
   config: HarnessConfig;
 }
 
@@ -57,6 +59,7 @@ export class WebUiBackend implements UiBackend {
   private port: number;
   private harness: Harness;
   private config: HarnessConfig;
+  private configStore: ConfigWatch;
   private httpServer: ReturnType<typeof createServer>;
   private wsServer: WsServer;
   private currentClient: WebSocketClient | null = null;
@@ -81,6 +84,7 @@ export class WebUiBackend implements UiBackend {
   constructor(options: WebUiOptions) {
     this.port = options.port;
     this.harness = options.harness;
+    this.configStore = options.configStore;
     this.config = options.config;
 
     this.wsServer = new WsServer();
@@ -285,6 +289,12 @@ export class WebUiBackend implements UiBackend {
     // In web mode, initiated by client
   }
 
+
+  // ── UiBackend Config Watch ──
+
+  onConfigChange(): void {
+    this.broadcast({ type: "config", data: this.buildConfigData() });
+  }
   // ── Private: WebSocket handling ──
 
   private handleConnect(client: WebSocketClient): void {
@@ -448,6 +458,7 @@ export class WebUiBackend implements UiBackend {
         contextManager: (this.harness as any).contextManager,
         mcpManager: (this.harness as any).mcpManager,
         config: this.config,
+        configStore: this.configStore,
         onSetModel: (id: string) => (this.harness as any).setModel(id),
         onSetThinking: (level: string) => (this.harness as any).setThinking(level),
         onSetProvider: (id: string) => (this.harness as any).setProvider(id),
@@ -551,7 +562,7 @@ export class WebUiBackend implements UiBackend {
           break;
         }
         case "set_key": {
-          this.config.apiKey = cmd.value;
+          this.configStore.setApiKey(cmd.value);
           saveUserConfig({ apiKey: cmd.value });
           const envVar = PROVIDER_ENV_VARS[this.config.provider] ?? "DEEPSEEK_API_KEY";
           process.env[envVar] = cmd.value;
@@ -563,8 +574,9 @@ export class WebUiBackend implements UiBackend {
           break;
         }
         case "set_provider": {
-          this.config.provider = cmd.value;
           saveUserConfig({ provider: cmd.value });
+          // Update config via ConfigWatch so onChange propagates
+          this.configStore.setModelConfig(cmd.value, this.config.modelId, this.config.thinkingLevel);
           // Auto-select the first model for the new provider
           const cd = this.buildConfigData();
           if (cd.models.length > 0) {
@@ -582,7 +594,7 @@ export class WebUiBackend implements UiBackend {
         }
         case "set_vision_provider": {
           const vp = cmd.value;
-          this.config.vision = { provider: vp, model: "" as any };
+          this.configStore.updateVision({ provider: vp });
           saveUserConfig({ vision: this.config.vision });
           client.send({ type: "config", data: this.buildConfigData() });
           client.send({ type: "info", text: `Vision provider set to: ${vp}` });
@@ -591,7 +603,7 @@ export class WebUiBackend implements UiBackend {
         case "set_vision_model": {
           const vm = cmd.value;
           const vp = this.config.vision?.provider ?? "";
-          this.config.vision = { provider: vp, model: vm };
+          this.configStore.updateVision({ model: vm });
           saveUserConfig({ vision: this.config.vision });
           client.send({ type: "config", data: this.buildConfigData() });
           client.send({ type: "info", text: `Vision model set to: ${vm}` });
@@ -601,14 +613,14 @@ export class WebUiBackend implements UiBackend {
           const vk = cmd.value;
           const vp = this.config.vision?.provider ?? "";
           const vm = this.config.vision?.model ?? "";
-          this.config.vision = { provider: vp, model: vm, key: vk };
+          this.configStore.updateVision({ key: vk });
           saveUserConfig({ vision: this.config.vision });
           client.send({ type: "config", data: this.buildConfigData() });
           client.send({ type: "info", text: "Vision API key updated" });
           break;
         }
         case "set_vision_delete": {
-          this.config.vision = undefined;
+          this.configStore.setVision(undefined);
           saveUserConfig({ vision: null });
           client.send({ type: "config", data: this.buildConfigData() });
           client.send({ type: "info", text: "Vision model configuration removed" });
