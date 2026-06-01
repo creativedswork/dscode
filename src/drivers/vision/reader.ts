@@ -37,7 +37,7 @@ function appleScriptExtractClipboardImage(tmpPath: string): string {
 export async function readClipboardImage(): Promise<ImageContent | null> {
   if (process.platform !== "darwin") return null;
 
-  const tmpPath = join(tmpdir(), "dscode_clipboard.png");
+  const tmpPath = join(tmpdir(), `dscode_clipboard_${Date.now()}_${++_pasteSeq}.png`);
   const script = appleScriptExtractClipboardImage(tmpPath);
 
   try {
@@ -51,10 +51,13 @@ export async function readClipboardImage(): Promise<ImageContent | null> {
   return { type: "image" as const, data: buf.toString("base64"), mimeType: "image/png" };
 }
 
+let _pasteSeq = 0;
+
+/** Non-blocking clipboard image read with unique temp file per call (safe for concurrent pastes). */
 export function readClipboardImageNonBlocking(): Promise<ImageContent | null> {
   if (process.platform !== "darwin") return Promise.resolve(null);
 
-  const tmpPath = join(tmpdir(), "dscode_clipboard.png");
+  const tmpPath = join(tmpdir(), `dscode_clipboard_${Date.now()}_${++_pasteSeq}.png`);
   const script = appleScriptExtractClipboardImage(tmpPath);
 
   return new Promise((resolve) => {

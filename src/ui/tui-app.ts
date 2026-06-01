@@ -38,6 +38,8 @@ import { buildMcpServers, createInitialMcpBrowserState, getMcpVisibleRows, reduc
 import type { McpBrowserState } from "./mcp-browser.js";
 import { resolveAtFileRefs, listProjectFiles } from "../utils/at-file-resolver.js";
 import { readClipboardImageNonBlocking } from "../utils/image.js";
+import { ImageManager } from "./image-manager.js";
+import { ImagePasteHandler } from "./image-paste-handler.js";
 // TuiDeps replaced by HarnessAPI — see src/core/harness-api.ts
 
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;
@@ -141,17 +143,10 @@ export class TuiApp {
   private exitPromise!: Promise<void>;
   private exitResolve!: () => void;
   private stopping = false;
-  // ── Image lifecycle ──
-  //
-  // pendingImages: UI-layer stack for syncing [image] placeholder count with
-  //   the editor. Pop/push in onChange — NEVER used for model submission.
-  //
-  // imageStore: Data-layer store for actual ImageContent. Written on paste,
-  //   read in handleSubmit, cleared on submit/clear. Immune to onChange.
-  private pendingImages: ImageContent[] = [];
-  private imageStore: ImageContent[] = [];
-  private static readonly IMAGE_PLACEHOLDER = "[image]";
-  private imagePasteInFlight = false;
+  // ── Image lifecycle (delegated to ImagePasteHandler) ──
+  private imagePasteHandler: ImagePasteHandler;
+  // Pre-drained images: captured in input listener before Editor's onChange("") clears them
+  private drainedSubmitImages: ImageContent[] | null = null;
   private sigintHandler = () => this.handleCtrlC();
 
   constructor(deps: HarnessAPI) {
@@ -168,15 +163,22 @@ export class TuiApp {
       deps.config.projectPath,
     );
     this.editor = new Editor(this.tui, editorTheme, { paddingX: 1 });
+    this.imagePasteHandler = new ImagePasteHandler(
+      new ImageManager(),
+      this.editor,
+      this.conversation,
+      this.imageStatus,
+      this.tui,
+    );
     this.editor.setAutocompleteProvider(autocomplete);
     this.editor.onSubmit = (text) => this.handleSubmit(text.trim());
     this.editor.onChange = (text) => {
-      // Sync [image] placeholder count with pendingImages and conversation draft blocks
+      // Sync [image] placeholder count with image manager and conversation draft blocks
       const imageCount = (text.match(/\[image\]/g) || []).length;
-      while (this.pendingImages.length > imageCount) {
-        this.pendingImages.pop();
-        this.conversation.removeLastDraftImage();
-        this.updateImageStatus();
+      // Guard: if images were pre-drained by input listener (Enter key),
+      // don't remove — handleSubmit will use drainedSubmitImages.
+      while (this.imagePasteHandler.imageCount > imageCount && !this.drainedSubmitImages) {
+        this.imagePasteHandler.removeLastImage();
       }
     };
 
@@ -184,6 +186,12 @@ export class TuiApp {
       const pasteResult = this.handlePasteImage(data);
       if (pasteResult) {
         return pasteResult;
+      }
+      // Pre-submit drain: if Enter/Return is pressed with pending images,
+      // drain them NOW before the Editor fires onChange("") which would
+      // otherwise trigger removeLastImage.
+      if ((matchesKey(data, Key.enter) || matchesKey(data, Key.return) || data === "\r" || data === "\n") && this.imagePasteHandler.imageCount > 0 && !this.processing) {
+        this.drainedSubmitImages = this.imagePasteHandler.drainImages();
       }
       if (this.handleInput(data)) {
         return { consume: true };
@@ -558,25 +566,11 @@ export class TuiApp {
     // Extract any printable text mixed with the image binary data
     const printableText = this.extractPrintableText(pasteContent);
 
-    // Try to read the image from system clipboard (macOS only)
-    if (this.imagePasteInFlight) {
-      if (printableText.length > 0) {
-        return { data: printableText };
-      }
-      return { consume: true };
-    }
-    this.imagePasteInFlight = true;
+    // Try to read the image from system clipboard (macOS only).
+    // Each call uses a unique temp file, so concurrent pastes are safe.
     readClipboardImageNonBlocking().then((img) => {
-      this.imagePasteInFlight = false;
       if (img) {
-        this.updateImageStatus();
-        this.insertImagePlaceholder();
-        this.pendingImages.push(img);
-        this.imageStore.push(img);
-        this.conversation.addDraftImage(img.data, img.mimeType,
-          `Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
-        );
-
+        this.imagePasteHandler.addImage(img);
       }
     });
 
@@ -603,19 +597,9 @@ export class TuiApp {
     // The data might be a Kitty image transmission.
     // We consume it and try to read the clipboard image instead,
     // since extracting base64 from Kitty protocol chunks is fragile.
-    if (this.imagePasteInFlight) return true;
-    this.imagePasteInFlight = true;
     readClipboardImageNonBlocking().then((img) => {
-      this.imagePasteInFlight = false;
       if (img) {
-        this.updateImageStatus();
-        this.insertImagePlaceholder();
-        this.pendingImages.push(img);
-        this.imageStore.push(img);
-        this.conversation.addDraftImage(img.data, img.mimeType,
-          `Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
-        );
-
+        this.imagePasteHandler.addImage(img);
       }
     });
 
@@ -641,30 +625,15 @@ export class TuiApp {
   }
 
   private pasteClipboardImage(): void {
-    if (this.imagePasteInFlight) return;
-    this.imagePasteInFlight = true;
     readClipboardImageNonBlocking().then((img) => {
-      this.imagePasteInFlight = false;
       if (img) {
-        this.updateImageStatus();
-        this.insertImagePlaceholder();
-        this.pendingImages.push(img);
-        this.imageStore.push(img);
-        this.conversation.addDraftImage(img.data, img.mimeType,
-          `Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
-        );
-
+        this.imagePasteHandler.addImage(img);
       } else {
         this.conversation.addInfo(c.dim("No image found in clipboard (macOS only). Use /image <path> to attach an image file."));
       }
     });
   }
 
-  private insertImagePlaceholder(): void {
-    if (this.editor.insertTextAtCursor) {
-      this.editor.insertTextAtCursor(TuiApp.IMAGE_PLACEHOLDER + " ");
-    }
-  }
 
   private handleCtrlC(): void {
     if (this.resolvePermission) {
@@ -839,22 +808,22 @@ export class TuiApp {
 
   private handleSubmit(text: string): void {
     text = text.replace(/\[image\]\s*/g, "").trim();
-    let images = this.imageStore.length > 0 ? [...this.imageStore] : undefined;
+    // Use pre-drained images if Enter was intercepted in input listener,
+    // otherwise drain now (for programmatic submits like /image command).
+    let images: ImageContent[] | undefined;
+    if (this.drainedSubmitImages) {
+      images = this.drainedSubmitImages;
+      this.drainedSubmitImages = null;
+    } else {
+      const drainedImages = this.imagePasteHandler.drainImages();
+      images = drainedImages.length > 0 ? drainedImages : undefined;
+    }
     const hasText = text.length > 0;
     const hasImages = Boolean(images?.length);
     if (!hasText && !hasImages) {
-      if (this.imagePasteInFlight) return;
-      this.imagePasteInFlight = true;
       readClipboardImageNonBlocking().then((img) => {
-        this.imagePasteInFlight = false;
         if (img) {
-          this.updateImageStatus();
-          this.insertImagePlaceholder();
-          this.pendingImages.push(img);
-          this.imageStore.push(img);
-          this.conversation.addDraftImage(img.data, img.mimeType,
-            `Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
-          );
+          this.imagePasteHandler.addImage(img);
         }
       });
       return;
@@ -916,7 +885,7 @@ export class TuiApp {
       }) as ImageContent);
       images = [...(images ?? []), ...atImages];
     }
-    if (this.imageStore.length > 0 && !resolveModel(this.deps.config.provider, this.deps.config.modelId).input.includes("image")) {
+    if (images && images.length > 0 && !resolveModel(this.deps.config.provider, this.deps.config.modelId).input.includes("image")) {
       this.conversation.addInfo(
         c.dim(`${resolveModel(this.deps.config.provider, this.deps.config.modelId).name} does not support image input natively — using vision model or OCR.`),
       );
@@ -938,9 +907,7 @@ export class TuiApp {
     }
     this.setProcessing(true);
 
-    this.pendingImages = [];
-    this.imageStore = [];
-    this.updateImageStatus();
+    this.imagePasteHandler.updateStatus();
 
     if (images && images.length > 0) {
       this.deps.promptWithImages(text, images).then(
@@ -997,12 +964,9 @@ export class TuiApp {
     this.pendingPermissionContext = null;
     this.lastMenuNavDirection = null;
     this.lastMenuNavAt = 0;
-    this.pendingImages = [];
-    this.imageStore = [];
+    this.imagePasteHandler.clear();
     if (this.mcpPanelVisible) {
       this.closeMcpBrowser();
-    } else {
-      this.updateImageStatus();
     }
     this.editor.setText("");
     this.editor.disableSubmit = this.processing && !this.permissionExplainMode;
@@ -1016,23 +980,10 @@ export class TuiApp {
   }
 
   addPendingImage(image: ImageContent): void {
-    this.pendingImages.push(image);
-    this.imageStore.push(image);
-    this.updateImageStatus();
-    this.insertImagePlaceholder();
+    this.imagePasteHandler.addImage(image);
   }
 
   private updateImageStatus(): void {
-    if (this.imageStore.length > 0) {
-      const totalKB = Math.round(
-        this.imageStore.reduce((sum, img) => sum + img.data.length * 0.75, 0) / 1024,
-      );
-      this.imageStatus.setText(
-        c.dim(` ${this.imageStore.length} image(s) attached (${totalKB} KB) — type text and press Enter to send`),
-      );
-    } else {
-      this.imageStatus.setText("");
-    }
-    this.tui.requestRender(true);
+    this.imagePasteHandler.updateStatus();
   }
 }
