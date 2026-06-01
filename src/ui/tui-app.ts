@@ -179,10 +179,6 @@ export class TuiApp {
     this.editor.setAutocompleteProvider(autocomplete);
     this.editor.onSubmit = (text) => this.handleSubmit(text.trim());
     this.editor.onChange = (text) => {
-      const match = text.match(/\[paste #\d+ (\+[\d]+ lines|[\d]+ chars)\]/);
-      if (match) {
-        this.conversation.addInfo(c.dim(`Large paste accepted — ${match[0]}. Press Enter to submit full content.`));
-      }
       // Sync [image] placeholder count with pendingImages and conversation draft blocks
       const imageCount = (text.match(/\[image\]/g) || []).length;
       while (this.pendingImages.length > imageCount) {
@@ -555,6 +551,14 @@ export class TuiApp {
     const hasControlChars = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]/.test(pasteContent);
     if (pasteContent.trim() !== "" && !hasControlChars) {
       // Pure text paste — let it through to the editor unchanged
+      const lines = pasteContent.split("\n");
+      const totalChars = pasteContent.length;
+      if (lines.length > 10 || totalChars > 1000) {
+        const desc = lines.length > 10
+          ? `[paste # +${lines.length} lines]`
+          : `[paste # ${totalChars} chars]`;
+        this.conversation.addInfo(c.dim(`Large paste accepted — ${desc}. Press Enter to submit full content.`));
+      }
       return undefined;
     }
 
