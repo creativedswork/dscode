@@ -1,7 +1,29 @@
-## Purpose
+## ADDED Requirements
 
-Central agent harness — owns agent lifecycle, session management, MCP coordination, and delegates image processing to ImagePipeline.
-## Requirements
+### Requirement: Harness implements HarnessAPI
+The `Harness` class SHALL implement the `HarnessAPI` interface. All fields consumed by UI backends (agent, sessionManager, memoryManager, driverRegistry, toolRegistry, skillManager, permissionManager, contextManager, mcpManager, config, configStore) SHALL be `public readonly`. The image processing fields and methods SHALL be delegated to `this.imagePipeline`.
+
+#### Scenario: Harness fields are public readonly
+- **WHEN** `Harness` is instantiated
+- **THEN** `harness.agent`, `harness.sessionManager`, `harness.driverRegistry`, etc. are accessible without type assertions
+
+#### Scenario: Harness delegates image processing to ImagePipeline
+- **WHEN** `harness.promptWithImages(text, images)` is called
+- **THEN** it SHALL delegate to `this.imagePipeline.process(images, text)` and use the result
+
+### Requirement: Harness constructs and owns ImagePipeline
+The `Harness` constructor SHALL create an `ImagePipeline` instance and store it as `this.imagePipeline`. The ImagePipeline SHALL be included in `HarnessAPI`.
+
+#### Scenario: ImagePipeline created during Harness construction
+- **WHEN** `new Harness(config)` is called
+- **THEN** `this.imagePipeline` is instantiated with the vision config from `config.vision`, the cache directory, and an `onWarning` callback
+
+#### Scenario: ImagePipeline accessible via HarnessAPI
+- **WHEN** a consumer accesses `harness.imagePipeline`
+- **THEN** it receives the `ImagePipeline` instance
+
+## MODIFIED Requirements
+
 ### Requirement: Harness uses ConfigWatch for all config mutations
 The `Harness` class SHALL create a `ConfigWatch` instance from the raw `HarnessConfig` and route all configuration mutations through ConfigWatch setter methods. External code MAY still read `this.config` directly since it references the same internal object that ConfigWatch manages.
 
@@ -61,26 +83,3 @@ When loading MCP server configurations in `updateProjectPath()`, the harness SHA
 #### Scenario: Project-level MCP overrides user-level
 - **WHEN** `updateProjectPath()` is called and both user-level and project-level settings define an MCP server with the same name
 - **THEN** the project-level configuration takes precedence
-
-### Requirement: Harness implements HarnessAPI
-The `Harness` class SHALL implement the `HarnessAPI` interface. All fields consumed by UI backends (agent, sessionManager, memoryManager, driverRegistry, toolRegistry, skillManager, permissionManager, contextManager, mcpManager, config, configStore) SHALL be `public readonly`. The image processing fields and methods SHALL be delegated to `this.imagePipeline`.
-
-#### Scenario: Harness fields are public readonly
-- **WHEN** `Harness` is instantiated
-- **THEN** `harness.agent`, `harness.sessionManager`, `harness.driverRegistry`, etc. are accessible without type assertions
-
-#### Scenario: Harness delegates image processing to ImagePipeline
-- **WHEN** `harness.promptWithImages(text, images)` is called
-- **THEN** it SHALL delegate to `this.imagePipeline.process(images, text)` and use the result
-
-### Requirement: Harness constructs and owns ImagePipeline
-The `Harness` constructor SHALL create an `ImagePipeline` instance and store it as `this.imagePipeline`. The ImagePipeline SHALL be included in `HarnessAPI`.
-
-#### Scenario: ImagePipeline created during Harness construction
-- **WHEN** `new Harness(config)` is called
-- **THEN** `this.imagePipeline` is instantiated with the vision config from `config.vision`, the cache directory, and an `onWarning` callback
-
-#### Scenario: ImagePipeline accessible via HarnessAPI
-- **WHEN** a consumer accesses `harness.imagePipeline`
-- **THEN** it receives the `ImagePipeline` instance
-

@@ -26,6 +26,8 @@ import type { SkillManager } from "../skills/manager.js";
 import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
 import type { HarnessConfig, PermissionPromptResult, PermissionRuleConfig } from "../core/types.js";
+import type { HarnessAPI } from "../core/harness-api.js";
+import { resolveModel } from "../models/index.js";
 import type { ConfigWatch } from "../core/config-watch.js";
 import type { MCPManager } from "../mcp/manager.js";
 import type { AppInstance } from "../mcp/app/types.js";
@@ -36,27 +38,7 @@ import { buildMcpServers, createInitialMcpBrowserState, getMcpVisibleRows, reduc
 import type { McpBrowserState } from "./mcp-browser.js";
 import { resolveAtFileRefs, listProjectFiles } from "../utils/at-file-resolver.js";
 import { readClipboardImageNonBlocking } from "../utils/image.js";
-export interface TuiDeps {
-  agent: Agent;
-  sessionManager: SessionManager;
-  memoryManager: MemoryManager;
-  driverRegistry: DriverRegistry;
-  toolRegistry: ToolRegistry;
-  skillManager: SkillManager;
-  permissionManager: PermissionManager;
-  contextManager: ContextManager;
-  mcpManager?: MCPManager;
-  modelName: string;
-  modelSupportsImages: boolean;
-  projectPath: string;
-  config: HarnessConfig;
-  configStore: ConfigWatch;
-  onSetModel: (modelId: string) => void;
-  onSetThinking: (level: string) => void;
-  onSetProvider: (providerId: string) => void;
-  promptWithImages: (text: string, images: ImageContent[]) => Promise<void>;
-  onSetCwd: (cwd: string) => Promise<{ success: boolean; error?: string }>;
-}
+// TuiDeps replaced by HarnessAPI — see src/core/harness-api.ts
 
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;
 
@@ -124,7 +106,7 @@ class HybridAutocompleteProvider implements AutocompleteProvider {
 
 
 export class TuiApp {
-  private deps: TuiDeps;
+  private deps: HarnessAPI;
   private terminal: ProcessTerminal;
   private tui: TUI;
   private conversation: ConversationView;
@@ -172,7 +154,7 @@ export class TuiApp {
   private imagePasteInFlight = false;
   private sigintHandler = () => this.handleCtrlC();
 
-  constructor(deps: TuiDeps) {
+  constructor(deps: HarnessAPI) {
     this.deps = deps;
     this.terminal = new ProcessTerminal();
     this.tui = new TUI(this.terminal, true);
@@ -183,7 +165,7 @@ export class TuiApp {
 
     const autocomplete = new HybridAutocompleteProvider(
       getSlashCommandAutocomplete(),
-      deps.projectPath,
+      deps.config.projectPath,
     );
     this.editor = new Editor(this.tui, editorTheme, { paddingX: 1 });
     this.editor.setAutocompleteProvider(autocomplete);
@@ -220,7 +202,7 @@ export class TuiApp {
 
   private buildLayout(): void {
     const root = new Box(1);
-    root.addChild(new TruncatedText(c.bold("DSCode ") + c.dim(`· ${this.deps.modelName}`), 1));
+    root.addChild(new TruncatedText(c.bold("DSCode ") + c.dim(`· ${resolveModel(this.deps.config.provider, this.deps.config.modelId).name}`), 1));
     root.addChild(this.conversation.component);
     this.tui.addChild(root);
     this.tui.addChild(this.imageStatus);
@@ -235,7 +217,7 @@ export class TuiApp {
   }
 
   setMcpManager(mcpManager?: MCPManager): void {
-    this.deps.mcpManager = mcpManager;
+    (this.deps as any).mcpManager = mcpManager;
     if (this.mcpPanelVisible) {
       this.updateMcpPanel();
     }
@@ -747,7 +729,7 @@ export class TuiApp {
     }
   }
 
-  addInfo(text: string): void {
+  addInfo(text: string, _display?: "toast" | "panel"): void {
     this.conversation.addInfo(text);
   }
 
@@ -906,7 +888,7 @@ export class TuiApp {
     if (this.processing) return;
 
     if (text.startsWith("/")) {
-      const executed = executeSlashCommand(text, this.deps, this);
+      const executed = executeSlashCommand(text, { harness: this.deps, ui: this as any });
       if (executed) {
         return;
       }
@@ -919,7 +901,7 @@ export class TuiApp {
     }
 
     // Resolve @file references
-    const resolved = resolveAtFileRefs(this.deps.projectPath, text, this.deps.config.atFile ?? {});
+    const resolved = resolveAtFileRefs(this.deps.config.projectPath, text, this.deps.config.atFile ?? {});
     if (resolved.warnings.length > 0) {
       for (const warn of resolved.warnings) {
         this.conversation.addInfo(c.yellow(`@${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}`));
@@ -934,9 +916,9 @@ export class TuiApp {
       }) as ImageContent);
       images = [...(images ?? []), ...atImages];
     }
-    if (this.imageStore.length > 0 && !this.deps.modelSupportsImages) {
+    if (this.imageStore.length > 0 && !resolveModel(this.deps.config.provider, this.deps.config.modelId).input.includes("image")) {
       this.conversation.addInfo(
-        c.dim(`${this.deps.modelName} does not support image input natively — using vision model or OCR.`),
+        c.dim(`${resolveModel(this.deps.config.provider, this.deps.config.modelId).name} does not support image input natively — using vision model or OCR.`),
       );
     }
 

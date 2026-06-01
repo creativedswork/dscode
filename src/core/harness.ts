@@ -21,29 +21,29 @@ import { AppHostManager } from "../mcp/app/host.js";
 import { inferLayout } from "../ui/mdx/inference.js";
 import { TuiBackend } from "../ui/tui-backend.js";
 import type { UiBackend } from "../ui/backend.js";
-import type { TuiDeps } from "../ui/tui-app.js";
+import type { HarnessAPI } from "./harness-api.js";
 import { resolveModel, getThinkingLevel, getAllModels } from "../models/index.js";
-import { ocrImages } from "../utils/ocr.js";
-import type { OcrResult } from "../utils/ocr.js";
-import { getEnvApiKey } from "@mariozechner/pi-ai";
+import { ImagePipeline } from "../image-pipeline/pipeline.js";
+import { resolveVisionModel, describeImagesViaVisionModel } from "../image-pipeline/vision.js";
 import { ImageCache } from "../utils/image-cache.js";
 import type { ImageRef, VisionMessage } from "./types.js";
 import { initCheckpointSystem, shutdownCheckpointSystem } from "../checkpoint/index.js";
 import { ConfigWatch } from "./config-watch.js";
 
-export class Harness {
+export class Harness implements HarnessAPI {
   agent!: Agent;
   sessionManager: SessionManager;
-  private contextManager: ContextManager;
+  contextManager: ContextManager;
   memoryManager: MemoryManager;
   driverRegistry: DriverRegistry;
   toolRegistry: ToolRegistry;
   skillManager: SkillManager;
   permissionManager: PermissionManager;
-  mcpManager?: MCPManager;
-  public appHostManager?: AppHostManager;
+  mcpManager: MCPManager | undefined;
+  appHostManager?: AppHostManager;
   configStore: ConfigWatch;
   config: HarnessConfig;
+  imagePipeline: ImagePipeline;
   private ui!: UiBackend;
   private baseSystemPrompt = "";
   private lastMcpProgress = new Map<string, { progress?: number; total?: number; message?: string }>();
@@ -65,6 +65,13 @@ export class Harness {
       (toolName, preview, args) => this.ui.getPromptPermission()(toolName, preview, args),
       () => {},
     );
+    this.imagePipeline = new ImagePipeline({
+      visionConfig: config.vision,
+      fallbackApiKey: config.apiKey,
+      onWarning: (msg: string) => {
+        if (this.ui) this.ui.addWarning(msg);
+      },
+    });
   }
 
   async initialize(): Promise<void> {
@@ -341,180 +348,115 @@ export class Harness {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  /** @deprecated Use ImagePipeline instead. Kept for backward compat with MCPManager until task 4. */
   private resolveVisionModel(): { model: Model<Api>; apiKey: string } | null {
-    const v = this.config.vision;
-    if (!v?.provider || !v?.model) return null;
-    try {
-      const model = resolveModel(v.provider, v.model);
-      if (!model.input.includes("image")) {
-        this.ui.addWarning(`Vision model ${v.provider}/${v.model} does not support image input — falling back to OCR.`);
-        return null;
-      }
-      const apiKey = v.key ?? getEnvApiKey(v.provider) ?? this.config.apiKey;
-      if (!apiKey) {
-        this.ui.addWarning(`No API key for vision model ${v.provider}/${v.model} — configure via /config set_vision_key. Falling back to OCR.`);
-        return null;
-      }
-      return { model, apiKey };
-    } catch (err) {
-      this.ui.addWarning(`Failed to resolve vision model ${v?.provider ?? "?"}/${v?.model ?? "?"}: ${err instanceof Error ? err.message : String(err)}. Falling back to OCR.`);
-      return null;
-    }
+    return resolveVisionModel(
+      this.config.vision,
+      this.config.apiKey,
+      (msg) => this.ui.addWarning(msg),
+    );
   }
 
+  /** @deprecated Use ImagePipeline instead. Kept for backward compat with MCPManager until task 4. */
   private async describeImagesViaVisionModel(
     images: ImageContent[],
     visionModel: Model<Api>,
     apiKey: string,
   ): Promise<string> {
-    const ctx: Context = {
-      systemPrompt: "You are an image description assistant. Describe the image in detail, including text, layout, and visual elements. Be thorough but concise.",
-      messages: [
-        { role: "user", content: [{ type: "text", text: "请详细描述这张图片的内容，包括文字、布局和视觉元素。" }, ...images], timestamp: Date.now() },
-      ],
-      tools: [],
-    };
-    const stream = streamSimple(visionModel, ctx, {
-      apiKey,
-      maxTokens: 4096,
-      timeoutMs: 60_000,
-      maxRetries: 0,
-      reasoning: "off" as any,
-    });
-    let text = "";
-    for await (const event of stream) {
-      if (event.type === "text_delta") {
-        text += event.delta;
-      }
-    }
-    return text;
+    return describeImagesViaVisionModel(images, visionModel, apiKey);
   }
 
   async promptWithImages(text: string, images: ImageContent[]): Promise<void> {
-    // Normalize: ensure every image has type: "image" and proper fields
-    const normalizedImages: ImageContent[] = images.map((img) => ({
-      type: "image" as const,
-      data: img.data ?? "",
-      mimeType: img.mimeType ?? "image/png",
-    }));
-
-    // Cache images before processing
-    const cachedRefs = await Promise.all(normalizedImages.map((img) => ImageCache.put(img)));
     const turnIdx = this.turnIndex++;
 
-    // 1. Vision model configured → use it first for image description.
-    //    A dedicated vision model provides better image understanding than
-    //    native image support on the main model. The main model receives a
-    //    text description it can always consume regardless of image support.
-    const vision = this.resolveVisionModel();
-
-    // 2. No vision model → try native image support on main model
-    if (!vision) {
+    // Check if main model supports images natively (no vision model configured)
+    const hasVisionConfig = !!(this.config.vision?.provider && this.config.vision?.model);
+    if (!hasVisionConfig) {
       const mainModel = resolveModel(this.config.provider, this.config.modelId);
       if (mainModel.input.includes("image")) {
-        await this.promptAndSave(text, normalizedImages);
+        await this.promptAndSave(text, images);
         return;
       }
     }
 
-    if (vision) {
-      try {
-        this.ui.setProcessing(true);
-        this.ui.addInfo(`Analyzing ${normalizedImages.length} image(s) with vision model (${vision.model.name})...`);
-        const description = await this.describeImagesViaVisionModel(normalizedImages, vision.model, vision.apiKey);
-        if (!description || description.trim().length === 0) {
-          // Vision model returned empty description — fall through to OCR
-          throw new Error("Vision model returned empty description");
-        }
-        this.ui.addInfo(`Image analysis complete, sending to main model...`);
-        const enrichedText = text
-          ? `${text}\n\n<image_description>\n${description}\n</image_description>`
-          : `<image_description>\n${description}\n</image_description>`;
+    this.ui.setProcessing(true);
+    this.ui.addInfo(`Analyzing ${images.length} image(s)...`);
 
-        await this.promptAndSave(enrichedText);
+    const result = await this.imagePipeline.process(images, text);
 
-        // Record vision model call — capture AFTER promptAndSave so we know
-        // the exact message index for session load restoration
-        const msgs = this.agent.state.messages as any[];
-        const msgId = this.findLastUserMessageIndex(msgs);
-        const vMsg: VisionMessage = {
-          turnIndex: turnIdx,
-          messageIndex: msgId,
-          images: cachedRefs,
-          prompt: "请详细描述这张图片的内容，包括文字、布局和视觉元素。",
-          description,
-          modelProvider: vision.model.provider ?? this.config.vision?.provider ?? "",
-          modelId: vision.model.id ?? this.config.vision?.model ?? "",
-          timestamp: Date.now(),
-        };
-        this.sessionManager.setVisionMessages([...this.sessionManager.visionMessages, vMsg]);
+    if (result.source === "vision") {
+      this.ui.addInfo(`Image analysis complete, sending to main model...`);
+      await this.promptAndSave(result.enrichedText);
 
-        // Replace the enriched user message with original text + cached image refs.
-        // The model already processed the description, but the user should see
-        // their own text and the original images, not the machine-generated description.
-        const msgs2 = this.agent.state.messages as any[];
-        let userMsg: any = null;
-        for (let i = msgs2.length - 1; i >= 0; i--) {
-          if (msgs2[i]?.role === "user") {
-            userMsg = msgs2[i];
-            break;
-          }
-        }
-        if (userMsg) {
-          userMsg.content = text || (cachedRefs.length > 0 ? "📷 Image" : text);
-          // Restore images from cache for immediate display and store refs for session persistence
-          userMsg.images = cachedRefs.map((ref: ImageRef) => ({
-            type: "image_ref" as const,
-            hash: ref.hash,
-            mimeType: ref.mimeType,
-          }));
-        }
-        // Re-save to persist the cleaned message (promptAndSave already saved once
-        // with the enriched text).
-        this.sessionManager.trySaveSession(this.agent);
-        // Restore images into agent state for the UI to render — reads from disk cache synchronously
-        const restoredImgs: ImageContent[] = [];
-        for (const ref of cachedRefs) {
-          const cached = ImageCache.getSync(ref);
-          if (cached) restoredImgs.push(cached);
-        }
-        if (restoredImgs.length > 0) {
-          userMsg.images = restoredImgs.map((img) => ({
-            data: img.data,
-            mimeType: img.mimeType,
-          }));
-        }
+      // Record vision model call
+      const msgs = this.agent.state.messages as any[];
+      const msgId = this.findLastUserMessageIndex(msgs);
+      const vMsg: VisionMessage = {
+        turnIndex: turnIdx,
+        messageIndex: msgId,
+        images: result.cachedRefs,
+        prompt: "请详细描述这张图片的内容，包括文字、布局和视觉元素。",
+        description: result.enrichedText
+          .replace(text ? `${text}\n\n<image_description>\n` : `<image_description>\n`, "")
+          .replace("\n</image_description>", ""),
+        modelProvider: this.config.vision?.provider ?? "",
+        modelId: this.config.vision?.model ?? "",
+        timestamp: Date.now(),
+      };
+      this.sessionManager.setVisionMessages([...this.sessionManager.visionMessages, vMsg]);
 
-        return;
-      } catch (err) {
-        this.ui.setProcessing(false);
-        this.ui.addWarning(`Vision model failed: ${err instanceof Error ? err.message : String(err)}. Falling back to OCR.`);
-      }
+      // Restore user message with original text + cached image refs
+      this.restoreUserMessageImages(text, result.cachedRefs);
+      return;
     }
 
-    // 3. OCR fallback
-    try {
-      this.ui.setProcessing(true);
-      this.ui.addInfo(`Extracting text from ${normalizedImages.length} image(s) with OCR...`);
-      const result: OcrResult = await ocrImages(normalizedImages);
+    if (result.source === "ocr") {
       this.ui.addInfo(`OCR complete, sending to main model...`);
-      if (result.hasText) {
-        const ocrText = text
-          ? `${text}\n\n<image_text>\n${result.content}\n</image_text>`
-          : `<image_text>\n${result.content}\n</image_text>`;
-        await this.promptAndSave(ocrText);
-      } else {
-        const noText = text
-          ? `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`
-          : "(用户附带了一张图片，但图片中没有可识别的文字内容)";
-        await this.promptAndSave(noText);
+      await this.promptAndSave(result.enrichedText);
+      return;
+    }
+
+    if (result.source === "none") {
+      const noText = text
+        ? `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`
+        : "(用户附带了一张图片，但图片中没有可识别的文字内容)";
+      await this.promptAndSave(noText);
+      return;
+    }
+
+    // source === "error"
+    await this.promptAndSave(result.enrichedText);
+  }
+
+  private restoreUserMessageImages(text: string, cachedRefs: ImageRef[]): void {
+    const msgs = this.agent.state.messages as any[];
+    let userMsg: any = null;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      if (msgs[i]?.role === "user") {
+        userMsg = msgs[i];
+        break;
       }
-    } catch (err) {
-      this.ui.setProcessing(false);
-      this.ui.addInfo(`OCR failed: ${err instanceof Error ? err.message : String(err)}. Sending text only.`);
-      // If text is empty, send a fallback so the model knows about the image
-      const fallbackText = text || "(用户附带了一张图片，OCR 未能识别其中内容)";
-      await this.promptAndSave(fallbackText);
+    }
+    if (userMsg) {
+      userMsg.content = text || (cachedRefs.length > 0 ? "📷 Image" : text);
+      userMsg.images = cachedRefs.map((ref: ImageRef) => ({
+        type: "image_ref" as const,
+        hash: ref.hash,
+        mimeType: ref.mimeType,
+      }));
+    }
+    this.sessionManager.trySaveSession(this.agent);
+    // Restore images into agent state for the UI to render
+    const restoredImgs: ImageContent[] = [];
+    for (const ref of cachedRefs) {
+      const cached = ImageCache.getSync(ref);
+      if (cached) restoredImgs.push(cached);
+    }
+    if (restoredImgs.length > 0 && userMsg) {
+      userMsg.images = restoredImgs.map((img: ImageContent) => ({
+        data: img.data,
+        mimeType: img.mimeType,
+      }));
     }
   }
 
@@ -523,28 +465,7 @@ export class Harness {
     const model = resolveModel(this.config.provider, this.config.modelId);
     const nativeImageSupport = model.input.includes("image");
     if (!ui) {
-      const tuiDeps: TuiDeps = {
-        agent: this.agent,
-        sessionManager: this.sessionManager,
-        memoryManager: this.memoryManager,
-        driverRegistry: this.driverRegistry,
-        toolRegistry: this.toolRegistry,
-        skillManager: this.skillManager,
-        permissionManager: this.permissionManager,
-        contextManager: this.contextManager,
-        mcpManager: this.mcpManager,
-        modelName: model.name,
-        modelSupportsImages: nativeImageSupport,
-        projectPath: this.config.projectPath,
-        config: this.config,
-        configStore: this.configStore,
-        onSetModel: (id: string) => this.setModel(id),
-        onSetThinking: (level: string) => this.setThinking(level),
-        onSetProvider: (id: string) => this.setProvider(id),
-        promptWithImages: (text: string, images: ImageContent[]) => this.promptWithImages(text, images),
-        onSetCwd: (cwd: string) => this.updateProjectPath(cwd),
-      };
-      ui = new TuiBackend(tuiDeps);
+      ui = new TuiBackend(this);
     }
     this.ui = ui;
     // Register config change notification → UI
@@ -558,8 +479,7 @@ export class Harness {
       if (this.config.mcp.length > 0) {
         this.ui.addInfo(`Connecting ${this.config.mcp.length} MCP server(s)...`);
         this.mcpManager = new MCPManager(this.config.mcp);
-        this.mcpManager.visionResolve = () => this.resolveVisionModel();
-        this.mcpManager.visionDescribe = (images: ImageContent[], model: Model<Api>, apiKey: string) => this.describeImagesViaVisionModel(images, model, apiKey);
+        this.mcpManager.imagePipeline = this.imagePipeline;
         this.ui.setMcpManager(this.mcpManager);
         await this.mcpManager.initialize();
         this.mcpEventUnsubscribe = this.mcpManager.onEvent((event) => this.handleMcpEvent(event));
@@ -730,8 +650,7 @@ export class Harness {
       if (mcpServers.length > 0) {
         this.configStore.setMcpServers(mcpServers);
         this.mcpManager = new MCPManager(mcpServers);
-        this.mcpManager.visionResolve = () => this.resolveVisionModel();
-        this.mcpManager.visionDescribe = (images, model, apiKey) => this.describeImagesViaVisionModel(images, model, apiKey);
+        this.mcpManager.imagePipeline = this.imagePipeline;
         await this.mcpManager.initialize();
         await this.mcpManager.registerDrivers(this.driverRegistry);
 

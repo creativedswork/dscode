@@ -16,6 +16,7 @@ import { MCPClient } from "./client.js";
 import type { DriverRegistry } from "../drivers/registry.js";
 import type { Driver } from "../core/types.js";
 import { ImageCache } from "../utils/image-cache.js";
+import type { ImagePipeline } from "../image-pipeline/pipeline.js";
 import type { AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
 
 function extractToolResultPreview(result: unknown): string {
@@ -211,8 +212,7 @@ export class MCPManager {
   private uiToolMap = new Map<string, ToolUiInfo>();
   private eventListeners = new Set<(event: MCPClientEvent) => void>();
   private driverRegistry?: DriverRegistry;
-  public visionResolve: (() => { model: any; apiKey: string } | null) | null = null;
-  public visionDescribe: ((images: ImageContent[], model: any, apiKey: string) => Promise<string>) | null = null;
+  public imagePipeline?: ImagePipeline;
 
   constructor(private configs: MCPServerConfig[]) {
     for (const cfg of configs) {
@@ -457,7 +457,7 @@ export class MCPManager {
           const hasImages = Array.isArray(result?.content) &&
             result.content.some((c: any) => c.type === "image" && c.data);
 
-          if (hasImages && this.visionDescribe) {
+          if (hasImages && this.imagePipeline) {
             const rawContent = result.content as MCPToolContent[];
             const textBlocks = rawContent
               .filter((c) => c.type === "text" && c.text)
@@ -466,40 +466,23 @@ export class MCPManager {
               .filter((c) => c.type === "image" && c.data)
               .map((c) => ({ type: "image" as const, data: (c as any).data, mimeType: (c as any).mimeType ?? "image/png" } as ImageContent));
 
-            const compressedImages: ImageContent[] = [];
-            for (const img of imageBlocks) {
-              try {
-                const ref = await ImageCache.put(img);
-                const cached = ImageCache.getSync(ref);
-                compressedImages.push(cached || img);
-              } catch {
-                compressedImages.push(img);
-              }
-            }
+            // Unified image processing via ImagePipeline
+            const pipeResult = await this.imagePipeline.process(imageBlocks, "", {
+              onProgress: (info: { phase: string; cachedRefs: any[] }) => {
+                if (onUpdate && info.cachedRefs.length > 0) {
+                  onUpdate({
+                    content: [
+                      ...textBlocks,
+                      { type: "text", text: "\n[Analyzing " + imageBlocks.length + " image(s)...]" },
+                    ],
+                    details: { server: serverName, tool: def.name, error: isError, structuredContent, mcpResult: result },
+                  });
+                }
+              },
+            });
 
-            if (onUpdate && compressedImages.length > 0) {
-              onUpdate({
-                content: [
-                  ...textBlocks,
-                  ...compressedImages,
-                  { type: "text", text: "\n[Analyzing " + imageBlocks.length + " image(s)...]" },
-                ],
-                details: { server: serverName, tool: def.name, error: isError, structuredContent, mcpResult: result },
-              });
-            }
-
-            let description = "";
-            let visionError = "";
-            const vision = this.visionResolve?.();
-            if (vision) {
-              try {
-                description = await this.visionDescribe(imageBlocks, vision.model, vision.apiKey);
-              } catch (err) {
-                visionError = err instanceof Error ? err.message : String(err);
-              }
-            }
-
-            if (description) {
+            if (pipeResult.source === "vision" || pipeResult.source === "ocr") {
+              const description = pipeResult.enrichedText.replace(/<image_(description|text)>\n?/g, "").replace(/\n?<\/image_(description|text)>/g, "");
               return {
                 content: [
                   ...textBlocks,
@@ -509,13 +492,10 @@ export class MCPManager {
                 terminate: false,
               };
             } else {
-              const reason = vision
-                ? (visionError ? `Vision model error: ${visionError}` : "Vision model returned empty description")
-                : "No vision model configured";
               return {
                 content: [
                   ...textBlocks,
-                  { type: "text", text: "\n[Received " + imageBlocks.length + " image(s). " + reason + ".]" },
+                  { type: "text", text: "\n[Received " + imageBlocks.length + " image(s). Could not process images.]" },
                 ],
                 details: { server: serverName, tool: def.name, error: isError, structuredContent, mcpResult: result },
                 terminate: false,

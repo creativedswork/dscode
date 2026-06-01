@@ -158,7 +158,7 @@ export type ServerEvent =
   | { type: "tool_start"; name: string; args: unknown }
   | { type: "tool_end"; name: string; result: string; isError: boolean; images?: ImageAttachment[] }
   | { type: "assistant_end" }
-  | { type: "info"; text: string }
+  | { type: "info"; text: string; display: "toast" | "panel" }
   | { type: "warning"; text: string }
   | { type: "error"; text: string }
   | { type: "retry"; info: { attempt: number; maxRetries: number; delayMs: number; error: string; level: "stream" | "turn" } }

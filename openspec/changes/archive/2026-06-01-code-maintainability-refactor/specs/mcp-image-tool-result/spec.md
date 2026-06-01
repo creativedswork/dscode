@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-MCP tool result handling — image content preservation, compression, and display in both Web and TUI.
-## Requirements
 ### Requirement: MCP Image Content Preservation
 The system SHALL preserve base64 image data from MCP tool results into `AgentToolResult.content` as `ImageContent` blocks, instead of replacing them with text placeholders. Image processing (compression, vision description) SHALL be delegated to `ImagePipeline.process()`.
 
@@ -78,4 +76,3 @@ The `ToolCallEntry` type and `tool_end` server event SHALL carry an optional `im
 #### Scenario: TUI backend passes image data
 - **WHEN** `TuiBackend.toolEnd()` delegates to `TuiApp.toolEnd()`
 - **THEN** the conversation view SHALL receive image attachment data for rendering
-

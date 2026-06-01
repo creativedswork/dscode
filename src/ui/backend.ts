@@ -46,7 +46,8 @@ export interface UiBackend {
   /** Gracefully tear down the UI. */
   shutdown(): Promise<void>;
 
-  // ── Conversation rendering ──
+  /** Display an informational message to the user. display hints: "toast" for single-line, "panel" for multi-line/multi-entry. */
+  addInfo(text: string, display?: "toast" | "panel"): void;
 
   /**
    * Display a user message in the conversation.
@@ -107,8 +108,8 @@ export interface UiBackend {
   finishAssistantMessage(): void;
 
   // ── System messages ──
-  /** Display an informational message to the user. */
-  addInfo(text: string): void;
+  /** Display an informational message to the user. display: "toast" for single-line, "panel" for multi-entry. */
+  addInfo(text: string, display?: "toast" | "panel"): void;
   /** Display an error message to the user. */
   addError(text: string): void;
   /** Display a warning (non-fatal but important — e.g., vision model billing issue, fallback active). */

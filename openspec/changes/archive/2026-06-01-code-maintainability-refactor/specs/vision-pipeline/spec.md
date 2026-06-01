@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-Vision model orchestration — image caching, vision API calls, OCR fallback; now consumed by ImagePipeline module.
-## Requirements
 ### Requirement: Vision Call Logging
 When vision model is used to describe images, the system SHALL log the call details into the session. The vision model call SHALL be made through `ImagePipeline.process()`, which handles logging internally.
 
@@ -57,4 +55,3 @@ Before sending MCP tool result images to the vision model, the system SHALL firs
 - **THEN** the system SHALL first pass each image through `ImageCache.put()`
 - **AND** use the cached (compressed) image data for the vision API call
 - **AND** include the resulting `ImageRef[]` in the `VisionMessage` log
-

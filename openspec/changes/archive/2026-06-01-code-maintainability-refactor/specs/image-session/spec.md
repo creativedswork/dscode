@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-Session data layer types — ImageRef, VisionMessage, session metadata, and display model.
-## Requirements
 ### Requirement: ImageRef Type Definition
 The system SHALL define an `ImageRef` type for referencing cached images in session messages. This type SHALL be exported from `ImagePipeline`'s types module (`src/image-pipeline/types.ts`) and re-exported for backward compatibility.
 
@@ -45,4 +43,3 @@ The system SHALL attempt to recover images when loading a session by reading fro
 - **AND** the corresponding cache files do NOT exist
 - **THEN** the system SHALL NOT crash or error
 - **AND** SHALL show a placeholder indicator for missing images
-

@@ -1,45 +1,21 @@
-import type { Agent } from "@mariozechner/pi-agent-core";
 import type { SlashCommand as AutocompleteSlashCommand } from "@earendil-works/pi-tui";
 
-import type { HarnessConfig } from "../core/types.js";
-import type { ConfigWatch } from "../core/config-watch.js";
-import type { SessionManager } from "../session/manager.js";
-import type { MemoryManager } from "../memory/manager.js";
-import type { DriverRegistry } from "../drivers/registry.js";
-import type { ToolRegistry } from "../drivers/tool-registry.js";
-import type { SkillManager } from "../skills/manager.js";
-import type { PermissionManager } from "../permissions/manager.js";
-import type { ContextManager } from "../context/manager.js";
-import type { MCPManager } from "../mcp/manager.js";
-import type { TuiApp } from "./tui-app.js";
+import type { HarnessAPI } from "../core/harness-api.js";
+import type { UiBackend } from "./backend.js";
 import { saveUserConfig, maskApiKey, PROVIDER_ENV_VARS } from "../core/config.js";
 import { getAllProviders, getAllModels, getVisionModels, getVisionProviders } from "../models/index.js";
 import { readImageFile, readClipboardImage } from "../utils/image.js";
 
 
-interface CommandContext {
-  agent: Agent;
-  sessionManager: SessionManager;
-  memoryManager: MemoryManager;
-  driverRegistry: DriverRegistry;
-  toolRegistry: ToolRegistry;
-  skillManager: SkillManager;
-  permissionManager: PermissionManager;
-  contextManager: ContextManager;
-  mcpManager?: MCPManager;
-  config: HarnessConfig;
-  configStore: ConfigWatch;
-  onSetModel: (modelId: string) => void;
-  onSetThinking: (level: string) => void;
-  onSetProvider: (providerId: string) => void;
-  onSetCwd: (cwd: string) => Promise<{ success: boolean; error?: string }>;
-  tui: TuiApp;
+interface SlashCommandContext {
+  harness: HarnessAPI;
+  ui: UiBackend;
 }
 
 interface SlashCommandDef {
   name: string;
   description: string;
-  execute(args: string, ctx: CommandContext): void | Promise<void>;
+  execute(args: string, ctx: SlashCommandContext): void | Promise<void>;
 }
 
 const COMMANDS: SlashCommandDef[] = [
@@ -202,13 +178,13 @@ const COMMANDS: SlashCommandDef[] = [
       };
 
       if (topic && topics[topic]) {
-        ctx.tui.addInfo(topics[topic].join("\n"));
+        ctx.ui.addInfo(topics[topic].join("\n"));
       }
       if (topic) {
-        ctx.tui.addError(`Unknown help topic: ${topic}. Try: ${Object.keys(topics).join("  ")}`);
+        ctx.ui.addError(`Unknown help topic: ${topic}. Try: ${Object.keys(topics).join("  ")}`);
         return;
       }
-      ctx.tui.addInfo(overview.join("\n"));
+      ctx.ui.addInfo(overview.join("\n"));
     },
   },
   {
@@ -216,13 +192,13 @@ const COMMANDS: SlashCommandDef[] = [
     description: "Clear conversation history and start a new session",
     execute: async (_args, ctx) => {
       // Save the current session before resetting
-      ctx.sessionManager.trySaveSession(ctx.agent);
+      ctx.harness.sessionManager.trySaveSession(ctx.harness.agent);
       // Create and persist a new empty session so it shows in the list
-      ctx.sessionManager.createSession(ctx.config.provider, ctx.config.modelId);
-      ctx.sessionManager.persistEmptySession();
+      ctx.harness.sessionManager.createSession(ctx.harness.config.provider, ctx.harness.config.modelId);
+      ctx.harness.sessionManager.persistEmptySession();
       // Clear agent state and UI
-      ctx.agent.reset();
-      ctx.tui.clearConversationView();
+      ctx.harness.agent.reset();
+      ctx.ui.clearConversationView();
     },
   },
   {
@@ -234,18 +210,18 @@ const COMMANDS: SlashCommandDef[] = [
         case "list": {
           const all = rest[0] === "--all";
           const sessions = all
-            ? ctx.sessionManager.listAllSessions()
-            : ctx.sessionManager.listSessions();
+            ? ctx.harness.sessionManager.listAllSessions()
+            : ctx.harness.sessionManager.listSessions();
           if (sessions.length === 0) {
             const msg = all
               ? "No saved sessions."
               : "No sessions in this project. Start a conversation to create one.";
-            ctx.tui.addInfo(msg);
+            ctx.ui.addInfo(msg);
           }
-          const currentId = ctx.sessionManager.getCurrentSessionId();
+          const currentId = ctx.harness.sessionManager.getCurrentSessionId();
           const header = all
             ? "All sessions:"
-            : `Sessions (project: ${ctx.config.projectPath}):`;
+            : `Sessions (project: ${ctx.harness.config.projectPath}):`;
           const lines = sessions.slice(0, 30).map((s) => {
             const date = new Date(s.updatedAt).toISOString().slice(0, 10);
             const time = new Date(s.updatedAt).toISOString().slice(11, 16);
@@ -253,39 +229,39 @@ const COMMANDS: SlashCommandDef[] = [
             const title = `"${s.title.slice(0, 60)}"`;
             return `${marker} ${s.id.slice(0, 8)} ${title}  ${s.modelProvider}/${s.modelId}  ${date} ${time}  ${s.messageCount} msgs`;
           });
-          ctx.tui.addInfo(header + "\n" + lines.join("\n"));
+          ctx.ui.addInfo(header + "\n" + lines.join("\n"));
           break;
         }
         case "save":
           try {
-            ctx.sessionManager.saveSession(ctx.agent);
-            ctx.tui.addInfo("Session saved.");
+            ctx.harness.sessionManager.saveSession(ctx.harness.agent);
+            ctx.ui.addInfo("Session saved.");
           } catch (err: any) {
-            ctx.tui.addError(`Failed to save session: ${err.message}`);
+            ctx.ui.addError(`Failed to save session: ${err.message}`);
           }
           break;
         case "load": {
           const id = rest[0];
-          if (!id) { ctx.tui.addError("Usage: /session load <id>"); return; }
-          const sessions = ctx.sessionManager.listSessions();
+          if (!id) { ctx.ui.addError("Usage: /session load <id>"); return; }
+          const sessions = ctx.harness.sessionManager.listSessions();
           const matches = sessions.filter((s) => s.id.startsWith(id));
           if (matches.length === 0) {
-            ctx.tui.addError(`Session not found: ${id}`);
+            ctx.ui.addError(`Session not found: ${id}`);
             return;
           }
           if (matches.length > 1) {
             const matchLines = matches.map((s) =>
               `  ${s.id.slice(0, 8)} "${s.title.slice(0, 60)}"  ${s.modelProvider}/${s.modelId}  ${s.messageCount} msgs`,
             );
-            ctx.tui.addError(
+            ctx.ui.addError(
               `Ambiguous session ID prefix. Matching sessions:\n${matchLines.join("\n")}`,
             );
             return;
           }
           const match = matches[0];
-          const result = await ctx.sessionManager.loadSession(match.id, ctx.agent);
+          const result = await ctx.harness.sessionManager.loadSession(match.id, ctx.harness.agent);
           if (!result.success) {
-            ctx.tui.addError(`Failed to load session: ${result.error}`);
+            ctx.ui.addError(`Failed to load session: ${result.error}`);
             return;
           }
           const lines = [
@@ -297,24 +273,24 @@ const COMMANDS: SlashCommandDef[] = [
             `  Activity: ${new Date(match.updatedAt).toISOString().replace("T", " ").slice(0, 16)}`,
             `  Messages: ${match.messageCount}`,
           ];
-          ctx.tui.addInfo(lines.join("\n"));
-          ctx.tui.clearConversationView();
-          ctx.tui.replayMessages(ctx.agent.state.messages as unknown[]);
+          ctx.ui.addInfo(lines.join("\n"));
+          ctx.ui.clearConversationView();
+          (ctx.ui as any).replayMessages(ctx.harness.agent.state.messages as unknown[]);
           break;
         }
         case "delete": {
           const id = rest[0];
-          if (!id) { ctx.tui.addError("Usage: /session delete <id>"); return; }
-          const result = ctx.sessionManager.deleteSession(id);
+          if (!id) { ctx.ui.addError("Usage: /session delete <id>"); return; }
+          const result = ctx.harness.sessionManager.deleteSession(id);
           if (!result.success) {
-            ctx.tui.addError(`Failed to delete session: ${result.error}`);
+            ctx.ui.addError(`Failed to delete session: ${result.error}`);
             return;
           }
-          ctx.tui.addInfo("Session deleted.");
+          ctx.ui.addInfo("Session deleted.");
           break;
         }
         default:
-          ctx.tui.addError("Usage: /session [list|save|load|delete]");
+          ctx.ui.addError("Usage: /session [list|save|load|delete]");
       }
     },
   },
@@ -323,41 +299,41 @@ const COMMANDS: SlashCommandDef[] = [
     description: "Memory management (list|add|remove|clear)",
     execute: async (args, ctx) => {
       const [sub, ...rest] = args.split(/\s+/);
-      const sessionId = ctx.sessionManager.getCurrentSessionId() ?? "unknown";
+      const sessionId = ctx.harness.sessionManager.getCurrentSessionId() ?? "unknown";
       switch (sub) {
         case "list": {
           const scope = rest[0] as "global" | "project" | undefined;
-          const entries = ctx.memoryManager.listMemories(scope);
+          const entries = ctx.harness.memoryManager.listMemories(scope);
           if (entries.length === 0) {
-            ctx.tui.addInfo("No memories stored.");
+            ctx.ui.addInfo("No memories stored.");
             return;
           }
           const lines = entries.map((m) => `  [${m.scope}] ${m.content} (${m.id})`);
-          ctx.tui.addInfo("Memories:\n" + lines.join("\n"));
+          ctx.ui.addInfo("Memories:\n" + lines.join("\n"));
           break;
         }
         case "add": {
           const content = rest.join(" ");
-          if (!content) { ctx.tui.addError("Usage: /memory add <content>"); return; }
-          ctx.memoryManager.addMemory(content, "project", sessionId);
-          ctx.tui.addInfo("Memory added.");
+          if (!content) { ctx.ui.addError("Usage: /memory add <content>"); return; }
+          ctx.harness.memoryManager.addMemory(content, "project", sessionId);
+          ctx.ui.addInfo("Memory added.");
           break;
         }
         case "remove": {
           const id = rest[0];
-          if (!id) { ctx.tui.addError("Usage: /memory remove <id>"); return; }
-          ctx.memoryManager.removeMemory(id);
-          ctx.tui.addInfo("Memory removed.");
+          if (!id) { ctx.ui.addError("Usage: /memory remove <id>"); return; }
+          ctx.harness.memoryManager.removeMemory(id);
+          ctx.ui.addInfo("Memory removed.");
           break;
         }
         case "clear": {
           const scope = rest[0] as "global" | "project" | undefined;
-          ctx.memoryManager.clearMemories(scope);
-          ctx.tui.addInfo("Memories cleared.");
+          ctx.harness.memoryManager.clearMemories(scope);
+          ctx.ui.addInfo("Memories cleared.");
           break;
         }
         default:
-          ctx.tui.addError("Usage: /memory [list|add|remove|clear]");
+          ctx.ui.addError("Usage: /memory [list|add|remove|clear]");
       }
     },
   },
@@ -369,32 +345,32 @@ const COMMANDS: SlashCommandDef[] = [
       switch (sub) {
         case "activate": {
           const name = rest[0];
-          if (!name) { ctx.tui.addError("Usage: /skills activate <name>"); return; }
+          if (!name) { ctx.ui.addError("Usage: /skills activate <name>"); return; }
           try {
-            const skill = ctx.skillManager.activate(name, ctx.driverRegistry);
-            ctx.agent.state.tools = ctx.toolRegistry.buildToolsForRequest();
+            const skill = ctx.harness.skillManager.activate(name, ctx.harness.driverRegistry);
+            ctx.harness.agent.state.tools = ctx.harness.toolRegistry.buildToolsForRequest();
             const toolNames = skill.tools.map((t) => t.name).join(", ");
-            ctx.tui.addInfo(`Activated: ${name} (allowed tools: ${toolNames || "none"})`);
+            ctx.ui.addInfo(`Activated: ${name} (allowed tools: ${toolNames || "none"})`);
           } catch (err: any) {
-            ctx.tui.addError(err.message);
+            ctx.ui.addError(err.message);
           }
           break;
         }
         case "deactivate": {
           const name = rest[0];
-          if (!name) { ctx.tui.addError("Usage: /skills deactivate <name>"); return; }
-          ctx.skillManager.deactivate(name);
-          ctx.agent.state.tools = ctx.toolRegistry.buildToolsForRequest();
-          ctx.tui.addInfo(`Deactivated: ${name}`);
+          if (!name) { ctx.ui.addError("Usage: /skills deactivate <name>"); return; }
+          ctx.harness.skillManager.deactivate(name);
+          ctx.harness.agent.state.tools = ctx.harness.toolRegistry.buildToolsForRequest();
+          ctx.ui.addInfo(`Deactivated: ${name}`);
           break;
         }
         default: {
           const lines: string[] = [];
-          for (const { skill, active } of ctx.skillManager.listAll()) {
+          for (const { skill, active } of ctx.harness.skillManager.listAll()) {
             const status = active ? "active" : "inactive";
             lines.push(`  ${skill.name} [${status}] (${skill.source}) — ${skill.description}`);
           }
-          ctx.tui.addInfo("Skills:\n" + lines.join("\n"));
+          ctx.ui.addInfo("Skills:\n" + lines.join("\n"));
         }
       }
     },
@@ -404,56 +380,56 @@ const COMMANDS: SlashCommandDef[] = [
     description: "List loaded drivers",
     execute: async (_args, ctx) => {
       const lines: string[] = [];
-      for (const d of ctx.driverRegistry.listAll()) {
+      for (const d of ctx.harness.driverRegistry.listAll()) {
         const toolNames = d.tools.map((t) => t.name).join(", ");
         lines.push(`  ${d.name} (${d.source}) — ${d.description}`);
         lines.push(`    tools: ${toolNames}`);
       }
-      ctx.tui.addInfo("Drivers:\n" + lines.join("\n"));
+      ctx.ui.addInfo("Drivers:\n" + lines.join("\n"));
     },
   },
   {
     name: "mcp",
     description: "Browse MCP servers and tools",
     execute: async (_args, ctx) => {
-      if (!ctx.mcpManager || ctx.mcpManager.getStates().length === 0) {
-        ctx.tui.addInfo("No MCP servers configured.");
+      if (!ctx.harness.mcpManager || ctx.harness.mcpManager.getStates().length === 0) {
+        ctx.ui.addInfo("No MCP servers configured.");
         return;
       }
-      ctx.tui.openMcpBrowser();
+      ctx.ui.openMcpBrowser();
     },
   },
   {
     name: "permissions",
     description: "Show session permission grants",
     execute: async (_args, ctx) => {
-      const grants = ctx.permissionManager.getSessionGrants();
+      const grants = ctx.harness.permissionManager.getSessionGrants();
       if (grants.length === 0) {
-        ctx.tui.addInfo("No session-level grants.");
+        ctx.ui.addInfo("No session-level grants.");
         return;
       }
       const lines = grants.map((g) => `  ✓ ${g}`);
-      ctx.tui.addInfo("Session grants:\n" + lines.join("\n"));
+      ctx.ui.addInfo("Session grants:\n" + lines.join("\n"));
     },
   },
   {
     name: "cost",
     description: "Show token usage for this session",
     execute: async (_args, ctx) => {
-      const msgs = ctx.agent.state.messages;
-      const tokens = ctx.contextManager.getEstimatedTokens(msgs);
-      ctx.tui.addInfo(`Estimated context: ~${tokens} tokens (${msgs.length} messages)`);
+      const msgs = ctx.harness.agent.state.messages;
+      const tokens = ctx.harness.contextManager.getEstimatedTokens(msgs);
+      ctx.ui.addInfo(`Estimated context: ~${tokens} tokens (${msgs.length} messages)`);
     },
   },
   {
     name: "compact",
     description: "Force context compaction",
     execute: async (_args, ctx) => {
-      const before = ctx.agent.state.messages.length;
-      const compacted = await ctx.contextManager.transform(ctx.agent.state.messages);
-      ctx.agent.state.messages = compacted as any;
-      const after = ctx.agent.state.messages.length;
-      ctx.tui.addInfo(`Compacted: ${before} → ${after} messages`);
+      const before = ctx.harness.agent.state.messages.length;
+      const compacted = await ctx.harness.contextManager.transform(ctx.harness.agent.state.messages);
+      ctx.harness.agent.state.messages = compacted as any;
+      const after = ctx.harness.agent.state.messages.length;
+      ctx.ui.addInfo(`Compacted: ${before} → ${after} messages`);
     },
   },
   {
@@ -463,7 +439,7 @@ const COMMANDS: SlashCommandDef[] = [
       const [sub, ...rest] = args.split(/\s+/);
       switch (sub) {
         case "help": {
-          ctx.tui.addInfo([
+          ctx.ui.addInfo([
             "/config                  Show current user command config",
             "/config provider <id>     Switch provider (no restart needed)",
             "/config model <id>       Switch model (saved to ~/.dscode/config.json)",
@@ -486,16 +462,16 @@ const COMMANDS: SlashCommandDef[] = [
           const providerId = rest[0];
           if (!providerId) {
             const available = getAllProviders();
-            const current = ctx.config.provider;
+            const current = ctx.harness.config.provider;
             const lines = available.map((p) => p === current ? `  * ${p} (current)` : `  ${p}`);
-            ctx.tui.addInfo(`Available providers:\n${lines.join("\n")}\n\nUsage: /config provider <provider-id>`);
+            ctx.ui.addInfo(`Available providers:\n${lines.join("\n")}\n\nUsage: /config provider <provider-id>`);
             return;
           }
           try {
-            ctx.onSetProvider(providerId);
-            ctx.tui.addInfo(`Provider switched to: ${providerId}. Default model selected. Conversation reset.`);
+            ctx.harness.setProvider(providerId);
+            ctx.ui.addInfo(`Provider switched to: ${providerId}. Default model selected. Conversation reset.`);
           } catch (err: any) {
-            ctx.tui.addError(err.message);
+            ctx.ui.addError(err.message);
           }
           break;
         }
@@ -503,129 +479,129 @@ const COMMANDS: SlashCommandDef[] = [
         case "model": {
           const modelId = rest[0];
           if (!modelId) {
-            const available = getAllModels(ctx.config.provider);
+            const available = getAllModels(ctx.harness.config.provider);
             const models = available.map((m) => `  ${m.id} — ${m.name}`);
-            ctx.tui.addInfo(`Models for ${ctx.config.provider}:\n${models.join("\n")}\n\nUsage: /config model <model-id>`);
+            ctx.ui.addInfo(`Models for ${ctx.harness.config.provider}:\n${models.join("\n")}\n\nUsage: /config model <model-id>`);
             return;
           }
-          ctx.onSetModel(modelId);
-          ctx.tui.addInfo(`Model switched to: ${modelId}`);
+          ctx.harness.setModel(modelId);
+          ctx.ui.addInfo(`Model switched to: ${modelId}`);
           break;
         }
         case "cwd": {
           const cwd = rest.join(" ");
           if (!cwd) {
-            ctx.tui.addInfo(`Current working directory: ${ctx.config.projectPath}\n\nUsage: /config cwd <path>`);
+            ctx.ui.addInfo(`Current working directory: ${ctx.harness.config.projectPath}\n\nUsage: /config cwd <path>`);
             return;
           }
-          const result = await ctx.onSetCwd(cwd);
+          const result = await ctx.harness.updateProjectPath(cwd);
           if (result.success) {
-            ctx.tui.addInfo(`Working directory changed to: ${ctx.config.projectPath}`);
+            ctx.ui.addInfo(`Working directory changed to: ${ctx.harness.config.projectPath}`);
           } else {
-            ctx.tui.addError(result.error ?? "Failed to change working directory");
+            ctx.ui.addError(result.error ?? "Failed to change working directory");
           }
           break;
         }
         case "key": {
           const key = rest.join(" ");
           if (!key) {
-            ctx.tui.addError("Usage: /config key <api-key>");
+            ctx.ui.addError("Usage: /config key <api-key>");
             return;
           }
           saveUserConfig({ apiKey: key });
-          ctx.configStore.setApiKey(key);
-          const envVar = PROVIDER_ENV_VARS[ctx.config.provider] ?? "DEEPSEEK_API_KEY";
+          ctx.harness.configStore.setApiKey(key);
+          const envVar = PROVIDER_ENV_VARS[ctx.harness.config.provider] ?? "DEEPSEEK_API_KEY";
           process.env[envVar] = key;
           if (envVar !== "DEEPSEEK_API_KEY") {
             process.env.DEEPSEEK_API_KEY = key;
           }
-          ctx.tui.addInfo(`API key saved to ~/.dscode/config.json: ${maskApiKey(key)}`);
+          ctx.ui.addInfo(`API key saved to ~/.dscode/config.json: ${maskApiKey(key)}`);
           break;
         }
         case "thinking": {
           const level = rest[0];
           const valid = ["off", "minimal", "low", "medium", "high", "xhigh"];
           if (!level || !valid.includes(level)) {
-            ctx.tui.addError(`Usage: /config thinking <${valid.join("|")}>`);
+            ctx.ui.addError(`Usage: /config thinking <${valid.join("|")}>`);
             return;
           }
-          ctx.onSetThinking(level);
-          ctx.tui.addInfo(`Thinking level set to: ${level}`);
+          ctx.harness.setThinking(level);
+          ctx.ui.addInfo(`Thinking level set to: ${level}`);
           break;
         }
         case "vision-provider": {
           const vpId = rest[0];
           if (!vpId) {
             const available = getVisionProviders();
-            const current = (ctx.config.vision as any)?.provider;
+            const current = (ctx.harness.config.vision as any)?.provider;
             const lines = available.map((p) => p === current ? `  * ${p} (current)` : `  ${p}`);
-            ctx.tui.addInfo(`Available providers for vision model:\n${lines.join("\n")}\n\nUsage: /config vision-provider <provider-id>`);
+            ctx.ui.addInfo(`Available providers for vision model:\n${lines.join("\n")}\n\nUsage: /config vision-provider <provider-id>`);
             return;
           }
           try {
             const v = { provider: vpId } as any;
             saveUserConfig({ vision: v });
-            ctx.configStore.updateVision({ provider: vpId });
-            ctx.tui.addInfo(`Vision provider set to: ${vpId}`);
+            ctx.harness.configStore.updateVision({ provider: vpId });
+            ctx.ui.addInfo(`Vision provider set to: ${vpId}`);
           } catch (err: any) {
-            ctx.tui.addError(err.message);
+            ctx.ui.addError(err.message);
           }
           break;
         }
         case "vision-model": {
           const vmId = rest[0];
           if (!vmId) {
-            const vp = (ctx.config.vision as any)?.provider;
+            const vp = (ctx.harness.config.vision as any)?.provider;
             if (!vp) {
-              ctx.tui.addError("No vision provider configured. Set it first: /config vision-provider <id>");
+              ctx.ui.addError("No vision provider configured. Set it first: /config vision-provider <id>");
               return;
             }
             const available = getVisionModels(vp);
             const models = available.map((m) => `  ${m.id} — ${m.name}`);
-            ctx.tui.addInfo(`Models for vision provider ${vp}:\n${models.join("\n")}\n\nUsage: /config vision-model <model-id>`);
+            ctx.ui.addInfo(`Models for vision provider ${vp}:\n${models.join("\n")}\n\nUsage: /config vision-model <model-id>`);
             return;
           }
-          const vp = (ctx.config.vision as any)?.provider;
+          const vp = (ctx.harness.config.vision as any)?.provider;
           if (!vp) {
-            ctx.tui.addError("No vision provider configured. Set it first: /config vision-provider <id>");
+            ctx.ui.addError("No vision provider configured. Set it first: /config vision-provider <id>");
             return;
           }
           try {
-            const existingKey = (ctx.config.vision as any)?.key;
+            const existingKey = (ctx.harness.config.vision as any)?.key;
             const v = { provider: vp, model: vmId, key: existingKey };
             saveUserConfig({ vision: v });
-            ctx.configStore.updateVision({ model: vmId });
-            ctx.tui.addInfo(`Vision model set to: ${vmId}`);
+            ctx.harness.configStore.updateVision({ model: vmId });
+            ctx.ui.addInfo(`Vision model set to: ${vmId}`);
           } catch (err: any) {
-            ctx.tui.addError(err.message);
+            ctx.ui.addError(err.message);
           }
           break;
         }
         case "vision-key": {
           const key = rest.join(" ");
           if (!key) {
-            ctx.tui.addError("Usage: /config vision-key <api-key>");
+            ctx.ui.addError("Usage: /config vision-key <api-key>");
             return;
           }
-          const vp = (ctx.config.vision as any)?.provider ?? "";
-          const vm = (ctx.config.vision as any)?.model ?? "";
+          const vp = (ctx.harness.config.vision as any)?.provider ?? "";
+          const vm = (ctx.harness.config.vision as any)?.model ?? "";
           const v = { provider: vp, model: vm, key };
           saveUserConfig({ vision: v });
-          ctx.configStore.updateVision({ key });
-          ctx.tui.addInfo(`Vision API key saved to ~/.dscode/config.json: ${maskApiKey(key)}`);
+          ctx.harness.configStore.updateVision({ key });
+          ctx.ui.addInfo(`Vision API key saved to ~/.dscode/config.json: ${maskApiKey(key)}`);
           break;
         }
         default: {
           const lines = [
-            `  provider      ${ctx.config.provider}`,
-            `  model         ${ctx.config.modelId}`,
-            `  key           ${maskApiKey(ctx.config.apiKey)}`,
-            `  cwd           ${ctx.config.projectPath}`,
-            `  maxTokens     ${ctx.config.maxTokens}`,
-            `  thinking      ${ctx.config.thinkingLevel}`,
-            `  vision-provider  ${(ctx.config.vision as any)?.provider ?? "(not set)"}`,
-            `  vision-model     ${(ctx.config.vision as any)?.model ?? "(not set)"}`,
-            `  vision-key       ${maskApiKey((ctx.config.vision as any)?.key)}`,
+            `  provider      ${ctx.harness.config.provider}`,
+            `  model         ${ctx.harness.config.modelId}`,
+            `  key           ${maskApiKey(ctx.harness.config.apiKey)}`,
+            `  cwd           ${ctx.harness.config.projectPath}`,
+            `  maxTokens     ${ctx.harness.config.maxTokens}`,
+            `  thinking      ${ctx.harness.config.thinkingLevel}`,
+            `  vision-provider  ${(ctx.harness.config.vision as any)?.provider ?? "(not set)"}`,
+            `  vision-model     ${(ctx.harness.config.vision as any)?.model ?? "(not set)"}`,
+            `  vision-key       ${maskApiKey((ctx.harness.config.vision as any)?.key)}`,
             "",
             "  command file  ~/.dscode/config.json",
             "  settings      ~/.dscode/settings.json",
@@ -633,7 +609,7 @@ const COMMANDS: SlashCommandDef[] = [
             "",
             "Type /config help for usage.",
           ];
-          ctx.tui.addInfo("Configuration:\n" + lines.join("\n"));
+          ctx.ui.addInfo("Configuration:\n" + lines.join("\n"));
         }
       }
     },
@@ -644,29 +620,29 @@ const COMMANDS: SlashCommandDef[] = [
     execute: async (args, ctx) => {
       const target = args.trim();
       if (!target) {
-        ctx.tui.addError("Usage: /image <filepath> or /image clipboard");
+        ctx.ui.addError("Usage: /image <filepath> or /image clipboard");
         return;
       }
       if (target === "clipboard") {
         const img = await readClipboardImage();
         if (!img) {
-          ctx.tui.addError("No image found in clipboard (macOS only)");
+          ctx.ui.addError("No image found in clipboard (macOS only)");
           return;
         }
-        ctx.tui.addPendingImage(img);
-        ctx.tui.addInfo(
+        ctx.ui.addPendingImage(img);
+        ctx.ui.addInfo(
           `Image attached from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
         );
         return;
       }
       try {
         const img = await readImageFile(target);
-        ctx.tui.addPendingImage(img);
-        ctx.tui.addInfo(
+        ctx.ui.addPendingImage(img);
+        ctx.ui.addInfo(
           `Image attached: ${target} (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
         );
       } catch {
-        ctx.tui.addError(`Cannot read image: ${target}`);
+        ctx.ui.addError(`Cannot read image: ${target}`);
       }
     },
   },
@@ -676,21 +652,29 @@ export function getSlashCommandAutocomplete(): AutocompleteSlashCommand[] {
   return COMMANDS.map((c) => ({ name: c.name, description: c.description }));
 }
 
-export type { CommandContext };
 
 export function executeSlashCommand(
-  raw: string,
-  ctx: Omit<CommandContext, "tui">,
-  tui: TuiApp,
-): boolean {
-  const [cmdName, ...argParts] = raw.slice(1).split(/\s+/);
-  const cmd = COMMANDS.find((c) => c.name === cmdName);
-  if (!cmd) {
-    return false;
+  text: string,
+  ctx: SlashCommandContext,
+): string | undefined {
+  if (!text.startsWith("/")) return undefined;
+  const spaceIdx = text.indexOf(" ");
+  const commandName = spaceIdx === -1 ? text.slice(1) : text.slice(1, spaceIdx);
+  const args = spaceIdx === -1 ? "" : text.slice(spaceIdx + 1).trim();
+
+  const cmd = COMMANDS.find((c) => c.name === commandName);
+  if (!cmd) return undefined;
+
+  try {
+    const result = cmd.execute(args, ctx);
+    if (result instanceof Promise) {
+      result.catch((err) => {
+        ctx.ui.addError(`${commandName}: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }
+    return commandName;
+  } catch (err) {
+    ctx.ui.addError(`${commandName}: ${err instanceof Error ? err.message : String(err)}`);
+    return commandName;
   }
-  const fullCtx: CommandContext = { ...ctx, tui };
-  Promise.resolve(cmd.execute(argParts.join(" "), fullCtx)).catch((err) => {
-    tui.addError(err instanceof Error ? err.message : String(err));
-  });
-  return true;
 }

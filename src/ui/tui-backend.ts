@@ -2,7 +2,8 @@ import type { ImageContent } from "@mariozechner/pi-ai";
 import type { MCPManager } from "../mcp/manager.js";
 import type { PermissionPromptResult } from "../core/types.js";
 import type { UiBackend } from "./backend.js";
-import { TuiApp, type TuiDeps } from "./tui-app.js";
+import { TuiApp } from "./tui-app.js";
+import type { HarnessAPI } from "../core/harness-api.js";
 
 /**
  * Thin adapter that wraps TuiApp and exposes the UiBackend interface.
@@ -11,7 +12,7 @@ import { TuiApp, type TuiDeps } from "./tui-app.js";
 export class TuiBackend implements UiBackend {
   private tui: TuiApp;
 
-  constructor(deps: TuiDeps) {
+  constructor(deps: HarnessAPI) {
     this.tui = new TuiApp(deps);
   }
 
@@ -58,8 +59,8 @@ export class TuiBackend implements UiBackend {
   }
 
   // ── System messages ──
-  addInfo(text: string): void {
-    this.tui.addInfo(text);
+  addInfo(text: string, display?: "toast" | "panel"): void {
+    this.tui.addInfo(text, display);
   }
 
   addError(text: string): void {

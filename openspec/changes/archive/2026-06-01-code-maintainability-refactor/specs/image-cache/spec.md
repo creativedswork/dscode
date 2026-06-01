@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-Content-addressed image cache — resize, compress, deduplicate, and store images to disk.
-## Requirements
 ### Requirement: Image Resize and Compression
 The system SHALL resize images to a unified height of 480 pixels, maintaining original aspect ratio for width. This functionality SHALL be provided by `ImageCache` as a sub-module of `ImagePipeline` at `src/image-pipeline/cache.ts`.
 
@@ -52,6 +50,8 @@ The `ImageCache` system SHALL accept and store images originating from MCP tool 
 - **THEN** the cache SHALL reuse the existing file (no duplicate storage)
 - **AND** return the same `ImageRef` with the existing hash
 
+## ADDED Requirements
+
 ### Requirement: ImageCache re-exported from ImagePipeline
 The `ImagePipeline` module SHALL re-export `ImageCache` from `src/image-pipeline/cache.ts` for consumers that need direct cache access. Existing imports of `ImageCache` from `src/utils/image-cache.ts` SHALL continue to work via a re-export shim during migration.
 
@@ -62,4 +62,3 @@ The `ImagePipeline` module SHALL re-export `ImageCache` from `src/image-pipeline
 #### Scenario: Old import path works during migration
 - **WHEN** a consumer imports from `src/utils/image-cache.js`
 - **THEN** it SHALL re-export from `src/image-pipeline/cache.js` until all consumers are migrated
-

@@ -10,7 +10,7 @@ import type { HarnessConfig, PermissionPromptResult } from "../../core/types.js"
 import type { ConfigWatch } from "../../core/config-watch.js";
 import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig, normalizeTransport, normalizeProtocolVersion, loadScopedSettings, projectSettingsPath } from "../../core/config.js";
 import { executeSlashCommand, getSlashCommandAutocomplete } from "../commands.js";
-import type { Harness } from "../../core/harness.js";
+import type { HarnessAPI } from "../../core/harness-api.js";
 import type { MCPManager } from "../../mcp/manager.js";
 import type { AppHostManager } from "../../mcp/app/host.js";
 import type { AppInstance } from "../../mcp/app/types.js";
@@ -45,7 +45,7 @@ function extractImagesFromToolResult(result: unknown): ImageAttachment[] | undef
 }
 export interface WebUiOptions {
   port: number;
-  harness: Harness;
+  harness: HarnessAPI;
   configStore: ConfigWatch;
   config: HarnessConfig;
 }
@@ -57,7 +57,7 @@ export interface WebUiOptions {
  */
 export class WebUiBackend implements UiBackend {
   private port: number;
-  private harness: Harness;
+  private harness: HarnessAPI;
   private config: HarnessConfig;
   private configStore: ConfigWatch;
   private httpServer: ReturnType<typeof createServer>;
@@ -198,8 +198,8 @@ export class WebUiBackend implements UiBackend {
 
   // ── UiBackend System Messages ──
 
-  addInfo(text: string): void {
-    this.broadcast({ type: "info", text });
+  addInfo(text: string, display: "toast" | "panel" = "toast"): void {
+    this.broadcast({ type: "info", text, display });
   }
 
   addError(text: string): void {
@@ -225,7 +225,6 @@ export class WebUiBackend implements UiBackend {
     };
     this.broadcast({ type: "mcp_app", app: appInfo });
   }
-
 
   // ── UiBackend Permission ──
 
@@ -281,8 +280,8 @@ export class WebUiBackend implements UiBackend {
 
   pushMcpState(): void {
     if (!this.mcpManager) return;
-    const driverRegistry = (this.harness as any).driverRegistry;
-    const toolRegistry = (this.harness as any).toolRegistry;
+    const driverRegistry = this.harness.driverRegistry;
+    const toolRegistry = this.harness.toolRegistry;
     if (!driverRegistry || !toolRegistry) return;
     const servers = buildMcpServers(this.mcpManager.getStates(), driverRegistry, toolRegistry);
     this.broadcast({ type: "mcp_state", servers });
@@ -291,7 +290,6 @@ export class WebUiBackend implements UiBackend {
   openMcpBrowser(): void {
     // In web mode, initiated by client
   }
-
 
   // ── UiBackend Config Watch ──
 
@@ -354,7 +352,7 @@ export class WebUiBackend implements UiBackend {
           images = [...(images ?? []), ...atImages];
         }
         for (const warn of resolved.warnings) {
-          client.send({ type: "info", text: `@${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}` });
+          client.send({ type: "info", display: "toast", text: `@${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}` });
         }
         // Broadcast user message to client before sending to agent
         client.send({ type: "user_message", text, images: images && images.length > 0 ? images : undefined } as any);
@@ -450,48 +448,10 @@ export class WebUiBackend implements UiBackend {
 
   private handleSlashCommand(client: WebSocketClient, text: string): void {
     try {
-      const ctx = {
-        agent: this.harness.agent,
-        sessionManager: (this.harness as any).sessionManager,
-        memoryManager: (this.harness as any).memoryManager,
-        driverRegistry: (this.harness as any).driverRegistry,
-        toolRegistry: (this.harness as any).toolRegistry,
-        skillManager: (this.harness as any).skillManager,
-        permissionManager: (this.harness as any).permissionManager,
-        contextManager: (this.harness as any).contextManager,
-        mcpManager: (this.harness as any).mcpManager,
-        config: this.config,
-        configStore: this.configStore,
-        onSetModel: (id: string) => (this.harness as any).setModel(id),
-        onSetThinking: (level: string) => (this.harness as any).setThinking(level),
-        onSetProvider: (id: string) => (this.harness as any).setProvider(id),
-        onSetCwd: (cwd: string) => (this.harness as any).updateProjectPath(cwd),
-      };
 
-      const mockTui = {
-        addInfo: (msg: string) => client.send({ type: "info", text: msg }),
-        addError: (msg: string) => client.send({ type: "error", text: msg }),
-        addUserMessage: () => {},
-        addPendingImage: () => {},
-        openMcpBrowser: () => {},
-        clearConversationView: () => this.clearConversationView(),
-        replayMessages: async () => {
-          this.clearConversationView();
-          const messages = await this.buildConversationHistory();
-          const model = (this.harness.agent.state.model as any)?.name ?? this.config.modelId;
-          client.send({
-            type: "ready",
-            model,
-            config: this.buildConfigData(),
-            messages,
-          });
-        },
-        focusEditor: () => {},
-        setProcessing: () => {},
-        getPromptPermission: () => () => Promise.resolve({ decision: "deny" } as PermissionPromptResult),
-      };
+      
 
-      const executed = executeSlashCommand(text, ctx, mockTui as any);
+      const executed = executeSlashCommand(text, { harness: this.harness, ui: this });
 
       if (!executed) {
         // Not a known command — treat as regular chat message
@@ -509,7 +469,6 @@ export class WebUiBackend implements UiBackend {
       // Push updated session list so sidebar auto-refreshes
       this.pushSessionList(client);
 
-
       client.send({ type: "loader", state: "hide" });
       setTimeout(() => {
         client.send({ type: "config", data: this.buildConfigData() });
@@ -523,7 +482,7 @@ export class WebUiBackend implements UiBackend {
   }
 
   private pushSessionList(client: WebSocketClient): void {
-    const sessionManager = (this.harness as any).sessionManager;
+    const sessionManager = this.harness.sessionManager;
     if (!sessionManager) return;
     const sessions = sessionManager.listSessions();
     const currentId = sessionManager.getCurrentSessionId?.() ?? undefined;
@@ -551,17 +510,17 @@ export class WebUiBackend implements UiBackend {
     try {
       switch (cmd.action) {
         case "set_model": {
-          (this.harness as any).setModel(cmd.value);
+          this.harness.setModel(cmd.value);
           const modelName = (this.harness.agent.state.model as any)?.name ?? cmd.value;
           client.send({ type: "config", data: this.buildConfigData() });
           client.send({ type: "model", name: modelName });
-          client.send({ type: "info", text: `Model set to ${cmd.value}` });
+          client.send({ type: "info", display: "toast", text: `Model set to ${cmd.value}` });
           break;
         }
         case "set_thinking": {
-          (this.harness as any).setThinking(cmd.value);
+          this.harness.setThinking(cmd.value);
           client.send({ type: "config", data: this.buildConfigData() });
-          client.send({ type: "info", text: `Thinking level set to ${cmd.value}` });
+          client.send({ type: "info", display: "toast", text: `Thinking level set to ${cmd.value}` });
           break;
         }
         case "set_key": {
@@ -573,7 +532,7 @@ export class WebUiBackend implements UiBackend {
             process.env.DEEPSEEK_API_KEY = cmd.value;
           }
           client.send({ type: "config", data: this.buildConfigData() });
-          client.send({ type: "info", text: "API key updated" });
+          client.send({ type: "info", display: "toast", text: "API key updated" });
           break;
         }
         case "set_provider": {
@@ -584,7 +543,7 @@ export class WebUiBackend implements UiBackend {
           const cd = this.buildConfigData();
           if (cd.models.length > 0) {
             try {
-              (this.harness as any).setModel(cd.models[0].id);
+              this.harness.setModel(cd.models[0].id);
             } catch {
               // ignore if model resolution fails
             }
@@ -592,7 +551,7 @@ export class WebUiBackend implements UiBackend {
           client.send({ type: "config", data: this.buildConfigData() });
           const mn = (this.harness.agent.state.model as any)?.name ?? this.config.modelId;
           client.send({ type: "model", name: mn });
-          client.send({ type: "info", text: `Provider set to: ${cmd.value}. Restart required for full effect.` });
+          client.send({ type: "info", display: "toast", text: `Provider set to: ${cmd.value}. Restart required for full effect.` });
           break;
         }
         case "set_vision_provider": {
@@ -600,7 +559,7 @@ export class WebUiBackend implements UiBackend {
           this.configStore.updateVision({ provider: vp });
           saveUserConfig({ vision: this.config.vision });
           client.send({ type: "config", data: this.buildConfigData() });
-          client.send({ type: "info", text: `Vision provider set to: ${vp}` });
+          client.send({ type: "info", display: "toast", text: `Vision provider set to: ${vp}` });
           break;
         }
         case "set_vision_model": {
@@ -609,7 +568,7 @@ export class WebUiBackend implements UiBackend {
           this.configStore.updateVision({ model: vm });
           saveUserConfig({ vision: this.config.vision });
           client.send({ type: "config", data: this.buildConfigData() });
-          client.send({ type: "info", text: `Vision model set to: ${vm}` });
+          client.send({ type: "info", display: "toast", text: `Vision model set to: ${vm}` });
           break;
         }
         case "set_vision_key": {
@@ -619,14 +578,14 @@ export class WebUiBackend implements UiBackend {
           this.configStore.updateVision({ key: vk });
           saveUserConfig({ vision: this.config.vision });
           client.send({ type: "config", data: this.buildConfigData() });
-          client.send({ type: "info", text: "Vision API key updated" });
+          client.send({ type: "info", display: "toast", text: "Vision API key updated" });
           break;
         }
         case "set_vision_delete": {
           this.configStore.setVision(undefined);
           saveUserConfig({ vision: null });
           client.send({ type: "config", data: this.buildConfigData() });
-          client.send({ type: "info", text: "Vision model configuration removed" });
+          client.send({ type: "info", display: "toast", text: "Vision model configuration removed" });
           break;
         }
         case "set_project_path": {
@@ -635,11 +594,11 @@ export class WebUiBackend implements UiBackend {
             client.send({ type: "error", text: "Project path is required." });
             break;
           }
-          const result = await (this.harness as any).updateProjectPath(cwd);
+          const result = await this.harness.updateProjectPath(cwd);
           if (result.success) {
             client.send({ type: "config", data: this.buildConfigData() });
             // Push updated session list
-            const sessionManager = (this.harness as any).sessionManager;
+            const sessionManager = this.harness.sessionManager;
             if (sessionManager) {
               const sessions = sessionManager.listSessions();
               client.send({
@@ -657,7 +616,7 @@ export class WebUiBackend implements UiBackend {
                 })),
               });
             }
-            client.send({ type: "info", text: `Project path set to: ${cwd}` });
+            client.send({ type: "info", display: "toast", text: `Project path set to: ${cwd}` });
           } else {
             client.send({ type: "error", text: result.error ?? "Failed to change project path" });
           }
@@ -676,7 +635,7 @@ export class WebUiBackend implements UiBackend {
     client: WebSocketClient,
     cmd: ClientCommand & { type: "session" },
   ): Promise<void> {
-    const sessionManager = (this.harness as any).sessionManager;
+    const sessionManager = this.harness.sessionManager;
     const agent = this.harness.agent;
 
     switch (cmd.action) {
@@ -699,7 +658,7 @@ export class WebUiBackend implements UiBackend {
       case "save": {
         try {
           sessionManager.saveSession(agent);
-          client.send({ type: "info", text: "Session saved." });
+          client.send({ type: "info", display: "toast", text: "Session saved." });
         } catch (err: any) {
           client.send({ type: "error", text: `Failed to save session: ${err.message}` });
           return;
@@ -747,6 +706,7 @@ export class WebUiBackend implements UiBackend {
         }
         client.send({
           type: "info",
+          display: "toast",
           text: [
             `Loaded session: ${match.id.slice(0, 8)}`,
             `  Title:    "${match.title}"`,
@@ -777,7 +737,7 @@ export class WebUiBackend implements UiBackend {
           client.send({ type: "error", text: `Failed to delete session: ${result.error}` });
           return;
         }
-        client.send({ type: "info", text: "Session deleted." });
+        client.send({ type: "info", display: "toast", text: "Session deleted." });
         const sessions = sessionManager.listSessions();
         client.send({
           type: "sessions",
@@ -802,7 +762,7 @@ export class WebUiBackend implements UiBackend {
     client: WebSocketClient,
     cmd: ClientCommand & { type: "mcp" },
   ): Promise<void> {
-    const mcpManager = this.mcpManager ?? (this.harness as any).mcpManager as MCPManager | undefined;
+    const mcpManager = this.mcpManager ?? this.harness.mcpManager as MCPManager | undefined;
     if (!mcpManager) {
       client.send({ type: "error", text: "No MCP manager available." });
       return;
@@ -810,16 +770,16 @@ export class WebUiBackend implements UiBackend {
 
     switch (cmd.action) {
       case "list": {
-        const servers = buildMcpServers(mcpManager.getStates(), (this.harness as any).driverRegistry, (this.harness as any).toolRegistry);
+        const servers = buildMcpServers(mcpManager.getStates(), this.harness.driverRegistry, this.harness.toolRegistry);
         client.send({ type: "mcp_state", servers });
         break;
       }
       case "refresh": {
-        const driverRegistry = (this.harness as any).driverRegistry;
+        const driverRegistry = this.harness.driverRegistry;
         mcpManager.registerDrivers(driverRegistry).then(() => {
-          const servers = buildMcpServers(mcpManager.getStates(), driverRegistry, (this.harness as any).toolRegistry);
+          const servers = buildMcpServers(mcpManager.getStates(), driverRegistry, this.harness.toolRegistry);
           client.send({ type: "mcp_state", servers });
-          client.send({ type: "info", text: "MCP servers refreshed." });
+          client.send({ type: "info", display: "toast", text: "MCP servers refreshed." });
         }).catch((err: Error) => {
           client.send({ type: "error", text: `MCP refresh failed: ${err.message}` });
         });
@@ -833,7 +793,7 @@ export class WebUiBackend implements UiBackend {
         try {
           await mcpManager.connectServer(cmd.serverName);
           this.pushMcpState();
-          client.send({ type: "info", text: `MCP server "${cmd.serverName}" connected.` });
+          client.send({ type: "info", display: "toast", text: `MCP server "${cmd.serverName}" connected.` });
         } catch (err: any) {
           this.pushMcpState();
           client.send({ type: "error", text: `MCP connect failed: ${err.message}` });
@@ -848,7 +808,7 @@ export class WebUiBackend implements UiBackend {
         try {
           await mcpManager.disconnectServer(cmd.serverName);
           this.pushMcpState();
-          client.send({ type: "info", text: `MCP server "${cmd.serverName}" disconnected.` });
+          client.send({ type: "info", display: "toast", text: `MCP server "${cmd.serverName}" disconnected.` });
         } catch (err: any) {
           this.pushMcpState();
           client.send({ type: "error", text: `MCP disconnect failed: ${err.message}` });
@@ -886,10 +846,9 @@ export class WebUiBackend implements UiBackend {
 
   private buildConversationHistory(): ConversationMessage[] {
     const messages = this.harness.agent.state.messages as any[];
-    const vms = (this.harness as any).sessionManager?.visionMessages ?? [];
+    const vms = this.harness.sessionManager?.visionMessages ?? [];
     return rebuildDisplayMessages(messages, vms) as any;
   }
-
 
   private broadcast(event: ServerEvent): void {
     this.wsServer.broadcast(event);
