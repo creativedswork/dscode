@@ -147,6 +147,7 @@ export class TuiApp {
   private imagePasteHandler: ImagePasteHandler;
   // Pre-drained images: captured in input listener before Editor's onChange("") clears them
   private drainedSubmitImages: ImageContent[] | null = null;
+  private lastPasteTime = 0;
   private sigintHandler = () => this.handleCtrlC();
 
   constructor(deps: HarnessAPI) {
@@ -567,7 +568,13 @@ export class TuiApp {
     const printableText = this.extractPrintableText(pasteContent);
 
     // Try to read the image from system clipboard (macOS only).
-    // Each call uses a unique temp file, so concurrent pastes are safe.
+    // Debounce: same paste event often triggers both Kitty and Bracketed
+    // handlers within ~50ms. Skip if we just processed one.
+    const now = Date.now();
+    if (now - this.lastPasteTime < 100) {
+      return { consume: true };
+    }
+    this.lastPasteTime = now;
     readClipboardImageNonBlocking().then((img) => {
       if (img) {
         this.imagePasteHandler.addImage(img);
@@ -597,6 +604,9 @@ export class TuiApp {
     // The data might be a Kitty image transmission.
     // We consume it and try to read the clipboard image instead,
     // since extracting base64 from Kitty protocol chunks is fragile.
+    const now = Date.now();
+    if (now - this.lastPasteTime < 100) return true;
+    this.lastPasteTime = now;
     readClipboardImageNonBlocking().then((img) => {
       if (img) {
         this.imagePasteHandler.addImage(img);
@@ -625,6 +635,9 @@ export class TuiApp {
   }
 
   private pasteClipboardImage(): void {
+    const now = Date.now();
+    if (now - this.lastPasteTime < 100) return;
+    this.lastPasteTime = now;
     readClipboardImageNonBlocking().then((img) => {
       if (img) {
         this.imagePasteHandler.addImage(img);
@@ -818,9 +831,20 @@ export class TuiApp {
       const drainedImages = this.imagePasteHandler.drainImages();
       images = drainedImages.length > 0 ? drainedImages : undefined;
     }
+    // Remove draft blocks before setText("") — onChange guard skips
+    // removeLastImage, so drafts must be cleaned up here to avoid
+    // duplicates when addInlineImage re-adds them later.
+    if (images) {
+      for (let i = 0; i < images.length; i++) {
+        this.conversation.removeLastDraftImage();
+      }
+    }
     const hasText = text.length > 0;
     const hasImages = Boolean(images?.length);
     if (!hasText && !hasImages) {
+      const now = Date.now();
+      if (now - this.lastPasteTime < 100) return;
+      this.lastPasteTime = now;
       readClipboardImageNonBlocking().then((img) => {
         if (img) {
           this.imagePasteHandler.addImage(img);
