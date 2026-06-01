@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Type } from "@mariozechner/pi-ai";
+import { getCheckpointManager, getFileWriteTracker, type WriterType } from "../checkpoint/index.js";
 
 // --- Hash utilities ---
 
@@ -799,6 +800,12 @@ export const editTool: AgentTool<typeof editParams> = {
       hashToQuality,
     };
 
+    // 4.2: Checkpoint file before modification + track writer
+    const cpm = getCheckpointManager();
+    const fwt = getFileWriteTracker();
+    const baselineContinuity = fwt ? fwt.getContinuity(resolved, "edit") : "clean";
+    if (cpm) cpm.save(resolved, "edit");
+    if (fwt) fwt.recordWrite(resolved, "edit");
     const validation = validateOperations(operations, ctx);
     if (!validation.valid) {
       if (validation.error === "anchor_low_entropy") {
@@ -918,6 +925,7 @@ export const editTool: AgentTool<typeof editParams> = {
     try {
       resultLines = applyEditOperations(lines, operations, ctx);
     } catch (err: any) {
+      if (cpm) { try { cpm.rollback(resolved); } catch { /* best-effort rollback */ } }
       return {
         content: [
           {
@@ -935,6 +943,33 @@ export const editTool: AgentTool<typeof editParams> = {
     const newFileVersion = computeFileVersion(newContent);
     const sanity = runSanityChecks(lines, resultLines, affectedMinLine,
       Math.min(lines.length, resultLines.length));
+
+    // 4.2: Rollback on suspicious, commit on clean
+    // 4.2: Only rollback on severe safety issues (unbalanced delimiters, orphan fragments)
+    const severeWarnings = sanity.warnings.filter(w => !w.startsWith("duplicate_line"));
+    if (sanity.status === "suspicious" && severeWarnings.length > 0) {
+      if (cpm) {
+        try { cpm.rollback(resolved); } catch { /* best-effort rollback */ }
+      }
+      return {
+        content: [{
+          type: "text",
+          text:
+            `Edit rejected: safety check failed. File rolled back.\n` +
+            `Warnings: ${sanity.warnings.join("; ")}\n` +
+            `Hint: review the edit operations for correctness and re-read the file before retrying.`,
+        }],
+        details: {
+          error: "safety_check_failed",
+          safety_warnings: sanity.warnings,
+          baseline_continuity: baselineContinuity,
+          writer_type: "edit",
+          suggested_action: "re-read_file",
+        },
+      };
+    }
+    if (cpm) cpm.commit(resolved);
+
     const diffResult = generateLocalDiff(lines, resultLines, operations, ctx);
 
     const mustRefreshFromLine = affectedMinLine > 0 ? affectedMinLine : 1;
@@ -988,6 +1023,8 @@ export const editTool: AgentTool<typeof editParams> = {
         diff_preview: diffResult.diffPreview,
         safety_status: sanity.status,
         safety_warnings: sanity.warnings,
+        baseline_continuity: baselineContinuity,
+        writer_type: "edit" as WriterType,
       },
     };
   },

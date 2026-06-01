@@ -28,6 +28,7 @@ import type { OcrResult } from "../utils/ocr.js";
 import { getEnvApiKey } from "@mariozechner/pi-ai";
 import { ImageCache } from "../utils/image-cache.js";
 import type { ImageRef, VisionMessage } from "./types.js";
+import { initCheckpointSystem, shutdownCheckpointSystem } from "../checkpoint/index.js";
 
 export class Harness {
   agent!: Agent;
@@ -79,6 +80,10 @@ export class Harness {
     }
 
     // Register discovery driver so search_tools is available
+
+    // 4.2: Initialize checkpoint system for baseline hygiene
+    const sessionId = this.sessionManager.getCurrentSessionId?.() ?? `session-${Date.now()}`;
+    initCheckpointSystem(this.config.projectPath, sessionId);
     this.driverRegistry.register(makeDiscoveryDriver(this.toolRegistry));
 
     if (this.config.appHost?.enabled) {
@@ -181,6 +186,7 @@ export class Harness {
       if (!lastAssistantMsg || lastAssistantMsg.stopReason !== "error") {
         // Success — save and return
         this.sessionManager.trySaveSession(this.agent);
+
         return;
       }
 
@@ -197,8 +203,10 @@ export class Harness {
         });
         this.ui.addError(`Model error: ${errorMsg}`);
         this.sessionManager.trySaveSession(this.agent);
+
         return;
       }
+
 
       // Last retry attempt exhausted
       if (attempt >= maxRetries) {
@@ -731,6 +739,9 @@ export class Harness {
 
     this.mcpEventUnsubscribe?.();
     this.mcpEventUnsubscribe = undefined;
+    // 4.2: Clean up checkpoint directories for this session
+    try { shutdownCheckpointSystem(); } catch {}
+
     if (this.appHostManager) {
       try {
         await this.appHostManager.shutdown();

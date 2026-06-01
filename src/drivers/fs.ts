@@ -11,6 +11,7 @@ import {
   ANCHOR_FORMAT_VERSION,
   classifyLinesWithFrequency,
 } from "./edit.js";
+import { getCheckpointManager, getFileWriteTracker } from "../checkpoint/index.js";
 
 const readFileParams = Type.Object({
   path: Type.String({ description: "Absolute file path to read" }),
@@ -98,6 +99,8 @@ export const readFileTool: AgentTool<typeof readFileParams> = {
         file_version: useHashes ? computeFileVersion(raw) : undefined,
         anchor_format_version: useHashes ? ANCHOR_FORMAT_VERSION : undefined,
         recommended_anchors: useHashes ? recommendedAnchors : undefined,
+        is_dirty: useHashes ? (getCheckpointManager()?.isDirty(resolved) ?? false) : undefined,
+        last_writer: useHashes ? (getFileWriteTracker()?.getWriter(resolved) ?? null) : undefined,
       },
     };
   },
@@ -199,7 +202,15 @@ export const writeFileTool: AgentTool<typeof writeFileParams> = {
       mkdirSync(dir, { recursive: true });
     }
 
+    // 4.2: Checkpoint before write + track writer
+    const cpm = getCheckpointManager();
+    const fwt = getFileWriteTracker();
+    const baselineContinuity = fwt ? fwt.getContinuity(resolved, "write_file") : "clean";
+    if (cpm) cpm.save(resolved, "write_file");
+    if (fwt) fwt.recordWrite(resolved, "write_file");
+
     writeFileSync(resolved, content);
+    if (cpm) cpm.commit(resolved);
     const bytes = Buffer.byteLength(content, "utf8");
     const newFileVersion = computeFileVersion(content);
 
@@ -240,6 +251,8 @@ export const writeFileTool: AgentTool<typeof writeFileParams> = {
         path: resolved,
         file_version: newFileVersion,
         lines: newLines.length,
+        baseline_continuity: baselineContinuity,
+        writer_type: "write_file",
         new_anchors: newAnchors,
       },
     };
@@ -305,7 +318,15 @@ export const overwriteFileTool: AgentTool<typeof overwriteFileParams> = {
       mkdirSync(dir, { recursive: true });
     }
 
+    // 4.2: Checkpoint before overwrite + track writer
+    const cpm2 = getCheckpointManager();
+    const fwt2 = getFileWriteTracker();
+    const bc = fwt2 ? fwt2.getContinuity(resolved, "overwrite_file") : "clean";
+    if (cpm2) cpm2.save(resolved, "overwrite_file");
+    if (fwt2) fwt2.recordWrite(resolved, "overwrite_file");
+
     writeFileSync(resolved, content);
+    if (cpm2) cpm2.commit(resolved);
     const bytes = Buffer.byteLength(content, "utf8");
     const newFileVersion = computeFileVersion(content);
 
@@ -337,6 +358,8 @@ export const overwriteFileTool: AgentTool<typeof overwriteFileParams> = {
         path: resolved,
         file_version: newFileVersion,
         lines: newLines.length,
+        baseline_continuity: bc,
+        writer_type: "overwrite_file",
         new_anchors: newAnchors,
       },
     };
