@@ -23,6 +23,8 @@ export type ProgressFn = (info: ProgressInfo) => void;
 /** Options for ImagePipeline.process(). */
 export interface ProcessOptions {
   onProgress?: ProgressFn;
+  /** Abort signal to cancel in-progress vision/OCR calls. */
+  signal?: AbortSignal;
 }
 
 // Re-export commonly used types for consumers

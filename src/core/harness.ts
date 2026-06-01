@@ -50,6 +50,7 @@ export class Harness implements HarnessAPI {
   private mcpEventUnsubscribe?: () => void;
   private shuttingDown = false;
   private turnIndex = 0;
+  private visionAbortController: AbortController | null = null;
 
   constructor(config: HarnessConfig) {
     this.configStore = new ConfigWatch(config);
@@ -366,6 +367,7 @@ export class Harness implements HarnessAPI {
     return describeImagesViaVisionModel(images, visionModel, apiKey);
   }
 
+
   async promptWithImages(text: string, images: ImageContent[]): Promise<void> {
     const turnIdx = this.turnIndex++;
 
@@ -382,50 +384,71 @@ export class Harness implements HarnessAPI {
     this.ui.setProcessing(true);
     this.ui.addInfo(`Analyzing ${images.length} image(s)...`);
 
-    const result = await this.imagePipeline.process(images, text);
+    // Create abort controller for vision/OCR pre-processing
+    this.visionAbortController = new AbortController();
 
-    if (result.source === "vision") {
-      this.ui.addInfo(`Image analysis complete, sending to main model...`);
+    try {
+      const result = await this.imagePipeline.process(images, text, {
+        signal: this.visionAbortController.signal,
+      });
+
+      if (result.source === "vision") {
+        this.ui.addInfo(`Image analysis complete, sending to main model...`);
+        await this.promptAndSave(result.enrichedText);
+
+        // Record vision model call
+        const msgs = this.agent.state.messages as any[];
+        const msgId = this.findLastUserMessageIndex(msgs);
+        const vMsg: VisionMessage = {
+          turnIndex: turnIdx,
+          messageIndex: msgId,
+          images: result.cachedRefs,
+          prompt: "请详细描述这张图片的内容，包括文字、布局和视觉元素。",
+          description: result.enrichedText
+            .replace(text ? `${text}\n\n<image_description>\n` : `<image_description>\n`, "")
+            .replace("\n</image_description>", ""),
+          modelProvider: this.config.vision?.provider ?? "",
+          modelId: this.config.vision?.model ?? "",
+          timestamp: Date.now(),
+        };
+        this.sessionManager.setVisionMessages([...this.sessionManager.visionMessages, vMsg]);
+
+        // Restore user message with original text + cached image refs
+        this.restoreUserMessageImages(text, result.cachedRefs);
+        return;
+      }
+
+      if (result.source === "ocr") {
+        this.ui.addInfo(`OCR complete, sending to main model...`);
+        await this.promptAndSave(result.enrichedText);
+        return;
+      }
+
+      if (result.source === "none") {
+        const noText = text
+          ? `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`
+          : "(用户附带了一张图片，但图片中没有可识别的文字内容)";
+        await this.promptAndSave(noText);
+        return;
+      }
+
+      // source === "error"
       await this.promptAndSave(result.enrichedText);
-
-      // Record vision model call
-      const msgs = this.agent.state.messages as any[];
-      const msgId = this.findLastUserMessageIndex(msgs);
-      const vMsg: VisionMessage = {
-        turnIndex: turnIdx,
-        messageIndex: msgId,
-        images: result.cachedRefs,
-        prompt: "请详细描述这张图片的内容，包括文字、布局和视觉元素。",
-        description: result.enrichedText
-          .replace(text ? `${text}\n\n<image_description>\n` : `<image_description>\n`, "")
-          .replace("\n</image_description>", ""),
-        modelProvider: this.config.vision?.provider ?? "",
-        modelId: this.config.vision?.model ?? "",
-        timestamp: Date.now(),
-      };
-      this.sessionManager.setVisionMessages([...this.sessionManager.visionMessages, vMsg]);
-
-      // Restore user message with original text + cached image refs
-      this.restoreUserMessageImages(text, result.cachedRefs);
-      return;
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") {
+        this.ui.setProcessing(false);
+        return;
+      }
+      throw err;
+    } finally {
+      this.visionAbortController = null;
     }
+  }
 
-    if (result.source === "ocr") {
-      this.ui.addInfo(`OCR complete, sending to main model...`);
-      await this.promptAndSave(result.enrichedText);
-      return;
-    }
-
-    if (result.source === "none") {
-      const noText = text
-        ? `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`
-        : "(用户附带了一张图片，但图片中没有可识别的文字内容)";
-      await this.promptAndSave(noText);
-      return;
-    }
-
-    // source === "error"
-    await this.promptAndSave(result.enrichedText);
+  /** Abort any in-progress vision/OCR processing AND the current agent run. */
+  abort(): void {
+    this.visionAbortController?.abort();
+    this.agent.abort();
   }
 
   private restoreUserMessageImages(text: string, cachedRefs: ImageRef[]): void {

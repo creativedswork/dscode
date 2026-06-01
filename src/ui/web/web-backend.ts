@@ -383,7 +383,7 @@ export class WebUiBackend implements UiBackend {
       }
 
       case "abort": {
-        this.harness.agent.abort();
+        this.harness.abort();
         break;
       }
 

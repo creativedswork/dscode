@@ -51,6 +51,7 @@ export async function describeImagesViaVisionModel(
   images: ImageContent[],
   visionModel: Model<Api>,
   apiKey: string,
+  signal?: AbortSignal,
 ): Promise<string> {
   const ctx: Context = {
     systemPrompt: "You are an image description assistant. Describe the image in detail, including text, layout, and visual elements. Be thorough but concise.",
@@ -65,12 +66,20 @@ export async function describeImagesViaVisionModel(
     timeoutMs: 60_000,
     maxRetries: 0,
     reasoning: "off" as any,
+    signal,
   });
   let text = "";
-  for await (const event of stream) {
-    if (event.type === "text_delta") {
-      text += event.delta;
+  try {
+    for await (const event of stream) {
+      if (event.type === "text_delta") {
+        text += event.delta;
+      }
     }
+    return text;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw err; // re-throw so pipeline can distinguish abort from failure
+    }
+    throw err;
   }
-  return text;
 }

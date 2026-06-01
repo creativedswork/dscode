@@ -35,6 +35,7 @@ export class ImagePipeline {
     options?: ProcessOptions,
   ): Promise<ProcessResult> {
     const onProgress: ProgressFn | undefined = options?.onProgress;
+    const signal = options?.signal;
 
     // Normalize: ensure every image has type: "image" and proper fields
     const normalizedImages: ImageContent[] = images.map((img) => ({
@@ -47,13 +48,14 @@ export class ImagePipeline {
     onProgress?.({ phase: "compressing", cachedRefs: [] });
     const cachedRefs = await Promise.all(normalizedImages.map((img) => ImageCache.put(img)));
     onProgress?.({ phase: "compressing", cachedRefs });
+    if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
 
     // Try vision model
     const vision = resolveVisionModel(this.visionConfig, this.fallbackApiKey, this.onWarning);
     if (vision) {
       try {
         onProgress?.({ phase: "describing", cachedRefs });
-        const description = await describeImagesViaVisionModel(normalizedImages, vision.model, vision.apiKey);
+        const description = await describeImagesViaVisionModel(normalizedImages, vision.model, vision.apiKey, signal);
         if (!description || description.trim().length === 0) {
           // Vision model returned empty description — fall through to OCR
           throw new Error("Vision model returned empty description");
@@ -64,14 +66,18 @@ export class ImagePipeline {
           : `<image_description>\n${description}\n</image_description>`;
         return { enrichedText, cachedRefs, source: "vision" };
       } catch (err) {
+        if (err instanceof DOMException && err.name === "AbortError") {
+          throw err; // re-throw abort immediately, no fallback
+        }
         this.onWarning(`Vision model failed: ${err instanceof Error ? err.message : String(err)}. Falling back to OCR.`);
       }
     }
 
     // OCR fallback
+    if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
     try {
       onProgress?.({ phase: "ocr", cachedRefs });
-      const result = await ocrImages(normalizedImages);
+      const result = await ocrImages(normalizedImages, signal);
       onProgress?.({ phase: "done", cachedRefs });
       if (result.hasText) {
         const ocrText = text
@@ -84,6 +90,9 @@ export class ImagePipeline {
       }
     } catch (err) {
       onProgress?.({ phase: "done", cachedRefs });
+      if (err instanceof DOMException && err.name === "AbortError") {
+        throw err; // re-throw abort immediately, no fallback
+      }
       this.onWarning(`OCR failed: ${err instanceof Error ? err.message : String(err)}.`);
       // Both vision and OCR failed
       const fallbackText = text

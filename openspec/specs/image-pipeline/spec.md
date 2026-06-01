@@ -14,12 +14,23 @@ The system SHALL provide an `ImagePipeline` class in `src/drivers/vision/` that 
 - **WHEN** a consumer imports `from "../drivers/vision/index.js"`
 - **THEN** it receives `ImagePipeline`, `ImageRef`, `ImageContent`, and related types
 
+
 ### Requirement: ImagePipeline.process() Unified Method
-The `ImagePipeline` class SHALL expose a `process(images: ImageContent[], text: string, options?: { onProgress?: ProgressFn }): Promise<ProcessResult>` method that handles the full vision→OCR→fallback chain. The method SHALL be used by both user-input paths (via `Harness.promptWithImages`) and MCP tool-result paths (via `MCPManager.buildAgentTool`).
+The `ImagePipeline` class SHALL expose a `process(images: ImageContent[], text: string, options?: { onProgress?: ProgressFn; signal?: AbortSignal }): Promise<ProcessResult>` method that handles the full vision→OCR→fallback chain. The method SHALL accept an optional `AbortSignal` via `options.signal` and pass it to both vision model and OCR calls. If the signal is aborted at any point, the method SHALL throw an `AbortError` and not proceed to subsequent phases. The method SHALL be used by both user-input paths (via `Harness.promptWithImages`) and MCP tool-result paths (via `MCPManager.buildAgentTool`).
 
 #### Scenario: Vision model available — successful description
 - **WHEN** `process()` is called with images AND a vision model is configured and available
-- **THEN** it SHALL compress images via ImageCache, call the vision model, and return `{ enrichedText: text + description, cachedRefs: ImageRef[], source: "vision" }`
+- **THEN** it SHALL compress images via ImageCache, call the vision model with the provided signal, and return `{ enrichedText: text + description, cachedRefs: ImageRef[], source: "vision" }`
+
+#### Scenario: Abort signal received during vision call — throw AbortError
+- **WHEN** `process()` is called with an `AbortSignal` AND the signal is aborted during the vision model API call
+- **THEN** it SHALL throw an `AbortError`
+- **AND** SHALL NOT proceed to OCR fallback
+- **AND** SHALL NOT return a `ProcessResult`
+
+#### Scenario: Abort signal received during OCR call — throw AbortError
+- **WHEN** `process()` is called with an `AbortSignal` AND vision fails (non-abort) AND the signal is aborted during OCR
+- **THEN** it SHALL throw an `AbortError`
 
 #### Scenario: Vision model returns empty description — fallback to OCR
 - **WHEN** `process()` calls the vision model AND the model returns an empty or whitespace-only description
@@ -48,6 +59,11 @@ The `ImagePipeline` class SHALL expose a `process(images: ImageContent[], text: 
 - **WHEN** `process()` is called with `options.onProgress`
 - **THEN** it SHALL call `onProgress({ phase: "compressing" | "describing" | "ocr" | "done", cachedRefs: ImageRef[] })` at each phase transition
 - **AND** the caller (MCPManager) can use this to emit intermediate UI updates
+
+#### Scenario: No signal provided — backward compatible
+- **WHEN** `process()` is called without `options.signal`
+- **THEN** it SHALL behave exactly as before (no abort capability for this call)
+
 
 ### Requirement: ImagePipeline constructor dependencies
 The `ImagePipeline` constructor SHALL accept: a `VisionConfig` (provider, model ID, API key), a file path for the cache directory, and an optional `onWarning: (message: string) => void` callback for non-fatal error reporting.

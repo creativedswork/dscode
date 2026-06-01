@@ -211,7 +211,7 @@ export class TuiApp {
     process.on("SIGINT", this.sigintHandler);
 
     this.loader.onAbort = () => {
-      deps.agent.abort();
+      deps.abort();
     };
 
     this.buildLayout();
@@ -363,7 +363,7 @@ export class TuiApp {
 
     if (this.processing) {
       if (matchesKey(data, Key.escape) || matchesKey(data, Key.tab)) {
-        this.deps.agent.abort();
+        this.deps.abort();
         this.conversation.addInfo("(aborted)");
         return true;
       }
@@ -663,7 +663,7 @@ export class TuiApp {
     }
 
     if (this.processing) {
-      this.deps.agent.abort();
+      this.deps.abort();
       this.conversation.addInfo("(aborted)");
       return;
     }

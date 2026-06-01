@@ -69,9 +69,39 @@ The `Harness` class SHALL implement the `HarnessAPI` interface. All fields consu
 - **WHEN** `Harness` is instantiated
 - **THEN** `harness.agent`, `harness.sessionManager`, `harness.driverRegistry`, etc. are accessible without type assertions
 
-#### Scenario: Harness delegates image processing to ImagePipeline
+
+#### Scenario: Harness delegates image processing to ImagePipeline with abort support
 - **WHEN** `harness.promptWithImages(text, images)` is called
-- **THEN** it SHALL delegate to `this.imagePipeline.process(images, text)` and use the result
+- **THEN** it SHALL create a new `AbortController`, store it as `this.visionAbortController`, and call `this.imagePipeline.process(images, text, { signal: visionAbortController.signal })`
+- **AND** clear `this.visionAbortController` after the call completes or throws
+
+#### Scenario: promptWithImages handles AbortError from pipeline
+- **WHEN** `this.imagePipeline.process()` throws an `AbortError`
+- **THEN** `promptWithImages()` SHALL call `this.ui.setProcessing(false)` without calling `agent.prompt()`
+
+### Requirement: HarnessAPI includes abort method
+The `HarnessAPI` interface SHALL declare `abort(): void` so that UI backends (TUI, Web) can call abort through the typed interface.
+
+#### Scenario: HarnessAPI abort declaration
+- **WHEN** code references `harness.abort()` through a `HarnessAPI` type
+- **THEN** TypeScript SHALL compile without type errors
+
+### Requirement: Harness exposes abort method
+The `Harness` class SHALL expose a public `abort(): void` method. When called, it SHALL abort the visionAbortController (if one is active for in-progress image pre-processing) AND call `this.agent.abort()`.
+
+#### Scenario: Abort during image pre-processing
+- **WHEN** `harness.abort()` is called while `promptWithImages()` is executing inside `imagePipeline.process()`
+- **THEN** the vision/OCR call SHALL be aborted via `visionAbortController.abort()`
+- **AND** `agent.abort()` SHALL also be called
+
+#### Scenario: Abort during agent loop
+- **WHEN** `harness.abort()` is called while the agent loop is running (no image pre-processing active)
+- **THEN** `agent.abort()` SHALL be called
+- **AND** no error SHALL be thrown
+
+#### Scenario: Abort when idle
+- **WHEN** `harness.abort()` is called while nothing is running
+- **THEN** the call SHALL complete without throwing
 
 ### Requirement: Harness constructs and owns ImagePipeline
 The `Harness` constructor SHALL create an `ImagePipeline` instance and store it as `this.imagePipeline`. The ImagePipeline SHALL be included in `HarnessAPI`.

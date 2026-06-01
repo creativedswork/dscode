@@ -17,11 +17,31 @@ function isUsefulOcrText(text: string): boolean {
   return ratio > 0.4 && alphanumCount > 10;
 }
 
-export async function ocrImage(image: ImageContent): Promise<string> {
+export async function ocrImage(image: ImageContent, signal?: AbortSignal): Promise<string> {
+  // Check if already aborted before starting
+  if (signal?.aborted) {
+    throw new DOMException("The operation was aborted", "AbortError");
+  }
   const w = await getWorker();
   const dataUrl = `data:${image.mimeType};base64,${image.data}`;
-  const { data } = await w.recognize(dataUrl);
-  return data.text.trim();
+
+  let aborted = false;
+  const onAbort = () => {
+    aborted = true;
+    w.terminate();
+    worker = null;
+  };
+  signal?.addEventListener("abort", onAbort);
+
+  try {
+    const { data } = await w.recognize(dataUrl);
+    return data.text.trim();
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    if (aborted) {
+      throw new DOMException("The operation was aborted", "AbortError");
+    }
+  }
 }
 
 export interface OcrResult {
@@ -29,10 +49,10 @@ export interface OcrResult {
   content: string;
 }
 
-export async function ocrImages(images: ImageContent[]): Promise<OcrResult> {
+export async function ocrImages(images: ImageContent[], signal?: AbortSignal): Promise<OcrResult> {
   const results: string[] = [];
   for (const img of images) {
-    const text = await ocrImage(img);
+    const text = await ocrImage(img, signal);
     if (text && isUsefulOcrText(text)) {
       results.push(text);
     }

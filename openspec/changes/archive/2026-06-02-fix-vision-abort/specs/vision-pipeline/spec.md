@@ -1,29 +1,4 @@
-## Purpose
-
-Vision model orchestration — image caching, vision API calls, OCR fallback; now consumed by ImagePipeline module.
-## Requirements
-### Requirement: Vision Call Logging
-When vision model is used to describe images, the system SHALL log the call details into the session. The vision model call SHALL be made through `ImagePipeline.process()`, which handles logging internally.
-
-#### Scenario: Vision model invoked
-- **WHEN** `ImagePipeline.process()` calls the vision model successfully
-- **THEN** the system SHALL create a `VisionMessage` with: input `ImageRef[]`, `description` text, `modelProvider`, `modelId`, `timestamp`, `turnIndex`
-- **AND** append it to a `visionMessages` array in the session
-
-#### Scenario: Vision model failure
-- **WHEN** `ImagePipeline.process()` vision call fails
-- **THEN** the system SHALL NOT create a `VisionMessage` entry (no partial log)
-- **AND** proceed to OCR fallback as before
-
-### Requirement: Image Caching Before Vision Call
-Before sending images to the vision model, the system SHALL first cache them through ImagePipeline's internal ImageCache.
-
-#### Scenario: Cached images sent to vision
-- **WHEN** images are sent to the vision model via `ImagePipeline.process()`
-- **THEN** the system SHALL first pass them through `ImageCache.put()`
-- **AND** use the cached (compressed) image data for the vision API call
-- **AND** include the resulting `ImageRef[]` in the `VisionMessage` log
-
+## MODIFIED Requirements
 
 ### Requirement: Vision/OCR Fallback for MCP Tool Result Images
 When a tool result contains `ImageContent` blocks and the main model does not support image inputs, the system SHALL use `ImagePipeline.process()` which handles the vision-model-then-OCR chain uniformly for both user-uploaded and MCP tool-result images. The process call SHALL include an `AbortSignal` when available from the caller context.
@@ -54,14 +29,3 @@ When a tool result contains `ImageContent` blocks and the main model does not su
 - **WHEN** `ImagePipeline.process()` is called from MCP tool result handling with an `AbortSignal`
 - **THEN** the signal SHALL be passed through to vision model and OCR calls
 - **AND** if aborted, the error SHALL propagate to the caller without producing a `ProcessResult`
-
-
-### Requirement: MCP Tool Images Cached Before Vision Call
-Before sending MCP tool result images to the vision model, the system SHALL first cache them through ImagePipeline's internal ImageCache.
-
-#### Scenario: MCP image cached before vision call
-- **WHEN** MCP tool result images are sent to the vision model via `ImagePipeline.process()`
-- **THEN** the system SHALL first pass each image through `ImageCache.put()`
-- **AND** use the cached (compressed) image data for the vision API call
-- **AND** include the resulting `ImageRef[]` in the `VisionMessage` log
-

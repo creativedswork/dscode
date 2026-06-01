@@ -37,4 +37,5 @@ export interface HarnessAPI {
   updateProjectPath(cwd: string): Promise<{ success: boolean; error?: string }>;
   promptAndSave(text: string, images?: ImageContent[]): Promise<void>;
   saveSessionNow(): void;
+  abort(): void;
 }
