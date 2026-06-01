@@ -6,30 +6,48 @@ function makeImg(data = "abcd"): { type: "image"; data: string; mimeType: string
 }
 
 describe("ImageManager", () => {
-  it("add increments count", () => {
+  it("add returns sequential IDs and increments count", () => {
     const mgr = new ImageManager();
-    mgr.add(makeImg("a"));
+    expect(mgr.add(makeImg("a"))).toBe(1);
     expect(mgr.count).toBe(1);
-    mgr.add(makeImg("b"));
+    expect(mgr.add(makeImg("b"))).toBe(2);
     expect(mgr.count).toBe(2);
   });
 
-  it("removeLast returns images in LIFO order", () => {
+  it("removeById removes the correct image", () => {
     const mgr = new ImageManager();
     const a = makeImg("a");
     const b = makeImg("b");
     mgr.add(a);
     mgr.add(b);
-    expect(mgr.removeLast()).toBe(b);
+    expect(mgr.removeById(1)).toBe(true);
+    expect(mgr.getById(1)).toBeUndefined();
+    expect(mgr.getById(2)).toBe(b);
     expect(mgr.count).toBe(1);
-    expect(mgr.removeLast()).toBe(a);
+  });
+
+  it("removeById on non-existent ID returns false", () => {
+    const mgr = new ImageManager();
+    expect(mgr.removeById(99)).toBe(false);
     expect(mgr.count).toBe(0);
   });
 
-  it("removeLast on empty returns undefined", () => {
+  it("getById returns image or undefined", () => {
     const mgr = new ImageManager();
-    expect(mgr.removeLast()).toBeUndefined();
-    expect(mgr.count).toBe(0);
+    const a = makeImg("a");
+    mgr.add(a);
+    expect(mgr.getById(1)).toBe(a);
+    expect(mgr.getById(99)).toBeUndefined();
+  });
+
+  it("getAllIds returns active IDs in insertion order", () => {
+    const mgr = new ImageManager();
+    mgr.add(makeImg("a"));
+    mgr.add(makeImg("b"));
+    mgr.add(makeImg("c"));
+    expect(mgr.getAllIds()).toEqual([1, 2, 3]);
+    mgr.removeById(2);
+    expect(mgr.getAllIds()).toEqual([1, 3]);
   });
 
   it("drain captures all and clears", () => {
@@ -41,6 +59,7 @@ describe("ImageManager", () => {
     const captured = mgr.drain();
     expect(captured).toEqual([a, b]);
     expect(mgr.count).toBe(0);
+    expect(mgr.getAllIds()).toEqual([]);
   });
 
   it("drain returns a copy, not internal reference", () => {
@@ -58,20 +77,38 @@ describe("ImageManager", () => {
     expect(mgr.count).toBe(0);
   });
 
-  it("clear empties all images", () => {
+  it("clear empties all images and resets nextId", () => {
     const mgr = new ImageManager();
     mgr.add(makeImg("a"));
     mgr.add(makeImg("b"));
     mgr.clear();
     expect(mgr.count).toBe(0);
+    expect(mgr.getAllIds()).toEqual([]);
+    // After clear, IDs restart from 1
+    expect(mgr.add(makeImg("c"))).toBe(1);
   });
 
-  it("add after drain works correctly", () => {
+  it("reuses the smallest available ID slot after removal", () => {
+    const mgr = new ImageManager();
+    mgr.add(makeImg("a")); // id=1
+    mgr.add(makeImg("b")); // id=2
+    mgr.add(makeImg("c")); // id=3
+    mgr.removeById(2);
+    // Next add should reuse id=2 (smallest gap)
+    expect(mgr.add(makeImg("d"))).toBe(2);
+    mgr.removeById(1);
+    // Next add should reuse id=1
+    expect(mgr.add(makeImg("e"))).toBe(1);
+  });
+
+  it("add after drain works correctly and IDs restart from 1", () => {
     const mgr = new ImageManager();
     mgr.add(makeImg("a"));
     mgr.drain();
-    mgr.add(makeImg("b"));
+    const id = mgr.add(makeImg("b"));
+    expect(id).toBe(1); // after drain, IDs restart from 1
     expect(mgr.count).toBe(1);
-    expect(mgr.removeLast()?.data).toBe("b");
+    expect(mgr.count).toBe(1);
+    expect(mgr.getById(id)).toBeDefined();
   });
 });

@@ -89,7 +89,7 @@ export class ConversationView {
   private toolEntries: ToolEntry[] = [];
   private renderedToolCount = 0;
   private tui: TUI;
-  private draftImageBlockCounts: number[] = [];
+  private draftBlocks = new Map<number, { startIndex: number; count: number }>();
 
   private activePermission: PermissionPrompt | null = null;
   private permSelected = 0;
@@ -116,6 +116,7 @@ export class ConversationView {
     this.renderedToolCount = 0;
     this.activePermission = null;
     this.permSelected = 0;
+    this.draftBlocks.clear();
     while (this.box.children.length > 0) { this.box.removeChild(this.box.children[0]); }
     this.tui.requestRender(true);
   }
@@ -262,24 +263,48 @@ export class ConversationView {
     this.render();
   }
 
-  addDraftImage(base64Data: string, mimeType: string, infoText: string): void {
+  addDraftImage(id: number, base64Data: string, mimeType: string, infoText: string): void {
     const blocksBefore = this.blocks.length;
     this.addInlineImage(base64Data, mimeType);
     this.pushText(c.dim(infoText));
     const blocksAdded = this.blocks.length - blocksBefore;
-    this.draftImageBlockCounts.push(blocksAdded);
+    this.draftBlocks.set(id, { startIndex: blocksBefore, count: blocksAdded });
   }
 
-  removeLastDraftImage(): void {
-    const count = this.draftImageBlockCounts.pop();
-    if (count === undefined || count === 0) return;
-    this.blocks.splice(this.blocks.length - count, count);
-    const childrenToRemove = this.box.children.slice(-count);
+  removeDraftImageById(id: number): void {
+    const entry = this.draftBlocks.get(id);
+    if (!entry) return;
+
+    const { startIndex, count } = entry;
+    this.draftBlocks.delete(id);
+
+    // Remove blocks from the array
+    this.blocks.splice(startIndex, count);
+
+    // Remove corresponding box children
+    const childrenToRemove = this.box.children.slice(startIndex, startIndex + count);
     for (const child of childrenToRemove) {
       this.box.removeChild(child);
     }
+
     this.renderedBlockCount = Math.max(0, this.renderedBlockCount - count);
+
+    // Adjust startIndex of all drafts that come after the removed one
+    for (const [otherId, other] of this.draftBlocks) {
+      if (other.startIndex > startIndex) {
+        other.startIndex -= count;
+      }
+    }
+
     this.tui.requestRender(true);
+  }
+
+  /** Remove all draft image blocks (called before addInlineImage re-adds them on submit). */
+  clearDrafts(): void {
+    const ids = [...this.draftBlocks.keys()];
+    for (const id of ids.reverse()) {
+      this.removeDraftImageById(id);
+    }
   }
 
   addInlineImage(base64Data: string, mimeType: string): void {

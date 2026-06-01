@@ -1,4 +1,20 @@
-## Requirements
+## REMOVED Requirements
+
+### Requirement: TuiApp SHALL synchronize pending images with editor placeholders on content change
+
+**Reason**: LIFO-based placeholder sync replaced by ID-based set-diff approach defined in `tui-image-placeholder-identity`.
+
+**Migration**: All placeholder synchronization behavior is now covered by `tui-image-placeholder-identity` spec's "TuiApp onChange SHALL use ID-set diff" requirement.
+
+### Requirement: ConversationView SHALL support atomic draft image insertion and removal
+
+**Reason**: LIFO stack-based draft management replaced by ID-keyed draft management defined in `tui-image-placeholder-identity`.
+
+**Migration**: All draft image management behavior is now covered by `tui-image-placeholder-identity` spec's "ConversationView SHALL support draft image removal by ID" requirement.
+
+---
+
+## MODIFIED Requirements
 
 ### Requirement: ImagePasteHandler SHALL coordinate image lifecycle across subsystems
 
@@ -60,40 +76,3 @@
 
 - **WHEN** `clearConversationView()` is called
 - **THEN** it SHALL call `this.imagePasteHandler.clear()`
-
-### Requirement: TuiApp SHALL pre-drain images on Enter before Editor onChange clears them
-
-The `@earendil-works/pi-tui` Editor fires `onChange("")` immediately before `onSubmit` when Enter is pressed. To prevent `onChange` from removing pending images, `TuiApp` SHALL intercept the Enter key in the input listener, drain images into a `drainedSubmitImages` buffer, and skip removal in `onChange` when this buffer is non-null.
-
-#### Scenario: Enter key pre-drains images before onChange
-
-- **WHEN** user presses Enter AND `imagePasteHandler.imageCount > 0` AND `!processing`
-- **THEN** the input listener SHALL call `imagePasteHandler.drainImages()` and store the result in `this.drainedSubmitImages`
-- **AND** the Enter key SHALL pass through to the Editor
-- **AND** the subsequent `onChange("")` SHALL be a no-op because `drainedSubmitImages` is non-null
-
-#### Scenario: onChange does not remove images when pre-drained
-
-- **WHEN** `onChange` fires AND `this.drainedSubmitImages` is non-null
-- **THEN** the system SHALL NOT call `removeImageById()`, regardless of placeholder count
-
-#### Scenario: handleSubmit uses pre-drained images
-
-- **WHEN** `handleSubmit` is called AND `this.drainedSubmitImages` is non-null
-- **THEN** it SHALL use `this.drainedSubmitImages` as the images for submission
-- **AND** it SHALL set `this.drainedSubmitImages = null` after consuming
-
-#### Scenario: handleSubmit falls back to drainImages when no pre-drain
-
-- **WHEN** `handleSubmit` is called AND `this.drainedSubmitImages` is null (e.g., programmatic submit via `/image` command)
-- **THEN** it SHALL call `this.imagePasteHandler.drainImages()` normally
-
-### Requirement: ImagePasteHandler.addImage SHALL insert placeholder last
-
-To prevent `insertTextAtCursor` from triggering `onChange` before the image count is updated, `addImage` SHALL call `imageManager.add`, `addDraftImage`, `updateStatus`, and only then `insertPlaceholder`.
-
-#### Scenario: addImage ordering prevents premature onChange removal
-
-- **WHEN** `addImage(img)` is called
-- **THEN** it SHALL execute in order: `imageManager.add(img)` → `conversation.addDraftImage(...)` → `updateStatus()` → `insertPlaceholder()`
-- **AND** if `insertPlaceholder` triggers `onChange`, the image manager count SHALL already reflect the new image

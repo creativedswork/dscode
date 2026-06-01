@@ -174,12 +174,20 @@ export class TuiApp {
     this.editor.setAutocompleteProvider(autocomplete);
     this.editor.onSubmit = (text) => this.handleSubmit(text.trim());
     this.editor.onChange = (text) => {
-      // Sync [image] placeholder count with image manager and conversation draft blocks
-      const imageCount = (text.match(/\[image\]/g) || []).length;
+      // Sync [image:<id>] placeholders with image manager via ID-set diff.
+      // Extract all valid placeholder IDs from the text.
+      const RE = /\[image:(\d+)\]/g;
+      const presentIds = new Set<number>();
+      for (const m of text.matchAll(RE)) {
+        presentIds.add(Number(m[1]));
+      }
       // Guard: if images were pre-drained by input listener (Enter key),
       // don't remove — handleSubmit will use drainedSubmitImages.
-      while (this.imagePasteHandler.imageCount > imageCount && !this.drainedSubmitImages) {
-        this.imagePasteHandler.removeLastImage();
+      if (!this.drainedSubmitImages) {
+        const removedIds = this.imagePasteHandler.getAllIds().filter((id) => !presentIds.has(id));
+        for (const id of removedIds) {
+          this.imagePasteHandler.removeImageById(id);
+        }
       }
     };
 
@@ -190,7 +198,7 @@ export class TuiApp {
       }
       // Pre-submit drain: if Enter/Return is pressed with pending images,
       // drain them NOW before the Editor fires onChange("") which would
-      // otherwise trigger removeLastImage.
+      // otherwise trigger removeImageById.
       if ((matchesKey(data, Key.enter) || matchesKey(data, Key.return) || data === "\r" || data === "\n") && this.imagePasteHandler.imageCount > 0 && !this.processing) {
         this.drainedSubmitImages = this.imagePasteHandler.drainImages();
       }
@@ -820,7 +828,7 @@ export class TuiApp {
   }
 
   private handleSubmit(text: string): void {
-    text = text.replace(/\[image\]\s*/g, "").trim();
+    text = text.replace(/\[image:\d+\]\s*/g, "").trim();
     // Use pre-drained images if Enter was intercepted in input listener,
     // otherwise drain now (for programmatic submits like /image command).
     let images: ImageContent[] | undefined;
@@ -832,12 +840,10 @@ export class TuiApp {
       images = drainedImages.length > 0 ? drainedImages : undefined;
     }
     // Remove draft blocks before setText("") — onChange guard skips
-    // removeLastImage, so drafts must be cleaned up here to avoid
+    // removeImageById, so drafts must be cleaned up here to avoid
     // duplicates when addInlineImage re-adds them later.
     if (images) {
-      for (let i = 0; i < images.length; i++) {
-        this.conversation.removeLastDraftImage();
-      }
+      this.imagePasteHandler.clearDrafts();
     }
     const hasText = text.length > 0;
     const hasImages = Boolean(images?.length);
