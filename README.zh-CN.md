@@ -58,7 +58,7 @@
 
 ### 🧬 Spec-Driven 开发
 
-dscode 通过 [OpenSpec](https://github.com/Fission-AI/OpenSpec) 实现 **规约驱动开发（SDD）**。每个功能先有正式 spec——`openspec/specs/` 是唯一真相源，代码只是实现。我们不鼓励手动提交；所有设计和开发都在 SDD 管线中完成，由 AI Agent 协作实现。
+dscode 通过 [OpenSpec](https://github.com/Fission-AI/OpenSpec) 实现**规约驱动开发（SDD）**。每个功能先有正式 spec——`openspec/specs/` 是唯一真相源，代码只是实现。我们不鼓励手动提交；所有设计和开发都在 SDD 管线中完成，由 AI Agent 协作实现。
 
 **代码是规约的实现 —— 而不是反过来。**
 
@@ -85,49 +85,6 @@ dscode 专为 DeepSeek V4 Pro 打造 —— 我们首推的数字创作模型。
 </td>
 </tr>
 </table>
-
----
-
-## Harness 设计哲学
-
-我们在 Harness 设计上遵循**奥卡姆剃刀原则**。dscode 不会预设意图理解模块、Plan 模式或复杂的 agent 编排层——直到系统提示词确实不够用。大多数 coding agent 在一开始就堆叠了推理规划、反思循环和多 agent 协调，而我们选择等模型真正需要时再添加。
-
-这不意味着 Harness 很简陋。它意味着每一块功能都经过了必要性论证。
-
-一个我们深入投入的例子：**edit 工具**。基于 [@_can1357 的 hash-anchor 协议](https://x.com/_can1357/status/2021828033640911196)，我们的 `edit` 工具用**内容寻址的锚点系统**替代了脆弱的行号和正则匹配（详见 [spec](openspec/specs/edit-tool/spec.md)）：
-
-- **三级自适应消歧** — 歧义哈希静默解析：6 位 → 8 位 → 上下文增强（三行窗口）匹配，全部失败才显式拒绝
-- **Occurrence + line-hint 双重消歧** — `occurrence: 3` 选取第 N 次出现；`line` 字段自动选最近候选，仅等距时拒绝
-- **Proximity 范围消歧** — 范围端点一侧唯一时，另一侧自动在正确方向找最近候选项
-- **低熵过滤** — `}` 等行被拒绝作为锚点，工具返回最多 6 个相邻 `[high]` 锚点作为替代建议
-- **原子批量 + 重叠检测** — 6 种操作类型一次调用，全部成功或全部回滚。批量内重叠区间自动检测拒绝
-- **Checkpoint + 安全回滚** — 编辑前保存快照。编辑后安全检查（重复行、括号平衡、孤儿 `else`）失败则自动回滚
-- **结构化失效区间** — `anchors_valid_through` + `must_refresh_from_line` 精确告知模型哪些锚点仍有效，支持链式编辑无需重读
-- **Localized diff + 新锚点** — 编辑成功返回带全新 6 位 hash 的 diff，模型可立即继续编辑
-
-**dscode 开发 dscode。** 正是这个 edit 工具——配合我们的 spec-driven 工作流——让 dscode 实现了自我开发。从 hash-anchor 协议到 checkpoint 系统，每一个功能都由 dscode + DeepSeek V4 Pro 编写，通过 MCP 工具编辑自己的源码树。这不是 demo。这就是我们交付项目的方式。
-
-这就是我们投入的 Harness 工作：不是加更多 AI，而是让 AI 的工具更可靠。
-
----
-
-## 安装
-
-```bash
-npm install -g @wangcan26/dscode
-dscode              # 终端模式
-dscode --web        # Web 模式 → http://localhost:3000
-```
-
-> 首次使用？运行 `/config key <你的 API Key>` 和 `/config model deepseek-v4-pro` 即可开始。键入 `/help` 查看完整指南。
-
-**从源码构建：**
-
-```bash
-git clone https://github.com/wangcan26/dscode.git
-cd dscode && npm install && npm run build
-node dist/dscode.mjs
-```
 
 ---
 
@@ -202,6 +159,49 @@ dscode 启动时自动连接，工具以 `mcp_blender_*` 和 `mcp_playwright_*` 
 </table>
 
 > **提示：** 以上为真实 MCP 工作流 —— dscode 像调用原生 API 一样编排 PlayCanvas 和 Blender。
+
+---
+
+## 安装
+
+```bash
+npm install -g @wangcan26/dscode
+dscode              # 终端模式
+dscode --web        # Web 模式 → http://localhost:3000
+```
+
+> 首次使用？运行 `/config key <你的 API Key>` 和 `/config model deepseek-v4-pro` 即可开始。键入 `/help` 查看完整指南。
+
+**从源码构建：**
+
+```bash
+git clone https://github.com/wangcan26/dscode.git
+cd dscode && npm install && npm run build
+node dist/dscode.mjs
+```
+
+---
+
+## Harness 设计哲学
+
+我们在 Harness 设计上遵循**奥卡姆剃刀原则**。dscode 不会预设意图理解模块、Plan 模式或复杂的 agent 编排层——直到系统提示词确实不够用。大多数 coding agent 在一开始就堆叠了推理规划、反思循环和多 agent 协调，而我们选择等模型真正需要时再添加。
+
+这不意味着 Harness 很简陋。它意味着每一块功能都经过了必要性论证。
+
+一个我们深入投入的例子：**edit 工具**。基于 [@_can1357 的 hash-anchor 协议](https://x.com/_can1357/status/2021828033640911196)，我们的 `edit` 工具用**内容寻址的锚点系统**替代了脆弱的行号和正则匹配（详见 [spec](openspec/specs/edit-tool/spec.md)）：
+
+- **三级自适应消歧** — 歧义哈希静默解析：6 位 → 8 位 → 上下文增强（三行窗口）匹配，全部失败才显式拒绝
+- **Occurrence + line-hint 双重消歧** — `occurrence: 3` 选取第 N 次出现；`line` 字段自动选最近候选，仅等距时拒绝
+- **Proximity 范围消歧** — 范围端点一侧唯一时，另一侧自动在正确方向找最近候选项
+- **低熵过滤** — `}` 等行被拒绝作为锚点，工具返回最多 6 个相邻 `[high]` 锚点作为替代建议
+- **原子批量 + 重叠检测** — 6 种操作类型一次调用，全部成功或全部回滚。批量内重叠区间自动检测拒绝
+- **Checkpoint + 安全回滚** — 编辑前保存快照。编辑后安全检查（重复行、括号平衡、孤儿 `else`）失败则自动回滚
+- **结构化失效区间** — `anchors_valid_through` + `must_refresh_from_line` 精确告知模型哪些锚点仍有效，支持链式编辑无需重读
+- **Localized diff + 新锚点** — 编辑成功返回带全新 6 位 hash 的 diff，模型可立即继续编辑
+
+**dscode 开发 dscode。** 正是这个 edit 工具——配合我们的 spec-driven 工作流——让 dscode 实现了自我开发。从 hash-anchor 协议到 checkpoint 系统，每一个功能都由 dscode + DeepSeek V4 Pro 编写，通过 MCP 工具编辑自己的源码树。这不是 demo。这就是我们交付项目的方式。
+
+这就是我们投入的 Harness 工作：不是加更多 AI，而是让 AI 的工具更可靠。
 
 ---
 

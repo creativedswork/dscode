@@ -28,8 +28,10 @@ dscode 不服务传统"代码感知"场景（那是 Cursor / Claude Code 的领�
 │  Layer 5: Permissions   beforeToolCall 拦截 + 规则引擎     │
 ├──────────────────────────────────────────────────────────┤
 │  Layer 4: Skills         用户态程序，SKILL.md 声明式加载    │
-│           Drivers        内核模块，始终加载 (fs/shell/...) │
-│           Tool Search    延迟工具发现 (search_tools)       │
+│           Drivers        内核模块 (fs/shell/search/edit/    │
+│                           vision/discovery)                  │
+│           Tool Search    延迟工具发现 (search_tools)         │
+│           Checkpoint     编辑安全网 (save/commit/rollback)   │
 ├──────────────────────────────────────────────────────────┤
 │  Layer 3: Memory         跨 session 记忆 + system prompt 注入│
 ├──────────────────────────────────────────────────────────┤
@@ -190,6 +192,7 @@ Driver 是工具提供者，分为 builtin 和 MCP 两类：
 | `shell` | builtin | `bash` |
 | `search` | builtin | `grep`, `glob` |
 | `edit` | builtin | `edit`（基于 hash anchor 的文件编辑） |
+| `vision` | builtin | `ImagePipeline`（vision → OCR → fallback 图像处理链） |
 | `discovery` | builtin | `search_tools`（延迟工具发现） |
 | `<mcp-server>` | mcp | MCP Server 提供的工具，命名空间: `mcp_<server>_<tool>` |
 
@@ -212,6 +215,29 @@ Skill 不直接提供工具，而是声明**允许使用的 Driver 工具白名�
 2. builtin 工具始终发送给 LLM；deferred 工具仅发送名称列表（不发送 schema）
 3. LLM 需要时调用 `search_tools` 工具按关键词或 `select:` 精确匹配
 4. 匹配到的工具被标记为 `discovered`，下一轮请求中携带完整 schema
+
+### Vision Driver（图像处理管道）
+
+Vision 驱动（`src/drivers/vision/`）提供统一的 `ImagePipeline`，负责图像预处理链：vision 模型描述 → OCR 降级 → 文本占位符兜底。
+
+1. 压缩并缓存所有图像（`ImageCache`）
+2. 若配置了 vision 模型，调用获取描述
+3. vision 失败或返回空结果 → 降级到 OCR（tesseract.js）
+4. 两者都失败 → 返回 `[Image(s) could not be processed]` 占位符
+
+`ImagePipeline` 支持 `AbortSignal`，可在图像预处理阶段取消。`Harness.promptWithImages()` 将用户上传的图像通过 `ImagePipeline.process()` 处理；MCP 工具结果中的图像同样通过此管道处理。
+
+### Checkpoint 系统
+
+编辑安全网（`src/checkpoint/`），在每次文件修改前自动保存快照，支持完整的 save → commit → rollback 生命周期：
+
+- **save(filePath)** — 修改前复制文件内容到 `.dscode/checkpoints/<sessionId>/`，写入 `meta.json` 记录元数据
+- **commit(filePath)** — 修改成功后清理 checkpoint
+- **rollback(filePath)** — 修改失败后恢复文件原始内容
+- **isDirty / listDirty** — 查询未提交的 checkpoint
+- **baseCommit** — 初始化时捕获 git HEAD 作为变更基线
+
+`Harness.initialize()` 初始化 CheckpointManager，使用当前 session ID 隔离不同会话的 checkpoint。
 
 ---
 
@@ -278,15 +304,16 @@ Web 模式下的前端是独立 Vite + React 项目（`web/`），通过 WebSock
 
 ## Harness 组装
 
-`Harness` 类（`src/core/harness.ts`）是进程级 host，负责：
+`Harness` 类（`src/core/harness.ts`）实现 `HarnessAPI` 接口（`src/core/harness-api.ts`），是进程级 host，负责：
 
-1. 加载配置（config.json + settings.json + env）
-2. 实例化各模块：SessionManager, ContextManager, MemoryManager, DriverRegistry, ToolRegistry, SkillManager, PermissionManager, MCPManager
-3. 构建 system prompt = base + skills instructions + memories + AGENTS.md
-4. 创建 Agent（注入 hooks: transformContext, beforeToolCall, afterToolCall）
-5. 绑定事件（UI 渲染、token 校准、session 自动保存）
-6. 启动 UI（TUI REPL 或 Web server）
-7. 优雅关闭（保存 session, 提取 memory）
+1. 加载配置（config.json + settings.json + env），创建 `ConfigWatch` 统一可观测配置层
+2. 实例化各模块：SessionManager, ContextManager, MemoryManager, DriverRegistry, ToolRegistry, SkillManager, PermissionManager, MCPManager, ImagePipeline
+3. 初始化 CheckpointManager（编辑安全网）
+4. 构建 system prompt = base + skills instructions + memories + AGENTS.md + deferred tools hint
+5. 创建 Agent（注入 hooks: transformContext, beforeToolCall, afterToolCall）
+6. 绑定事件（UI 渲染、token 校准、session 自动保存）
+7. 启动 UI（TUI REPL 或 Web server）
+8. 优雅关闭（保存 session, 提取 memory, 关闭 checkpoint 系统）
 
 ### System Prompt 构建
 
@@ -295,9 +322,28 @@ base prompt
   + skill instructions（每激活一个 skill 追加一段）
   + ## Memories（global + project 记忆，MemoryManager 格式化）
   + AGENTS.md 内容（项目级 agent 指令，最低优先级）
+  + deferred tools hint（ToolRegistry 生成的延迟工具提示）
 ```
 
----
+### ConfigWatch 可观测配置层
+
+`ConfigWatch`（`src/core/config-watch.ts`）包装 `HarnessConfig`，提供显式 setter 方法和订阅制变更通知：
+
+- `get()` — 返回 `Readonly<HarnessConfig>` 不可变快照
+- `onChange(fn)` — 订阅配置变更，返回取消订阅函数
+- `setModelConfig()` / `setApiKey()` / `setProjectPath()` / `setVision()` / `setMcpServers()` — 原子化配置修改
+
+所有配置变更通过 ConfigWatch 方法，禁止直接修改 config 属性。Harness 注册 `onChange` 回调通知 UI 后端同步更新。
+
+### HarnessAPI 接口
+
+`HarnessAPI`（`src/core/harness-api.ts`）定义 Harness 的公共 API 表面，TUI 和 Web 后端通过该接口消费 Agent 能力，不依赖 Harness 的内部实现细节：
+
+- **readonly 访问器**: agent, sessionManager, memoryManager, driverRegistry, toolRegistry, skillManager, permissionManager, contextManager, mcpManager, config, configStore, imagePipeline
+- **mutation 方法**: `setModel()`, `setThinking()`, `setProvider()`, `updateProjectPath()`, `abort()`
+- **执行方法**: `promptWithImages()`, `promptAndSave()`
+
+此接口替代了旧的 `TuiDeps` 反模式，消除了 Web 后端中的 `as any` 类型断言。
 
 ## 目录结构
 
@@ -306,7 +352,9 @@ src/
 ├── core/           # 入口 + Harness 组装 + 配置 + 共享类型
 │   ├── main.ts
 │   ├── harness.ts
+│   ├── harness-api.ts     # HarnessAPI 公共接口
 │   ├── config.ts
+│   ├── config-watch.ts    # 可观测配置层
 │   └── types.ts
 ├── session/        # Layer 1: Session 持久化
 │   ├── manager.ts, store.ts, types.ts, display.ts
@@ -317,6 +365,13 @@ src/
 ├── drivers/        # Layer 4: 驱动（工具提供者）
 │   ├── registry.ts, fs.ts, shell.ts, search.ts, edit.ts
 │   ├── discovery.ts, tool-registry.ts
+│   └── vision/          # 图像处理管道
+│       ├── cache.ts, client.ts, ocr.ts, pipeline.ts
+│       ├── reader.ts, types.ts
+├── checkpoint/     # Layer 4: 编辑安全网
+│   ├── index.ts, checkpoint-manager.ts, types.ts
+│   ├── base-commit.ts, write-tracker.ts
+│   └── store/
 ├── skills/         # Layer 4: 技能（用户态程序）
 │   ├── manager.ts, loader.ts
 ├── mcp/            # MCP 客户端 + App Host
@@ -330,7 +385,9 @@ src/
 │   ├── backend.ts, tui-app.ts, tui-backend.ts
 │   ├── web/web-backend.ts, web/ws-server.ts, web/protocol.ts
 │   ├── shared/types.ts, shared/reducer.ts
-│   └── commands.ts, conversation.ts, theme.ts
+│   ├── commands.ts, conversation.ts, theme.ts
+│   ├── image-manager.ts, image-paste-handler.ts
+│   └── mcp-browser.ts
 └── utils/          # 工具集
     ├── image.ts, image-cache.ts, ocr.ts
     └── at-file-resolver.ts
@@ -349,7 +406,13 @@ web/                # Web 前端（独立 Vite + React 项目）
     └── memory/global.json + projects/<hash>.json
 
 <project>/.dscode/
-└── settings.json            # 项目级 settings（覆盖用户级）
+├── settings.json            # 项目级 settings（覆盖用户级）
+└── checkpoints/             # 编辑安全网快照
+    └── <sessionId>/
+        ├── <safeFileName>-<timestamp>/
+        │   ├── original     # 修改前文件副本
+        │   └── meta.json    # 元数据（filePath, baseCommit, timestamp）
+        └── ...
 ```
 
 ---

@@ -88,49 +88,6 @@ dscode is purpose-built for DeepSeek V4 Pro — our recommended model for digita
 
 ---
 
-## Harness Philosophy
-
-We follow **Occam's razor** in harness design. dscode does not pre-build intent understanding modules, plan modes, or elaborate agentic scaffolding until the system prompt proves insufficient. Most coding agents pile on pre-turn planning, reflection loops, and multi-agent orchestration upfront — we wait until the model demands it.
-
-That doesn't mean the harness is bare. It means every piece earns its place.
-
-One example where we went deeper: the **edit tool**. Based on [@_can1357's hash-anchor protocol](https://x.com/_can1357/status/2021828033640911196), our `edit` tool replaces fragile line-number and regex-based editing with a **content-addressable anchor system** ([spec](openspec/specs/edit-tool/spec.md)):
-
-- **Three-level adaptive resolution** — ambiguous 6-char hashes are resolved silently through 8-char → context-augmented (3-line window) matching before rejection
-- **Occurrence + line-hint disambiguation** — `occurrence: 3` picks the Nth match; `line` field auto-selects the closest candidate, rejecting only when equidistant
-- **Proximity-based range resolution** — for range endpoints, if one side is unique the other automatically resolves to the nearest candidate in the correct direction
-- **Low-entropy filtering** — lines like `}` are rejected as anchors; the tool returns up to 6 neighboring `[high]` anchors as alternatives
-- **Atomic batch + overlap detection** — 6 operation types in one call, all-or-nothing. Overlapping ranges within a batch are detected and rejected
-- **Checkpoint + safety rollback** — file checkpointed before edit. Post-edit sanity checks (duplicate lines, delimiter balance, orphan `else`) roll back suspicious changes
-- **Structured invalidation scope** — `anchors_valid_through` and `must_refresh_from_line` tell the model exactly which anchors survive, enabling chained edits without re-reading
-- **Localized diff with live anchors** — successful edits return a diff with fresh 6-char hashes, so the model can continue editing immediately
-
-**dscode builds dscode.** This edit tool — combined with our spec-driven workflow — is what enabled dscode to develop itself. Every feature, from the hash-anchor protocol to the checkpoint system, was implemented by dscode running on DeepSeek V4 Pro, editing its own source tree through MCP-driven tools. It's not a demo. It's how this project ships.
-
-This is the kind of harness work we invest in: not adding more AI, but making the AI's tools dependable.
-
----
-
-## Install
-
-```bash
-npm install -g @wangcan26/dscode
-dscode              # Terminal UI
-dscode --web        # Web UI → http://localhost:3000
-```
-
-> First launch? Run `/config key <your-api-key>` and `/config model deepseek-v4-pro` to get started. Type `/help` for the full guide.
-
-**Build from source:**
-
-```bash
-git clone https://github.com/wangcan26/dscode.git
-cd dscode && npm install && npm run build
-node dist/dscode.mjs
-```
-
----
-
 ## Capabilities
 
 <table>
@@ -202,6 +159,49 @@ dscode auto-connects on launch. Tools appear as `mcp_blender_*` and `mcp_playwri
 </table>
 
 > **Tip:** These are real MCP workflows — dscode orchestrates PlayCanvas and Blender as if they were native APIs.
+
+---
+
+## Install
+
+```bash
+npm install -g @wangcan26/dscode
+dscode              # Terminal UI
+dscode --web        # Web UI → http://localhost:3000
+```
+
+> First launch? Run `/config key <your-api-key>` and `/config model deepseek-v4-pro` to get started. Type `/help` for the full guide.
+
+**Build from source:**
+
+```bash
+git clone https://github.com/wangcan26/dscode.git
+cd dscode && npm install && npm run build
+node dist/dscode.mjs
+```
+
+---
+
+## Harness Philosophy
+
+We follow **Occam's razor** in harness design. dscode does not pre-build intent understanding modules, plan modes, or elaborate agentic scaffolding until the system prompt proves insufficient. Most coding agents pile on pre-turn planning, reflection loops, and multi-agent orchestration upfront — we wait until the model demands it.
+
+That doesn't mean the harness is bare. It means every piece earns its place.
+
+One example where we went deeper: the **edit tool**. Based on [@_can1357's hash-anchor protocol](https://x.com/_can1357/status/2021828033640911196), our `edit` tool replaces fragile line-number and regex-based editing with a **content-addressable anchor system** ([spec](openspec/specs/edit-tool/spec.md)):
+
+- **Three-level adaptive resolution** — ambiguous 6-char hashes are resolved silently through 8-char → context-augmented (3-line window) matching before rejection
+- **Occurrence + line-hint disambiguation** — `occurrence: 3` picks the Nth match; `line` field auto-selects the closest candidate, rejecting only when equidistant
+- **Proximity-based range resolution** — for range endpoints, if one side is unique the other automatically resolves to the nearest candidate in the correct direction
+- **Low-entropy filtering** — lines like `}` are rejected as anchors; the tool returns up to 6 neighboring `[high]` anchors as alternatives
+- **Atomic batch + overlap detection** — 6 operation types in one call, all-or-nothing. Overlapping ranges within a batch are detected and rejected
+- **Checkpoint + safety rollback** — file checkpointed before edit. Post-edit sanity checks (duplicate lines, delimiter balance, orphan `else`) roll back suspicious changes
+- **Structured invalidation scope** — `anchors_valid_through` and `must_refresh_from_line` tell the model exactly which anchors survive, enabling chained edits without re-reading
+- **Localized diff with live anchors** — successful edits return a diff with fresh 6-char hashes, so the model can continue editing immediately
+
+**dscode builds dscode.** This edit tool — combined with our spec-driven workflow — is what enabled dscode to develop itself. Every feature, from the hash-anchor protocol to the checkpoint system, was implemented by dscode running on DeepSeek V4 Pro, editing its own source tree through MCP-driven tools. It's not a demo. It's how this project ships.
+
+This is the kind of harness work we invest in: not adding more AI, but making the AI's tools dependable.
 
 ---
 

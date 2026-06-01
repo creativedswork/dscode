@@ -64,8 +64,9 @@ MCP Server 多了以后，工具数量爆炸会导致上下文溢出。需要建
 - [ ] **Git 感知** — 检测 git 状态和分支信息注入上下文；结构化 git 操作工具（commit、diff、PR）
 - [ ] **Diff-based 编辑** — 支持 patch/diff 级别的文件修改，替代全文覆写
 - [ ] **Diff 驱动的 Permission** — 编辑工具展示 diff 而非全文，permission 确认粒度从文件级细化到 diff 级
-- [x] **图片/PDF 读取** — 多模态输入支持（OCR 方式，基于 tesseract.js）
+- [x] **图片/PDF 读取** — 多模态输入支持（Vision 模型 + OCR 降级 + fallback，通过 ImagePipeline 统一处理）
 - [ ] **通知系统** — 长任务完成后桌面通知
+- [x] **编辑安全网（Checkpoint）** — 文件修改前自动保存快照，支持 save/commit/rollback 生命周期，按 session 隔离
 
 ---
 
@@ -85,4 +86,7 @@ MCP Server 多了以后，工具数量爆炸会导致上下文溢出。需要建
 
 - [x] **MCP 协议支持** — Stdio + SSE 双传输，兼容 Claude Desktop 配置格式
 - [x] **外部 Skill 加载** — 支持从 `~/.dscode/skills/` 和项目级目录动态加载 SKILL.md
-- [x] **图片/PDF 读取** — 基于 tesseract.js 的 OCR，支持中英文
+- [x] **图片/PDF 读取** — Vision 模型优先 → OCR 降级 → 文本占位符兜底，通过 `ImagePipeline` 统一处理
+- [x] **编辑安全网（Checkpoint）** — 文件修改前自动保存快照到 `.dscode/checkpoints/`，支持 rollback 恢复
+- [x] **HarnessAPI 架构** — 消除 TuiDeps 反模式，统一定义 `HarnessAPI` 接口，TUI 和 Web 后端通过接口消费 Agent 能力
+- [x] **ConfigWatch 可观测配置层** — 订阅制配置变更通知，所有 config 修改通过原子化 setter 方法
