@@ -89,6 +89,7 @@ export class ConversationView {
   private toolEntries: ToolEntry[] = [];
   private renderedToolCount = 0;
   private tui: TUI;
+  private draftImageBlockCounts: number[] = [];
 
   private activePermission: PermissionPrompt | null = null;
   private permSelected = 0;
@@ -254,6 +255,26 @@ export class ConversationView {
   addNotice(text: string): void {
     this.pushText(text);
     this.render();
+  }
+
+  addDraftImage(base64Data: string, mimeType: string, infoText: string): void {
+    const blocksBefore = this.blocks.length;
+    this.addInlineImage(base64Data, mimeType);
+    this.pushText(c.dim(infoText));
+    const blocksAdded = this.blocks.length - blocksBefore;
+    this.draftImageBlockCounts.push(blocksAdded);
+  }
+
+  removeLastDraftImage(): void {
+    const count = this.draftImageBlockCounts.pop();
+    if (count === undefined || count === 0) return;
+    this.blocks.splice(this.blocks.length - count, count);
+    const childrenToRemove = this.box.children.slice(-count);
+    for (const child of childrenToRemove) {
+      this.box.removeChild(child);
+    }
+    this.renderedBlockCount = Math.max(0, this.renderedBlockCount - count);
+    this.tui.requestRender(true);
   }
 
   addInlineImage(base64Data: string, mimeType: string): void {

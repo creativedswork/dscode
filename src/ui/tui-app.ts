@@ -183,6 +183,13 @@ export class TuiApp {
       if (match) {
         this.conversation.addInfo(c.dim(`Large paste accepted — ${match[0]}. Press Enter to submit full content.`));
       }
+      // Sync [image] placeholder count with pendingImages and conversation draft blocks
+      const imageCount = (text.match(/\[image\]/g) || []).length;
+      while (this.pendingImages.length > imageCount) {
+        this.pendingImages.pop();
+        this.conversation.removeLastDraftImage();
+        this.updateImageStatus();
+      }
     };
 
     this.tui.addInputListener((data) => {
@@ -569,9 +576,8 @@ export class TuiApp {
         this.pendingImages.push(img);
         this.updateImageStatus();
         this.insertImagePlaceholder();
-        this.conversation.addInlineImage(img.data, img.mimeType);
-        this.conversation.addInfo(
-          c.dim(`Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`),
+        this.conversation.addDraftImage(img.data, img.mimeType,
+          `Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
         );
 
       }
@@ -608,9 +614,8 @@ export class TuiApp {
         this.pendingImages.push(img);
         this.updateImageStatus();
         this.insertImagePlaceholder();
-        this.conversation.addInlineImage(img.data, img.mimeType);
-        this.conversation.addInfo(
-          c.dim(`Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`),
+        this.conversation.addDraftImage(img.data, img.mimeType,
+          `Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
         );
 
       }
@@ -646,9 +651,8 @@ export class TuiApp {
         this.pendingImages.push(img);
         this.updateImageStatus();
         this.insertImagePlaceholder();
-        this.conversation.addInlineImage(img.data, img.mimeType);
-        this.conversation.addInfo(
-          c.dim(`Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`),
+        this.conversation.addDraftImage(img.data, img.mimeType,
+          `Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
         );
 
       } else {
@@ -842,10 +846,9 @@ export class TuiApp {
         if (img) {
           this.pendingImages.push(img);
           this.updateImageStatus();
-            this.insertImagePlaceholder();
-          this.conversation.addInlineImage(img.data, img.mimeType);
-          this.conversation.addInfo(
-            c.dim(`Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`),
+          this.insertImagePlaceholder();
+          this.conversation.addDraftImage(img.data, img.mimeType,
+            `Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
           );
         }
       });
