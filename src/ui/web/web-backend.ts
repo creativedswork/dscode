@@ -206,6 +206,9 @@ export class WebUiBackend implements UiBackend {
     this.broadcast({ type: "error", text });
   }
 
+  addWarning(text: string): void {
+    this.broadcast({ type: "warning", text });
+  }
   addRetry(info: { attempt: number; maxRetries: number; delayMs: number; error: string; level: "stream" | "turn" }): void {
     this.broadcast({ type: "retry", info });
   }

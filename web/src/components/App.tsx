@@ -88,6 +88,7 @@ export function App() {
         }
         break;
       }
+      case "warning": addToast({ type: "warning", text: event.text }); break;
       case "error": addToast({ type: "error", text: event.text }); setProcessing(false); turnStartRef.current = 0; break;
       case "permission_prompt": setPermissionPrompt({ toolName: event.toolName, preview: event.preview }); break;
       case "loader":

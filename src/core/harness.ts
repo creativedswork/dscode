@@ -346,11 +346,18 @@ export class Harness {
     if (!v?.provider || !v?.model) return null;
     try {
       const model = resolveModel(v.provider, v.model);
-      if (!model.input.includes("image")) return null;
+      if (!model.input.includes("image")) {
+        this.ui.addWarning(`Vision model ${v.provider}/${v.model} does not support image input — falling back to OCR.`);
+        return null;
+      }
       const apiKey = v.key ?? getEnvApiKey(v.provider) ?? this.config.apiKey;
-      if (!apiKey) return null;
+      if (!apiKey) {
+        this.ui.addWarning(`No API key for vision model ${v.provider}/${v.model} — configure via /config set_vision_key. Falling back to OCR.`);
+        return null;
+      }
       return { model, apiKey };
-    } catch {
+    } catch (err) {
+      this.ui.addWarning(`Failed to resolve vision model ${v?.provider ?? "?"}/${v?.model ?? "?"}: ${err instanceof Error ? err.message : String(err)}. Falling back to OCR.`);
       return null;
     }
   }
@@ -395,20 +402,30 @@ export class Harness {
     const cachedRefs = await Promise.all(normalizedImages.map((img) => ImageCache.put(img)));
     const turnIdx = this.turnIndex++;
 
-    // 1. Main model supports images natively → send directly
-    const mainModel = resolveModel(this.config.provider, this.config.modelId);
-    if (mainModel.input.includes("image")) {
-      await this.promptAndSave(text, normalizedImages);
-      return;
+    // 1. Vision model configured → use it first for image description.
+    //    A dedicated vision model provides better image understanding than
+    //    native image support on the main model. The main model receives a
+    //    text description it can always consume regardless of image support.
+    const vision = this.resolveVisionModel();
+
+    // 2. No vision model → try native image support on main model
+    if (!vision) {
+      const mainModel = resolveModel(this.config.provider, this.config.modelId);
+      if (mainModel.input.includes("image")) {
+        await this.promptAndSave(text, normalizedImages);
+        return;
+      }
     }
 
-    // 2. Vision model configured → use vision model for image description
-    const vision = this.resolveVisionModel();
     if (vision) {
       try {
         this.ui.setProcessing(true);
         this.ui.addInfo(`Analyzing ${normalizedImages.length} image(s) with vision model (${vision.model.name})...`);
         const description = await this.describeImagesViaVisionModel(normalizedImages, vision.model, vision.apiKey);
+        if (!description || description.trim().length === 0) {
+          // Vision model returned empty description — fall through to OCR
+          throw new Error("Vision model returned empty description");
+        }
         this.ui.addInfo(`Image analysis complete, sending to main model...`);
         const enrichedText = text
           ? `${text}\n\n<image_description>\n${description}\n</image_description>`
@@ -471,7 +488,7 @@ export class Harness {
         return;
       } catch (err) {
         this.ui.setProcessing(false);
-        this.ui.addInfo(`Vision model failed: ${err instanceof Error ? err.message : String(err)}. Falling back to OCR.`);
+        this.ui.addWarning(`Vision model failed: ${err instanceof Error ? err.message : String(err)}. Falling back to OCR.`);
       }
     }
 
@@ -495,7 +512,9 @@ export class Harness {
     } catch (err) {
       this.ui.setProcessing(false);
       this.ui.addInfo(`OCR failed: ${err instanceof Error ? err.message : String(err)}. Sending text only.`);
-      await this.promptAndSave(text);
+      // If text is empty, send a fallback so the model knows about the image
+      const fallbackText = text || "(用户附带了一张图片，OCR 未能识别其中内容)";
+      await this.promptAndSave(fallbackText);
     }
   }
 

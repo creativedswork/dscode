@@ -252,6 +252,11 @@ export class ConversationView {
     this.render();
   }
 
+  addWarning(text: string): void {
+    this.pushText(c.yellow("\u26a0 " + text));
+    this.render();
+  }
+
   addNotice(text: string): void {
     this.pushText(text);
     this.render();

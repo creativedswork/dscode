@@ -489,12 +489,13 @@ export class MCPManager {
             }
 
             let description = "";
+            let visionError = "";
             const vision = this.visionResolve?.();
             if (vision) {
               try {
                 description = await this.visionDescribe(imageBlocks, vision.model, vision.apiKey);
-              } catch {
-                // fall through
+              } catch (err) {
+                visionError = err instanceof Error ? err.message : String(err);
               }
             }
 
@@ -509,11 +510,14 @@ export class MCPManager {
                 terminate: false,
               };
             } else {
+              const reason = vision
+                ? (visionError ? `Vision model error: ${visionError}` : "Vision model returned empty description")
+                : "No vision model configured";
               return {
                 content: [
                   ...textBlocks,
                   ...compressedImages,
-                  { type: "text", text: "\n[Received " + imageBlocks.length + " image(s). No vision model configured.]" },
+                  { type: "text", text: "\n[Received " + imageBlocks.length + " image(s). " + reason + ".]" },
                 ],
                 details: { server: serverName, tool: def.name, error: isError, structuredContent, mcpResult: result },
                 terminate: false,

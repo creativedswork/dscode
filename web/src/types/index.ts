@@ -24,6 +24,6 @@ export type {
 
 export interface Toast {
   id: string;
-  type: "info" | "error";
+  type: "info" | "warning" | "error";
   text: string;
 }

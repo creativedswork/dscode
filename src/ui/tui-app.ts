@@ -159,7 +159,15 @@ export class TuiApp {
   private exitPromise!: Promise<void>;
   private exitResolve!: () => void;
   private stopping = false;
+  // ── Image lifecycle ──
+  //
+  // pendingImages: UI-layer stack for syncing [image] placeholder count with
+  //   the editor. Pop/push in onChange — NEVER used for model submission.
+  //
+  // imageStore: Data-layer store for actual ImageContent. Written on paste,
+  //   read in handleSubmit, cleared on submit/clear. Immune to onChange.
   private pendingImages: ImageContent[] = [];
+  private imageStore: ImageContent[] = [];
   private static readonly IMAGE_PLACEHOLDER = "[image]";
   private imagePasteInFlight = false;
   private sigintHandler = () => this.handleCtrlC();
@@ -579,9 +587,10 @@ export class TuiApp {
     readClipboardImageNonBlocking().then((img) => {
       this.imagePasteInFlight = false;
       if (img) {
-        this.pendingImages.push(img);
         this.updateImageStatus();
         this.insertImagePlaceholder();
+        this.pendingImages.push(img);
+        this.imageStore.push(img);
         this.conversation.addDraftImage(img.data, img.mimeType,
           `Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
         );
@@ -617,9 +626,10 @@ export class TuiApp {
     readClipboardImageNonBlocking().then((img) => {
       this.imagePasteInFlight = false;
       if (img) {
-        this.pendingImages.push(img);
         this.updateImageStatus();
         this.insertImagePlaceholder();
+        this.pendingImages.push(img);
+        this.imageStore.push(img);
         this.conversation.addDraftImage(img.data, img.mimeType,
           `Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
         );
@@ -654,9 +664,10 @@ export class TuiApp {
     readClipboardImageNonBlocking().then((img) => {
       this.imagePasteInFlight = false;
       if (img) {
-        this.pendingImages.push(img);
         this.updateImageStatus();
         this.insertImagePlaceholder();
+        this.pendingImages.push(img);
+        this.imageStore.push(img);
         this.conversation.addDraftImage(img.data, img.mimeType,
           `Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
         );
@@ -756,6 +767,10 @@ export class TuiApp {
     this.conversation.addError(text);
   }
 
+  addWarning(text: string): void {
+    this.conversation.addWarning(text);
+  }
+
   addRetry(info: { attempt: number; maxRetries: number; delayMs: number; error: string; level: "stream" | "turn" }): void {
     this.conversation.addRetry(info);
   }
@@ -842,7 +857,7 @@ export class TuiApp {
 
   private handleSubmit(text: string): void {
     text = text.replace(/\[image\]\s*/g, "").trim();
-    let images = this.pendingImages.length > 0 ? [...this.pendingImages] : undefined;
+    let images = this.imageStore.length > 0 ? [...this.imageStore] : undefined;
     const hasText = text.length > 0;
     const hasImages = Boolean(images?.length);
     if (!hasText && !hasImages) {
@@ -851,9 +866,10 @@ export class TuiApp {
       readClipboardImageNonBlocking().then((img) => {
         this.imagePasteInFlight = false;
         if (img) {
-          this.pendingImages.push(img);
           this.updateImageStatus();
           this.insertImagePlaceholder();
+          this.pendingImages.push(img);
+          this.imageStore.push(img);
           this.conversation.addDraftImage(img.data, img.mimeType,
             `Image pasted from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
           );
@@ -918,7 +934,7 @@ export class TuiApp {
       }) as ImageContent);
       images = [...(images ?? []), ...atImages];
     }
-    if (this.pendingImages.length > 0 && !this.deps.modelSupportsImages) {
+    if (this.imageStore.length > 0 && !this.deps.modelSupportsImages) {
       this.conversation.addInfo(
         c.dim(`${this.deps.modelName} does not support image input natively — using vision model or OCR.`),
       );
@@ -931,9 +947,17 @@ export class TuiApp {
       ? imageIndicator ? `${text}\n${imageIndicator}` : text
       : imageIndicator;
     this.addUserMessage(userMessage);
+
+    // Re-add images as inline images (drafts were removed by editor.setText onChange)
+    if (images && images.length > 0) {
+      for (const img of images) {
+        this.conversation.addInlineImage(img.data, img.mimeType);
+      }
+    }
     this.setProcessing(true);
 
     this.pendingImages = [];
+    this.imageStore = [];
     this.updateImageStatus();
 
     if (images && images.length > 0) {
@@ -992,6 +1016,7 @@ export class TuiApp {
     this.lastMenuNavDirection = null;
     this.lastMenuNavAt = 0;
     this.pendingImages = [];
+    this.imageStore = [];
     if (this.mcpPanelVisible) {
       this.closeMcpBrowser();
     } else {
@@ -1010,17 +1035,18 @@ export class TuiApp {
 
   addPendingImage(image: ImageContent): void {
     this.pendingImages.push(image);
+    this.imageStore.push(image);
     this.updateImageStatus();
     this.insertImagePlaceholder();
   }
 
   private updateImageStatus(): void {
-    if (this.pendingImages.length > 0) {
+    if (this.imageStore.length > 0) {
       const totalKB = Math.round(
-        this.pendingImages.reduce((sum, img) => sum + img.data.length * 0.75, 0) / 1024,
+        this.imageStore.reduce((sum, img) => sum + img.data.length * 0.75, 0) / 1024,
       );
       this.imageStatus.setText(
-        c.dim(` ${this.pendingImages.length} image(s) attached (${totalKB} KB) — type text and press Enter to send`),
+        c.dim(` ${this.imageStore.length} image(s) attached (${totalKB} KB) — type text and press Enter to send`),
       );
     } else {
       this.imageStatus.setText("");

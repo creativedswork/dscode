@@ -66,7 +66,9 @@ export class TuiBackend implements UiBackend {
     this.tui.addError(text);
   }
 
-  // ── Retry feedback ──
+  addWarning(text: string): void {
+    this.tui.addWarning(text);
+  }
   addRetry(info: { attempt: number; maxRetries: number; delayMs: number; error: string; level: "stream" | "turn" }): void {
     this.tui.addRetry(info);
   }

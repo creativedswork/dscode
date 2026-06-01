@@ -19,10 +19,11 @@ export function ToastContainer({ toasts, onRemove }: ToastContainerProps) {
 
 function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: (id: string) => void }) {
   // Auto-remove info toasts after 3 seconds
-  if (toast.type === "info") {
+  if (toast.type === "info" || toast.type === "warning") {
     setTimeout(() => onRemove(toast.id), 3000);
   }
 
+  const isWarning = toast.type === "warning";
   const isError = toast.type === "error";
 
   return (
@@ -31,8 +32,8 @@ function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: (id: string) =
       style={{
         borderRadius: "8px",
         border: "1px solid var(--color-border)",
-        backgroundColor: isError ? "var(--color-error)" : "var(--color-surface)",
-        color: isError ? "var(--color-error-text)" : "var(--color-text)",
+        backgroundColor: isError ? "var(--color-error)" : isWarning ? "var(--color-warning, #fef3c7)" : "var(--color-surface)",
+        color: isError ? "var(--color-error-text)" : isWarning ? "var(--color-warning-text, #92400e)" : "var(--color-text)",
       }}
     >
       <span className="shrink-0 mt-0.5">

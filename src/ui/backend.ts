@@ -111,6 +111,8 @@ export interface UiBackend {
   addInfo(text: string): void;
   /** Display an error message to the user. */
   addError(text: string): void;
+  /** Display a warning (non-fatal but important — e.g., vision model billing issue, fallback active). */
+  addWarning(text: string): void;
 
   // ── Retry feedback ──
   /** Display retry progress during model error recovery. */
