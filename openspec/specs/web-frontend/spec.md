@@ -108,7 +108,7 @@ The frontend SHALL import `UIMessage`, `ToolCallEntry`, `ImageAttachment`, `Conv
 - **THEN** it contains no inline `interface UIMessage`, `interface ToolCallEntry`, or `interface ConversationMessage` definitions
 
 ### Requirement: Input area
-The frontend SHALL provide a text input area at the bottom of the screen with flat, rounded styling using the warm design system. The send button SHALL switch to a Stop button while the agent is processing (when `processing` is true, controlled exclusively by `handleSend` and the `loader` event from `agent_end`). The `assistant_end` event SHALL NOT affect the `processing` state — it only finalizes the streaming message.
+The frontend SHALL provide a text input area at the bottom of the screen with flat, rounded styling using the warm design system. The send button SHALL switch to a Stop button while the agent is processing (when `processing` is true, controlled exclusively by `handleSend` and the `loader` event from `agent_end`). The `assistant_end` event SHALL NOT affect the `processing` state — it only finalizes the streaming message. All text input SHALL be sent via the `chat` command channel; the server determines whether the text is a slash command or a regular chat message.
 
 #### Scenario: Text input and submit
 - **WHEN** user types text and presses Enter (or clicks send button)
@@ -141,6 +141,10 @@ The frontend SHALL provide a text input area at the bottom of the screen with fl
 #### Scenario: Stop button reverts to Send when processing ends
 - **WHEN** the `loader` event with `state: "hide"` is received from the server
 - **THEN** `processing` is set to `false` and the Stop button reverts to the Send button
+
+#### Scenario: Slash command text submitted as chat
+- **WHEN** user submits text starting with `/` (e.g., `/help`, `/config key value`, or `/Users/foo/bar.ts`)
+- **THEN** the text is sent as a `chat` command (not `slash` command) via WebSocket, and the server routes it appropriately
 
 ### Requirement: Image upload
 The frontend SHALL support attaching images to messages via paste from clipboard, with flat, warm-toned thumbnail previews.

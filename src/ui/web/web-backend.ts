@@ -8,7 +8,7 @@ import { getAllProviders, getAllModels, getVisionModels, getVisionProviders } fr
 import type { UiBackend } from "../backend.js";
 import type { HarnessConfig, PermissionPromptResult } from "../../core/types.js";
 import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig, normalizeTransport, normalizeProtocolVersion, loadScopedSettings, projectSettingsPath } from "../../core/config.js";
-import { executeSlashCommand } from "../commands.js";
+import { executeSlashCommand, getSlashCommandAutocomplete } from "../commands.js";
 import type { Harness } from "../../core/harness.js";
 import type { MCPManager } from "../../mcp/manager.js";
 import type { AppHostManager } from "../../mcp/app/host.js";
@@ -323,9 +323,13 @@ export class WebUiBackend implements UiBackend {
         let images = cmd.images;
 
         if (text.startsWith("/")) {
-          this.pendingImages = [];
-          this.handleSlashCommand(client, text);
-          break;
+          const firstWord = text.slice(1).split(/\s+/)[0];
+          const knownCommands = getSlashCommandAutocomplete().map(c => c.name);
+          if (knownCommands.includes(firstWord)) {
+            this.pendingImages = [];
+            this.handleSlashCommand(client, text);
+            break;
+          }
         }
         const resolved = resolveAtFileRefs(this.config.projectPath, text, this.config.atFile ?? {});
         text = resolved.text;
@@ -473,7 +477,20 @@ export class WebUiBackend implements UiBackend {
         getPromptPermission: () => () => Promise.resolve({ decision: "deny" } as PermissionPromptResult),
       };
 
-      executeSlashCommand(text, ctx, mockTui as any);
+      const executed = executeSlashCommand(text, ctx, mockTui as any);
+
+      if (!executed) {
+        // Not a known command — treat as regular chat message
+        this.pendingImages = [];
+        // Send as user message then prompt the agent
+        client.send({ type: 'user_message', text } as any);
+        this.harness.promptAndSave(text).catch((err: any) => {
+          client.send({
+            type: 'error',
+            text: err instanceof Error ? err.message : String(err),
+          });
+        });
+      }
 
       // Push updated session list so sidebar auto-refreshes
       this.pushSessionList(client);

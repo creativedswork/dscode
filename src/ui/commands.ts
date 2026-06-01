@@ -201,7 +201,6 @@ const COMMANDS: SlashCommandDef[] = [
 
       if (topic && topics[topic]) {
         ctx.tui.addInfo(topics[topic].join("\n"));
-        return;
       }
       if (topic) {
         ctx.tui.addError(`Unknown help topic: ${topic}. Try: ${Object.keys(topics).join("  ")}`);
@@ -240,7 +239,6 @@ const COMMANDS: SlashCommandDef[] = [
               ? "No saved sessions."
               : "No sessions in this project. Start a conversation to create one.";
             ctx.tui.addInfo(msg);
-            return;
           }
           const currentId = ctx.sessionManager.getCurrentSessionId();
           const header = all
@@ -682,15 +680,15 @@ export function executeSlashCommand(
   raw: string,
   ctx: Omit<CommandContext, "tui">,
   tui: TuiApp,
-): void {
+): boolean {
   const [cmdName, ...argParts] = raw.slice(1).split(/\s+/);
   const cmd = COMMANDS.find((c) => c.name === cmdName);
   if (!cmd) {
-    tui.addError(`Unknown command: /${cmdName}. Type /help`);
-    return;
+    return false;
   }
   const fullCtx: CommandContext = { ...ctx, tui };
   Promise.resolve(cmd.execute(argParts.join(" "), fullCtx)).catch((err) => {
     tui.addError(err instanceof Error ? err.message : String(err));
   });
+  return true;
 }

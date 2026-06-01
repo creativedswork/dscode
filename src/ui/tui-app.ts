@@ -882,8 +882,11 @@ export class TuiApp {
     if (this.processing) return;
 
     if (text.startsWith("/")) {
-      executeSlashCommand(text, this.deps, this);
-      return;
+      const executed = executeSlashCommand(text, this.deps, this);
+      if (executed) {
+        return;
+      }
+      // Not a known command — fall through to normal chat handling
     }
 
     if (text === "exit" || text === "quit") {

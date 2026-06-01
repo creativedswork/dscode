@@ -74,11 +74,7 @@ export function MessageInput({
   const handleSubmit = useCallback(() => {
     const trimmed = text.trim();
     if (!trimmed && images.length === 0) return;
-    if (trimmed.startsWith("/") && !trimmed.includes(" ")) {
-      onSlashCommand(trimmed);
-    } else {
-      onSend(trimmed, images.length > 0 ? images : undefined);
-    }
+    onSend(trimmed, images.length > 0 ? images : undefined);
     setText("");
     setImages([]);
     setShowSlashMenu(false);
