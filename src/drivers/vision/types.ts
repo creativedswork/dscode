@@ -1,6 +1,6 @@
 import type { ImageContent } from "@mariozechner/pi-ai";
-import type { ImageRef } from "../session/types.js";
-import type { VisionConfig } from "../core/types.js";
+import type { ImageRef } from "../../session/types.js";
+import type { VisionConfig } from "../../core/types.js";
 
 /** Result of processing images through the pipeline. */
 export interface ProcessResult {

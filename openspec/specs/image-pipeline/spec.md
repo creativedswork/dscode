@@ -1,17 +1,17 @@
 # image-pipeline Specification
 
 ## Purpose
-TBD - created by archiving change code-maintainability-refactor. Update Purpose after archive.
+Unified image processing module residing under drivers/ as a perception driver — reader, cache, OCR, vision model client, and fallback orchestration consumed by both user-input and MCP-tool-result paths.
 ## Requirements
 ### Requirement: ImagePipeline Module Structure
-The system SHALL provide an `ImagePipeline` class in `src/image-pipeline/` that consolidates all image processing — reading, caching, OCR, vision model invocation, and fallback orchestration — into a single module. The directory SHALL contain: `index.ts` (barrel export), `types.ts` (shared types), `reader.ts` (file/clipboard reading), `cache.ts` (compression/storage), `ocr.ts` (Tesseract.js), `vision.ts` (vision model API), and `pipeline.ts` (orchestration).
+The system SHALL provide an `ImagePipeline` class in `src/drivers/vision/` that consolidates all image processing — reading, caching, OCR, vision model invocation, and fallback orchestration — into a single module. The directory SHALL contain: `index.ts` (barrel export), `types.ts` (shared types), `reader.ts` (file/clipboard reading), `cache.ts` (compression/storage), `ocr.ts` (Tesseract.js), `client.ts` (vision model API), and `pipeline.ts` (orchestration).
 
 #### Scenario: ImagePipeline directory exists
 - **WHEN** the refactoring is complete
-- **THEN** `src/image-pipeline/` exists with `index.ts`, `types.ts`, `reader.ts`, `cache.ts`, `ocr.ts`, `vision.ts`, and `pipeline.ts`
+- **THEN** `src/drivers/vision/` exists with `index.ts`, `types.ts`, `reader.ts`, `cache.ts`, `ocr.ts`, `client.ts`, and `pipeline.ts`
 
 #### Scenario: Barrel export works
-- **WHEN** a consumer imports `from "../image-pipeline/index.js"`
+- **WHEN** a consumer imports `from "../drivers/vision/index.js"`
 - **THEN** it receives `ImagePipeline`, `ImageRef`, `ImageContent`, and related types
 
 ### Requirement: ImagePipeline.process() Unified Method

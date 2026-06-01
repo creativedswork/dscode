@@ -16,7 +16,7 @@ import { MCPClient } from "./client.js";
 import type { DriverRegistry } from "../drivers/registry.js";
 import type { Driver } from "../core/types.js";
 import { ImageCache } from "../utils/image-cache.js";
-import type { ImagePipeline } from "../image-pipeline/pipeline.js";
+import type { ImagePipeline } from "../drivers/vision/pipeline.js";
 import type { AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
 
 function extractToolResultPreview(result: unknown): string {

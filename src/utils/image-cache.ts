@@ -1,2 +1,2 @@
-/** @deprecated Import from '../image-pipeline/cache.js' instead. */
-export { ImageCache } from "../image-pipeline/cache.js";
+/** @deprecated Import from '../drivers/vision/cache.js' instead. */
+export { ImageCache } from "../drivers/vision/cache.js";

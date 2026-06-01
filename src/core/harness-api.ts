@@ -10,7 +10,7 @@ import type { PermissionManager } from "../permissions/manager.js";
 import type { MCPManager } from "../mcp/manager.js";
 import type { HarnessConfig } from "./types.js";
 import type { ConfigWatch } from "./config-watch.js";
-import type { ImagePipeline } from "../image-pipeline/pipeline.js";
+import type { ImagePipeline } from "../drivers/vision/pipeline.js";
 
 /**
  * Public API surface of Harness, consumed by UI backends and slash commands.

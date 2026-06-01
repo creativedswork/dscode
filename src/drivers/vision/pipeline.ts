@@ -1,7 +1,7 @@
 import type { ImageContent } from "@mariozechner/pi-ai";
 import { ImageCache } from "./cache.js";
 import { ocrImages } from "./ocr.js";
-import { resolveVisionModel, describeImagesViaVisionModel } from "./vision.js";
+import { resolveVisionModel, describeImagesViaVisionModel } from "./client.js";
 import type { VisionConfig, ImageRef, ProcessResult, ProcessOptions, ProgressFn } from "./types.js";
 
 export interface ImagePipelineConfig {

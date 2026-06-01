@@ -1,2 +1,2 @@
-/** @deprecated Import from '../image-pipeline/reader.js' instead. */
-export { readImageFile, readClipboardImage, readClipboardImageNonBlocking } from "../image-pipeline/reader.js";
+/** @deprecated Import from '../drivers/vision/reader.js' instead. */
+export { readImageFile, readClipboardImage, readClipboardImageNonBlocking } from "../drivers/vision/reader.js";

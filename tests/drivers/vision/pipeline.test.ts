@@ -1,31 +1,31 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ImageContent } from "@mariozechner/pi-ai";
-import { ImagePipeline } from "../../src/image-pipeline/pipeline.js";
-import type { ProcessResult } from "../../src/image-pipeline/types.js";
+import { ImagePipeline } from "../../../src/drivers/vision/pipeline.js";
+import type { ProcessResult } from "../../../src/drivers/vision/types.js";
 
 // Mock dependencies
-vi.mock("../../src/image-pipeline/cache.js", () => ({
+vi.mock("../../../src/drivers/vision/cache.js", () => ({
   ImageCache: {
     put: vi.fn(),
     getSync: vi.fn(),
   },
 }));
 
-vi.mock("../../src/image-pipeline/vision.js", () => ({
+vi.mock("../../../src/drivers/vision/client.js", () => ({
   resolveVisionModel: vi.fn(),
   describeImagesViaVisionModel: vi.fn(),
 }));
 
-vi.mock("../../src/image-pipeline/ocr.js", () => ({
+vi.mock("../../../src/drivers/vision/ocr.js", () => ({
   ocrImages: vi.fn(),
 }));
 
-import { ImageCache } from "../../src/image-pipeline/cache.js";
+import { ImageCache } from "../../../src/drivers/vision/cache.js";
 import {
   resolveVisionModel,
   describeImagesViaVisionModel,
-} from "../../src/image-pipeline/vision.js";
-import { ocrImages } from "../../src/image-pipeline/ocr.js";
+} from "../../../src/drivers/vision/client.js";
+import { ocrImages } from "../../../src/drivers/vision/ocr.js";
 
 const mockImage: ImageContent = {
   type: "image",

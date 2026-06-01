@@ -1,7 +1,7 @@
 import type { Api, Context, ImageContent, Model } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
 import { getEnvApiKey } from "@mariozechner/pi-ai";
-import { resolveModel } from "../models/index.js";
+import { resolveModel } from "../../models/index.js";
 import type { VisionConfig } from "./types.js";
 
 export interface ResolvedVisionModel {
