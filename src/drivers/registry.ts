@@ -4,7 +4,7 @@ import type { Driver } from "../core/types.js";
 import { readFileTool, writeFileTool, overwriteFileTool, listFilesTool } from "./fs.js";
 import { bashTool } from "./shell.js";
 import { grepTool, globTool } from "./search.js";
-import { editTool } from "./edit.js";
+import { editTool } from "./edit/index.js";
 
 const BUILTIN_DRIVERS: Driver[] = [
   {

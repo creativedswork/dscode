@@ -9,9 +9,9 @@ import {
   computeFileVersion,
   hashLines,
   formatHashedLine,
-  editTool,
   ANCHOR_FORMAT_VERSION,
-} from "../../src/drivers/edit.js";
+} from "../../src/drivers/edit/hash.js";
+import { editTool } from "../../src/drivers/edit/index.js";
 
 // --- computeLineHash ---
 

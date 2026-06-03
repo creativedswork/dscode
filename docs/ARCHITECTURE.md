@@ -363,13 +363,13 @@ src/
 ├── memory/         # Layer 3: 记忆系统
 │   ├── manager.ts, store.ts
 ├── drivers/        # Layer 4: 驱动（工具提供者）
-│   ├── registry.ts, fs.ts, shell.ts, search.ts, edit.ts
+│   ├── registry.ts, fs.ts, shell.ts, search.ts, edit/ (tool.ts, hash.ts, recovery.ts, index.ts)
 │   ├── discovery.ts, tool-registry.ts
 │   └── vision/          # 图像处理管道
 │       ├── cache.ts, client.ts, ocr.ts, pipeline.ts
 │       ├── reader.ts, types.ts
 ├── checkpoint/     # Layer 4: 编辑安全网
-│   ├── index.ts, checkpoint-manager.ts, types.ts
+│   ├── index.ts, checkpoint-manager.ts, snapshot-store.ts, types.ts
 │   ├── base-commit.ts, write-tracker.ts
 │   └── store/
 ├── skills/         # Layer 4: 技能（用户态程序）

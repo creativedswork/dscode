@@ -10,8 +10,8 @@ import {
   formatHashedLine,
   ANCHOR_FORMAT_VERSION,
   classifyLinesWithFrequency,
-} from "./edit.js";
-import { getCheckpointManager, getFileWriteTracker } from "../checkpoint/index.js";
+} from "./edit/hash.js";
+import { getCheckpointManager, getFileWriteTracker, getSnapshotStore } from "../checkpoint/index.js";
 
 const readFileParams = Type.Object({
   path: Type.String({ description: "Absolute file path to read" }),
@@ -84,9 +84,6 @@ export const readFileTool: AgentTool<typeof readFileParams> = {
     if (useHashes) {
       const fileVersion = computeFileVersion(raw);
       parts.push(`\n[file_version: ${fileVersion}]`);
-    }
-
-    if (slice.length < lines.length) {
       parts.push(`\n(${lines.length} lines total, showing ${start + 1}-${start + slice.length}${useHashes ? ", anchors enabled" : ""})`);
     }
 
@@ -213,6 +210,11 @@ export const writeFileTool: AgentTool<typeof writeFileParams> = {
     if (cpm) cpm.commit(resolved);
     const bytes = Buffer.byteLength(content, "utf8");
     const newFileVersion = computeFileVersion(content);
+    const ss = getSnapshotStore();
+    if (ss) {
+      ss.invalidate(resolved);
+      ss.record(resolved, newFileVersion, content);
+    }
 
     const newLines = content.split("\n");
     const previewLimit = Math.min(newLines.length, 50);
@@ -329,6 +331,11 @@ export const overwriteFileTool: AgentTool<typeof overwriteFileParams> = {
     if (cpm2) cpm2.commit(resolved);
     const bytes = Buffer.byteLength(content, "utf8");
     const newFileVersion = computeFileVersion(content);
+    const ss2 = getSnapshotStore();
+    if (ss2) {
+      ss2.invalidate(resolved);
+      ss2.record(resolved, newFileVersion, content);
+    }
 
     const newLines = content.split("\n");
     const previewLimit = Math.min(newLines.length, 50);
