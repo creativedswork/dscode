@@ -1,0 +1,289 @@
+// ── Dashboard HTML Generator ──
+// Generates a dark-themed, self-contained HTML diagnostic dashboard.
+
+import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { exec } from "node:child_process";
+import { join, dirname } from "node:path";
+import type { EvalResult } from "./types.js";
+
+// ── HTML Escape ──
+
+export function escapeHtml(text: string | null | undefined): string {
+  if (text == null) return "";
+  const s = String(text);
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+// ── Color utilities ──
+
+const COLORS = {
+  ok: "#3fb950",
+  warn: "#d2991d",
+  danger: "#f85149",
+  bg: "#0d1117",
+  card: "#161b22",
+  border: "#30363d",
+  text: "#c9d1d9",
+  textMuted: "#8b949e",
+  accent: "#58a6ff",
+};
+
+function statusColor(status: "ok" | "warn" | "danger"): string {
+  return COLORS[status];
+}
+
+function statusEmoji(status: "ok" | "warn" | "danger"): string {
+  switch (status) {
+    case "ok": return "✓";
+    case "warn": return "⚠";
+    case "danger": return "✗";
+  }
+}
+
+// ── HTML Template ──
+
+export function generateDashboardHTML(result: EvalResult): string {
+  const { metadata, stats, phases, deviations, rootCauses, suggestions, timeline } = result;
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Eval Dashboard — ${escapeHtml(metadata.sessionId.slice(0, 8))}</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  background: ${COLORS.bg};
+  color: ${COLORS.text};
+  line-height: 1.6;
+  padding: 32px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+h1 { font-size: 28px; font-weight: 600; margin-bottom: 4px; color: #f0f6fc; }
+h2 { font-size: 20px; font-weight: 600; margin: 32px 0 16px; color: #f0f6fc; border-bottom: 1px solid ${COLORS.border}; padding-bottom: 8px; }
+h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #e6edf3; }
+.header { background: ${COLORS.card}; border: 1px solid ${COLORS.border}; border-radius: 8px; padding: 24px; margin-bottom: 24px; }
+.header-meta { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 16px; }
+.meta-item { }
+.meta-label { font-size: 12px; color: ${COLORS.textMuted}; text-transform: uppercase; letter-spacing: 0.5px; }
+.meta-value { font-size: 14px; color: ${COLORS.text}; font-family: "SF Mono", "Fira Code", monospace; }
+.stats-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 16px; margin-bottom: 32px; }
+.stat-card { background: ${COLORS.card}; border: 1px solid ${COLORS.border}; border-radius: 8px; padding: 20px; text-align: center; }
+.stat-value { font-size: 36px; font-weight: 700; }
+.stat-label { font-size: 12px; color: ${COLORS.textMuted}; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+.phase-bar { display: flex; height: 32px; border-radius: 4px; overflow: hidden; margin-bottom: 16px; }
+.phase-segment { display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; color: #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 4px; cursor: default; }
+.phase-segment:hover { filter: brightness(1.2); }
+.phase-detail { background: ${COLORS.card}; border: 1px solid ${COLORS.border}; border-radius: 6px; padding: 16px; margin-bottom: 12px; }
+.phase-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.phase-badge { display: inline-block; width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+.phase-label { font-weight: 600; font-size: 14px; }
+.phase-range { font-size: 12px; color: ${COLORS.textMuted}; }
+.phase-summary { font-size: 13px; color: ${COLORS.textMuted}; margin-top: 4px; }
+.root-cause { background: ${COLORS.card}; border: 1px solid ${COLORS.border}; border-left: 3px solid ${COLORS.danger}; border-radius: 6px; padding: 16px; margin-bottom: 12px; }
+.root-cause.secondary { border-left-color: ${COLORS.warn}; }
+.root-cause-title { font-weight: 600; font-size: 15px; margin-bottom: 4px; }
+.root-cause-desc { font-size: 13px; color: ${COLORS.textMuted}; margin-bottom: 8px; }
+.root-cause-evidence { font-size: 12px; color: ${COLORS.accent}; font-family: "SF Mono", "Fira Code", monospace; }
+.suggestion-item { background: ${COLORS.card}; border: 1px solid ${COLORS.border}; border-radius: 6px; padding: 14px 16px; margin-bottom: 8px; font-size: 14px; display: flex; align-items: flex-start; gap: 10px; }
+.suggestion-num { color: ${COLORS.accent}; font-weight: 600; flex-shrink: 0; }
+.timeline { position: relative; padding-left: 24px; }
+.timeline::before { content: ""; position: absolute; left: 8px; top: 0; bottom: 0; width: 2px; background: ${COLORS.border}; }
+.timeline-event { position: relative; margin-bottom: 10px; padding: 8px 12px; background: ${COLORS.card}; border: 1px solid ${COLORS.border}; border-radius: 6px; font-size: 13px; }
+.timeline-dot { position: absolute; left: -20px; top: 12px; width: 10px; height: 10px; border-radius: 50%; }
+.no-issues { text-align: center; padding: 32px; color: ${COLORS.textMuted}; font-size: 15px; }
+.footer { text-align: center; margin-top: 48px; padding-top: 16px; border-top: 1px solid ${COLORS.border}; font-size: 12px; color: ${COLORS.textMuted}; }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <h1>${escapeHtml(metadata.title)}</h1>
+  <div style="font-size:13px;color:${COLORS.textMuted};font-family:monospace;margin-top:4px;">
+    ${escapeHtml(metadata.sessionId)}
+  </div>
+  <div style="margin-top:8px;">
+    ${result.analysisMode === "llm"
+      ? `<span style="background:${COLORS.ok};color:#000;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">🤖 LLM 深度分析</span>`
+      : `<span style="background:${COLORS.warn};color:#000;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">⚙ 规则引擎分析（LLM 不可用）</span>`}
+  </div>
+  <div class="header-meta">
+    <div class="meta-item">
+      <div class="meta-label">Model</div>
+      <div class="meta-value">${escapeHtml(metadata.model)}</div>
+    </div>
+    <div class="meta-item">
+      <div class="meta-label">Messages</div>
+      <div class="meta-value">${metadata.totalMessages}</div>
+    </div>
+    <div class="meta-item">
+      <div class="meta-label">Duration</div>
+      <div class="meta-value">${escapeHtml(metadata.duration)}</div>
+    </div>
+    <div class="meta-item">
+      <div class="meta-label">Started</div>
+      <div class="meta-value">${escapeHtml(metadata.startedAt)}</div>
+    </div>
+    <div class="meta-item">
+      <div class="meta-label">Ended</div>
+      <div class="meta-value">${escapeHtml(metadata.endedAt)}</div>
+    </div>
+    <div class="meta-item">
+      <div class="meta-label">Project</div>
+      <div class="meta-value">${escapeHtml(metadata.projectPath)}</div>
+    </div>
+  </div>
+</div>
+
+<!-- Stats -->
+<h2>Summary</h2>
+<div class="stats-grid">
+  <div class="stat-card">
+    <div class="stat-value" style="color:${COLORS.accent}">${metadata.totalMessages}</div>
+    <div class="stat-label">Total Messages</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value" style="color:${COLORS.accent}">${stats.toolCalls}</div>
+    <div class="stat-label">Tool Calls</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value" style="color:${parseFloat(stats.errorRate) > 15 ? COLORS.danger : parseFloat(stats.errorRate) > 5 ? COLORS.warn : COLORS.ok}">${stats.errorRate}</div>
+    <div class="stat-label">Error Rate</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value" style="color:${COLORS.accent}">${stats.screenshotsTaken}</div>
+    <div class="stat-label">Screenshots</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value" style="color:${stats.userComplaints > 0 ? COLORS.warn : COLORS.ok}">${stats.userComplaints}</div>
+    <div class="stat-label">User Complaints</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value" style="color:${deviations.length > 0 ? COLORS.warn : COLORS.ok}">${deviations.length}</div>
+    <div class="stat-label">Deviations</div>
+  </div>
+</div>
+
+<!-- Phase Timeline -->
+<h2>Phase Timeline</h2>
+${phases.length > 0 ? `
+<div class="phase-bar">
+  ${phases.map((p) => {
+    const total = metadata.totalMessages || 1;
+    const width = ((p.endIdx - p.startIdx + 1) / total * 100).toFixed(1);
+    return `<div class="phase-segment" style="width:${width}%;background:${statusColor(p.status)};" title="${escapeHtml(p.label)} (M${p.startIdx}–M${p.endIdx})">${escapeHtml(p.label)}</div>`;
+  }).join("")}
+</div>
+` : ""}
+${phases.map((p) => `
+<div class="phase-detail">
+  <div class="phase-header">
+    <span class="phase-badge" style="background:${statusColor(p.status)}"></span>
+    <span class="phase-label">${statusEmoji(p.status)} ${escapeHtml(p.label)}</span>
+    <span class="phase-range">M${p.startIdx} – M${p.endIdx}</span>
+  </div>
+  <div class="phase-summary">${escapeHtml(p.summary)} · ${p.toolCalls.total} tool calls, ${p.toolCalls.errors} errors</div>
+</div>
+`).join("")}
+
+<!-- Root Causes -->
+<h2>Root Cause Analysis</h2>
+${rootCauses.length > 0 ? rootCauses.map((rc) => `
+<div class="root-cause ${rc.severity}">
+  <div class="root-cause-title">${rc.severity === "primary" ? "🔴" : "🟡"} ${escapeHtml(rc.title)}</div>
+  <div class="root-cause-desc">${escapeHtml(rc.description)}</div>
+  <div class="root-cause-evidence">Evidence: M${rc.evidenceIndices.map((i) => i).join(", M")}</div>
+</div>
+`).join("") : `<div class="no-issues">No significant issues detected ✓</div>`}
+
+<!-- Deviations -->
+${deviations.length > 0 ? `
+<h2>Keyword Deviations</h2>
+${deviations.map((d) => `
+<div class="phase-detail">
+  <div class="phase-header">
+    <span class="phase-badge" style="background:${d.severity === "high" ? COLORS.danger : d.severity === "medium" ? COLORS.warn : COLORS.ok}"></span>
+    <span class="phase-label">M${d.messageIdx}</span>
+    <span class="phase-range">severity: ${d.severity}</span>
+  </div>
+  <div class="phase-summary">
+    Target: ${escapeHtml(d.targetKeyword)}<br>
+    Screenshot: ${escapeHtml(d.screenshotKeyword)}<br>
+    ${escapeHtml(d.description)}
+  </div>
+</div>
+`).join("")}
+` : ""}
+
+<!-- Suggestions -->
+<h2>Suggestions</h2>
+${suggestions.map((s, i) => `
+<div class="suggestion-item">
+  <span class="suggestion-num">${i + 1}.</span>
+  <span>${escapeHtml(s)}</span>
+</div>
+`).join("")}
+
+<!-- Timeline -->
+<h2>Event Timeline</h2>
+<div class="timeline">
+${timeline.map((e) => `
+  <div class="timeline-event">
+    <div class="timeline-dot" style="background:${e.severity ? statusColor(e.severity) : COLORS.accent}"></div>
+    <strong style="font-family:monospace;font-size:12px;">M${e.messageIdx}</strong>
+    <span style="font-size:11px;color:${COLORS.textMuted};margin-left:6px;">[${e.type}]</span>
+    <span style="margin-left:6px;">${escapeHtml(e.label)}</span>
+  </div>
+`).join("")}
+</div>
+
+<div class="footer">
+  Generated by dscode /eval · ${new Date().toISOString().replace("T", " ").slice(0, 19)}
+</div>
+
+</body>
+</html>`;
+}
+
+// ── File generation ──
+
+export function generateDashboard(result: EvalResult, outputPath: string): string {
+  const html = generateDashboardHTML(result);
+  const dir = dirname(outputPath);
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true });
+  }
+  writeFileSync(outputPath, html, "utf8");
+  return outputPath;
+}
+
+// ── Browser open ──
+
+export function openDashboard(filePath: string): void {
+  const platform = process.platform;
+  let cmd: string;
+  if (platform === "darwin") {
+    cmd = `open "${filePath}"`;
+  } else if (platform === "linux") {
+    cmd = `xdg-open "${filePath}"`;
+  } else if (platform === "win32") {
+    cmd = `start "" "${filePath}"`;
+  } else {
+    return;
+  }
+
+  exec(cmd, (err) => {
+    if (err) {
+      // Graceful fallback: don't throw
+    }
+  });
+}

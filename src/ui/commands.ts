@@ -5,6 +5,7 @@ import type { UiBackend } from "./backend.js";
 import { saveUserConfig, maskApiKey, PROVIDER_ENV_VARS } from "../core/config.js";
 import { getAllProviders, getAllModels, getVisionModels, getVisionProviders } from "../models/index.js";
 import { readImageFile, readClipboardImage } from "../utils/image.js";
+import { runEval } from "../eval/index.js";
 
 
 interface SlashCommandContext {
@@ -430,6 +431,14 @@ const COMMANDS: SlashCommandDef[] = [
       ctx.harness.agent.state.messages = compacted as any;
       const after = ctx.harness.agent.state.messages.length;
       ctx.ui.addInfo(`Compacted: ${before} → ${after} messages`);
+    },
+  },
+  {
+    name: "eval",
+    description: "Analyze a session and generate diagnostic dashboard (/eval [session_id])",
+    execute: async (args, ctx) => {
+      const sessionId = args.trim() || null;
+      await runEval(sessionId, ctx);
     },
   },
   {

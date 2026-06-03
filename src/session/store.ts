@@ -125,6 +125,28 @@ export class SessionStore {
     return validateSession(raw, id);
   }
 
+  /** Load raw session JSON without validation — returns null on any error. */
+  async loadSessionFile(sessionId: string): Promise<SerializedSession | null> {
+    const projPath = join(this.projectDir, `${sessionId}.json`);
+    const globalPath = join(this.globalDir, `${sessionId}.json`);
+
+    let filePath: string;
+    if (existsSync(projPath)) {
+      filePath = projPath;
+    } else if (existsSync(globalPath)) {
+      filePath = globalPath;
+    } else {
+      return null;
+    }
+
+    try {
+      const raw = JSON.parse(readFileSync(filePath, "utf8"));
+      return validateSession(raw, sessionId);
+    } catch {
+      return null;
+    }
+  }
+
   list(): SessionMetadata[] {
     return this.readIndex(this.projectDir);
   }
@@ -168,6 +190,10 @@ export class SessionStore {
     } catch {
       // Best-effort cleanup
     }
+  }
+
+  projectDirPath(): string {
+    return this.projectDir;
   }
 
   globalDirPath(): string {

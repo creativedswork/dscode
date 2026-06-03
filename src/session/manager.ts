@@ -4,6 +4,8 @@ import type { ImageContent } from "@mariozechner/pi-ai";
 import type { ImageRef, SerializedSession, SessionMetadata, VisionMessage } from "../core/types.js";
 import { ImageCache } from "../utils/image-cache.js";
 import { SessionStore } from "./store.js";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 
 export interface LoadResult {
   success: boolean;
@@ -227,8 +229,59 @@ export class SessionManager {
     }
   }
 
+  /** Locate session file by full ID or prefix (minimum 8 characters). */
+  getSessionFilePath(idOrPrefix: string): { path: string; metadata: SessionMetadata } | null {
+    if (idOrPrefix.length < 8) return null;
+
+    // Exact match first —— check project dir then global dir
+    const projPath = join(this.store.projectDirPath(), `${idOrPrefix}.json`);
+    const globalPath = join(this.store.globalDirPath(), `${idOrPrefix}.json`);
+
+    for (const p of [projPath, globalPath]) {
+      if (existsSync(p)) {
+        try {
+          const raw = JSON.parse(readFileSync(p, "utf8"));
+          return { path: p, metadata: raw.metadata as SessionMetadata };
+        } catch {
+          return null;
+        }
+      }
+    }
+
+    // Prefix match: scan directories for files matching prefix
+    const dirs = [
+      this.store.projectDirPath(),
+      this.store.globalDirPath(),
+    ];
+    for (const dir of dirs) {
+      try {
+        const files = readdirSync(dir).filter(
+          (f) => f.endsWith(".json") && f !== "index.json" && f.startsWith(idOrPrefix),
+        );
+        if (files.length === 1) {
+          const p = join(dir, files[0]);
+          try {
+            const raw = JSON.parse(readFileSync(p, "utf8"));
+            return { path: p, metadata: raw.metadata as SessionMetadata };
+          } catch {
+            return null;
+          }
+        }
+        if (files.length > 1) return null; // ambiguous
+      } catch {
+        // directory may not exist
+      }
+    }
+
+    return null;
+  }
+
   getCurrentSessionId(): string | null {
     return this.current?.id ?? null;
+  }
+
+  async loadSessionFile(sessionId: string): Promise<SerializedSession | null> {
+    return this.store.loadSessionFile(sessionId);
   }
 
   getCurrentMetadata(): SessionMetadata | null {
