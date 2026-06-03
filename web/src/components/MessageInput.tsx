@@ -55,6 +55,7 @@ export function MessageInput({
   const historyRef = useRef<string[]>([]);
   const historyCursorRef = useRef<number>(-1);
   const draftRef = useRef<string>("");
+  const isComposingRef = useRef(false);
   const MAX_HISTORY = 100;
 
   const filteredCommands = slashCommands.filter(
@@ -276,7 +277,7 @@ export function MessageInput({
       return;
     }
 
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey && !isComposingRef.current) {
       e.preventDefault();
       if (!processing) handleSubmit();
     }
@@ -523,6 +524,8 @@ export function MessageInput({
           }}
           onKeyDown={handleKeyDown}
           onPaste={handlePaste}
+          onCompositionStart={() => { isComposingRef.current = true; }}
+          onCompositionEnd={() => { isComposingRef.current = false; }}
           placeholder={
             processing
               ? "Processing... (Esc to stop)"
