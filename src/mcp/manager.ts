@@ -448,9 +448,9 @@ export class MCPManager {
       label: `${serverName}: ${def.title ?? def.name}`,
       description: def.description ?? "",
       parameters: convertJsonSchema(def.inputSchema),
-      execute: async (_id: string, args: any, _signal?: AbortSignal, onUpdate?: AgentToolUpdateCallback) => {
+      execute: async (_id: string, args: any, signal?: AbortSignal, onUpdate?: AgentToolUpdateCallback) => {
         try {
-          const result = await client.callTool(def.name, args) as MCPToolResult;
+          const result = await client.callTool(def.name, args, signal) as MCPToolResult;
           const structuredContent = result?.structuredContent;
           const isError = Boolean(result?.isError);
 
@@ -506,6 +506,9 @@ export class MCPManager {
           const content = await buildToolResultContent(result);
           return { content, details: { server: serverName, tool: def.name, error: isError, structuredContent, mcpResult: result }, terminate: false };
         } catch (err: any) {
+          if (err instanceof DOMException && err.name === "AbortError") {
+            return { content: [{ type: "text", text: "Tool call aborted by user." }], details: { server: serverName, tool: def.name, error: true } };
+          }
           return { content: [{ type: "text", text: `Error: ${err.message}` }], details: { server: serverName, tool: def.name, error: true } };
         }
       },

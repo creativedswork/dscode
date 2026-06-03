@@ -171,12 +171,12 @@ export class MCPClient {
     return Array.from(this.toolDefs.values());
   }
 
-  async callTool(name: string, args: unknown): Promise<unknown> {
-    return this.request("tools/call", { name, arguments: args }, TOOL_CALL_TIMEOUT, true);
+  async callTool(name: string, args: unknown, signal?: AbortSignal): Promise<unknown> {
+    return this.request("tools/call", { name, arguments: args }, TOOL_CALL_TIMEOUT, true, signal);
   }
 
-  async readResource(uri: string): Promise<MCPResourcesReadResult> {
-    return this.request("resources/read", { uri }, TOOL_CALL_TIMEOUT, true) as Promise<MCPResourcesReadResult>;
+  async readResource(uri: string, signal?: AbortSignal): Promise<MCPResourcesReadResult> {
+    return this.request("resources/read", { uri }, TOOL_CALL_TIMEOUT, true, signal) as Promise<MCPResourcesReadResult>;
   }
 
   async close(): Promise<void> {
@@ -568,16 +568,47 @@ export class MCPClient {
     }
   }
 
-  private request(method: string, params?: unknown, timeout = this.config.requestTimeoutMs ?? REQUEST_TIMEOUT, withProgress = false): Promise<unknown> {
+  private request(method: string, params?: unknown, timeout = this.config.requestTimeoutMs ?? REQUEST_TIMEOUT, withProgress = false, signal?: AbortSignal): Promise<unknown> {
     if (this.closed) {
       return Promise.reject(new Error(`MCP request "${method}" rejected: client closed`));
+    }
+
+    // Early-exit: signal already aborted
+    if (signal?.aborted) {
+      return Promise.reject(new DOMException("The operation was aborted", "AbortError"));
     }
 
     return new Promise((resolve, reject) => {
       const id = ++this.requestId;
       const finalParams = this.attachProgressToken(params, withProgress ? id : undefined);
 
+      let cancelled = false;
+
+      const onAbort = () => {
+        if (cancelled) return;
+        cancelled = true;
+        clearTimeout(timer);
+        this.pending.delete(id);
+
+        if (method !== "initialize") {
+          this.sendNotification("notifications/cancelled", { requestId: id, reason: "Request aborted by user" });
+        }
+
+        if (httpReq) {
+          httpReq.destroy();
+        }
+
+        reject(new DOMException("The operation was aborted", "AbortError"));
+      };
+
+      signal?.addEventListener("abort", onAbort, { once: true });
+
+      const cleanup = () => {
+        signal?.removeEventListener("abort", onAbort);
+      };
+
       const timer = setTimeout(() => {
+        cleanup();
         this.pending.delete(id);
         if (method !== "initialize") {
           this.sendNotification("notifications/cancelled", { requestId: id, reason: `Request timed out after ${timeout}ms` });
@@ -585,7 +616,9 @@ export class MCPClient {
         reject(new Error(`MCP request "${method}" timed out after ${timeout}ms`));
       }, timeout);
 
-      this.pending.set(id, { resolve, reject, timer, method, progressToken: withProgress ? id : undefined });
+      this.pending.set(id, { resolve: (v) => { cleanup(); resolve(v); }, reject: (err) => { cleanup(); reject(err); }, timer, method, progressToken: withProgress ? id : undefined });
+
+      let httpReq: ReturnType<typeof httpRequest> | ReturnType<typeof httpsRequest> | null = null;
 
       if (this.resolvedTransport === "stdio") {
         this.process?.stdin?.write(JSON.stringify({ jsonrpc: "2.0", id, method, params: finalParams }) + "\n");
@@ -599,6 +632,7 @@ export class MCPClient {
             if (!entry) return;
 
             if (response.statusCode >= 400) {
+              cleanup();
               clearTimeout(entry.timer);
               this.pending.delete(id);
               reject(new Error(`MCP HTTP response for "${method}" failed with status ${response.statusCode}`));
@@ -607,6 +641,7 @@ export class MCPClient {
 
             if (this.isSseResponse(response.headers)) {
               if (this.pending.has(id)) {
+                cleanup();
                 clearTimeout(entry.timer);
                 this.pending.delete(id);
                 reject(new Error(`MCP HTTP SSE response for "${method}" ended without a JSON-RPC result`));
@@ -616,6 +651,7 @@ export class MCPClient {
 
             const parsed = this.parseJsonResponse(response.body);
             if (!parsed) {
+              cleanup();
               clearTimeout(entry.timer);
               this.pending.delete(id);
               reject(new Error(`MCP HTTP response for "${method}" was not valid JSON-RPC`));
@@ -626,6 +662,7 @@ export class MCPClient {
           .catch((err) => {
             const entry = this.pending.get(id);
             if (!entry) return;
+            cleanup();
             clearTimeout(entry.timer);
             this.pending.delete(id);
             reject(new Error(`MCP HTTP error: ${err.message}`));
@@ -638,7 +675,7 @@ export class MCPClient {
         const requester = parsed.protocol === "https:" ? httpsRequest : httpRequest;
         const body = JSON.stringify({ jsonrpc: "2.0", id, method, params: finalParams });
 
-        const req = requester(
+        httpReq = requester(
           parsed.toString(),
           {
             method: "POST",
@@ -647,16 +684,17 @@ export class MCPClient {
           () => {
           },
         );
-        req.on("error", (err) => {
+        httpReq.on("error", (err) => {
           const entry = this.pending.get(id);
           if (entry) {
+            cleanup();
             clearTimeout(entry.timer);
             this.pending.delete(id);
             reject(new Error(`MCP SSE POST error: ${err.message}`));
           }
         });
-        req.write(body);
-        req.end();
+        httpReq.write(body);
+        httpReq.end();
       }
     });
   }
