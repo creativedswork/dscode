@@ -506,7 +506,7 @@ function SettingsPanel({
           />
           <button
             onClick={() => {
-              if (projectPath) onChange("set_project_path", projectPath);
+              if (projectPath) onChange("set_project_path", projectPath.trim());
             }}
             className="btn-primary text-xs px-3"
           >

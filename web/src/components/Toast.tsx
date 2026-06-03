@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { Toast } from "../types";
 import { Info, XCircle, X } from "@phosphor-icons/react";
 
@@ -18,13 +18,19 @@ export function ToastContainer({ toasts, onRemove }: ToastContainerProps) {
 }
 
 function ToastItem({ toast, onRemove }: { toast: Toast; onRemove: (id: string) => void }) {
-  // Auto-remove info toasts after 3 seconds
-  if (toast.type === "info" || toast.type === "warning") {
-    setTimeout(() => onRemove(toast.id), 3000);
-  }
-
   const isWarning = toast.type === "warning";
   const isError = toast.type === "error";
+
+  useEffect(() => {
+    let delay: number | null = null;
+    if (toast.type === "info" || toast.type === "warning") delay = 3000;
+    else if (toast.type === "error") delay = 8000;
+
+    if (delay === null) return;
+
+    const timer = setTimeout(() => onRemove(toast.id), delay);
+    return () => clearTimeout(timer);
+  }, [toast.id, toast.type, onRemove]);
 
   return (
     <div
