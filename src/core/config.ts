@@ -125,8 +125,8 @@ function loadAgentsMd(projectPath: string): string | undefined {
   }
 }
 
-export function loadConfig(): HarnessConfig {
-  const startupPath = resolve(process.env.DSCODE_PROJECT_PATH ?? process.cwd());
+export function loadConfig(cliCwd?: string): HarnessConfig {
+  const startupPath = resolve(cliCwd ?? process.env.DSCODE_PROJECT_PATH ?? process.cwd());
   const configDir = dsConfigHome();
   const dataDir = join(dsDataHome(), "data");
 

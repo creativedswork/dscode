@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadConfig, PROVIDER_ENV_VARS } from "./config.js";
@@ -58,11 +58,6 @@ process.on("SIGTERM", () => {
 
 // ── CLI ──
 
-function isDevMode(): boolean {
-  const url = import.meta.url;
-  return url.includes("/src/core/main.ts");
-}
-
 function readCliVersion(): string {
   const currentDir = dirname(fileURLToPath(import.meta.url));
   const candidates = [
@@ -81,17 +76,17 @@ function readCliVersion(): string {
   return "unknown";
 }
 
-function parseArgs(): { web: boolean; webPort: number; debug: boolean } {
+function parseArgs(): { web: boolean; webPort: number; debug: boolean; cwd?: string } {
   const args = process.argv.slice(2);
-  const dev = isDevMode();
   let web = false;
   let webPort = 3000;
   let debug = false;
+  let cwd: string | undefined;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--web") {
       web = true;
-    } else if (args[i] === "--debug" && dev) {
+    } else if (args[i] === "--debug") {
       debug = true;
     } else if (args[i] === "--web-port" && i + 1 < args.length) {
       webPort = parseInt(args[++i], 10);
@@ -99,10 +94,12 @@ function parseArgs(): { web: boolean; webPort: number; debug: boolean } {
         console.error(`Invalid port: ${args[i]}. Using default 3000.`);
         webPort = 3000;
       }
+    } else if (args[i] === "--cwd" && i + 1 < args.length) {
+      cwd = resolve(args[++i]);
     }
   }
 
-  return { web, webPort, debug };
+  return { web, webPort, debug, cwd };
 }
 
 async function main(): Promise<void> {
@@ -111,8 +108,8 @@ async function main(): Promise<void> {
     return;
   }
 
-  const { web, webPort, debug } = parseArgs();
-  const config = loadConfig();
+  const { web, webPort, debug, cwd } = parseArgs();
+  const config = loadConfig(cwd);
 
   if (config.apiKey) {
     const envVar = PROVIDER_ENV_VARS[config.provider] ?? "DEEPSEEK_API_KEY";
