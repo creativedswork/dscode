@@ -46,14 +46,17 @@ export class Harness implements HarnessAPI {
   imagePipeline: ImagePipeline;
   private ui!: UiBackend;
   private baseSystemPrompt = "";
+  private debug = false;
+  private debugPromptLastHash = "";
   private lastMcpProgress = new Map<string, { progress?: number; total?: number; message?: string }>();
   private mcpEventUnsubscribe?: () => void;
   private shuttingDown = false;
   private turnIndex = 0;
   private visionAbortController: AbortController | null = null;
 
-  constructor(config: HarnessConfig) {
+  constructor(config: HarnessConfig, debug?: boolean) {
     this.configStore = new ConfigWatch(config);
+    this.debug = debug ?? false;
     this.config = this.configStore.get() as HarnessConfig;
     this.sessionManager = new SessionManager(config.dataDir, config.projectPath);
     this.contextManager = new ContextManager(config.context);
@@ -128,13 +131,14 @@ export class Harness implements HarnessAPI {
         maxRetries: self.config.retry.maxRetries,
         maxRetryDelayMs: self.config.retry.maxDelayMs,
       }),
-      transformContext: (msgs: AgentMessage[], signal?: AbortSignal) => {
+      transformContext: async (msgs: AgentMessage[], signal?: AbortSignal) => {
         try {
           // Update tools based on current discovery state
           self.agent.state.tools = self.toolRegistry.buildToolsForRequest();
           // Update system prompt with current deferred tools hint
           const deferredHint = self.toolRegistry.buildDeferredToolsHint();
           self.agent.state.systemPrompt = self.baseSystemPrompt + deferredHint;
+          await self.dumpDebugPrompt();
           return self.contextManager.transform(msgs, signal) as Promise<AgentMessage[]>;
         } catch (err) {
           console.error("[harness] transformContext error:", err);
@@ -157,6 +161,7 @@ export class Harness implements HarnessAPI {
 
     this.bindEvents();
     this.sessionManager.createSession(this.config.provider, this.config.modelId);
+    await this.dumpDebugPrompt();
   }
 
   /**
@@ -783,6 +788,22 @@ You can also load tools by exact name using \`select:\`: for example \`search_to
       prompt += "\n\n" + this.config.agentsMdContent;
     }
     return prompt;
+  }
+
+  private async dumpDebugPrompt(): Promise<void> {
+    if (!this.debug) return;
+    const prompt = this.agent?.state?.systemPrompt;
+    if (!prompt) return;
+    const hash = String(prompt.length);
+    if (hash === this.debugPromptLastHash) return;
+    this.debugPromptLastHash = hash;
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { join } = await import("node:path");
+    const dumpDir = join(this.config.projectPath, "dump");
+    mkdirSync(dumpDir, { recursive: true });
+    const filePath = join(dumpDir, "system-prompt.md");
+    writeFileSync(filePath, prompt, "utf8");
+    process.stderr.write("\n[dscode] --debug: system prompt dumped to " + filePath + " (" + prompt.length + " chars)\n\n");
   }
 
 

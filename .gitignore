@@ -5,4 +5,5 @@ dist-standalone/
 .env.local
 .DS_Store
 *.log
+dump/
 

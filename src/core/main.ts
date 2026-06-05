@@ -58,6 +58,11 @@ process.on("SIGTERM", () => {
 
 // ── CLI ──
 
+function isDevMode(): boolean {
+  const url = import.meta.url;
+  return url.includes("/src/core/main.ts");
+}
+
 function readCliVersion(): string {
   const currentDir = dirname(fileURLToPath(import.meta.url));
   const candidates = [
@@ -76,14 +81,18 @@ function readCliVersion(): string {
   return "unknown";
 }
 
-function parseArgs(): { web: boolean; webPort: number } {
+function parseArgs(): { web: boolean; webPort: number; debug: boolean } {
   const args = process.argv.slice(2);
+  const dev = isDevMode();
   let web = false;
   let webPort = 3000;
+  let debug = false;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--web") {
       web = true;
+    } else if (args[i] === "--debug" && dev) {
+      debug = true;
     } else if (args[i] === "--web-port" && i + 1 < args.length) {
       webPort = parseInt(args[++i], 10);
       if (isNaN(webPort) || webPort < 1 || webPort > 65535) {
@@ -93,7 +102,7 @@ function parseArgs(): { web: boolean; webPort: number } {
     }
   }
 
-  return { web, webPort };
+  return { web, webPort, debug };
 }
 
 async function main(): Promise<void> {
@@ -102,7 +111,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  const { web, webPort } = parseArgs();
+  const { web, webPort, debug } = parseArgs();
   const config = loadConfig();
 
   if (config.apiKey) {
@@ -113,7 +122,7 @@ async function main(): Promise<void> {
     }
   }
 
-  const harness = new Harness(config);
+  const harness = new Harness(config, debug);
   harnessRef = harness;
   await harness.initialize();
 
