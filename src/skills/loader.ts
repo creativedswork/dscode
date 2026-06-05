@@ -101,6 +101,17 @@ function parseFrontmatter(text: string): ParsedFrontmatter {
       continue;
     }
 
+    // YAML block scalar: description: >  or  description: |  (with optional chomp: -/+)
+    const blockDescMatch = line.match(/^description:\s*([>|][-+]?)\s*$/);
+    if (blockDescMatch) {
+      const style = blockDescMatch[1];
+      const { value, endIdx } = consumeBlockScalar(lines, i + 1, style);
+      result.description = value;
+      i = endIdx;
+      continue;
+    }
+
+    // Plain single-line description
     const descMatch = line.match(/^description:\s*(.+)/);
     if (descMatch) {
       result.description = unquote(descMatch[1].trim());
@@ -129,6 +140,96 @@ function parseFrontmatter(text: string): ParsedFrontmatter {
   }
 
   return result;
+}
+
+/**
+ * Consume a YAML block scalar value.
+ *
+ * Block scalars are multi-line values indicated by `>` (folded) or `|` (literal)
+ * on the header line, optionally followed by a chomping indicator (`-` or `+`).
+ *
+ * - `>`  folded: single newlines become spaces; blank lines become paragraph breaks (\n)
+ * - `|`  literal: all newlines preserved as-is
+ * - `>-` / `|-`  strip: remove trailing blank lines
+ * - `>+` / `|+`  keep: preserve all trailing blank lines
+ * - default (no indicator): clip — single trailing newline
+ */
+function consumeBlockScalar(
+  lines: string[],
+  startIdx: number,
+  style: string,
+): { value: string; endIdx: number } {
+  const isFolded = style.startsWith(">");
+  const chomp = style.length > 1 ? style[style.length - 1] : undefined;
+
+  // Collect all content lines (indented or blank)
+  const contentLines: string[] = [];
+  let i = startIdx;
+
+  while (i < lines.length) {
+    const ln = lines[i];
+
+    // Blank lines (including whitespace-only) are always part of the block
+    if (ln.trim() === "") {
+      contentLines.push("");
+      i++;
+      continue;
+    }
+
+    // Non-blank lines must be indented (2+ spaces or tab) relative to parent
+    if (ln.startsWith("  ") || ln.startsWith("\t")) {
+      contentLines.push(ln.replace(/^[ \t]+/, ""));
+      i++;
+      continue;
+    }
+
+    // Non-indented, non-blank line → block ends
+    break;
+  }
+
+  // Build value from content lines
+  let value: string;
+  if (isFolded) {
+    value = foldLines(contentLines);
+  } else {
+    value = contentLines.join("\n");
+  }
+
+  // Apply chomping
+  if (chomp === "-") {
+    value = value.replace(/\n+$/, "");
+  } else if (chomp === "+") {
+    // Keep all trailing newlines — already intact
+  } else {
+    // Default clip: single trailing newline, then trim trailing whitespace
+    value = value.replace(/\n+$/, "");
+  }
+
+  return { value: chomp === "+" ? value : value.trim(), endIdx: i };
+}
+
+/** Fold a sequence of lines according to YAML folded block scalar rules:
+ *  single newlines collapse to spaces; blank lines separate paragraphs. */
+function foldLines(lines: string[]): string {
+  const paragraphs: string[] = [];
+  let currentPara: string[] = [];
+
+  for (const ln of lines) {
+    if (ln.trim() === "") {
+      if (currentPara.length > 0) {
+        paragraphs.push(currentPara.join(" "));
+        currentPara = [];
+      }
+    } else {
+      currentPara.push(ln);
+    }
+  }
+
+  if (currentPara.length > 0) {
+    paragraphs.push(currentPara.join(" "));
+  }
+
+  return paragraphs.join("\n");
 }
 
 function parseToolsList(lines: string[], startIdx: number): string[] {

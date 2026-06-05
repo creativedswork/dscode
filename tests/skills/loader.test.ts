@@ -152,4 +152,113 @@ Body
     expect(manifest).not.toBeNull();
     expect(manifest!.tools).toEqual([]);
   });
+
+  describe("YAML block scalar description", () => {
+    it("should parse folded block scalar (>) - lines joined with spaces", () => {
+      const filePath = createTempSkill(`---
+name: folded
+description: >
+  The foundational knowledge distillation pattern for building
+  and maintaining an AI-powered Obsidian wiki.
+  Based on Andrej Karpathy's LLM Wiki architecture.
+tools: [read_file]
+---
+Body
+`);
+      const manifest = parseSkillManifest(filePath, "user");
+      expect(manifest).not.toBeNull();
+      expect(manifest!.description).toBe(
+        "The foundational knowledge distillation pattern for building and maintaining an AI-powered Obsidian wiki. Based on Andrej Karpathy's LLM Wiki architecture."
+      );
+    });
+
+    it("should parse literal block scalar (|) - newlines preserved", () => {
+      const filePath = createTempSkill(`---
+name: literal
+description: |
+  Line one.
+  Line two.
+  Line three.
+tools: [read_file]
+---
+Body
+`);
+      const manifest = parseSkillManifest(filePath, "user");
+      expect(manifest).not.toBeNull();
+      expect(manifest!.description).toBe("Line one.\nLine two.\nLine three.");
+    });
+
+    it("should handle folded with blank line as paragraph break", () => {
+      const filePath = createTempSkill(`---
+name: folded-para
+description: >
+  First paragraph line one.
+  First paragraph line two.
+
+  Second paragraph.
+tools: [read_file]
+---
+Body
+`);
+      const manifest = parseSkillManifest(filePath, "user");
+      expect(manifest).not.toBeNull();
+      expect(manifest!.description).toBe(
+        "First paragraph line one. First paragraph line two.\nSecond paragraph."
+      );
+    });
+
+    it("should handle >- (folded with strip chomping)", () => {
+      const filePath = createTempSkill(`---
+name: folded-strip
+description: >-
+  Some text here.
+  More text.
+
+tools: [read_file]
+---
+Body
+`);
+      const manifest = parseSkillManifest(filePath, "user");
+      expect(manifest).not.toBeNull();
+      expect(manifest!.description).toBe("Some text here. More text.");
+    });
+
+    it("should handle |+ (literal with keep chomping)", () => {
+      const filePath = createTempSkill(`---
+name: literal-keep
+description: |+
+  Line A.
+  Line B.
+
+
+tools: [read_file]
+---
+Body
+`);
+      const manifest = parseSkillManifest(filePath, "user");
+      expect(manifest).not.toBeNull();
+      expect(manifest!.description).toBe("Line A.\nLine B.\n\n");
+    });
+
+    it("should coexist with YAML list tools after block scalar", () => {
+      const filePath = createTempSkill(`---
+name: full-skill
+description: >
+  A comprehensive skill for doing complex operations
+  across multiple domains.
+tools:
+  - read_file
+  - write_file
+  - bash
+---
+Instructions body.
+`);
+      const manifest = parseSkillManifest(filePath, "project");
+      expect(manifest).not.toBeNull();
+      expect(manifest!.name).toBe("full-skill");
+      expect(manifest!.description).toBe("A comprehensive skill for doing complex operations across multiple domains.");
+      expect(manifest!.tools).toEqual(["read_file", "write_file", "bash"]);
+      expect(manifest!.instructions).toBe("Instructions body.");
+    });
+  });
 });
