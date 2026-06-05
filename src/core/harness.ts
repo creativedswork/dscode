@@ -137,7 +137,7 @@ export class Harness implements HarnessAPI {
           self.agent.state.tools = self.toolRegistry.buildToolsForRequest();
           // Update system prompt with current deferred tools hint
           const deferredHint = self.toolRegistry.buildDeferredToolsHint();
-          self.agent.state.systemPrompt = self.baseSystemPrompt + deferredHint;
+          self.agent.state.systemPrompt = self.baseSystemPrompt.replace("__DEFERRED_HINT__", deferredHint);
           await self.dumpDebugPrompt();
           return self.contextManager.transform(msgs, signal) as Promise<AgentMessage[]>;
         } catch (err) {
@@ -716,7 +716,7 @@ export class Harness implements HarnessAPI {
     const memories = this.memoryManager.getRelevantMemories();
     const skillSection = this.skillManager.getSystemPromptSection();
     this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection);
-    this.agent.state.systemPrompt = this.baseSystemPrompt + this.toolRegistry.buildDeferredToolsHint();
+    this.agent.state.systemPrompt = this.baseSystemPrompt.replace("__DEFERRED_HINT__", this.toolRegistry.buildDeferredToolsHint());
 
     return { success: true };
   }
@@ -752,7 +752,29 @@ export class Harness implements HarnessAPI {
   }
 
   private buildSystemPrompt(memories: string, skillSection: string): string {
-    let prompt = `You are a coding assistant working in: ${this.config.projectPath}
+    let prompt = `# Identity
+
+You are dscode — a digital studio for content-driven creation.
+
+You specialize in turning ideas into clear, compelling, and executable creative output, including writing, storytelling, branding, visual concepts, interactive experiences, and coded products.
+You are not just an assistant that responds to requests. You are a creative studio that thinks like an editor, designs like an art director, and builds like a developer.
+You help users shape raw thoughts into finished works — works that are not only functional, but expressive, memorable, and alive.
+
+# Soul
+
+You are built in the spirit of Hackers and Painters.
+You believe that great creation lives at the intersection of logic and taste, structure and intuition, engineering and art.
+You have the maker's discipline and the painter's eye.
+You write code not only to make things work, but to make ideas real.
+You create not only to solve problems, but to express, move, and transform.
+You treat code as a creative medium, words as design material, and interfaces as narrative surfaces.
+You value originality over imitation, clarity over noise, taste over clutter, and finished expression over empty capability.
+Your goal is not merely to generate output, but to craft meaningful work — work that can communicate sharply, resonate emotionally, and leave a mark on the world.
+# Runtime Context
+
+You are working in: ${this.config.projectPath}.
+
+# Tool Use
 
 ## Rules
 
@@ -760,15 +782,7 @@ export class Harness implements HarnessAPI {
 - Do not explain your plan before acting. Act first, then briefly explain what you did.
 - If a task requires multiple tool calls, execute them one by one. Do not stop after planning.
 - Answer in the user's language. Be concise and direct.
-- When writing code, produce complete, working implementations. Do not leave placeholders or TODOs.`;
-
-    if (skillSection) {
-      prompt += "\n\n" + skillSection;
-    }
-
-    prompt += `\n\n## Using Skills
-
-You have a \`skill\` tool available. When you decide to use a skill from the list above, call \`skill\` with the skill name to load its full instructions and allowed tools. Read the instructions, then follow them.
+- When writing code, produce complete, working implementations. Do not leave placeholders or TODOs.
 
 ## Tool Search
 
@@ -779,14 +793,28 @@ When you need a tool that is listed as discoverable but not yet in your tool lis
 2. The matching tools will become available in your next message
 3. Then call the newly loaded tools directly
 
-You can also load tools by exact name using \`select:\`: for example \`search_tools\` with query \`select:ToolA,ToolB\`.`;
+You can also load tools by exact name using \`select:\`: for example \`search_tools\` with query \`select:ToolA,ToolB\`.
 
-    if (memories) {
-      prompt += memories;
-    }
+__DEFERRED_HINT__`;
+
     if (this.config.agentsMdContent) {
       prompt += "\n\n" + this.config.agentsMdContent;
     }
+
+    prompt += `\n\n# Skills`;
+
+    if (skillSection) {
+      prompt += "\n\n" + skillSection;
+    }
+
+    prompt += `\n\n## Using Skills
+
+You have a \`skill\` tool available. When you decide to use a skill from the list above, call \`skill\` with the skill name to load its full instructions and allowed tools. Read the instructions, then follow them.`;
+
+    if (memories) {
+      prompt += "\n\n" + memories;
+    }
+
     return prompt;
   }
 
