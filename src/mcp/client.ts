@@ -494,6 +494,40 @@ export class MCPClient {
     }
   }
 
+  /**
+   * Force-kill the child process for stdio transport.
+   * Used when the process is stuck (e.g. infinite loop in tool execution)
+   * and cannot process notifications/cancelled.
+   * Sends SIGTERM first, then SIGKILL after a 2-second grace period.
+   */
+  private killProcess(): void {
+    if (!this.process || this.process.killed) return;
+
+    const pid = this.process.pid;
+    if (!pid) return;
+
+    try {
+      if (process.platform !== "win32") {
+        process.kill(-pid, "SIGTERM");
+      } else {
+        this.process.kill("SIGTERM");
+      }
+    } catch { /* best-effort */ }
+
+    // Grace period then force kill
+    setTimeout(() => {
+      if (!this.process || this.process.killed) return;
+      try {
+        if (process.platform !== "win32" && this.process.pid) {
+          process.kill(-this.process.pid, "SIGKILL");
+        } else {
+          this.process.kill("SIGKILL");
+        }
+      } catch { /* best-effort */ }
+    }, 2000);
+  }
+
+
   private async closeStreamableHttp(): Promise<void> {
     if (!this.config.url || !this.sessionId) return;
     const url = this.config.url;
@@ -590,15 +624,24 @@ export class MCPClient {
         clearTimeout(timer);
         this.pending.delete(id);
 
-        if (method !== "initialize") {
-          this.sendNotification("notifications/cancelled", { requestId: id, reason: "Request aborted by user" });
-        }
-
-        if (httpReq) {
-          httpReq.destroy();
-        }
-
+        // Always reject first — guarantee Promise settlement
         reject(new DOMException("The operation was aborted", "AbortError"));
+
+        // Best-effort cleanup: must not prevent reject()
+        try {
+          if (method !== "initialize") {
+            this.sendNotification("notifications/cancelled", { requestId: id, reason: "Request aborted by user" });
+          }
+        } catch { /* best-effort */ }
+
+        try {
+          httpReq?.destroy();
+        } catch { /* best-effort */ }
+
+        // Kill stuck child process for stdio transport
+        if (this.resolvedTransport === "stdio") {
+          this.killProcess();
+        }
       };
 
       signal?.addEventListener("abort", onAbort, { once: true });

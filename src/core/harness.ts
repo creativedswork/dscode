@@ -156,6 +156,10 @@ export class Harness implements HarnessAPI {
         } catch (err) {
           console.error("[harness] afterToolCall error:", err);
         }
+        // If signal is aborted, terminate the agent loop immediately
+        if (_signal?.aborted) {
+          return { terminate: true };
+        }
         return undefined;
       },    });
 

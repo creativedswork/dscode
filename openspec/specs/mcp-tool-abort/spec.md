@@ -68,3 +68,51 @@ When an MCP tool call is aborted, the error message returned to the agent SHALL 
 - **WHEN** `client.callTool()` rejects with an `AbortError`
 - **THEN** the `AgentToolResult.content` SHALL contain a text block like `"Tool call aborted by user."`
 - **AND** `details.error` SHALL be `true` so the agent knows the call did not succeed
+
+### Requirement: MCPClient onAbort handler is exception-safe
+
+The `onAbort` handler in `MCPClient.request()` SHALL guarantee that `reject()` is always called when the signal fires, regardless of whether downstream cleanup operations (`sendNotification`, `httpReq.destroy()`) throw exceptions.
+
+#### Scenario: reject called before cleanup operations
+- **WHEN** the abort signal fires while a request is pending
+- **THEN** `reject()` SHALL be called BEFORE any `sendNotification()` or `httpReq.destroy()` calls
+- **AND** `sendNotification()` and `httpReq.destroy()` SHALL be wrapped in individual try-catch blocks
+
+#### Scenario: sendNotification throws during abort
+- **WHEN** the abort signal fires AND `sendNotification()` throws an exception (e.g. broken stdin pipe)
+- **THEN** the caught exception SHALL NOT prevent `reject()` from being called
+- **AND** the request promise SHALL still reject with `AbortError`
+
+#### Scenario: httpReq.destroy throws during abort
+- **WHEN** the abort signal fires AND `httpReq.destroy()` throws an exception
+- **THEN** the caught exception SHALL NOT prevent `reject()` from being called
+- **AND** the request promise SHALL still reject with `AbortError`
+
+### Requirement: Aborted MCP tool sets terminate flag
+
+When an MCP tool execution is aborted via AbortSignal, the returned `AgentToolResult` SHALL set `terminate: true` so that the agent loop can exit immediately without an additional LLM round-trip.
+
+#### Scenario: AbortError sets terminate
+- **WHEN** `client.callTool()` rejects with an `AbortError`
+- **THEN** the `AgentToolResult` returned by `MCPManager.buildAgentTool` SHALL include `terminate: true`
+
+#### Scenario: Harness afterToolCall checks signal.aborted
+- **WHEN** the `afterToolCall` hook is invoked with an aborted signal
+- **THEN** it SHALL return `{ terminate: true }` as a safeguard, ensuring the agent loop terminates even if individual tools fail to set the flag
+
+### Requirement: MCP child process is killed on abort (stdio transport)
+
+For stdio transport, when a tool call is aborted, the MCPClient SHALL terminate the child process since it may be stuck in an unrecoverable state and unable to process the `notifications/cancelled` notification.
+
+#### Scenario: Process killed on abort
+- **WHEN** the abort signal fires for a pending stdio request
+- **THEN** the child process SHALL be sent SIGTERM
+- **AND** after a 2-second grace period, if the process is still alive, SIGKILL SHALL be sent
+
+#### Scenario: Normal close path unaffected
+- **WHEN** `MCPClient.close()` is called normally (not via abort)
+- **THEN** the existing `closeStdioGracefully()` logic SHALL be used — no forced kill
+
+#### Scenario: Already killed process handled gracefully
+- **WHEN** `killProcess()` is called but the process has already exited or been killed
+- **THEN** the call SHALL be a no-op, with any exceptions silently caught

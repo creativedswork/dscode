@@ -507,7 +507,7 @@ export class MCPManager {
           return { content, details: { server: serverName, tool: def.name, error: isError, structuredContent, mcpResult: result }, terminate: false };
         } catch (err: any) {
           if (err instanceof DOMException && err.name === "AbortError") {
-            return { content: [{ type: "text", text: "Tool call aborted by user." }], details: { server: serverName, tool: def.name, error: true } };
+            return { content: [{ type: "text", text: "Tool call aborted by user." }], details: { server: serverName, tool: def.name, error: true }, terminate: true };
           }
           return { content: [{ type: "text", text: `Error: ${err.message}` }], details: { server: serverName, tool: def.name, error: true } };
         }
