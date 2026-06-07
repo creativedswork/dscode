@@ -329,6 +329,67 @@ export class MCPManager {
     }
   }
 
+  /**
+   * Attempt to reconnect a server whose client connection is dead.
+   * Closes the old client, creates a fresh one, and re-registers tools.
+   * Returns true on success, false on failure.
+   */
+  private async reconnectServer(name: string): Promise<boolean> {
+    const state = this.states.get(name)!;
+    const cfg = this.configs.find((c) => c.name === name);
+    if (!cfg) return false;
+
+    // Close and remove dead client
+    const oldClient = this.clients.get(name);
+    if (oldClient) {
+      try { await oldClient.close(); } catch { /* best-effort */ }
+      this.clients.delete(name);
+    }
+
+    // Unregister stale driver
+    if (this.driverRegistry) {
+      this.driverRegistry.unregister(`mcp_${name}`);
+    }
+
+    state.status = "connecting";
+
+    try {
+      const client = new MCPClient(cfg);
+      client.onEvent((event) => this.handleClientEvent(event));
+      await client.connect();
+      this.clients.set(name, client);
+
+      const tools = await client.listTools();
+      this.registerDriver(name, tools);
+
+      state.status = "connected";
+      state.error = undefined;
+      state.toolCount = tools.length;
+      state.negotiatedProtocolVersion = client.getNegotiatedProtocolVersion() ?? undefined;
+      state.resolvedTransport = client.getResolvedTransport();
+      state.compatibilityMode = client.getCompatibilityMode();
+      state.refreshState = "idle";
+      state.refreshError = undefined;
+      state.lastRefreshAt = Date.now();
+      return true;
+      } catch (err: any) {
+        const state = this.states.get(name)!;
+        // Only attempt reconnect if the server was in a state where
+        // we expect connectivity — not if the user explicitly disconnected.
+        if (state.status === "connected" || state.status === "error") {
+          await this.reconnectServer(name);
+        } else {
+          state.status = "error";
+          state.error = err.message ?? "Unknown error";
+          state.refreshState = "error";
+          state.refreshError = err.message ?? "Unknown error";
+        }
+      state.toolCount = 0;
+      return false;
+    }
+  }
+
+
   async registerDrivers(registry: DriverRegistry): Promise<void> {
     this.driverRegistry = registry;
     for (const [name, client] of this.clients) {
@@ -342,15 +403,23 @@ export class MCPManager {
         state.refreshError = undefined;
       } catch (err: any) {
         const state = this.states.get(name)!;
-        state.status = "error";
-        state.error = err.message ?? "Unknown error";
-        state.refreshState = "error";
-        state.refreshError = err.message ?? "Unknown error";
+        // Only attempt reconnect if the server was in a state where
+        // we expect connectivity — not if the user explicitly disconnected.
+        if (state.status === "connected" || state.status === "error") {
+          await this.reconnectServer(name);
+        } else {
+          state.status = "error";
+          state.error = err.message ?? "Unknown error";
+          state.refreshState = "error";
+          state.refreshError = err.message ?? "Unknown error";
+        }
       }
     }
   }
 
+
   async shutdown(): Promise<void> {
+
     await Promise.allSettled(
       Array.from(this.clients.entries()).map(async ([name, client]) => {
         await client.close();
@@ -371,12 +440,22 @@ export class MCPManager {
 
   async connectServer(name: string): Promise<void> {
     const existing = this.clients.get(name);
-    if (existing) return;
+    const state = this.states.get(name)!;
+
+    // Allow reconnection if the server is in error state with a stale client.
+    // Otherwise, skip if already connected or connecting.
+    if (existing && state.status !== "error") return;
+    if (existing && state.status === "error") {
+      try { await existing.close(); } catch { /* best-effort */ }
+      this.clients.delete(name);
+      if (this.driverRegistry) {
+        this.driverRegistry.unregister(`mcp_${name}`);
+      }
+    }
 
     const cfg = this.configs.find((c) => c.name === name);
     if (!cfg) throw new Error(`MCP server "${name}" not found in config`);
 
-    const state = this.states.get(name)!;
     state.status = "connecting";
 
     try {
