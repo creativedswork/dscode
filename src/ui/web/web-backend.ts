@@ -288,7 +288,9 @@ export class WebUiBackend implements UiBackend {
   }
 
   openMcpBrowser(): void {
-    // In web mode, initiated by client
+    // Signal the frontend to open the MCP panel
+    this.pushMcpState();
+    this.broadcast({ type: "mcp_open_browser" });
   }
 
   // ── UiBackend Config Watch ──

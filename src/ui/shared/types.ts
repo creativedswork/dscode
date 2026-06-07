@@ -172,4 +172,6 @@ export type ServerEvent =
   | { type: "mcp_app"; app: McpAppInfo }
   | { type: "clear_conversation" }
   | { type: "file_list_result"; prefix: string; items: FileListItem[] }
-  | { type: "processing"; processing: boolean };
+  | { type: "processing"; processing: boolean }
+  | { type: "mcp_open_browser" };
+
