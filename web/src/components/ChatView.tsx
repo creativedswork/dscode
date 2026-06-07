@@ -323,14 +323,12 @@ function MessageBubble({ message, elapsed }: { message: UIMessage; elapsed: numb
         <div style={{ color: isUser ? "var(--color-user-bubble-text)" : "var(--color-text)" }}>
           {safeContent || (message.images && message.images.length > 0) ? (
             <Markdown className="text-sm leading-relaxed">{safeContent}</Markdown>
-          ) : !message.thinking && !message.isStreaming ? (
-            <span style={{ color: "var(--color-text-muted)", fontStyle: "italic" }}>(no content)</span>
-          ) : null}
+          ) : (
+            message.isStreaming && !message.thinking && (!message.images || message.images.length === 0) ? (
+              <span className="inline-block w-2 h-4 animate-pulse rounded-sm" style={{ backgroundColor: "var(--color-accent)" }} />
+            ) : null
+          )}
         </div>
-
-        {message.isStreaming && !safeContent && !message.thinking && (!message.images || message.images.length === 0) && (
-          <span className="inline-block w-2 h-4 animate-pulse rounded-sm" style={{ backgroundColor: "var(--color-accent)" }} />
-        )}
 
         {message.tools && message.tools.length > 0 && (
           <div className="mt-3 space-y-2">

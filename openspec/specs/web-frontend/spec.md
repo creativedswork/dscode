@@ -78,7 +78,7 @@ The frontend SHALL support warm light and warm dark themes using warm stone/taup
 - **THEN** backgrounds use warm deep gray-browns (≈ `#1e1c19`), surfaces are warm dark gray (≈ `#282622`), borders are warm dark (≈ `#3a3732`), and text is warm off-white (≈ `#e8e4dd`)
 
 ### Requirement: Conversation view
-The frontend SHALL display a scrollable conversation area showing user messages, assistant responses with streaming text, thinking blocks with elapsed time indicators, and tool call results, all using the warm flat design system styling. Message state management SHALL use the shared `conversationReducer` from `@dscode/shared/reducer` instead of inline event handling logic. The elapsed time display SHALL be derived from `turnStartRef` (set by `handleSend` or `loader { state: "show" }`) rather than the `processing` state flag.
+The frontend SHALL display a scrollable conversation area showing user messages, assistant responses with streaming text, thinking blocks with elapsed time indicators, and tool call results, all using the warm flat design system styling. Message state management SHALL use the shared `conversationReducer` from `@dscode/shared/reducer` instead of inline event handling logic. The elapsed time display SHALL be derived from `turnStartRef` (set by `handleSend` or `loader { state: "show" }`) rather than the `processing` state flag. When an assistant message has no text content, the content area SHALL render nothing instead of a "(no content)" placeholder.
 
 #### Scenario: User message display
 - **WHEN** user submits a message
@@ -95,6 +95,10 @@ The frontend SHALL display a scrollable conversation area showing user messages,
 #### Scenario: Tool call display
 - **WHEN** the server sends `tool_start` and `tool_end` events
 - **THEN** each tool call appears as an inline flat card with `border-radius: 8px`, `1px solid` warm border, tool name in monospace with amber accent, and muted pastel success/error indicators
+
+#### Scenario: Empty assistant content renders nothing
+- **WHEN** an assistant message has no text content (empty string), with or without thinking and tools
+- **THEN** the message bubble content area renders nothing; no "(no content)" placeholder is displayed
 
 ### Requirement: Message types imported from shared module
 The frontend SHALL import `UIMessage`, `ToolCallEntry`, `ImageAttachment`, `ConversationMessage`, and `ToolCallEntry` types from the shared module (`@dscode/shared/types`) rather than defining them in `web/src/types/index.ts`.
