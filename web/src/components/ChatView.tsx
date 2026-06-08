@@ -22,19 +22,22 @@ export function ChatView({ messages, processing, hasStreaming, turnStartRef, per
   const [elapsed, setElapsed] = useState(0);
 
   // Elapsed timer driven by turnStartRef (set on handleSend / loader:show, reset on loader:hide / error)
+  // Uses requestAnimationFrame to continuously poll the ref value, since ref changes
+  // don't trigger React re-renders and [turnStartRef.current] as a dependency is inert.
   useEffect(() => {
-    if (!turnStartRef.current) {
-      setElapsed(0);
-      return;
-    }
     let raf: number;
     const tick = () => {
-      setElapsed(Math.floor((Date.now() - turnStartRef.current) / 1000));
+      const start = turnStartRef.current;
+      if (!start) {
+        setElapsed(0);
+      } else {
+        setElapsed(Math.floor((Date.now() - start) / 1000));
+      }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [turnStartRef.current]);
+  }, [turnStartRef]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
