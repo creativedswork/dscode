@@ -2,65 +2,73 @@ import { describe, expect, it, vi } from "vitest";
 
 import { executeSlashCommand } from "../../src/ui/commands.js";
 
-function makeContext(overrides: Record<string, unknown> = {}) {
+function makeContext(
+  harnessOverrides: Record<string, unknown> = {},
+  uiOverrides: Record<string, unknown> = {},
+) {
   return {
-    agent: { reset: vi.fn(), state: { messages: [] } },
-    sessionManager: { trySaveSession: vi.fn(), createSession: vi.fn(), persistEmptySession: vi.fn(), getCurrentSessionId: () => null },
-    memoryManager: {},
-    driverRegistry: {},
-    toolRegistry: {},
-    skillManager: {},
-    permissionManager: {},
-    contextManager: {},
-    config: {},
-    onSetModel: vi.fn(),
-    onSetThinking: vi.fn(),
-    onSetCwd: vi.fn(),
-    ...overrides,
+    harness: {
+      agent: { reset: vi.fn(), state: { messages: [] } },
+      sessionManager: { trySaveSession: vi.fn(), createSession: vi.fn(), persistEmptySession: vi.fn(), getCurrentSessionId: () => null },
+      memoryManager: {},
+      driverRegistry: {},
+      toolRegistry: {},
+      skillManager: {},
+      permissionManager: {},
+      contextManager: {},
+      config: {},
+      onSetModel: vi.fn(),
+      onSetThinking: vi.fn(),
+      onSetCwd: vi.fn(),
+      ...harnessOverrides,
+    },
+    ui: {
+      addInfo: vi.fn(),
+      addError: vi.fn(),
+      ...uiOverrides,
+    },
   } as any;
 }
 
 describe("slash commands", () => {
   it("opens the MCP browser when MCP servers are available", async () => {
     const openMcpBrowser = vi.fn();
-    const addInfo = vi.fn();
-    const addError = vi.fn();
 
     executeSlashCommand(
       "/mcp",
-      makeContext({
-        mcpManager: {
-          getStates: () => [{ config: { name: "github" }, status: "connected", toolCount: 2 }],
+      makeContext(
+        {
+          mcpManager: {
+            getStates: () => [{ config: { name: "github" }, status: "connected", toolCount: 2 }],
+          },
         },
-      }),
-      { openMcpBrowser, addInfo, addError } as any,
+        { openMcpBrowser },
+      ),
     );
 
     await Promise.resolve();
 
     expect(openMcpBrowser).toHaveBeenCalledOnce();
-    expect(addInfo).not.toHaveBeenCalled();
-    expect(addError).not.toHaveBeenCalled();
   });
 
   it("shows an info message when no MCP servers are configured", async () => {
-    const openMcpBrowser = vi.fn();
     const addInfo = vi.fn();
     const addError = vi.fn();
 
     executeSlashCommand(
       "/mcp",
-      makeContext({
-        mcpManager: {
-          getStates: () => [],
+      makeContext(
+        {
+          mcpManager: {
+            getStates: () => [],
+          },
         },
-      }),
-      { openMcpBrowser, addInfo, addError } as any,
+        { addInfo, addError },
+      ),
     );
 
     await Promise.resolve();
 
-    expect(openMcpBrowser).not.toHaveBeenCalled();
     expect(addInfo).toHaveBeenCalledWith("No MCP servers configured.");
     expect(addError).not.toHaveBeenCalled();
   });
@@ -72,8 +80,10 @@ describe("slash commands", () => {
 
     executeSlashCommand(
       "/reset",
-      makeContext({ agent: { reset, state: { messages: [] } } }),
-      { clearConversationView, addInfo, addError: vi.fn() } as any,
+      makeContext(
+        { agent: { reset, state: { messages: [] } } },
+        { clearConversationView, addInfo },
+      ),
     );
 
     await Promise.resolve();

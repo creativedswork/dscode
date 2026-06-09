@@ -131,6 +131,7 @@ describe("permission prompt navigation", () => {
         drainImages: vi.fn().mockReturnValue([{ type: "image", data: "abcd", mimeType: "image/png" }]),
         updateStatus: vi.fn(),
         imageCount: 1,
+        clearDrafts: vi.fn(),
       },
       processing: false,
       permissionExplainMode: false,
