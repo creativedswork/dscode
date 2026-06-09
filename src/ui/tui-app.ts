@@ -293,13 +293,21 @@ export class TuiApp {
     return true;
   }
 
-  private applyPermissionOption(option: "allow" | "always_allow" | "explain" | "deny"): void {
+  private applyPermissionOption(option: "allow" | "always_allow" | "always_allow_save" | "explain" | "deny"): void {
     if (option === "deny") {
       this.resolvePermissionChoice({ decision: "deny" });
       return;
     }
     if (option === "always_allow") {
       this.resolvePermissionChoice({ decision: "allow", rememberForSession: true });
+      return;
+    }
+    if (option === "always_allow_save") {
+      const ctx = this.pendingPermissionContext;
+      const persistRule = ctx
+        ? this.buildPersistedRule(ctx.toolName, ctx.args, "saved from permission prompt")
+        : undefined;
+      this.resolvePermissionChoice({ decision: "allow", rememberForSession: true, persistRule });
       return;
     }
     if (option === "explain") {

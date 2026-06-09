@@ -156,11 +156,31 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
   const vision = visionProvider && visionModel ? { provider: visionProvider, model: visionModel, key: visionKey } : undefined;
   const maxTokens = Number(process.env.DSCODE_MAX_TOKENS) || (merged.maxTokens as number) || 16384;
 
-  const userPermissionRules = ((userSettings.permissions as any)?.rules as Record<string, unknown>[]) ?? [];
-  const projectPermissionRules = ((projectSettings.permissions as any)?.rules as Record<string, unknown>[]) ?? [];
+  // Parse Claude Code compatible allow/deny arrays
+  const userAllow = ((userSettings.permissions as any)?.allow as string[]) ?? [];
+  const projectAllow = ((projectSettings.permissions as any)?.allow as string[]) ?? [];
   const userDeny = ((userSettings.permissions as any)?.deny as string[]) ?? [];
   const projectDeny = ((projectSettings.permissions as any)?.deny as string[]) ?? [];
   const denyPatterns = [...new Set([...userDeny, ...projectDeny])];
+
+  // Convert allow/deny arrays to PermissionRuleConfig format
+  const allowRules: Record<string, unknown>[] = [...userAllow, ...projectAllow].map((t) => ({
+    tool: t,
+    decision: "allow",
+    priority: 5,
+  }));
+  const denyRules: Record<string, unknown>[] = [...userDeny, ...projectDeny].map((t) => ({
+    tool: t,
+    decision: "deny",
+    priority: 5,
+  }));
+
+  // Existing rules format (object array)
+  const userPermissionRules = ((userSettings.permissions as any)?.rules as Record<string, unknown>[]) ?? [];
+  const projectPermissionRules = ((projectSettings.permissions as any)?.rules as Record<string, unknown>[]) ?? [];
+
+  // Merge: allow/deny arrays + existing rules. Explicit rules come last so their priority overrides.
+  const allPermissionRules = [...allowRules, ...denyRules, ...userPermissionRules, ...projectPermissionRules];
 
   const userSkills = ((userSettings.skills as string[]) ?? []);
   const projectSkills = ((projectSettings.skills as string[]) ?? []);
@@ -261,7 +281,7 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
     },
     permissions: {
       defaultDecision: "ask",
-      rules: [...userPermissionRules, ...projectPermissionRules] as any,
+      rules: allPermissionRules as any,
       denyPatterns,
     },
     skills,

@@ -121,7 +121,7 @@ export interface PermissionPrompt {
 }
 
 export interface PermOption {
-  value: "allow" | "always_allow" | "deny";
+  value: "allow" | "always_allow" | "always_allow_save" | "deny";
   label: string;
   key: string;
 }
@@ -131,8 +131,8 @@ export interface PermOption {
 export type ClientCommand =
   | { type: "chat"; text: string; images?: ImageAttachment[]; clipboardImages?: ImageAttachment[] }
   | { type: "abort" }
-  | { type: "permission"; decision: "allow" | "always_allow" | "deny"; persistRule?: boolean }
-  | { type: "permission_response"; decision: "allow" | "always_allow" | "deny"; denyReason?: string }
+  | { type: "permission"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; persistRule?: boolean }
+  | { type: "permission_response"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; denyReason?: string }
   | { type: "slash"; command: string }
   | { type: "command"; text: string }
   | { type: "config"; action: "set_model"; value: string }

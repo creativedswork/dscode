@@ -16,12 +16,14 @@ describe("permission prompt navigation", () => {
     expect(PERM_OPTIONS.map((option) => option.value)).toEqual([
       "allow",
       "always_allow",
+      "always_allow_save",
       "explain",
       "deny",
     ]);
     expect(PERM_OPTIONS.map((option) => option.label)).toEqual([
       "Allow",
       "Always Allow",
+      "Save to Settings",
       "Input Idea",
       "Deny",
     ]);
@@ -29,6 +31,7 @@ describe("permission prompt navigation", () => {
 
   it("maps single-key shortcuts to options", () => {
     expect(findPermOptionByKey("a")?.value).toBe("always_allow");
+    expect(findPermOptionByKey("s")?.value).toBe("always_allow_save");
     expect(findPermOptionByKey("i")?.value).toBe("explain");
   });
 

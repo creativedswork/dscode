@@ -3,7 +3,7 @@ import { Warning } from "@phosphor-icons/react";
 interface PermissionDialogProps {
   toolName: string;
   preview: string;
-  onDecision: (decision: "allow" | "always_allow" | "deny") => void;
+  onDecision: (decision: "allow" | "always_allow" | "always_allow_save" | "explain" | "deny") => void;
 }
 
 export function PermissionDialog({ toolName, preview, onDecision }: PermissionDialogProps) {
@@ -49,12 +49,18 @@ export function PermissionDialog({ toolName, preview, onDecision }: PermissionDi
           </div>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <button onClick={() => onDecision("allow")} className="btn-primary flex-1 text-sm">
             Allow
           </button>
           <button onClick={() => onDecision("always_allow")} className="btn-secondary flex-1 text-sm">
             Always Allow
+          </button>
+          <button onClick={() => onDecision("always_allow_save")} className="btn-secondary text-sm">
+            Save to Settings
+          </button>
+          <button onClick={() => onDecision("explain")} className="btn text-sm" style={{ backgroundColor: "var(--color-warning)", color: "var(--color-warning-text)", borderColor: "var(--color-warning-text)" }}>
+            Input Idea
           </button>
           <button onClick={() => onDecision("deny")} className="btn-danger text-sm">
             Deny

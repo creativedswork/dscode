@@ -37,7 +37,7 @@ describe("PermissionManager", () => {
       toolCall: { name: "read_file" },
       args: { path: "/some/file.txt" },
     });
-    expect(result).toBeUndefined(); // undefined = allowed
+    expect(result).toBeUndefined();
   });
 
   it("should allow list_files by default", async () => {
@@ -190,20 +190,17 @@ describe("PermissionManager", () => {
       decision: "allow",
       rememberForSession: true,
     }));
-    // First call should prompt
     const first = await pm.check({
       toolCall: { name: "write_file" },
       args: { path: "/tmp/a.txt", content: "a" },
     });
     expect(first).toBeUndefined();
 
-    // Second call should not prompt (session grant)
     let promptedAgain = false;
     const pm2 = new PermissionManager(defaultConfig, async () => {
       promptedAgain = true;
       return { decision: "allow", rememberForSession: false };
     });
-    // Copy session grants
     for (const g of pm.getSessionGrants()) {
       pm2.grantForSession(g);
     }
@@ -233,7 +230,6 @@ describe("PermissionManager", () => {
       },
       createPromptFn(),
     );
-    // ls should be allowed despite default ask
     const result = await pm.check({
       toolCall: { name: "bash" },
       args: { command: "ls -la" },
@@ -246,7 +242,6 @@ describe("PermissionManager", () => {
       { ...defaultConfig, defaultDecision: "deny" },
       createPromptFn(),
     );
-    // unknown tool should be denied
     const result = await pm.check({
       toolCall: { name: "unknown_tool" },
       args: {},
@@ -292,9 +287,113 @@ describe("PermissionManager", () => {
 
     expect(result).toBeUndefined();
     const saved = JSON.parse(readFileSync(join(configHome, "settings.json"), "utf8"));
-    expect(saved.permissions.rules).toHaveLength(1);
-    expect(saved.permissions.rules[0]).toMatchObject({ tool: "bash", decision: "allow" });
+    expect(saved.permissions.allow).toHaveLength(1);
+    expect(saved.permissions.allow[0]).toBe("bash");
 
     rmSync(root, { recursive: true, force: true });
+  });
+
+  describe("glob tool name patterns", () => {
+    it("should match server-wide wildcard mcp__lsp__*", async () => {
+      const pm = new PermissionManager(
+        {
+          ...defaultConfig,
+          rules: [{ tool: "mcp__lsp__*", decision: "allow", priority: 50 }],
+        },
+        createPromptFn(),
+      );
+      const result = await pm.check({
+        toolCall: { name: "mcp__lsp_textDocument_hover" },
+        args: {},
+      });
+      expect(result).toBeUndefined();
+    });
+
+    it("should match all tools from a server with wildcard", async () => {
+      const pm = new PermissionManager(
+        {
+          ...defaultConfig,
+          rules: [{ tool: "mcp__lsp__*", decision: "allow", priority: 50 }],
+        },
+        createPromptFn(),
+      );
+      const r1 = await pm.check({ toolCall: { name: "mcp__lsp_textDocument_hover" }, args: {} });
+      const r2 = await pm.check({ toolCall: { name: "mcp__lsp_textDocument_definition" }, args: {} });
+      const r3 = await pm.check({ toolCall: { name: "mcp__lsp_window_showMessageRequest" }, args: {} });
+      expect(r1).toBeUndefined();
+      expect(r2).toBeUndefined();
+      expect(r3).toBeUndefined();
+    });
+
+    it("should not cross server boundary with wildcard", async () => {
+      const pm = new PermissionManager(
+        {
+          ...defaultConfig,
+          defaultDecision: "deny",
+          rules: [{ tool: "mcp__lsp__*", decision: "allow", priority: 50 }],
+        },
+        createPromptFn(),
+      );
+      const result = await pm.check({
+        toolCall: { name: "mcp__github__search" },
+        args: {},
+      });
+      expect(result).toEqual({ block: true, reason: "Denied by policy" });
+    });
+
+    it("should match mid-name wildcard mcp__*__search", async () => {
+      const pm = new PermissionManager(
+        {
+          ...defaultConfig,
+          rules: [{ tool: "mcp__*__search", decision: "allow", priority: 50 }],
+        },
+        createPromptFn(),
+      );
+      const r1 = await pm.check({ toolCall: { name: "mcp__github__search" }, args: {} });
+      const r2 = await pm.check({ toolCall: { name: "mcp__lsp__search" }, args: {} });
+      expect(r1).toBeUndefined();
+      expect(r2).toBeUndefined();
+    });
+
+    it("should still support exact match without wildcard", async () => {
+      const pm = new PermissionManager(
+        {
+          ...defaultConfig,
+          rules: [{ tool: "bash", decision: "deny", priority: 100 }],
+        },
+        createPromptFn(),
+      );
+      const result = await pm.check({ toolCall: { name: "bash" }, args: { command: "ls" } });
+      expect(result).toEqual({ block: true, reason: "Denied by policy" });
+    });
+
+    it("should still support global wildcard *", async () => {
+      const pm = new PermissionManager(
+        {
+          ...defaultConfig,
+          rules: [{ tool: "*", decision: "deny", priority: 100 }],
+        },
+        createPromptFn(),
+      );
+      const result = await pm.check({ toolCall: { name: "read_file" }, args: {} });
+      expect(result).toEqual({ block: true, reason: "Denied by policy" });
+    });
+
+    it("should prefer exact match over glob with higher priority", async () => {
+      const pm = new PermissionManager(
+        {
+          ...defaultConfig,
+          rules: [
+            { tool: "mcp__github__delete_repo", decision: "deny", priority: 100 },
+            { tool: "mcp__github__*", decision: "allow", priority: 50 },
+          ],
+        },
+        createPromptFn(),
+      );
+      const exact = await pm.check({ toolCall: { name: "mcp__github__delete_repo" }, args: {} });
+      const glob = await pm.check({ toolCall: { name: "mcp__github__list_repos" }, args: {} });
+      expect(exact).toEqual({ block: true, reason: "Denied by policy" });
+      expect(glob).toBeUndefined();
+    });
   });
 });

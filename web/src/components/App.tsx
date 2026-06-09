@@ -116,8 +116,8 @@ export function App() {
     setProcessing(true);
     send({ type: "chat", text, images: images?.length ? images : undefined });
   }, [send]);
-  const handlePermission = useCallback((decision: "allow" | "always_allow" | "deny", explainText?: string) => {
-    send({ type: explainText ? "permission_response" : "permission", decision, persistRule: decision === "always_allow", denyReason: explainText });
+  const handlePermission = useCallback((decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string) => {
+    send({ type: explainText ? "permission_response" : "permission", decision, persistRule: decision === "always_allow_save", denyReason: explainText });
     setPermissionPrompt(null);
   }, [send]);
   const handleAbort = useCallback(() => send({ type: "abort" }), [send]);

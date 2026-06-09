@@ -15,7 +15,7 @@ interface ChatViewProps {
   hasStreaming: boolean;
   turnStartRef: React.MutableRefObject<number>;
   permissionPrompt: PermissionPrompt | null;
-  onPermission: (decision: "allow" | "always_allow" | "deny", explainText?: string) => void;
+  onPermission: (decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string) => void;
 }
 export function ChatView({ messages, processing, hasStreaming, turnStartRef, permissionPrompt, onPermission }: ChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -201,7 +201,7 @@ function InlinePermission({
 }: {
   toolName: string;
   preview: string;
-  onDecision: (decision: "allow" | "always_allow" | "deny", explainText?: string) => void;
+  onDecision: (decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string) => void;
 }) {
   const [explainMode, setExplainMode] = useState(false);
   const [explainText, setExplainText] = useState("");
@@ -259,6 +259,7 @@ function InlinePermission({
           <div className="flex gap-2">
             <button onClick={() => onDecision("allow")} className="btn-primary text-xs">Allow</button>
             <button onClick={() => onDecision("always_allow")} className="btn-secondary text-xs">Always Allow</button>
+            <button onClick={() => onDecision("always_allow_save")} className="btn-secondary text-xs">Save to Settings</button>
             <button
               onClick={() => setExplainMode(true)}
               className="btn text-xs"

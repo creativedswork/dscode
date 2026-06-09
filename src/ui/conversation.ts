@@ -56,7 +56,7 @@ function extractTextFromBlocks(content: unknown): string {
   return "";
 }
 
-export type PermOptionValue = "allow" | "always_allow" | "explain" | "deny";
+export type PermOptionValue = "allow" | "always_allow" | "always_allow_save" | "explain" | "deny";
 
 export interface PermOption {
   value: PermOptionValue;
@@ -68,6 +68,7 @@ export interface PermOption {
 export const PERM_OPTIONS: PermOption[] = [
   { value: "allow", label: "Allow", key: "enter", color: c.green },
   { value: "always_allow", label: "Always Allow", key: "a", color: c.cyan },
+  { value: "always_allow_save", label: "Save to Settings", key: "s", color: c.magenta },
   { value: "explain", label: "Input Idea", key: "i", color: c.yellow },
   { value: "deny", label: "Deny", key: "esc", color: c.red },
 ];

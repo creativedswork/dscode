@@ -18,6 +18,7 @@ export class PermissionManager {
   private promptUser: PromptUserFn;
   private defaultDecision: PermissionDecision;
   private onBeforePrompt?: () => void;
+  private toolPatternCache = new Map<string, RegExp | null>();
 
   constructor(config: PermissionsConfig, promptUser: PromptUserFn, onBeforePrompt?: () => void) {
     this.defaultDecision = config.defaultDecision;
@@ -109,24 +110,69 @@ export class PermissionManager {
   private persistRule(rule: PermissionRuleConfig): void {
     const settings = loadUserSettings();
     const permissions = ((settings.permissions as Record<string, unknown> | undefined) ?? {});
-    const rules = Array.isArray(permissions.rules) ? [...permissions.rules] : [];
-    rules.push(rule);
-    saveUserSettings({
-      ...settings,
-      permissions: {
-        ...permissions,
-        rules,
-      },
-    });
+
+    if (rule.decision === "allow") {
+      const allow = Array.isArray(permissions.allow) ? [...permissions.allow] : [];
+      if (!allow.includes(rule.tool)) {
+        allow.push(rule.tool);
+      }
+      saveUserSettings({
+        ...settings,
+        permissions: {
+          ...permissions,
+          allow,
+        },
+      });
+    } else if (rule.decision === "deny") {
+      const deny = Array.isArray(permissions.deny) ? [...permissions.deny] : [];
+      if (!deny.includes(rule.tool)) {
+        deny.push(rule.tool);
+      }
+      saveUserSettings({
+        ...settings,
+        permissions: {
+          ...permissions,
+          deny,
+        },
+      });
+    }
   }
 
   private evaluate(toolName: string, argsStr: string): { decision: PermissionDecision; reason?: string } {
     for (const rule of this.rules) {
-      if (rule.tool !== "*" && rule.tool !== toolName) continue;
+      if (!this.matchesTool(rule.tool, toolName)) continue;
       if (rule.argPattern && !rule.argPattern.test(argsStr)) continue;
       return { decision: rule.decision, reason: rule.reason };
     }
     return { decision: this.defaultDecision };
+  }
+
+  /** Check if a rule's tool pattern matches a given tool name. */
+  private matchesTool(pattern: string, toolName: string): boolean {
+    if (pattern === "*") return true;
+    if (pattern === toolName) return true;
+    // Try glob pattern (contains '*')
+    if (pattern.includes("*")) {
+      const regex = this.compileToolPattern(pattern);
+      if (regex) return regex.test(toolName);
+    }
+    return false;
+  }
+
+  /** Compile a glob pattern to RegExp, caching results. Returns null for invalid patterns. */
+  private compileToolPattern(pattern: string): RegExp | null {
+    const cached = this.toolPatternCache.get(pattern);
+    if (cached !== undefined) return cached;
+    try {
+      const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+      const regexStr = escaped.replace(/\*/g, ".*");
+      const regex = new RegExp(`^${regexStr}$`);
+      this.toolPatternCache.set(pattern, regex);
+      return regex;
+    } catch {
+      this.toolPatternCache.set(pattern, null);
+      return null;
+    }
   }
 
   private formatPreview(toolName: string, args: unknown): string {

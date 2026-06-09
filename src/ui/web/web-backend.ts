@@ -70,6 +70,7 @@ export class WebUiBackend implements UiBackend {
 
   // Pending permission state
   private permissionResolve: ((result: PermissionPromptResult) => void) | null = null;
+  private currentPermissionTool: string = "";
 
   // Image state
   private pendingImages: ImageContent[] = [];
@@ -235,6 +236,7 @@ export class WebUiBackend implements UiBackend {
   ) => Promise<PermissionPromptResult> {
     return (toolName, preview, _args) => {
       return new Promise<PermissionPromptResult>((resolve) => {
+        this.currentPermissionTool = toolName;
         this.permissionResolve = resolve;
         this.broadcast({ type: "permission_prompt", toolName, preview });
       });
@@ -386,6 +388,11 @@ export class WebUiBackend implements UiBackend {
 
       case "abort": {
         this.harness.abort();
+        // Resolve any pending permission prompt so the agent doesn't hang
+        if (this.permissionResolve) {
+          this.permissionResolve({ decision: "deny" });
+          this.permissionResolve = null;
+        }
         break;
       }
 
@@ -412,15 +419,16 @@ export class WebUiBackend implements UiBackend {
         if (this.permissionResolve) {
           const resolve = this.permissionResolve;
           this.permissionResolve = null;
+          const isAlways = cmd.decision === "always_allow" || cmd.decision === "always_allow_save";
+          const isSave = cmd.decision === "always_allow_save";
           resolve({
-            decision: cmd.decision === "always_allow" ? "allow" : cmd.decision,
-            rememberForSession: cmd.decision === "always_allow",
-            persistRule: undefined,
+            decision: isAlways ? "allow" : cmd.decision as "allow" | "deny",
+            rememberForSession: isAlways,
+            persistRule: isSave ? { tool: this.currentPermissionTool, decision: "allow" } : undefined,
           });
         }
         break;
       }
-
       case "slash": {
         this.handleSlashCommand(client, cmd.command);
         break;
