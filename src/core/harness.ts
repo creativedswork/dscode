@@ -108,7 +108,7 @@ export class Harness implements HarnessAPI {
     const memories = this.memoryManager.getRelevantMemories();
     const skillSection = this.skillManager.getSystemPromptSection();
     this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection);
-    const systemPrompt = this.baseSystemPrompt;
+    const systemPrompt = this.baseSystemPrompt.replace("__DEFERRED_HINT__", this.toolRegistry.buildDeferredToolsHint());
 
     const model = resolveModel(this.config.provider, this.config.modelId);
     this.contextManager.updateModel(model.contextWindow, model.maxTokens);
@@ -529,6 +529,8 @@ export class Harness implements HarnessAPI {
           appOnlyNames,
         );
         this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
+        this.agent.state.systemPrompt = this.baseSystemPrompt.replace("__DEFERRED_HINT__", this.toolRegistry.buildDeferredToolsHint());
+        await this.dumpDebugPrompt();
         const connected = this.mcpManager.getStates().filter((s) => s.status === "connected").length;
         const total = this.config.mcp.length;
         this.ui.addInfo(`MCP: ${connected}/${total} connected`);
@@ -784,7 +786,10 @@ You are working in: ${this.config.projectPath}.
 
 - When the user asks you to create, modify, or delete files, you MUST call the corresponding tool (write_file, bash, etc.) immediately. Never just describe what you plan to do without actually doing it.
 - Do not explain your plan before acting. Act first, then briefly explain what you did.
-- If a task requires multiple tool calls, execute them one by one. Do not stop after planning.
+- When multiple tool calls have no data dependency on each other, batch them in a single response for parallel execution. When one call depends on the output of another, split them across sequential responses.
+- Prefer file tools over shell: use write_file, edit, read_file, and grep for file operations. Reserve bash for actual shell commands — tests, builds, git, package management — not for sed, cat, or awk on project files.
+- Activate Skills first: if a task falls within the domain of any Skill listed in "Available Skills", call the skill tool to load its full instructions before proceeding.
+- If a task relates to tools listed in the "Discoverable Tools" section below, use \`search_tools\` to discover and load the relevant tools first, before falling back to other methods.
 - Answer in the user's language. Be concise and direct.
 - When writing code, produce complete, working implementations. Do not leave placeholders or TODOs.
 
