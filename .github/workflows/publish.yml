@@ -32,7 +32,8 @@ jobs:
       - name: Ensure npm version is unpublished
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          if npm view "@wangcan26/dscode@$VERSION" version >/dev/null 2>&1; then
+          PKG_NAME="$(node -p "require('./package.json').name")"
+          if npm view "$PKG_NAME@$VERSION" version >/dev/null 2>&1; then
             echo "Version $VERSION already exists on npm"
             exit 1
           fi

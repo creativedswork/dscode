@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@wangcan26/dscode"><img src="docs/assets/badge-npm.svg" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/@creative-dswork/dscode"><img src="docs/assets/badge-npm.svg" alt="npm version" /></a>
   <img src="docs/assets/badge-node.svg" alt="Node.js >=20" />
   <img src="docs/assets/badge-deepseek.svg" alt="DeepSeek native" />
   <img src="docs/assets/badge-spec-driven.svg" alt="spec driven" />
@@ -165,7 +165,7 @@ dscode 启动时自动连接，工具以 `mcp_blender_*` 和 `mcp_playwright_*` 
 ## 安装
 
 ```bash
-npm install -g @wangcan26/dscode
+npm install -g @creative-dswork/dscode
 dscode              # 终端模式
 dscode --web        # Web 模式 → http://localhost:3000
 ```
@@ -175,7 +175,7 @@ dscode --web        # Web 模式 → http://localhost:3000
 **从源码构建：**
 
 ```bash
-git clone https://github.com/wangcan26/dscode.git
+git clone https://github.com/creativedswork/dscode.git
 cd dscode && npm install && npm run build
 node dist/dscode.mjs
 ```

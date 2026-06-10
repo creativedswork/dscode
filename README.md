@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://www.npmjs.com/package/@wangcan26/dscode"><img src="docs/assets/badge-npm.svg" alt="npm version" /></a>
+  <a href="https://www.npmjs.com/package/@creative-dswork/dscode"><img src="docs/assets/badge-npm.svg" alt="npm version" /></a>
   <img src="docs/assets/badge-node.svg" alt="Node.js >=20" />
   <img src="docs/assets/badge-deepseek.svg" alt="DeepSeek native" />
   <img src="docs/assets/badge-spec-driven.svg" alt="spec driven" />
@@ -165,7 +165,7 @@ dscode auto-connects on launch. Tools appear as `mcp_blender_*` and `mcp_playwri
 ## Install
 
 ```bash
-npm install -g @wangcan26/dscode
+npm install -g @creative-dswork/dscode
 dscode              # Terminal UI
 dscode --web        # Web UI → http://localhost:3000
 ```
@@ -175,7 +175,7 @@ dscode --web        # Web UI → http://localhost:3000
 **Build from source:**
 
 ```bash
-git clone https://github.com/wangcan26/dscode.git
+git clone https://github.com/creativedswork/dscode.git
 cd dscode && npm install && npm run build
 node dist/dscode.mjs
 ```
