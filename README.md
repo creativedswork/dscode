@@ -182,6 +182,115 @@ node dist/dscode.mjs
 
 ---
 
+## Configuration
+
+dscode uses two levels of `settings.json`, merged with project settings overriding user settings:
+
+| Scope | Path | Purpose |
+|-------|------|---------|
+| User | `~/.dscode/settings.json` | Defaults across all projects |
+| Project | `.dscode/settings.json` | Per-project overrides |
+
+> **Note:** Model configuration (`provider`, `modelId`, `apiKey`, `thinkingLevel`) lives in `~/.dscode/config.json`, managed via `/config` commands. Type `/help` in-session for the full command list.
+
+### Quick reference
+
+```jsonc
+// ~/.dscode/settings.json
+{
+  // --- MCP Servers ---
+  "mcpServers": {
+    "blender": {
+      "command": "uvx",
+      "args": ["blender-mcp"]
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["@anthropic/mcp-playwright"]
+    },
+    "my-api": {
+      "url": "https://my-mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  },
+
+  // --- Permissions ---
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(npm *)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)"
+    ],
+    "rules": [
+      { "tool": "Bash(curl *)", "decision": "allow", "priority": 5 }
+    ]
+  },
+
+  // --- Skills ---
+  "skills": ["brandkit", "minimalist-ui"],
+
+  // --- Retry ---
+  // Controls how dscode retries failed API calls (rate limits, timeouts, server errors).
+  // Uses exponential backoff: starts at baseDelayMs, doubles each retry, capped at maxDelayMs.
+  "retry": {
+    "maxRetries": 3,           // Max retry attempts before giving up
+    "baseDelayMs": 1000,       // Initial delay before first retry (ms)
+    "maxDelayMs": 30000,       // Upper bound on backoff delay (ms)
+    "retryOnTimeout": true,    // Retry when the provider times out
+    "retryOnRateLimit": true,  // Retry when hitting rate limits (respects Retry-After header)
+    "retryOnServerError": true // Retry on 5xx server errors
+  },
+
+  // --- @-file limits ---
+  "atFileMaxFiles": 5,
+  "atFileMaxFileSize": 51200,
+  "atFileMaxTotalSize": 204800
+}
+```
+
+### MCP server config
+
+Each server under `mcpServers` supports:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `command` | string | Executable (for stdio transport) |
+| `args` | string[] | Arguments passed to the command |
+| `url` | string | HTTP endpoint (for streamable-http transport) |
+| `env` | object | Extra environment variables for the server process |
+| `headers` | object | Custom HTTP headers |
+| `transport` | string | `"stdio"` \| `"streamable-http"` \| `"sse"` (auto-detected if omitted) |
+| `preferredProtocolVersion` | string | `"2025-11-25"` \| `"2025-03-26"` \| `"2024-11-05"` |
+| `requestTimeoutMs` | number | Per-request timeout |
+| `connectTimeoutMs` | number | Connection timeout |
+
+> **Tip:** Transport is auto-detected — if `url` is set without `command`, streamable-http is used. Otherwise stdio.
+
+### Environment variables
+
+All settings can also be set via environment variables for CI / containers:
+
+| Variable | Setting |
+|----------|---------|
+| `DEEPSEEK_API_KEY` | API key (provider-specific vars also supported: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) |
+| `AGENT_PROVIDER` | Provider override |
+| `AGENT_MODEL` | Model override |
+| `AGENT_THINKING_LEVEL` | Thinking level override |
+| `AGENT_VISION_PROVIDER` | Vision model provider |
+| `AGENT_VISION_MODEL` | Vision model ID |
+| `DSCODE_MAX_TOKENS` | Max tokens |
+| `DSCODE_CONFIG_HOME` | Custom config directory (default: `~/.dscode`) |
+| `DSCODE_DATA_HOME` | Custom data directory |
+| `DSCODE_PROJECT_PATH` | Project directory |
+| `DSCODE_RETRY_MAX_RETRIES` | Retry max retries |
+| `DSCODE_RETRY_BASE_DELAY_MS` | Retry base delay |
+| `DSCODE_RETRY_MAX_DELAY_MS` | Retry max delay |
+
+---
+
+
 ## Harness Philosophy
 
 We follow **Occam's razor** in harness design. dscode does not pre-build intent understanding modules, plan modes, or elaborate agentic scaffolding until the system prompt proves insufficient. Most coding agents pile on pre-turn planning, reflection loops, and multi-agent orchestration upfront — we wait until the model demands it.

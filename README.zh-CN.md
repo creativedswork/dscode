@@ -182,6 +182,115 @@ node dist/dscode.mjs
 
 ---
 
+## 配置
+
+dscode 使用两层 `settings.json`，项目级配置覆盖用户级配置：
+
+| 作用域 | 路径 | 用途 |
+|-------|------|---------|
+| 用户级 | `~/.dscode/settings.json` | 所有项目的默认配置 |
+| 项目级 | `.dscode/settings.json` | 单个项目的覆盖配置 |
+
+> **注意：** 模型配置（`provider`、`modelId`、`apiKey`、`thinkingLevel`）存放在 `~/.dscode/config.json`，通过 `/config` 命令管理。在会话中输入 `/help` 查看完整命令列表。
+
+### 配置速览
+
+```jsonc
+// ~/.dscode/settings.json
+{
+  // --- MCP 服务器 ---
+  "mcpServers": {
+    "blender": {
+      "command": "uvx",
+      "args": ["blender-mcp"]
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["@anthropic/mcp-playwright"]
+    },
+    "my-api": {
+      "url": "https://my-mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  },
+
+  // --- 权限 ---
+  "permissions": {
+    "allow": [
+      "Bash(git add *)",
+      "Bash(npm *)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)"
+    ],
+    "rules": [
+      { "tool": "Bash(curl *)", "decision": "allow", "priority": 5 }
+    ]
+  },
+
+  // --- Skills ---
+  "skills": ["brandkit", "minimalist-ui"],
+
+  // --- 重试 ---
+  // 控制 dscode 如何在 API 调用失败时重试（限流、超时、服务器错误）。
+  // 使用指数退避策略：从 baseDelayMs 开始，每次重试翻倍，上限为 maxDelayMs。
+  "retry": {
+    "maxRetries": 3,           // 最大重试次数
+    "baseDelayMs": 1000,       // 首次重试前的初始延迟（毫秒）
+    "maxDelayMs": 30000,       // 退避延迟的上限（毫秒）
+    "retryOnTimeout": true,    // 提供商超时时重试
+    "retryOnRateLimit": true,  // 触发限流时重试（遵循 Retry-After 头）
+    "retryOnServerError": true // 5xx 服务器错误时重试
+  },
+
+  // --- @-文件 限制 ---
+  "atFileMaxFiles": 5,
+  "atFileMaxFileSize": 51200,
+  "atFileMaxTotalSize": 204800
+}
+```
+
+### MCP 服务器配置
+
+`mcpServers` 下每个服务器支持以下字段：
+
+| 字段 | 类型 | 说明 |
+|-------|------|-------------|
+| `command` | string | 可执行文件（用于 stdio 传输） |
+| `args` | string[] | 传递给命令的参数 |
+| `url` | string | HTTP 端点（用于 streamable-http 传输） |
+| `env` | object | 服务器进程的额外环境变量 |
+| `headers` | object | 自定义 HTTP 头 |
+| `transport` | string | `"stdio"` \| `"streamable-http"` \| `"sse"`（省略时自动检测） |
+| `preferredProtocolVersion` | string | `"2025-11-25"` \| `"2025-03-26"` \| `"2024-11-05"` |
+| `requestTimeoutMs` | number | 单次请求超时时间 |
+| `connectTimeoutMs` | number | 连接超时时间 |
+
+> **提示：** 传输方式自动检测 —— 如果设置了 `url` 而没有 `command`，则使用 streamable-http，否则使用 stdio。
+
+### 环境变量
+
+所有配置均可通过环境变量设置，适用于 CI / 容器场景：
+
+| 变量 | 对应配置 |
+|----------|---------|
+| `DEEPSEEK_API_KEY` | API Key（也支持 provider 专用变量：`OPENAI_API_KEY`、`ANTHROPIC_API_KEY` 等） |
+| `AGENT_PROVIDER` | Provider 覆盖 |
+| `AGENT_MODEL` | Model 覆盖 |
+| `AGENT_THINKING_LEVEL` | Thinking Level 覆盖 |
+| `AGENT_VISION_PROVIDER` | Vision 模型 provider |
+| `AGENT_VISION_MODEL` | Vision 模型 ID |
+| `DSCODE_MAX_TOKENS` | 最大 token 数 |
+| `DSCODE_CONFIG_HOME` | 自定义配置目录（默认：`~/.dscode`） |
+| `DSCODE_DATA_HOME` | 自定义数据目录 |
+| `DSCODE_PROJECT_PATH` | 项目目录 |
+| `DSCODE_RETRY_MAX_RETRIES` | 重试最大次数 |
+| `DSCODE_RETRY_BASE_DELAY_MS` | 重试基础延迟 |
+| `DSCODE_RETRY_MAX_DELAY_MS` | 重试最大延迟 |
+
+---
+
+
 ## Harness 设计哲学
 
 我们在 Harness 设计上遵循**奥卡姆剃刀原则**。dscode 不会预设意图理解模块、Plan 模式或复杂的 agent 编排层——直到系统提示词确实不够用。大多数 coding agent 在一开始就堆叠了推理规划、反思循环和多 agent 协调，而我们选择等模型真正需要时再添加。
