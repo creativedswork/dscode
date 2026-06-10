@@ -254,7 +254,7 @@ describe("PermissionManager", () => {
     const pm = new PermissionManager(defaultConfig, async () => ({
       decision: "allow",
       rememberForSession: false,
-    }), () => { called = true; });
+    }), "/tmp/test-project", () => { called = true; });
     await pm.check({
       toolCall: { name: "write_file" },
       args: { path: "/tmp/test.txt", content: "hello" },
@@ -262,8 +262,10 @@ describe("PermissionManager", () => {
     expect(called).toBe(true);
   });
 
-  it("persists a saved allow rule to user settings", async () => {
+  it("persists a saved allow rule to project settings", async () => {
     const root = mkdtempSync(join(tmpdir(), "dscode-permissions-"));
+    const projectDir = join(root, "project");
+    mkdirSync(projectDir, { recursive: true });
     const configHome = join(root, "home");
     mkdirSync(configHome, { recursive: true });
     process.env.DSCODE_CONFIG_HOME = configHome;
@@ -278,7 +280,7 @@ describe("PermissionManager", () => {
         reason: "saved from permission prompt",
         priority: 20,
       },
-    }));
+    }), projectDir);
 
     const result = await pm.check({
       toolCall: { name: "bash" },
@@ -286,7 +288,7 @@ describe("PermissionManager", () => {
     });
 
     expect(result).toBeUndefined();
-    const saved = JSON.parse(readFileSync(join(configHome, "settings.json"), "utf8"));
+    const saved = JSON.parse(readFileSync(join(projectDir, ".dscode", "settings.json"), "utf8"));
     expect(saved.permissions.allow).toHaveLength(1);
     expect(saved.permissions.allow[0]).toBe("bash");
 

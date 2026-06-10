@@ -85,7 +85,19 @@ export function saveUserSettings(partial: Record<string, unknown>): void {
   saveJsonSafe(path, merged);
 }
 
+export function saveProjectSettings(projectPath: string, partial: Record<string, unknown>): void {
+  const path = projectSettingsPath(projectPath);
+  const existing = loadScopedSettings(path);
+  const merged = { ...existing, ...partial };
+  for (const [k, v] of Object.entries(partial)) {
+    if (v === null) delete merged[k];
+  }
+  saveJsonSafe(path, merged);
+}
+
+
 export function saveUserConfig(partial: Record<string, unknown>): void {
+
   const path = userConfigPath();
   const existing = loadUserCommandConfig();
   const merged = { ...existing, ...partial };

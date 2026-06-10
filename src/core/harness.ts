@@ -67,6 +67,7 @@ export class Harness implements HarnessAPI {
     this.permissionManager = new PermissionManager(
       config.permissions,
       (toolName, preview, args) => this.ui.getPromptPermission()(toolName, preview, args),
+      config.projectPath,
       () => {},
     );
     this.imagePipeline = new ImagePipeline({

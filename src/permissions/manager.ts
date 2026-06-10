@@ -1,5 +1,5 @@
 import type { PermissionDecision, PermissionRule, PermissionRuleConfig, PermissionsConfig, PromptUserFn } from "../core/types.js";
-import { loadUserSettings, saveUserSettings } from "../core/config.js";
+import { loadScopedSettings, projectSettingsPath, saveProjectSettings } from "../core/config.js";
 import { DEFAULT_RULES } from "./rules.js";
 
 function globToRegex(pattern: string): RegExp {
@@ -20,7 +20,10 @@ export class PermissionManager {
   private onBeforePrompt?: () => void;
   private toolPatternCache = new Map<string, RegExp | null>();
 
-  constructor(config: PermissionsConfig, promptUser: PromptUserFn, onBeforePrompt?: () => void) {
+  private projectPath: string;
+
+  constructor(config: PermissionsConfig, promptUser: PromptUserFn, projectPath: string, onBeforePrompt?: () => void) {
+    this.projectPath = projectPath;
     this.defaultDecision = config.defaultDecision;
     this.promptUser = promptUser;
     this.onBeforePrompt = onBeforePrompt;
@@ -108,7 +111,7 @@ export class PermissionManager {
   }
 
   private persistRule(rule: PermissionRuleConfig): void {
-    const settings = loadUserSettings();
+    const settings = loadScopedSettings(projectSettingsPath(this.projectPath));
     const permissions = ((settings.permissions as Record<string, unknown> | undefined) ?? {});
 
     if (rule.decision === "allow") {
@@ -116,7 +119,7 @@ export class PermissionManager {
       if (!allow.includes(rule.tool)) {
         allow.push(rule.tool);
       }
-      saveUserSettings({
+      saveProjectSettings(this.projectPath, {
         ...settings,
         permissions: {
           ...permissions,
@@ -128,7 +131,7 @@ export class PermissionManager {
       if (!deny.includes(rule.tool)) {
         deny.push(rule.tool);
       }
-      saveUserSettings({
+      saveProjectSettings(this.projectPath, {
         ...settings,
         permissions: {
           ...permissions,
