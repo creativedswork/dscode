@@ -27,19 +27,17 @@
 <table align="center">
 <tr>
 <td align="center" width="50%">
-  <img src="docs/screen_shots/show_dscode_web_ui.gif" alt="dscode Web UI" width="100%" />
+  <video src="https://github.com/user-attachments/assets/b92aedab-93cc-4188-976a-0fcae614c04d" controls width="100%"></video>
   <br /><sub><b>Web UI</b> — streaming chat, tool calls, permission dialogs</sub>
 </td>
 <td align="center" width="50%">
-  <img src="docs/screen_shots/show_dscode_tui.gif" alt="dscode TUI" width="100%" />
+  <video src="https://github.com/user-attachments/assets/79790daa-d6f3-4d43-8306-e1d93561600c" controls width="100%"></video>
   <br /><sub><b>Terminal UI</b> — real-time streaming, slash commands, inline rendering</sub>
 </td>
 </tr>
-</table>
 
-> **Tip:** GIFs auto-play in GitHub. Click any image for full-size view.
 
----
+> **Tip:** Videos play inline — click to watch demos directly in GitHub.
 
 ## What makes dscode different
 
@@ -148,19 +146,17 @@ dscode auto-connects on launch. Tools appear as `mcp_blender_*` and `mcp_playwri
 <table align="center">
 <tr>
 <td align="center" width="50%">
-  <img src="docs/screen_shots/show_playcanvas.gif" alt="PlayCanvas via MCP" width="100%" />
+  <video src="https://github.com/user-attachments/assets/917414f9-9f39-457e-9358-98f6abe01220" controls width="100%"></video>
   <br /><sub><b>PlayCanvas + MCP</b> — build a jump game entirely through natural language</sub>
 </td>
 <td align="center" width="50%">
-  <img src="docs/screen_shots/show_blender.gif" alt="Blender via MCP" width="100%" />
+  <video src="https://github.com/user-attachments/assets/cf62021e-bb1c-4aa3-953d-b0d09631a1ef" controls width="100%"></video>
   <br /><sub><b>Blender + MCP</b> — 3D modeling and scene composition through conversation</sub>
 </td>
 </tr>
 </table>
 
-> **Tip:** These are real MCP workflows — dscode orchestrates PlayCanvas and Blender as if they were native APIs.
-
----
+> **Tip:** Videos play inline — these are real MCP workflows, click to watch.
 
 ## Install
 
