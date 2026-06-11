@@ -43,7 +43,7 @@ export function ChatView({ messages, processing, hasStreaming, turnStartRef, per
   }, [turnStartRef]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    bottomRef.current?.scrollIntoView({ behavior: hasStreaming ? "instant" : "smooth" });
   }, [messages, processing, permissionPrompt]);
 
   if (messages.length === 0 && !permissionPrompt) {
@@ -102,7 +102,7 @@ export function ChatView({ messages, processing, hasStreaming, turnStartRef, per
   }
 
   return (
-    <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+    <div className="flex-1 overflow-y-auto min-h-0 px-4 py-4 space-y-4">
       {messages.map((msg) => (
         <ErrorBoundary key={msg.id} fallback={<FallbackBubble message={msg} />}>
           <MessageBubble message={msg} elapsed={elapsed} />

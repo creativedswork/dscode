@@ -78,7 +78,7 @@ The frontend SHALL support warm light and warm dark themes using warm stone/taup
 - **THEN** backgrounds use warm deep gray-browns (≈ `#1e1c19`), surfaces are warm dark gray (≈ `#282622`), borders are warm dark (≈ `#3a3732`), and text is warm off-white (≈ `#e8e4dd`)
 
 ### Requirement: Conversation view
-The frontend SHALL display a scrollable conversation area showing user messages, assistant responses with streaming text, thinking blocks with elapsed time indicators, and tool call results, all using the warm flat design system styling. Message state management SHALL use the shared `conversationReducer` from `@dscode/shared/reducer` instead of inline event handling logic. The elapsed time display SHALL be derived from `turnStartRef` (set by `handleSend` or `loader { state: "show" }`) rather than the `processing` state flag. When an assistant message has no text content, the content area SHALL render nothing instead of a "(no content)" placeholder.
+The frontend SHALL display a scrollable conversation area showing user messages, assistant responses with streaming text, thinking blocks with elapsed time indicators, and tool call results, all using the warm flat design system styling. Message state management SHALL use the shared `conversationReducer` from `@dscode/shared/reducer` instead of inline event handling logic. The elapsed time display SHALL be derived from `turnStartRef` (set by `handleSend` or `loader { state: "show" }`) rather than the `processing` state flag. When an assistant message has no text content, the content area SHALL render nothing instead of a "(no content)" placeholder. The conversation scroll container SHALL use `min-height: 0` (Tailwind `min-h-0`) to allow proper flexbox constraint and prevent overflow clipping of large content. Auto-scroll during streaming SHALL use `behavior: "instant"` to avoid smooth-scroll animation cancellation jank.
 
 #### Scenario: User message display
 - **WHEN** user submits a message
@@ -99,6 +99,18 @@ The frontend SHALL display a scrollable conversation area showing user messages,
 #### Scenario: Empty assistant content renders nothing
 - **WHEN** an assistant message has no text content (empty string), with or without thinking and tools
 - **THEN** the message bubble content area renders nothing; no "(no content)" placeholder is displayed
+
+#### Scenario: Large tool call result does not break scrolling
+- **WHEN** a tool call (e.g., write_file) returns a result that is larger than the viewport height
+- **THEN** the ChatView scroll container remains constrained to the viewport and the user can scroll to the bottom of the conversation to see all content, including the message input and the tail of the assistant bubble
+
+#### Scenario: Auto-scroll during streaming is instant
+- **WHEN** the conversation has a streaming message (hasStreaming is true)
+- **THEN** auto-scroll to the bottom uses `scrollIntoView({ behavior: "instant" })` instead of smooth behavior
+
+#### Scenario: Auto-scroll when idle is smooth
+- **WHEN** the conversation has no streaming message (hasStreaming is false)
+- **THEN** auto-scroll to the bottom uses `scrollIntoView({ behavior: "smooth" })` for a polished user experience
 
 ### Requirement: Message types imported from shared module
 The frontend SHALL import `UIMessage`, `ToolCallEntry`, `ImageAttachment`, `ConversationMessage`, and `ToolCallEntry` types from the shared module (`@dscode/shared/types`) rather than defining them in `web/src/types/index.ts`.
