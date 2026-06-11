@@ -118,6 +118,9 @@ export type PermissionDecision = "allow" | "deny" | "ask";
 export interface PermissionPrompt {
   toolName: string;
   preview: string;
+  fuzzyPattern?: string | null;
+  fuzzyArgDesc?: string | null;
+  llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[];
 }
 
 export interface PermOption {
@@ -131,8 +134,8 @@ export interface PermOption {
 export type ClientCommand =
   | { type: "chat"; text: string; images?: ImageAttachment[]; clipboardImages?: ImageAttachment[] }
   | { type: "abort" }
-  | { type: "permission"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; persistRule?: boolean }
-  | { type: "permission_response"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; denyReason?: string }
+  | { type: "permission"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; persistRule?: boolean; toolNamePattern?: string; fuzzyMode?: number; sessionGrantPattern?: string }
+  | { type: "permission_response"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; denyReason?: string; toolNamePattern?: string }
   | { type: "slash"; command: string }
   | { type: "command"; text: string }
   | { type: "config"; action: "set_model"; value: string }
@@ -162,7 +165,7 @@ export type ServerEvent =
   | { type: "warning"; text: string }
   | { type: "error"; text: string }
   | { type: "retry"; info: { attempt: number; maxRetries: number; delayMs: number; error: string; level: "stream" | "turn" } }
-  | { type: "permission_prompt"; toolName: string; preview: string }
+  | { type: "permission_prompt"; toolName: string; preview: string; fuzzyPattern?: string | null; fuzzyArgDesc?: string | null; llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[] }
   | { type: "loader"; state: "show" | "hide"; text?: string }
   | { type: "config"; data: ConfigData }
   | { type: "sessions"; data: SessionInfo[]; currentSessionId?: string }

@@ -248,7 +248,7 @@ export class MCPManager {
       for (const def of client.getAllToolDefs()) {
         const visibility = def._meta?.ui?.visibility;
         if (visibility && visibility.length === 1 && visibility[0] === "app") {
-          names.push(`mcp_${serverName}_${def.name}`);
+          names.push(`mcp__${serverName}__${def.name}`);
         }
       }
     }
@@ -348,7 +348,7 @@ export class MCPManager {
 
     // Unregister stale driver
     if (this.driverRegistry) {
-      this.driverRegistry.unregister(`mcp_${name}`);
+      this.driverRegistry.unregister(`mcp__${name}`);
     }
 
     state.status = "connecting";
@@ -449,7 +449,7 @@ export class MCPManager {
       try { await existing.close(); } catch { /* best-effort */ }
       this.clients.delete(name);
       if (this.driverRegistry) {
-        this.driverRegistry.unregister(`mcp_${name}`);
+        this.driverRegistry.unregister(`mcp__${name}`);
       }
     }
 
@@ -500,7 +500,7 @@ export class MCPManager {
 
     this.clients.delete(name);
     if (this.driverRegistry) {
-      this.driverRegistry.unregister(`mcp_${name}`);
+      this.driverRegistry.unregister(`mcp__${name}`);
     }
 
     state.status = "disconnected";
@@ -511,7 +511,7 @@ export class MCPManager {
   }
 
   private buildAgentTool(serverName: string, def: MCPToolDefinition, client: MCPClient): AgentTool<any> {
-    const toolName = `mcp_${serverName}_${def.name}`;
+    const toolName = `mcp__${serverName}__${def.name}`;
     if (def.alwaysLoad) {
       this.alwaysLoadToolNames.add(toolName);
     }
@@ -608,7 +608,7 @@ export class MCPManager {
     const description = this.configs.find((c) => c.name === serverName)?.description ?? "";
 
     const driver: Driver = {
-      name: `mcp_${serverName}`,
+      name: `mcp__${serverName}`,
       description: `MCP: ${description || serverName}`,
       tools: agentTools,
       source: "mcp",

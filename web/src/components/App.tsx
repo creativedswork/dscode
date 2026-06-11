@@ -35,7 +35,7 @@ export function App() {
   const [processing, setProcessing] = useState(false);
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [model, setModel] = useState("");
-  const [permissionPrompt, setPermissionPrompt] = useState<{ toolName: string; preview: string } | null>(null);
+  const [permissionPrompt, setPermissionPrompt] = useState<{ toolName: string; preview: string; fuzzyPattern?: string | null; fuzzyArgDesc?: string | null; llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[] } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<"sessions" | "mcp" | "settings">("sessions");
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -90,7 +90,7 @@ export function App() {
       }
       case "warning": addToast({ type: "warning", text: event.text }); break;
       case "error": addToast({ type: "error", text: event.text }); setProcessing(false); turnStartRef.current = 0; break;
-      case "permission_prompt": setPermissionPrompt({ toolName: event.toolName, preview: event.preview }); break;
+      case "permission_prompt": setPermissionPrompt({ toolName: event.toolName, preview: event.preview, fuzzyPattern: (event as any).fuzzyPattern ?? null, fuzzyArgDesc: (event as any).fuzzyArgDesc ?? null, llmSuggestions: (event as any).llmSuggestions ?? undefined }); break;
       case "loader":
         setProcessing(event.state === "show");
         if (event.state === "show") {
@@ -116,8 +116,16 @@ export function App() {
     setProcessing(true);
     send({ type: "chat", text, images: images?.length ? images : undefined });
   }, [send]);
-  const handlePermission = useCallback((decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string) => {
-    send({ type: explainText ? "permission_response" : "permission", decision, persistRule: decision === "always_allow_save", denyReason: explainText });
+  const handlePermission = useCallback((decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string, toolNamePattern?: string, fuzzyMode?: number) => {
+    send({
+      type: explainText ? "permission_response" : "permission",
+      decision,
+      persistRule: decision === "always_allow_save",
+      denyReason: explainText,
+      toolNamePattern,
+      fuzzyMode,
+      sessionGrantPattern: (decision === "always_allow" || (decision === "allow" && fuzzyMode === 1)) ? toolNamePattern : undefined,
+    });
     setPermissionPrompt(null);
   }, [send]);
   const handleAbort = useCallback(() => send({ type: "abort" }), [send]);

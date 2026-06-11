@@ -11,10 +11,16 @@ function globToRegex(pattern: string): RegExp {
   return new RegExp(`(^|/)${re}($|/)`);
 }
 
+interface SessionGrant {
+  pattern: string;
+  regex: RegExp | null;
+}
+
 export class PermissionManager {
   private rules: PermissionRule[];
   private denyRegexes: { pattern: string; regex: RegExp }[];
   private sessionGrants = new Set<string>();
+  private sessionGrantPatterns: SessionGrant[] = [];
   private promptUser: PromptUserFn;
   private defaultDecision: PermissionDecision;
   private onBeforePrompt?: () => void;
@@ -64,6 +70,11 @@ export class PermissionManager {
     if (this.sessionGrants.has(toolName)) {
       return undefined;
     }
+    for (const grant of this.sessionGrantPatterns) {
+      if (this.matchesTool(grant.pattern, toolName)) {
+        return undefined;
+      }
+    }
 
     const decision = this.evaluate(toolName, argsStr);
 
@@ -88,7 +99,16 @@ export class PermissionManager {
           this.rules.sort((a, b) => b.priority - a.priority);
         }
         if (result.rememberForSession) {
-          this.sessionGrants.add(toolName);
+          if (result.sessionGrantPattern) {
+            this.sessionGrantPatterns.push({
+              pattern: result.sessionGrantPattern,
+              regex: result.sessionGrantPattern.includes("*")
+                ? this.compileToolPattern(result.sessionGrantPattern)
+                : null,
+            });
+          } else {
+            this.sessionGrants.add(toolName);
+          }
         }
         if (result.decision === "deny") {
           return { block: true, reason: result.denyReason ?? "Denied by user" };
@@ -104,20 +124,26 @@ export class PermissionManager {
 
   revokeGrant(toolName: string): void {
     this.sessionGrants.delete(toolName);
+    this.sessionGrantPatterns = this.sessionGrantPatterns.filter(
+      (g) => g.pattern !== toolName,
+    );
   }
 
   getSessionGrants(): string[] {
-    return Array.from(this.sessionGrants);
+    const exact = Array.from(this.sessionGrants);
+    const patterns = this.sessionGrantPatterns.map((g) => g.pattern);
+    return [...exact, ...patterns];
   }
 
-  private persistRule(rule: PermissionRuleConfig): void {
+  private persistRule(rule: PermissionRuleConfig, toolNamePattern?: string): void {
+    const toolName = toolNamePattern ?? rule.tool;
     const settings = loadScopedSettings(projectSettingsPath(this.projectPath));
     const permissions = ((settings.permissions as Record<string, unknown> | undefined) ?? {});
 
     if (rule.decision === "allow") {
       const allow = Array.isArray(permissions.allow) ? [...permissions.allow] : [];
-      if (!allow.includes(rule.tool)) {
-        allow.push(rule.tool);
+      if (!allow.includes(toolName)) {
+        allow.push(toolName);
       }
       saveProjectSettings(this.projectPath, {
         ...settings,
@@ -128,8 +154,8 @@ export class PermissionManager {
       });
     } else if (rule.decision === "deny") {
       const deny = Array.isArray(permissions.deny) ? [...permissions.deny] : [];
-      if (!deny.includes(rule.tool)) {
-        deny.push(rule.tool);
+      if (!deny.includes(toolName)) {
+        deny.push(toolName);
       }
       saveProjectSettings(this.projectPath, {
         ...settings,

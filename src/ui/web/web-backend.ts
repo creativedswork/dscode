@@ -4,12 +4,14 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ImageContent } from "@mariozechner/pi-ai";
-import { getAllProviders, getAllModels, getVisionModels, getVisionProviders } from "../../models/index.js";
+import { getAllProviders, getAllModels, getVisionModels, getVisionProviders, resolveModel } from "../../models/index.js";
 import type { UiBackend } from "../backend.js";
 import type { HarnessConfig, PermissionPromptResult } from "../../core/types.js";
 import type { ConfigWatch } from "../../core/config-watch.js";
 import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig, normalizeTransport, normalizeProtocolVersion, loadScopedSettings, projectSettingsPath } from "../../core/config.js";
 import { executeSlashCommand, getSlashCommandAutocomplete } from "../commands.js";
+import { deriveFuzzyPattern, deriveFuzzyArgPattern, describeFuzzyArgPattern } from "../../permissions/fuzzy.js";
+import { prefetchLlmSuggestions, getLlmSuggestions } from "../../permissions/fuzzy-llm.js";
 import type { HarnessAPI } from "../../core/harness-api.js";
 import type { MCPManager } from "../../mcp/manager.js";
 import type { AppHostManager } from "../../mcp/app/host.js";
@@ -71,6 +73,7 @@ export class WebUiBackend implements UiBackend {
   // Pending permission state
   private permissionResolve: ((result: PermissionPromptResult) => void) | null = null;
   private currentPermissionTool: string = "";
+  private currentPermissionArgs: unknown = null;
 
   // Image state
   private pendingImages: ImageContent[] = [];
@@ -234,11 +237,18 @@ export class WebUiBackend implements UiBackend {
     preview: string,
     args: unknown,
   ) => Promise<PermissionPromptResult> {
-    return (toolName, preview, _args) => {
+    return (toolName, preview, args) => {
       return new Promise<PermissionPromptResult>((resolve) => {
         this.currentPermissionTool = toolName;
+        this.currentPermissionArgs = args;
         this.permissionResolve = resolve;
-        this.broadcast({ type: "permission_prompt", toolName, preview });
+        const fuzzy = deriveFuzzyPattern(toolName);
+        const fuzzyArgDesc = describeFuzzyArgPattern(toolName, args);
+        const llmSuggestions = getLlmSuggestions(toolName, args);
+        this.broadcast({ type: "permission_prompt", toolName, preview, fuzzyPattern: fuzzy, fuzzyArgDesc, llmSuggestions: llmSuggestions.length > 0 ? llmSuggestions : undefined });
+        // Prefetch for next time
+        const model = resolveModel(this.config.provider, this.config.modelId);
+        prefetchLlmSuggestions(model, toolName, args, preview);
       });
     };
   }
@@ -421,10 +431,41 @@ export class WebUiBackend implements UiBackend {
           this.permissionResolve = null;
           const isAlways = cmd.decision === "always_allow" || cmd.decision === "always_allow_save";
           const isSave = cmd.decision === "always_allow_save";
+          const isSessionGrant = (cmd.decision === "always_allow" && !isSave) || (cmd.decision === "allow" && !!(cmd as any).sessionGrantPattern);
+          const sessionPattern = (cmd as any).sessionGrantPattern as string | undefined;
           resolve({
             decision: isAlways ? "allow" : cmd.decision as "allow" | "deny",
             rememberForSession: isAlways,
-            persistRule: isSave ? { tool: this.currentPermissionTool, decision: "allow" } : undefined,
+            sessionGrantPattern: isSessionGrant ? sessionPattern : undefined,
+            persistRule: isSave
+              ? (() => {
+                  const mode = ((cmd as any).fuzzyMode as number | undefined) ?? 0;
+                  if (mode === 2) {
+                    // fuzzy args
+                    const fuzzyArg = deriveFuzzyArgPattern(this.currentPermissionTool, this.currentPermissionArgs);
+                    return fuzzyArg
+                      ? { tool: this.currentPermissionTool, argPattern: fuzzyArg, decision: "allow" as const }
+                      : { tool: this.currentPermissionTool, decision: "allow" as const };
+                  }
+                  if (mode >= 3) {
+                    // LLM suggestion — pattern is JSON with toolPattern + argPattern
+                    try {
+                      const p = JSON.parse((cmd as any).toolNamePattern || "{}");
+                      return {
+                        tool: p.toolPattern ?? this.currentPermissionTool,
+                        argPattern: p.argPattern ?? undefined,
+                        decision: "allow" as const,
+                      };
+                    } catch { /* fall through */ }
+                  }
+                  if (mode === 1) {
+                    // fuzzy tool: use toolNamePattern (server glob or raw tool name)
+                    return { tool: (cmd as any).toolNamePattern ?? this.currentPermissionTool, decision: "allow" as const };
+                  }
+                  // mode 0: exact
+                  return { tool: this.currentPermissionTool, decision: "allow" as const };
+                })()
+              : undefined,
           });
         }
         break;

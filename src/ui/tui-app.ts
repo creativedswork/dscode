@@ -32,6 +32,8 @@ import type { ConfigWatch } from "../core/config-watch.js";
 import type { MCPManager } from "../mcp/manager.js";
 import type { AppInstance } from "../mcp/app/types.js";
 import { c, editorTheme } from "./theme.js";
+import { deriveFuzzyPattern, deriveFuzzyArgPattern, describeFuzzyArgPattern } from "../permissions/fuzzy.js";
+import { prefetchLlmSuggestions, getLlmSuggestions, LlmSuggestion } from "../permissions/fuzzy-llm.js";
 import { ConversationView, findPermOptionByKey } from "./conversation.js";
 import { getSlashCommandAutocomplete, executeSlashCommand } from "./commands.js";
 import { buildMcpServers, createInitialMcpBrowserState, getMcpVisibleRows, reduceMcpBrowserState, renderMcpServerList, renderMcpToolList } from "./mcp-browser.js";
@@ -247,7 +249,17 @@ export class TuiApp {
   ): Promise<PermissionPromptResult> {
     this.pendingPermissionContext = { toolName, args };
     this.permissionExplainMode = false;
-    this.conversation.showPermissionPrompt(toolName, preview);
+    const fuzzy = deriveFuzzyPattern(toolName);
+    const fuzzyArgDesc = describeFuzzyArgPattern(toolName, args);
+    const llmSuggestions = getLlmSuggestions(toolName, args);
+    this.conversation.showPermissionPrompt(toolName, preview, fuzzy, fuzzyArgDesc);
+    if (llmSuggestions.length > 0) {
+      const ap = this.conversation.activePermission;
+      if (ap) ap.llmSuggestions = llmSuggestions;
+    }
+    // Prefetch for next time (fire-and-forget)
+    const model = resolveModel(this.deps.config.provider, this.deps.config.modelId);
+    prefetchLlmSuggestions(model, toolName, args, preview);
     return new Promise((resolve) => {
       this.resolvePermission = resolve;
     });
@@ -299,15 +311,21 @@ export class TuiApp {
       return;
     }
     if (option === "always_allow") {
-      this.resolvePermissionChoice({ decision: "allow", rememberForSession: true });
+      const fuzzy = deriveFuzzyPattern(this.pendingPermissionContext?.toolName ?? "");
+      if (fuzzy && fuzzy !== this.pendingPermissionContext?.toolName) {
+        this.conversation.enterSubMode("session", fuzzy);
+      } else {
+        this.resolvePermissionChoice({ decision: "allow", rememberForSession: true });
+      }
       return;
     }
     if (option === "always_allow_save") {
-      const ctx = this.pendingPermissionContext;
-      const persistRule = ctx
-        ? this.buildPersistedRule(ctx.toolName, ctx.args, "saved from permission prompt")
-        : undefined;
-      this.resolvePermissionChoice({ decision: "allow", rememberForSession: true, persistRule });
+      const fuzzy = deriveFuzzyPattern(this.pendingPermissionContext?.toolName ?? "");
+      if (fuzzy) {
+        this.conversation.enterSubMode("save", fuzzy);
+      } else {
+        this.saveExactRule();
+      }
       return;
     }
     if (option === "explain") {
@@ -318,7 +336,69 @@ export class TuiApp {
       this.tui.requestRender(true);
       return;
     }
-    this.resolvePermissionChoice({ decision: "allow" });
+    // Allow (one-time)
+    const fuzzy = deriveFuzzyPattern(this.pendingPermissionContext?.toolName ?? "");
+    if (fuzzy && fuzzy !== this.pendingPermissionContext?.toolName) {
+      this.conversation.enterSubMode("allow", fuzzy);
+    } else {
+      this.resolvePermissionChoice({ decision: "allow" });
+    }
+  }
+
+  private saveExactRule(): void {
+    const ctx = this.pendingPermissionContext;
+    const persistRule = ctx
+      ? this.buildPersistedRule(ctx.toolName, ctx.args, "saved from permission prompt")
+      : undefined;
+    this.resolvePermissionChoice({ decision: "allow", rememberForSession: true, persistRule });
+  }
+
+  private applyFuzzySaveOption(subIdx: number): void {
+    const ctx = this.pendingPermissionContext;
+    if (!ctx) { this.resolvePermissionChoice({ decision: "deny" }); return; }
+    if (subIdx === 0) { this.saveExactRule(); }
+    else if (subIdx === 1) {
+      const fuzzy = deriveFuzzyPattern(ctx.toolName);
+      this.resolvePermissionChoice({ decision: "allow", rememberForSession: true, persistRule: fuzzy ? { tool: fuzzy, decision: "allow" as const } : undefined });
+    } else if (subIdx === 2) {
+      const fuzzyArg = deriveFuzzyArgPattern(ctx.toolName, ctx.args);
+      this.resolvePermissionChoice({ decision: "allow", rememberForSession: true, persistRule: fuzzyArg ? { tool: ctx.toolName, argPattern: fuzzyArg, decision: "allow" as const } : undefined });
+    } else {
+      // LLM suggestions
+      const llm = this.conversation.activePermission?.llmSuggestions;
+      const s = llm ? llm[subIdx - 3] : null;
+      if (s) {
+        this.resolvePermissionChoice({
+          decision: "allow",
+          rememberForSession: true,
+          persistRule: {
+            tool: s.toolPattern ?? ctx.toolName,
+            argPattern: s.argPattern ?? undefined,
+            decision: "allow" as const,
+          },
+        });
+      } else {
+        this.saveExactRule();
+      }
+    }
+  }
+
+  private applySessionGrantOption(subIdx: number): void {
+    if (subIdx === 0) {
+      this.resolvePermissionChoice({ decision: "allow", rememberForSession: true });
+    } else {
+      const fuzzy = deriveFuzzyPattern(this.pendingPermissionContext?.toolName ?? "");
+      this.resolvePermissionChoice({ decision: "allow", rememberForSession: true, sessionGrantPattern: fuzzy ?? undefined });
+    }
+  }
+
+  private applyAllowOption(subIdx: number): void {
+    if (subIdx === 0) {
+      this.resolvePermissionChoice({ decision: "allow" });
+    } else {
+      const fuzzy = deriveFuzzyPattern(this.pendingPermissionContext?.toolName ?? "");
+      this.resolvePermissionChoice({ decision: "allow", rememberForSession: true, sessionGrantPattern: fuzzy ?? undefined });
+    }
   }
 
   private handleInput(data: string): boolean {
@@ -334,34 +414,61 @@ export class TuiApp {
     }
 
     if (this.resolvePermission) {
-      if (matchesKey(data, Key.up)) {
-        if (this.canNavigateMenu("up")) {
-          this.conversation.permNavigate(-1);
+      // Sub-mode takes priority
+      if (this.conversation.isInSubMode()) {
+        if (matchesKey(data, Key.up)) { this.conversation.permSubNavigate(-1); return true; }
+        if (matchesKey(data, Key.down)) { this.conversation.permSubNavigate(1); return true; }
+        if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
+          const idx = this.conversation.permSubSelect();
+          const t = this.conversation.permSubModeType;
+          if (t === "session") this.applySessionGrantOption(idx);
+          else if (t === "allow") this.applyAllowOption(idx);
+          else this.applyFuzzySaveOption(idx);
+          return true;
+        }
+        if (matchesKey(data, Key.escape) || matchesKey(data, "ctrl+c") || data === "\x03") {
+          this.conversation.cancelSubMode(); return true;
+        }
+        if (data === "1") {
+          const t = this.conversation.permSubModeType;
+          if (t === "session") this.applySessionGrantOption(0);
+          else if (t === "allow") this.applyAllowOption(0);
+          else this.applyFuzzySaveOption(0);
+          return true;
+        }
+        if (data === "2") {
+          const t = this.conversation.permSubModeType;
+          if (t === "session") this.applySessionGrantOption(1);
+          else if (t === "allow") this.applyAllowOption(1);
+          else this.applyFuzzySaveOption(1);
+          return true;
         }
         return true;
       }
+
+      if (matchesKey(data, Key.up)) {
+        if (this.canNavigateMenu("up")) { this.conversation.permNavigate(-1); }
+        return true;
+      }
       if (matchesKey(data, Key.down)) {
-        if (this.canNavigateMenu("down")) {
-          this.conversation.permNavigate(1);
-        }
+        if (this.canNavigateMenu("down")) { this.conversation.permNavigate(1); }
         return true;
       }
       if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
         const sel = this.conversation.permSelect();
-        if (sel) {
-          this.applyPermissionOption(sel.value);
-        }
+        if (sel) { this.applyPermissionOption(sel.value); }
         return true;
       }
       if (matchesKey(data, Key.escape) || matchesKey(data, "ctrl+c") || data === "\x03") {
-        this.resolvePermissionChoice({ decision: "deny" });
+        if (this.conversation.isInSubMode()) {
+          this.conversation.cancelSubMode();
+        } else if (!this.conversation.justCancelledSubMode) {
+          this.resolvePermissionChoice({ decision: "deny" });
+        }
         return true;
       }
       const shortcut = findPermOptionByKey(data);
-      if (shortcut) {
-        this.applyPermissionOption(shortcut.value);
-        return true;
-      }
+      if (shortcut) { this.applyPermissionOption(shortcut.value); return true; }
       return true;
     }
 

@@ -127,8 +127,8 @@ export class ToolRegistry {
 
     const grouped = new Map<string, string[]>();
     for (const name of this.deferredToolNames) {
-      const prefix = name.startsWith("mcp_")
-        ? name.split("_").slice(0, 2).join("_")
+      const prefix = name.startsWith("mcp__")
+        ? name.split("__").slice(0, 2).join("__")
         : "other";
       if (!grouped.has(prefix)) grouped.set(prefix, []);
       grouped.get(prefix)!.push(name);

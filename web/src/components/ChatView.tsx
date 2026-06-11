@@ -7,6 +7,9 @@ import { Warning } from "@phosphor-icons/react";
 interface PermissionPrompt {
   toolName: string;
   preview: string;
+  fuzzyPattern?: string | null;
+  fuzzyArgDesc?: string | null;
+  llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[];
 }
 
 interface ChatViewProps {
@@ -14,8 +17,8 @@ interface ChatViewProps {
   processing: boolean;
   hasStreaming: boolean;
   turnStartRef: React.MutableRefObject<number>;
-  permissionPrompt: PermissionPrompt | null;
-  onPermission: (decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string) => void;
+  permissionPrompt: ({ toolName: string; preview: string; fuzzyPattern?: string | null; fuzzyArgDesc?: string | null; llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[] }) | null;
+  onPermission: (decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string, toolNamePattern?: string, fuzzyMode?: number) => void;
 }
 export function ChatView({ messages, processing, hasStreaming, turnStartRef, permissionPrompt, onPermission }: ChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -114,6 +117,9 @@ export function ChatView({ messages, processing, hasStreaming, turnStartRef, per
         <InlinePermission
           toolName={permissionPrompt.toolName}
           preview={permissionPrompt.preview}
+          fuzzyPattern={permissionPrompt.fuzzyPattern}
+          fuzzyArgDesc={permissionPrompt.fuzzyArgDesc}
+          llmSuggestions={permissionPrompt.llmSuggestions}
           onDecision={onPermission}
         />
       )}
@@ -197,14 +203,34 @@ function WaitingBubble({ elapsed }: { elapsed: number }) {
 function InlinePermission({
   toolName,
   preview,
+  fuzzyPattern,
+  fuzzyArgDesc,
+  llmSuggestions,
   onDecision,
 }: {
   toolName: string;
   preview: string;
-  onDecision: (decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string) => void;
+  fuzzyPattern?: string | null;
+  fuzzyArgDesc?: string | null;
+  llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[];
+  onDecision: (decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string, toolNamePattern?: string, fuzzyMode?: number) => void;
 }) {
   const [explainMode, setExplainMode] = useState(false);
   const [explainText, setExplainText] = useState("");
+  const [showFuzzyOptions, setShowFuzzyOptions] = useState(false);
+  const [subModeType, setSubModeType] = useState<"save" | "session" | "allow">("save");
+  const handleFuzzySelect = (mode: number) => {
+    setShowFuzzyOptions(false);
+    if (subModeType === "session" || subModeType === "allow") {
+      if (mode === 0) {
+        onDecision("always_allow");
+      } else {
+        onDecision("always_allow", undefined, fuzzyPattern ?? undefined, mode);
+      }
+    } else {
+      onDecision("always_allow_save", undefined, mode === 1 ? fuzzyPattern ?? undefined : undefined, mode);
+    }
+  };
 
   const handleSubmitExplain = () => {
     if (explainText.trim()) {
@@ -255,11 +281,60 @@ function InlinePermission({
               <button onClick={() => { setExplainText(""); setExplainMode(false); }} className="btn-secondary text-xs">Cancel</button>
             </div>
           </div>
+        ) : showFuzzyOptions ? (
+          <div className="flex gap-2 flex-wrap">
+            {subModeType === "session" ? (
+              <>
+                <button onClick={() => handleFuzzySelect(0)} className="btn-secondary text-xs">
+                  Exact: {toolName}
+                </button>
+                <button onClick={() => handleFuzzySelect(1)} className="btn-secondary text-xs">
+                  Fuzzy: {fuzzyPattern}
+                </button>
+              </>
+            ) : (
+              <>
+                <button onClick={() => handleFuzzySelect(0)} className="btn-secondary text-xs">
+                  Exact: {toolName}{!toolName.startsWith("mcp__") ? " (this call)" : ""}
+                </button>
+                <button onClick={() => handleFuzzySelect(1)} className="btn-secondary text-xs">
+                  {toolName.startsWith("mcp__") ? fuzzyPattern : "All calls"}
+                </button>
+                {fuzzyArgDesc && (
+                  <button onClick={() => handleFuzzySelect(2)} className="btn-secondary text-xs">
+                    {fuzzyArgDesc}
+                  </button>
+                )}
+                {llmSuggestions && llmSuggestions.map((s, i) => (
+                  <button key={i} onClick={() => handleFuzzySelect(3 + i)} className="btn-secondary text-xs">
+                    [AI] {s.label}
+                  </button>
+                ))}
+              </>
+            )}
+            <button onClick={() => setShowFuzzyOptions(false)} className="btn text-xs" style={{ backgroundColor: "var(--color-surface-hover)" }}>
+              Cancel
+            </button>
+          </div>
         ) : (
-          <div className="flex gap-2">
-            <button onClick={() => onDecision("allow")} className="btn-primary text-xs">Allow</button>
-            <button onClick={() => onDecision("always_allow")} className="btn-secondary text-xs">Always Allow</button>
-            <button onClick={() => onDecision("always_allow_save")} className="btn-secondary text-xs">Save to Settings</button>
+          <div className="flex gap-2 flex-wrap">
+            {(fuzzyPattern && fuzzyPattern !== toolName) ? (
+              <button onClick={() => { setSubModeType("allow"); setShowFuzzyOptions(true); }} className="btn-primary text-xs">
+                Allow ▸
+              </button>
+            ) : (
+              <button onClick={() => onDecision("allow")} className="btn-primary text-xs">Allow</button>
+            )}
+            {(fuzzyPattern && fuzzyPattern !== toolName) ? (
+              <button onClick={() => { setSubModeType("session"); setShowFuzzyOptions(true); }} className="btn-secondary text-xs">
+                Always Allow ▸
+              </button>
+            ) : (
+              <button onClick={() => onDecision("always_allow")} className="btn-secondary text-xs">Always Allow</button>
+            )}
+            <button onClick={() => { setSubModeType("save"); setShowFuzzyOptions(true); }} className="btn-secondary text-xs">
+              Save to Settings ▸
+            </button>
             <button
               onClick={() => setExplainMode(true)}
               className="btn text-xs"

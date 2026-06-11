@@ -160,6 +160,7 @@ export interface PermissionPromptResult {
   decision: "allow" | "deny";
   rememberForSession?: boolean;
   persistRule?: PermissionRuleConfig;
+  sessionGrantPattern?: string;
   denyReason?: string;
 }
 

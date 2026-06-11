@@ -92,8 +92,13 @@ export class ConversationView {
   private tui: TUI;
   private draftBlocks = new Map<number, { startIndex: number; count: number }>();
 
-  private activePermission: PermissionPrompt | null = null;
+  private _activePermission: PermissionPrompt | null = null;
   private permSelected = 0;
+  private permSubMode = false;
+  private _permSubModeType: "save" | "session" | "allow" = "save";
+  private permSubSelected = 0;
+  private lastSubNavAt = 0;
+  private lastCancelSubAt = 0;
 
   private imageTheme: ImageTheme = {
     fallbackColor: c.dim,
@@ -115,8 +120,12 @@ export class ConversationView {
     this.currentAssistantText = "";
     this.toolEntries = [];
     this.renderedToolCount = 0;
-    this.activePermission = null;
+    this._activePermission = null;
     this.permSelected = 0;
+    this.permSubMode = false;
+    this._permSubModeType = "save";
+    this.permSubSelected = 0;
+    this.lastSubNavAt = 0;
     this.draftBlocks.clear();
     while (this.box.children.length > 0) { this.box.removeChild(this.box.children[0]); }
     this.tui.requestRender(true);
@@ -355,9 +364,12 @@ export class ConversationView {
     this.render();
   }
 
-  showPermissionPrompt(toolName: string, preview: string): void {
-    this.activePermission = { toolName, preview };
+  showPermissionPrompt(toolName: string, preview: string, fuzzyPattern?: string | null, fuzzyArgDesc?: string | null): void {
+    this._activePermission = { toolName, preview, fuzzyPattern: fuzzyPattern ?? null, fuzzyArgDesc: fuzzyArgDesc ?? null };
     this.permSelected = 0;
+    this.permSubMode = false;
+    this._permSubModeType = "save";
+    this.permSubSelected = 0;
     this.render();
   }
 
@@ -367,12 +379,61 @@ export class ConversationView {
   }
 
   permSelect(): PermOption | null {
-    return this.activePermission ? PERM_OPTIONS[this.permSelected] : null;
+    return this._activePermission ? PERM_OPTIONS[this.permSelected] : null;
+  }
+
+  isInSubMode(): boolean {
+    return this.permSubMode;
+  }
+
+  get activePermission(): PermissionPrompt | null {
+    return this._activePermission;
+  }
+
+  get permSubModeType(): "save" | "session" | "allow" {
+    return this._permSubModeType;
+  }
+
+  enterSubMode(type: "save" | "session" | "allow" = "save", _fuzzy?: string | null): void {
+    this.permSubMode = true;
+    this._permSubModeType = type;
+    this.permSubSelected = 0;
+    this.lastSubNavAt = 0;
+    this.render();
+  }
+
+  cancelSubMode(): void {
+    this.permSubMode = false;
+    this.permSubSelected = 0;
+    this.lastCancelSubAt = Date.now();
+    this.render();
+  }
+
+  /** True if sub-mode was cancelled within the last 200ms — used to debounce double-firing Escape. */
+  get justCancelledSubMode(): boolean {
+    return Date.now() - this.lastCancelSubAt < 200;
+  }
+
+  permSubNavigate(direction: -1 | 1): void {
+    const now = Date.now();
+    if (now - this.lastSubNavAt < 120) return;
+    this.lastSubNavAt = now;
+    const fa = this._activePermission?.fuzzyArgDesc;
+    const llm = this._activePermission?.llmSuggestions;
+    const count = (fa ? 3 : 2) + (llm ? llm.length : 0);
+    this.permSubSelected = (this.permSubSelected + direction + count) % count;
+    this.render();
+  }
+
+  permSubSelect(): number {
+    return this.permSubSelected;
   }
 
   clearPermissionPrompt(): void {
-    this.activePermission = null;
+    this._activePermission = null;
     this.permSelected = 0;
+    this.permSubMode = false;
+    this.permSubSelected = 0;
   }
 
   private pushText(content: string): void {
@@ -383,13 +444,17 @@ export class ConversationView {
     const lines: string[] = [];
     const maxLineLen = 60;
 
-    if (!this.activePermission) return lines;
+    if (!this._activePermission) return lines;
+
+    if (this.permSubMode) {
+      return this.renderPermSubOptions(lines);
+    }
 
     lines.push("");
     lines.push(c.yellow.bold(" Permissions ────────────────────────────────────"));
-    lines.push(c.yellow(` Tool: ${this.activePermission.toolName}`));
-    if (this.activePermission.preview) {
-      for (const pl of this.activePermission.preview.split("\n").slice(0, 6)) {
+    lines.push(c.yellow(` Tool: ${this._activePermission.toolName}`));
+    if (this._activePermission.preview) {
+      for (const pl of this._activePermission.preview.split("\n").slice(0, 6)) {
         lines.push(c.dim(`   ${pl.slice(0, maxLineLen)}`));
       }
     }
@@ -403,7 +468,69 @@ export class ConversationView {
       lines.push(`${prefix} ${label}  ${hint}`);
     }
     lines.push(c.dim(" ──────────────────────────────────────────────────"));
-    lines.push(c.dim(" ↑↓ to navigate  Enter to confirm  A/I shortcuts  Esc to deny"));
+    lines.push(c.dim(" ↑↓ to navigate  Enter to confirm  A/I/S shortcuts  Esc to deny"));
+    return lines;
+  }
+
+  private renderPermSubOptions(lines: string[]): string[] {
+    const fp = this._activePermission?.fuzzyPattern;
+    const tn = this._activePermission?.toolName ?? "";
+    const fa = this._activePermission?.fuzzyArgDesc;
+    const isMcp = tn.startsWith("mcp__");
+    const isSession = this._permSubModeType === "session" || this._permSubModeType === "allow";
+
+    if (isSession) {
+      const fuzzyLabel = isMcp ? `fuzzy: ${fp}` : `fuzzy: ${tn} (all calls)`;
+      const subOptions = [
+        { label: `exact: ${tn}`, key: "1" },
+        { label: fuzzyLabel, key: "2" },
+      ];
+      lines.push("");
+      lines.push(c.yellow.bold(" Always Allow ──────────────────────────────────────"));
+      lines.push(c.dim(" Choose exact or fuzzy pattern:"));
+      lines.push("");
+      for (let i = 0; i < subOptions.length; i++) {
+        const opt = subOptions[i];
+        const selected = i === this.permSubSelected;
+        const prefix = selected ? c.cyan(" ▶") : "  ";
+        const label = selected ? c.bold(c.magenta(opt.label)) : c.dim(opt.label);
+        lines.push(`${prefix} ${label}`);
+      }
+      lines.push(c.dim(" ──────────────────────────────────────────────────────"));
+      lines.push(c.dim(" ↑↓ to choose  Enter to confirm  Esc to cancel"));
+      return lines;
+    }
+
+    const exactLabel = isMcp ? `exact: ${tn}` : `exact: ${tn} (this call)`;
+    const fuzzyLabel = isMcp ? `fuzzy: ${fp ?? ""}` : `fuzzy: ${tn} (all calls)`;
+    const subOptions = [
+      { label: exactLabel, key: "1" },
+      { label: fuzzyLabel, key: "2" },
+    ];
+    if (fa) {
+      subOptions.push({ label: `fuzzy args: ${tn} ${fa}`, key: "3" });
+    }
+    // LLM suggestions
+    const llm = this._activePermission?.llmSuggestions;
+    if (llm && llm.length > 0) {
+      for (let i = 0; i < llm.length; i++) {
+        subOptions.push({ label: `[AI] ${llm[i].label}`, key: `${3 + i}` });
+      }
+    }
+
+    lines.push("");
+    lines.push(c.yellow.bold(" Save Rule ──────────────────────────────────────────────────────"));
+    lines.push(c.dim(" Choose exact or fuzzy pattern:"));
+    lines.push("");
+    for (let i = 0; i < subOptions.length; i++) {
+      const opt = subOptions[i];
+      const selected = i === this.permSubSelected;
+      const prefix = selected ? c.cyan(" ▶") : "  ";
+      const label = selected ? c.bold(c.magenta(opt.label)) : c.dim(opt.label);
+      lines.push(`${prefix} ${label}`);
+    }
+    lines.push(c.dim(" ──────────────────────────────────────────────────────"));
+    lines.push(c.dim(" ↑↓ to choose  Enter to confirm  Esc to cancel"));
     return lines;
   }
 
@@ -470,7 +597,7 @@ export class ConversationView {
       this.liveComponents.push(liveText);
     }
 
-    if (this.activePermission) {
+    if (this._activePermission) {
       const permText = new Text(this.renderPermPrompt().join("\n"));
       this.box.addChild(permText);
       this.liveComponents.push(permText);
