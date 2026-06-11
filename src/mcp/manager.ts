@@ -11,6 +11,7 @@ import type {
   MCPToolDefinition,
   MCPToolResult,
 } from "./types.js";
+import { mcpDriverName, mcpToolName } from "./names.js";
 import type { ToolUiInfo, McpUiResourceCsp, McpUiResourcePermissions } from "./app/types.js";
 import { MCPClient } from "./client.js";
 import type { DriverRegistry } from "../drivers/registry.js";
@@ -248,7 +249,7 @@ export class MCPManager {
       for (const def of client.getAllToolDefs()) {
         const visibility = def._meta?.ui?.visibility;
         if (visibility && visibility.length === 1 && visibility[0] === "app") {
-          names.push(`mcp__${serverName}__${def.name}`);
+          names.push(mcpToolName(serverName, def.name));
         }
       }
     }
@@ -348,7 +349,7 @@ export class MCPManager {
 
     // Unregister stale driver
     if (this.driverRegistry) {
-      this.driverRegistry.unregister(`mcp__${name}`);
+      this.driverRegistry.unregister(mcpDriverName(name));
     }
 
     state.status = "connecting";
@@ -449,7 +450,7 @@ export class MCPManager {
       try { await existing.close(); } catch { /* best-effort */ }
       this.clients.delete(name);
       if (this.driverRegistry) {
-        this.driverRegistry.unregister(`mcp__${name}`);
+        this.driverRegistry.unregister(mcpDriverName(name));
       }
     }
 
@@ -500,7 +501,7 @@ export class MCPManager {
 
     this.clients.delete(name);
     if (this.driverRegistry) {
-      this.driverRegistry.unregister(`mcp__${name}`);
+      this.driverRegistry.unregister(mcpDriverName(name));
     }
 
     state.status = "disconnected";
@@ -511,7 +512,7 @@ export class MCPManager {
   }
 
   private buildAgentTool(serverName: string, def: MCPToolDefinition, client: MCPClient): AgentTool<any> {
-    const toolName = `mcp__${serverName}__${def.name}`;
+    const toolName = mcpToolName(serverName, def.name);
     if (def.alwaysLoad) {
       this.alwaysLoadToolNames.add(toolName);
     }
@@ -608,7 +609,7 @@ export class MCPManager {
     const description = this.configs.find((c) => c.name === serverName)?.description ?? "";
 
     const driver: Driver = {
-      name: `mcp__${serverName}`,
+      name: mcpDriverName(serverName),
       description: `MCP: ${description || serverName}`,
       tools: agentTools,
       source: "mcp",

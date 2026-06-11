@@ -4,6 +4,7 @@ import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import type { DriverRegistry } from "../drivers/registry.js";
 import type { ToolRegistry } from "../drivers/tool-registry.js";
 import type { MCPServerState } from "../mcp/types.js";
+import { mcpDriverName } from "../mcp/names.js";
 import { c } from "./theme.js";
 
 const MIN_VISIBLE_ROWS = 6;
@@ -167,7 +168,7 @@ export function buildMcpServers(
   toolRegistry: ToolRegistry,
 ): McpServerViewModel[] {
   return states.map((state) => {
-    const driver = driverRegistry.get(`mcp_${state.config.name}`);
+    const driver = driverRegistry.get(mcpDriverName(state.config.name));
     const tools = (driver?.tools ?? []).map((tool) => toToolViewModel(tool, toolRegistry));
     return {
       name: state.config.name,

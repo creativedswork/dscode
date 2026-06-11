@@ -2,6 +2,8 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 
 import type { DriverRegistry } from "./registry.js";
 
+import { isMcpToolName, extractMcpServerPrefix } from "../mcp/names.js";
+
 export interface ToolSearchEntry {
   name: string;
   description: string;
@@ -127,9 +129,7 @@ export class ToolRegistry {
 
     const grouped = new Map<string, string[]>();
     for (const name of this.deferredToolNames) {
-      const prefix = name.startsWith("mcp__")
-        ? name.split("__").slice(0, 2).join("__")
-        : "other";
+      const prefix = extractMcpServerPrefix(name) ?? "other";
       if (!grouped.has(prefix)) grouped.set(prefix, []);
       grouped.get(prefix)!.push(name);
     }

@@ -254,13 +254,26 @@ function McpPanel({
                   </div>
                 </div>
                 <div className="flex items-center gap-1.5">
-                  <button
+                  <div
+                  role="button"
+                  tabIndex={0}
                   onClick={(ev) => {
                     ev.stopPropagation();
                     if (s.status === "connected" || s.status === "connecting") {
                       onServerAction("disconnect", s.name);
                     } else {
                       onServerAction("connect", s.name);
+                    }
+                  }}
+                  onKeyDown={(ev) => {
+                    if (ev.key === "Enter" || ev.key === " ") {
+                      ev.preventDefault();
+                      ev.stopPropagation();
+                      if (s.status === "connected" || s.status === "connecting") {
+                        onServerAction("disconnect", s.name);
+                      } else {
+                        onServerAction("connect", s.name);
+                      }
                     }
                   }}
                   className="flex-shrink-0"
@@ -301,7 +314,7 @@ function McpPanel({
                       transition: "left 200ms cubic-bezier(0.34, 1.56, 0.64, 1)",
                     }}
                   />
-                </button>
+                </div>
                 </div>
               </button>
 
@@ -403,9 +416,8 @@ function SettingsPanel({
         <select
           value={providerInput}
           onChange={(e) => {
-            const value = e.target.value;
-            setProviderInput(value);
-            if (value) onChange("set_provider", value);
+            setProviderInput(e.target.value);
+            onChange("set_provider", e.target.value);
           }}
           style={selectStyle}
         >
@@ -426,9 +438,8 @@ function SettingsPanel({
         <select
           value={modelInput}
           onChange={(e) => {
-            const value = e.target.value;
-            setModelInput(value);
-            if (value) onChange("set_model", value);
+            setModelInput(e.target.value);
+            onChange("set_model", e.target.value);
           }}
           style={selectStyle}
         >
@@ -540,112 +551,92 @@ function SettingsPanel({
             )}
           </div>
 
-          <div>
-            <label
-              className="text-xs mb-1 block"
-              style={{ color: "var(--color-text-muted)" }}
-            >
-              Vision Provider
-            </label>
-            <select
-              value={config.vision?.provider ?? ""}
-              onChange={(e) => {
-                if (e.target.value) onChange("set_vision_provider", e.target.value);
-              }}
-              style={selectStyle}
-            >
-              <option value="">(not set)</option>
-              {config.visionProviders.map((p) => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-            </select>
-          </div>
+          {showVisionForm && (
+            <>
+              <div>
+                <label className="text-xs mb-1 block" style={{ color: "var(--color-text-muted)" }}>Provider</label>
+                <select
+                  value={config.vision?.provider ?? ""}
+                  onChange={(e) => onChange("set_vision_provider", e.target.value)}
+                  style={selectStyle}
+                >
+                  <option value="">Select...</option>
+                  {config.visionProviders.map((p) => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs mb-1 block" style={{ color: "var(--color-text-muted)" }}>Model</label>
+                <select
+                  value={config.vision?.model ?? ""}
+                  onChange={(e) => onChange("set_vision_model", e.target.value)}
+                  style={selectStyle}
+                >
+                  <option value="">Select...</option>
+                  {config.visionModels.map((m) => (
+                    <option key={m.id} value={m.id}>{m.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="text-xs mb-1 block" style={{ color: "var(--color-text-muted)" }}>API Key</label>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                    className="input text-xs flex-1"
+                    placeholder={config.vision?.key ? "••••••••" : "Enter vision API key"}
+                  />
+                  <button
+                    onClick={() => {
+                      if (apiKey) onChange("set_vision_key", apiKey);
+                      setApiKey("");
+                    }}
+                    className="btn-primary text-xs px-3"
+                  >
+                    Set
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
 
-          <div>
-            <label
-              className="text-xs mb-1 block"
+          {!config.vision && showVisionForm && (
+            <button
+              onClick={() => setShowVisionForm(false)}
+              className="text-xs"
               style={{ color: "var(--color-text-muted)" }}
             >
-              Vision Model
-            </label>
-            <select
-              value={config.vision?.model ?? ""}
-              onChange={(e) => {
-                if (e.target.value) onChange("set_vision_model", e.target.value);
-              }}
-              style={selectStyle}
-            >
-              <option value="">(not set)</option>
-              {config.visionModels.map((m) => (
-                <option key={m.id} value={m.id}>{m.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label
-              className="text-xs mb-1 block"
-              style={{ color: "var(--color-text-muted)" }}
-            >
-              Vision Key
-            </label>
-            <div className="flex gap-2">
-              <input
-                type="password"
-                id="vision-key-input"
-                className="input text-xs flex-1"
-                placeholder={config.vision?.key ? "sk-***hidden***" : "sk-..."}
-              />
-              <button
-                onClick={() => {
-                  const input = document.getElementById("vision-key-input") as HTMLInputElement;
-                  if (input?.value) {
-                    onChange("set_vision_key", input.value);
-                    input.value = "";
-                  }
-                }}
-                className="btn-primary text-xs px-3"
-              >
-                Set
-              </button>
-            </div>
-          </div>
+              Cancel
+            </button>
+          )}
         </div>
       ) : (
         <button
           onClick={() => setShowVisionForm(true)}
-          className="btn-secondary text-xs w-full flex items-center justify-center gap-2"
+          className="w-full text-left px-3 py-1.5 text-sm transition-colors duration-200 flex items-center gap-2"
+          style={{ borderRadius: "8px" }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--color-surface-hover)"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
         >
           <Plus size={14} weight="bold" style={{ color: "var(--color-accent)" }} />
-          Add Vision Model
+          <span style={{ color: "var(--color-accent)" }}>Add Vision Model</span>
         </button>
       )}
 
-      {/* Info */}
+      {/* Max Tokens (read-only) */}
       <div
-        className="pt-2 space-y-1 text-xs"
-        style={{
-          borderTop: "1px solid var(--color-border)",
-          color: "var(--color-text-muted)",
-        }}
+        className="pt-2"
+        style={{ borderTop: "1px solid var(--color-border)" }}
       >
-        <div className="flex justify-between">
-          <span>Provider</span>
-          <span style={{ color: "var(--color-text)" }}>{config.provider}</span>
-        </div>
-        <div className="flex justify-between">
-          <span>Project</span>
-          <span
-            className="font-mono truncate ml-2 max-w-[150px]"
-            style={{ color: "var(--color-text)" }}
-          >
-            {config.projectPath}
-          </span>
-        </div>
-        <div className="flex justify-between">
-          <span>Max Tokens</span>
-          <span style={{ color: "var(--color-text)" }}>{config.maxTokens}</span>
-        </div>
+        <p
+          className="text-xs"
+          style={{ color: "var(--color-text-muted)" }}
+        >
+          Max Tokens: {config.maxTokens.toLocaleString()}
+        </p>
       </div>
     </div>
   );
