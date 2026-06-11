@@ -119,6 +119,8 @@ dscode is purpose-built for DeepSeek V4 Pro — our recommended model for digita
 </tr>
 </table>
 
+> **Tip:** In TUI, paste clipboard images with `Ctrl+V` (macOS) or `/image clipboard`.
+
 ---
 
 ## MCP in 30 seconds

@@ -150,6 +150,10 @@ export class TuiApp {
   // Pre-drained images: captured in input listener before Editor's onChange("") clears them
   private drainedSubmitImages: ImageContent[] | null = null;
   private lastPasteTime = 0;
+  // ── Kitty protocol multi-chunk buffer ──
+  // Kitty transmits large images in chunks. Accumulate base64 payloads here
+  // keyed by a synthetic ID until the final chunk (v=8) arrives.
+  private kittyChunkBuffer: { base64: string; timer: ReturnType<typeof setTimeout> } | null = null;
   private sigintHandler = () => this.handleCtrlC();
 
   constructor(deps: HarnessAPI) {
@@ -661,8 +665,9 @@ export class TuiApp {
     // ── Kitty image protocol (ESC _ G ... ESC \) ──
     // These APC sequences can arrive outside bracketed paste when the terminal
     // natively pastes images via Kitty protocol.
-    if (this.handleKittyImageProtocol(data)) {
-      return { consume: true };
+    const kittyResult = this.handleKittyProtocol(data);
+    if (kittyResult) {
+      return kittyResult;
     }
 
     // ── Bracketed paste ──
@@ -718,25 +723,92 @@ export class TuiApp {
   /**
    * Handle Kitty image protocol sequences.
    * Kitty uses APC sequences: ESC _ G <params> ; <base64> ESC \
-   * These can arrive as direct input when pasting images in Kitty-native terminals.
+   * Format: f=<format> (24=PNG), s=<chunk_size>, v=<version> (8=final, 16=chunk)
+   * These can arrive as direct input when pasting images in Kitty-native terminals
+   * (Ghostty, Kitty, WezTerm with Kitty protocol enabled).
+   *
+   * Returns an InputListenerResult:
+   * - null: not a Kitty image sequence, let caller handle it
+   * - { consume: true }: pure image data, consumed entirely
+   * - { data: string }: text mixed with kitty data, pass text to editor
    */
-  private handleKittyImageProtocol(data: string): boolean {
-    // Kitty image transmission always contains ESC _ G
-    if (!data.includes("\x1b_G")) return false;
+  private handleKittyProtocol(data: string): InputListenerResult {
+    if (!data.includes("\x1b_G")) return undefined;
 
-    // The data might be a Kitty image transmission.
-    // We consume it and try to read the clipboard image instead,
-    // since extracting base64 from Kitty protocol chunks is fragile.
-    const now = Date.now();
-    if (now - this.lastPasteTime < 100) return true;
-    this.lastPasteTime = now;
-    readClipboardImageNonBlocking().then((img) => {
-      if (img) {
-        this.imagePasteHandler.addImage(img);
+    // Parse Kitty APC sequence: ESC _ G <params> ; <base64> ESC \\
+    // Extract all APC sequences from the data
+    const apcRegex = /\x1b_G([^;]*);([^\x1b]*)\x1b\\/g;
+    const apcMatches: { params: string; b64: string }[] = [];
+    let apcMatch: RegExpExecArray | null;
+    while ((apcMatch = apcRegex.exec(data)) !== null) {
+      apcMatches.push({ params: apcMatch[1], b64: apcMatch[2] });
+    }
+
+    if (apcMatches.length === 0) return undefined;
+
+    // Check if any of the APC sequences are image transmissions (f=24 = PNG)
+    const hasImage = apcMatches.some(m => /(?:^|,)f=24(?:,|$)/.test(m.params));
+    if (!hasImage) return undefined; // Non-image Kitty sequence (cursor, etc.)
+
+    // Extract printable text surrounding the APC sequences
+    const cleanText = data.replace(/\x1b_G[^;]*;([^\x1b]*)\x1b\\/g, "").trim();
+    const printableText = this.extractPrintableText(cleanText);
+
+    // Determine if any chunk is final (v=8) or intermediate (v=16)
+    const isFinal = apcMatches.some(m => /(?:^|,)v=8(?:,|$)/.test(m.params));
+
+    // Accumulate base64 payload
+    const chunkB64 = apcMatches.map(m => m.b64).join("");
+
+    if (isFinal) {
+      // Final chunk — flush accumulated + this chunk
+      const prevB64 = this.kittyChunkBuffer?.base64 ?? "";
+      const fullB64 = prevB64 + chunkB64;
+      this.flushKittyBuffer();
+
+      try {
+        // Decode base64 to binary, build ImageContent
+        const binary = Buffer.from(fullB64, "base64");
+        const img: ImageContent = {
+          type: "image" as const,
+          data: binary.toString("base64"),
+          mimeType: "image/png",
+        };
+        // Defer addImage to avoid requestRender(true) during pi-tui input processing
+        queueMicrotask(() => this.imagePasteHandler.addImage(img));
+      } catch {
+        // Malformed base64 — consume silently
       }
-    });
 
-    return true;
+      if (printableText.length > 0) {
+        return { data: printableText };
+      }
+      return { consume: true };
+    }
+
+    // Intermediate chunk — buffer it
+    if (this.kittyChunkBuffer) {
+      clearTimeout(this.kittyChunkBuffer.timer);
+    }
+    const prevB64 = this.kittyChunkBuffer?.base64 ?? "";
+    this.kittyChunkBuffer = {
+      base64: prevB64 + chunkB64,
+      timer: setTimeout(() => {
+        this.flushKittyBuffer();
+      }, 200),
+    };
+
+    if (printableText.length > 0) {
+      return { data: printableText };
+    }
+    return { consume: true };
+  }
+
+  private flushKittyBuffer(): void {
+    if (this.kittyChunkBuffer) {
+      clearTimeout(this.kittyChunkBuffer.timer);
+      this.kittyChunkBuffer = null;
+    }
   }
 
   /**
@@ -765,7 +837,7 @@ export class TuiApp {
       if (img) {
         this.imagePasteHandler.addImage(img);
       } else {
-        this.conversation.addInfo(c.dim("No image found in clipboard (macOS only). Use /image <path> to attach an image file."));
+        this.conversation.addInfo(c.dim("No image found in clipboard. Use /image <path> to attach an image file."));
       }
     });
   }

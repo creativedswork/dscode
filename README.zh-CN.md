@@ -121,6 +121,8 @@ dscode 专为 DeepSeek V4 Pro 打造 —— 我们首推的数字创作模型。
 </tr>
 </table>
 
+> **提示：** TUI 中粘贴剪贴板图片用 `Ctrl+V`（macOS）或 `/image clipboard`。
+
 ---
 
 ## 30 秒上手 MCP
