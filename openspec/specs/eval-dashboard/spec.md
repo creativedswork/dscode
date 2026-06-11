@@ -1,21 +1,24 @@
 # eval-dashboard Specification
 
 ## Purpose
-TBD - created by archiving change eval-slash-command. Update Purpose after archive.
+
+Session quality diagnostic analysis for dscode. Analyzes sessions using a CHIFF causal graph pipeline (primary) with rule-engine fallback, and generates a dark-themed HTML dashboard with causal graph visualization, data flow paths, and counterfactual reasoning chains.
+
 ## Requirements
+
 ### Requirement: /eval Slash Command
 
-The system SHALL provide a `/eval` slash command that analyzes a session and generates an HTML diagnostic dashboard. Analysis uses a hybrid architecture: Layer 1 rule engine (metadata, stats, timeline) always runs first; Layer 2 LLM analysis (phase detection, deviation detection, root cause inference, suggestions) runs via `completeSimple()` — a direct model API call with zero agent state manipulation. If the LLM call fails, the system falls back to pure rule-engine analysis and marks the dashboard with "规则引擎分析（LLM 不可用）".
+The system SHALL provide a `/eval` slash command that analyzes a session and generates an HTML diagnostic dashboard. Analysis uses a CHIFF multi-step causal graph architecture: 4 LLM calls build a causal graph (subtask decomposition → subtask edges → agent OTAR nodes → agent edges), then 2 LLM calls perform counterfactual attribution (candidate set → root cause via Rule1/2/3/4). Rule engine (metadata, stats, timeline) always runs first as Step 0. If any LLM call fails, the system falls back to pure rule-engine analysis and marks the dashboard with "规则引擎分析（LLM 不可用）".
 
 When invoked without arguments, it SHALL analyze the current session. When invoked with a session ID or prefix (minimum 8 characters), it SHALL locate and analyze that session.
 
 #### Scenario: Evaluate current session
 
 - **WHEN** the user types `/eval` with no arguments and a current session exists
-- **THEN** the system SHALL analyze the current session's data using the hybrid architecture
+- **THEN** the system SHALL analyze the current session's data using the CHIFF pipeline with rule-engine fallback
 - **AND** generate an HTML dashboard at `~/.dscode/eval/{session_id_prefix}.html`
 - **AND** automatically open the dashboard in the default browser
-- **AND** display an info message with the dashboard file path
+- **AND** display an info message with the dashboard file path and analysis mode
 
 #### Scenario: Evaluate session by full ID
 
@@ -42,24 +45,27 @@ When invoked without arguments, it SHALL analyze the current session. When invok
 
 ### Requirement: Hybrid Analysis Architecture
 
-The analysis SHALL use a two-layer architecture:
+The analysis SHALL use a multi-step causal-graph architecture based on CHIFF methodology:
 
-**Layer 1 — Rule Engine** (`analyzeSession()`): Always runs first. Extracts metadata (sessionId, title, model, duration), computes tool call statistics (total calls, errors, error rate from `toolResult` messages with `isError: true` or `details.error`), detects phases via regex-based intent signals in thinking text, detects keyword deviations via Jaccard distance on Chinese visual keywords, infers root causes (效果过载, 截图感知盲区, 需求蔓延, 修复连锁反应), and generates dscode-specific improvement suggestions.
+**Step 0 — Session Parser** (`parseSessionToSteps()`): Deterministic. Parses `SerializedSession` into `HistoryStep[]` (stepId, agent, observation, thought, action, result, isError, timestamp). Extracts metadata and computes tool call statistics.
 
-**Layer 2 — LLM Analysis** (`analyzeWithLLM()`): Calls the model directly via `completeSimple()` from `@mariozechner/pi-ai` — no agent state manipulation, no session side effects. Uses a compressed session log as input and outputs structured JSON for phases, deviations, root causes, and suggestions. LLM results are merged with rule-engine metadata/stats via `mergeResults()`.
+**Step 1-4 — Causal Graph Construction** (4 LLM calls): Builds a structured causal graph — subtask decomposition (Step 1), subtask edges with data transfer and failure modes (Step 2), agent nodes with OTAR quadruples and step-level data flows (Step 3), agent-to-agent edges with failure modes (Step 4). Graph assembly is deterministic (`CausalGraphStore`). If the graph is incomplete (`isGraphComplete() === false`), the system SHALL fall back to rule-engine analysis.
 
-**Fallback**: If the LLM call fails (network error, timeout, JSON parse failure), the system returns pure rule-engine results. The dashboard displays `analysisMode: "rule"` with a visible indicator.
+**Step 5-6 — Counterfactual Attribution** (2 LLM calls): Generates candidate error set (≥5 steps, Step 5) and performs single root-cause attribution using four counterfactual rules: Rule1 (control flow / loop adjudication), Rule2 (data flow traceback), Rule3 (irrecoverable point identification), Rule4 (taste / creative drift) (Step 6).
 
-#### Scenario: LLM analysis succeeds
+**Fallback**: If any LLM call fails (network error, timeout, JSON parse failure after retry), the system returns pure rule-engine results. The dashboard displays `analysisMode: "rule"` with a visible indicator.
 
-- **WHEN** `analyzeWithLLM()` is called and the model returns valid JSON
-- **THEN** phases, deviations, rootCauses, and suggestions SHALL use LLM results
-- **AND** metadata, stats, and timeline SHALL use rule-engine results
+#### Scenario: LLM causal-graph analysis succeeds
+
+- **WHEN** all 6 steps complete successfully and the causal graph is built
+- **THEN** phases SHALL be derived from subtask decomposition
+- **AND** rootCauses SHALL include the Step 6 attribution with rules_applied
 - **AND** `analysisMode` SHALL be set to `"llm"`
+- **AND** the dashboard SHALL display causal graph visualization
 
-#### Scenario: LLM analysis fails
+#### Scenario: LLM analysis fails at any step
 
-- **WHEN** `analyzeWithLLM()` is called and the model call fails or returns invalid JSON
+- **WHEN** any of Step 1-6 LLM calls fail and retry is exhausted
 - **THEN** the system SHALL return pure rule-engine results
 - **AND** `analysisMode` SHALL be set to `"rule"`
 - **AND** the dashboard SHALL display "⚙ 规则引擎分析（LLM 不可用）"
@@ -106,7 +112,7 @@ The analysis engine SHALL count and categorize all tool calls in the session: to
 
 ### Requirement: Phase Auto-Detection
 
-The analysis engine SHALL automatically divide a session into phases based on intent signals in assistant thinking text (via `getThinking()`), tool call pattern mutations (tool name set changes ≥3 count or ≥2 new/removed), and user complaint messages. Each phase SHALL have a label, message range [startIdx, endIdx], status (ok/warn/danger), a summary description, and a breakdown of tool calls within the phase.
+The analysis engine SHALL automatically divide a session into phases. In rule-engine mode: based on intent signals in assistant thinking text (via `getThinking()`), tool call pattern mutations, and user complaint messages. In LLM mode: phases SHALL be derived from subtask decomposition (Step 1) rather than regex-based signals. Each phase SHALL have a label, message range [startIdx, endIdx], status (ok/warn/danger), a summary description, and a breakdown of tool calls within the phase.
 
 #### Scenario: Typical multi-phase session
 
@@ -119,6 +125,12 @@ The analysis engine SHALL automatically divide a session into phases based on in
 - **WHEN** a session has minimal thinking text or tool calls
 - **THEN** the system SHALL produce a single phase spanning all messages labeled "Full Session"
 
+#### Scenario: Phases mapped from subtasks (LLM mode)
+
+- **WHEN** Step 1 produced subtasks S1("探索"), S2("实现"), S3("修复"), S4("调整")
+- **THEN** the phase timeline SHALL show these 4 phases with correct step ranges
+- **AND** status SHALL be "danger" for subtasks containing user complaints or tool errors
+
 ### Requirement: Keyword Deviation Detection
 
 The analysis engine SHALL extract target keywords from the user's first message and session title using `extractTargetKeywords()`, extract visual keywords from screenshot descriptions in toolResult messages using `extractScreenshotKeywords()`, and compute keyword drift via `jaccardDistance()`. When the Jaccard distance between target and screenshot keywords exceeds 0.7, the system SHALL flag the message index as a deviation point with severity "low" (<0.8), "medium" (0.8-0.9), or "high" (>0.9).
@@ -130,7 +142,7 @@ The analysis engine SHALL extract target keywords from the user's first message 
 
 ### Requirement: Root Cause Inference
 
-The analysis engine SHALL infer root causes from deviation points and phase transitions. Root causes SHALL include a title, description, list of evidence message indices, and severity (primary/secondary). The engine SHALL detect patterns: "效果过载" (≥3 messages with ≥2 overlapping visual mechanisms), "截图感知盲区" (deviations where nearby thinking text doesn't acknowledge anomaly keywords), "需求蔓延" (≥3 phases with danger phases present), and "修复连锁反应" (≥3 warn/danger phases).
+The analysis engine SHALL infer root causes. In rule-engine mode: from deviation points and phase transitions, detecting patterns "效果过载", "截图感知盲区", "需求蔓延", and "修复连锁反应". In LLM mode: root cause SHALL be the Step 6 single attribution with counterfactual rules applied (Rule1/2/3/4). Root causes SHALL include a title, description, list of evidence message indices, and severity (primary/secondary).
 
 #### Scenario: Effect overload pattern detected
 
@@ -151,22 +163,68 @@ Rule-engine suggestions SHALL target specific anti-patterns with concrete system
 
 ### Requirement: Dashboard HTML Generation
 
-The system SHALL generate a self-contained HTML file at `~/.dscode/eval/{session_id_prefix}.html` with dark theme, inline CSS, and no external dependencies. The dashboard SHALL contain: header with metadata and analysis mode badge ("🤖 LLM 深度分析" or "⚙ 规则引擎分析（LLM 不可用）"), summary stat cards (message count, tool calls, error rate, screenshots, complaints, deviations) with color coding (ok=#3fb950, warn=#d2991d, danger=#f85149), phase timeline with horizontal colored bars, root cause analysis section, deviations section, suggestions section, and event timeline.
+The system SHALL generate a self-contained HTML file at `~/.dscode/eval/{session_id_prefix}.html` with dark theme, inline CSS, and no external dependencies. The dashboard SHALL contain: header with metadata and analysis mode badge ("🤖 CHIFF Causal Graph Analysis" or "⚙ 规则引擎分析（LLM Unavailable）"), summary stat cards (message count, tool calls, error rate, screenshots, complaints, deviations) with color coding (ok=#3fb950, warn=#d2991d, danger=#f85149), phase timeline with horizontal colored bars, **causal graph visualization section** (LLM mode only — bar chart showing subtask→subtask dependencies with color-coded nodes), **data flow paths section** (LLM mode only — table showing key data items and their complete production→consumption chains), **Rule reasoning chain section** (LLM mode only — Rule1/2/3/4 application with evidence), root cause analysis section, deviations section, suggestions section, and event timeline.
 
-#### Scenario: Dashboard for a session with deviations
+#### Scenario: Dashboard with causal graph
 
-- **WHEN** a session analysis completes with detected phases, deviations, and root causes
-- **THEN** the generated HTML SHALL display all sections with appropriate color coding
-- **AND** the analysis mode SHALL be clearly indicated
+- **WHEN** a session analysis completes with a full causal graph (LLM mode)
+- **THEN** the generated HTML SHALL include a causal graph visualization
+- **AND** SHALL include a data flow paths table
+- **AND** SHALL include a Rule reasoning chain section
+
+#### Scenario: Dashboard in rule-engine fallback mode
+
+- **WHEN** the causal graph could not be built and rule engine was used
+- **THEN** the dashboard SHALL omit the causal graph, data flow paths, and Rule reasoning chain sections
+- **AND** SHALL display the rule-engine analysis flag
 
 #### Scenario: HTML output is safe
 
 - **WHEN** the session contains user messages with HTML special characters
 - **THEN** `escapeHtml()` SHALL escape all text and return "" for null/undefined inputs
 
+### Requirement: Causal Graph Visualization
+
+When `analysisMode` is "llm" and `causalGraph` is present, the dashboard SHALL render a visualization showing:
+- Subtask nodes as colored horizontal bars with name and step range, color-coded by status (green=ok, yellow=warn, red=danger)
+- Subtask edges as labeled dependency lines
+- Agent counts and key actions per subtask
+
+The visualization SHALL use inline styles compatible with the dark theme and be responsive within the dashboard container.
+
+#### Scenario: Causal graph rendered for multi-subtask session
+
+- **WHEN** the causal graph has 3+ subtasks with edges and agent nodes
+- **THEN** the visualization SHALL display all subtasks with correct step ranges
+- **AND** edges SHALL be labeled with dependency type
+- **AND** all text SHALL be legible at dashboard width (max 1200px)
+
+### Requirement: Data Flow Paths Table
+
+When `causalGraph` is present, the dashboard SHALL render a table showing key data items and their complete flow paths. Each row SHALL display: data_item name, producer→consumer path, correctness assessment, and a visual indicator.
+
+#### Scenario: Data flow table for session with file operations
+
+- **WHEN** the causal graph contains data flows tracking file reads and writes
+- **THEN** each tracked file SHALL appear as a row in the data flow table
+- **AND** the complete chain from first read to last write SHALL be visible
+
+### Requirement: Rule Reasoning Chain Display
+
+When `attribution` and `rulesApplied` are present, the dashboard SHALL display a reasoning chain section showing:
+- Final attribution (mistakeAgent + mistakeStep + reason)
+- Each applied Rule (Rule1/2/3/4) with its description
+
+#### Scenario: Rule reasoning chain for a Rule2 attribution
+
+- **WHEN** the root cause was attributed via Rule 2 (data flow)
+- **THEN** the reasoning chain SHALL show the data item traced, its source step, its consumption step, and why the consumer was at fault
+- **AND** Rule2 SHALL be highlighted as a primary rule
+
 ### Requirement: Dashboard Auto-Open
 
 After generating the dashboard HTML file, the system SHALL attempt to open it in the user's default browser using the platform-appropriate command. On failure, the system SHALL still display the file path without throwing.
+
 #### Scenario: Dashboard opens in browser on macOS
 
 - **WHEN** running on macOS and the HTML file is written successfully
@@ -180,14 +238,23 @@ After generating the dashboard HTML file, the system SHALL attempt to open it in
 
 ### Requirement: Eval Result Data Structure
 
-The analysis engine SHALL return an `EvalResult` object with fields: `metadata` (SessionMeta), `stats` (ToolStats), `phases` (PhaseInfo[]), `deviations` (DeviationPoint[]), `rootCauses` (RootCause[]), `suggestions` (string[]), `timeline` (TimelineEvent[]), and `analysisMode` ("llm" | "rule").
+The analysis engine SHALL return an `EvalResult` object with fields: `metadata` (SessionMeta), `stats` (ToolStats), `phases` (PhaseInfo[]), `deviations` (DeviationPoint[]), `rootCauses` (RootCause[]), `suggestions` (string[]), `timeline` (TimelineEvent[]), `analysisMode` ("llm" | "rule"), `causalGraph` (CausalGraphSnapshot | null — present only in LLM mode), `attribution` (Attribution | null — present only in LLM mode), and `rulesApplied` (string[] — Rule identifiers, present only in LLM mode).
 
-#### Scenario: Complete EvalResult after analysis
+#### Scenario: Complete EvalResult after LLM causal-graph analysis
 
-- **WHEN** `analyzeSession(data)` completes successfully
-- **THEN** the returned EvalResult SHALL have all fields populated
-- **AND** `stats.errorRate` SHALL be "XX.X%" format
-- **AND** `analysisMode` SHALL be "rule" for rule-engine-only, "llm" for LLM-assisted
+- **WHEN** the full 6-step pipeline completes successfully
+- **THEN** `analysisMode` SHALL be "llm"
+- **AND** `causalGraph` SHALL be non-null containing subtask, edge, agent, and dataflow summaries
+- **AND** `attribution` SHALL be non-null with mistake_agent, mistake_step, reason, rules_applied
+- **AND** `rulesApplied` SHALL be a non-empty array
+
+#### Scenario: EvalResult after rule-engine fallback
+
+- **WHEN** LLM analysis fails and rule engine is used
+- **THEN** `analysisMode` SHALL be "rule"
+- **AND** `causalGraph` SHALL be null
+- **AND** `attribution` SHALL be null
+- **AND** `rulesApplied` SHALL be an empty array
 
 ### Requirement: Session Compression for LLM
 
@@ -198,11 +265,3 @@ Before sending data to the LLM, the system SHALL compress the session via `compa
 - Keep first 500 chars of all tool results; annotate oversized results with `[toolName output: N chars]`
 - Keep screenshot descriptions up to 500 chars
 - Skip empty assistant messages to reduce noise
-
-#### Scenario: Session compressed for LLM with tool results
-
-- **WHEN** a 440-message session is compressed
-- **THEN** tool results SHALL be included (not discarded)
-- **AND** key thinking SHALL receive expanded character budget
-- **AND** tool arguments SHALL be extracted for path/command fields
-

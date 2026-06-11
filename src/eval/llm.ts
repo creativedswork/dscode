@@ -1,99 +1,277 @@
-// ── LLM-Based Session Analysis ──
-// Uses completeSimple() for a direct one-shot API call.
-// No agent state manipulation, no session side effects.
+// ── CHIFF Causal Graph Pipeline ──
+// 6-step LLM analysis pipeline following the CHIFF methodology.
+// Falls back to rule-engine analysis on any failure.
 
-import type { EvalResult, CompactMessage } from "./types.js";
-import { analyzeSession, compactSession } from "./analyzer.js";
+import type { EvalResult, DeviationPoint, RootCause } from "./types.js";
 import type { HarnessAPI } from "../core/harness-api.js";
 import type { SerializedSession } from "../session/types.js";
 import { resolveModel } from "../models/index.js";
 import { completeSimple } from "@mariozechner/pi-ai";
+import { CausalGraphStore } from "./graph-store.js";
+import { parseSessionToSteps, validateSubtasks, validateSubtaskEdges, validateAgentNodes, validateAgentEdges, validateCandidateSet, validateAttribution, validateStepDataFlows, type HistoryStep, type Subtask, type SubtaskEdge, type AgentNode, type AgentEdge, type StepDataFlow, type CandidateSet, type Attribution } from "./schemas.js";
+import { analyzeSession, compactSession } from "./analyzer.js";
+import {
+  CHIFF_SYSTEM_PROMPT,
+  buildHistorySummary,
+  buildStep1Prompt,
+  buildStep2Prompt,
+  buildStep3Prompt,
+  buildStep4Prompt,
+  buildStep5Prompt,
+  buildStep6Prompt,
+  extractJSON,
+} from "./prompts.js";
 
-// ── System Prompt ──
+// ── LLM Call Helper ──
 
-function buildAnalysisPrompt(compactMessages: CompactMessage[], metadata: EvalResult["metadata"]): string {
-  const lines: string[] = [];
-
-  lines.push("SESSION METADATA");
-  lines.push("────────────────");
-  lines.push(`ID: ${metadata.sessionId}`);
-  lines.push(`Title: ${metadata.title}`);
-  lines.push(`Model: ${metadata.model}`);
-  lines.push(`Duration: ${metadata.duration} | ${metadata.totalMessages} messages`);
-  lines.push("");
-  lines.push("═══════════════════════════════════════");
-  lines.push("COMPRESSED SESSION LOG");
-  lines.push("═══════════════════════════════════════");
-  lines.push("");
-
-  for (const cm of compactMessages) {
-    const prefix = `M${cm.idx} [${cm.role}]`;
-    if (cm.role === "user") {
-      lines.push(`${prefix}:`);
-      if (cm.keyQuote) lines.push(`  "${cm.keyQuote.slice(0, 300)}"`);
-      if (cm.screenshotDesc) lines.push(`  🖼 screenshot: "${cm.screenshotDesc.slice(0, 300)}"`);
-      if (cm.toolResult) lines.push(`  📤 result: ${cm.toolResult.slice(0, 300)}`);
-      if (cm.error) lines.push(`  ❌ error: ${cm.error.slice(0, 300)}`);
-      if (cm.userEmotion === "frustrated") lines.push("  😤 用户不满");
-    } else {
-      // Skip assistant messages with no meaningful content
-      const hasContent = cm.thinking || (cm.toolsCalled && cm.toolsCalled.length > 0);
-      if (!hasContent) continue;
-      lines.push(`${prefix}:`);
-      if (cm.thinking) lines.push(`  💭 ${cm.thinking.slice(0, 400)}`);
-      if (cm.toolsCalled && cm.toolsCalled.length > 0) {
-        const toolInfo = cm.toolArgs ? ` → ${cm.toolArgs}` : "";
-        lines.push(`  🔧 ${cm.toolsCalled.join(", ")}${toolInfo}`);
-      }
-      if (cm.error) lines.push(`  ❌ ${cm.error.slice(0, 200)}`);
-    }
-    lines.push("");
-  }
-
-  return lines.join("\n");
+async function callLLM(
+  systemPrompt: string,
+  userMessage: string,
+  harness: HarnessAPI,
+): Promise<string> {
+  const model = resolveModel(harness.config.provider, harness.config.modelId);
+  const response = await completeSimple(
+    model,
+    {
+      systemPrompt,
+      messages: [{ role: "user" as const, content: userMessage, timestamp: Date.now() }],
+    },
+    { apiKey: harness.config.apiKey },
+  );
+  const content = typeof response.content === "string"
+    ? response.content
+    : Array.isArray(response.content)
+      ? ((response.content as unknown) as Record<string, unknown>[]).find((b) => b["type"] === "text")?.["text"] as string ?? ""
+      : "";
+  return content;
 }
 
-const SYSTEM_PROMPT = `你是一个 tracer 日志分析专家。以下是一条 AI 编程 agent（dscode）的工作日志，请分析并输出一个诊断 Dashboard。
+async function callLLMWithRetry(
+  systemPrompt: string,
+  userMessage: string,
+  harness: HarnessAPI,
+  maxRetries = 1,
+): Promise<string> {
+  let lastError: Error | null = null;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const content = await callLLM(systemPrompt, userMessage, harness);
+      if (content) return content;
+      lastError = new Error("Empty LLM response");
+    } catch (err) {
+      lastError = err instanceof Error ? err : new Error(String(err));
+    }
+    if (attempt < maxRetries) {
+      // Retry with correction hint
+      userMessage = userMessage + "\n\n⚠ Your previous response was invalid. Please output PURE JSON matching the specified format. No markdown, no extra text.";
+    }
+  }
+  throw lastError ?? new Error("LLM call failed after retries");
+}
 
-分析维度：
-1. Phase 划分 — 将 session 划分为若干阶段，标注每段的起止、状态(ok/warn/danger)、摘要
-2. 偏离检测 — 找出 agent 的反馈结果与用户目标产生语义偏离的时刻（如：截图与需求不符、生成的文件内容跑偏、agent 理解错了用户意图等）
-3. 根因推断 — 推断 agent 出错的深层原因（如效果过载、感知盲区、需求蔓延、修复连锁等）
-4. 改进建议 — 3-5 条针对 dscode agent 设计的具体改进建议（中文）
+// ── Step Executors ──
 
-输出纯 JSON，不要 markdown 代码块：
-{
-  "phases": [{"label":"...","startIdx":0,"endIdx":10,"status":"ok","summary":"...","toolCalls":{"total":5,"errors":0}}],
-  "deviations": [{"messageIdx":72,"description":"...","severity":"high"}],
-  "rootCauses": [{"title":"...","description":"...","evidenceIndices":[72],"severity":"primary"}],
-  "suggestions": ["建议1","建议2"]
-}`;
+async function executeStep1(
+  steps: HistoryStep[],
+  question: string,
+  harness: HarnessAPI,
+): Promise<Subtask[]> {
+  const summary = buildHistorySummary(
+    steps.map((s) => ({
+      stepId: s.stepId,
+      agent: s.agent,
+      action: s.action,
+      thought: s.thought,
+      isError: s.isError,
+    })),
+  );
+  const prompt = buildStep1Prompt(question, summary, steps.length);
+  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness);
+  const json = extractJSON(raw);
+  if (!json) throw new Error("Step 1: No JSON found in LLM response");
+  const parsed = JSON.parse(json);
+  // Handle both {"subtasks": [...]} and [...] formats
+  const arr = Array.isArray(parsed) ? parsed : parsed["subtasks"];
+  const result = validateSubtasks(arr);
+  if (!result.ok) throw new Error(`Step 1 validation: ${result.errors.join("; ")}`);
+  return result.value;
+}
 
-function mergeResults(ruleResult: EvalResult, llmResult: any): EvalResult {
+async function executeStep2(
+  subtasks: Subtask[],
+  steps: HistoryStep[],
+  harness: HarnessAPI,
+): Promise<SubtaskEdge[]> {
+  const summary = buildHistorySummary(
+    steps.map((s) => ({
+      stepId: s.stepId,
+      agent: s.agent,
+      action: s.action,
+      thought: s.thought,
+      isError: s.isError,
+    })),
+  );
+  const prompt = buildStep2Prompt(subtasks, summary);
+  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness);
+  const json = extractJSON(raw);
+  if (!json) throw new Error("Step 2: No JSON found in LLM response");
+  const parsed = JSON.parse(json);
+  const arr = Array.isArray(parsed) ? parsed : parsed["edges"];
+  const result = validateSubtaskEdges(arr);
+  if (!result.ok) throw new Error(`Step 2 validation: ${result.errors.join("; ")}`);
+  return result.value;
+}
+
+async function executeStep3(
+  subtasks: Subtask[],
+  steps: HistoryStep[],
+  harness: HarnessAPI,
+): Promise<{ agents: AgentNode[]; dataFlows: StepDataFlow[] }> {
+  const summary = buildHistorySummary(
+    steps.map((s) => ({
+      stepId: s.stepId,
+      agent: s.agent,
+      action: s.action,
+      thought: s.thought,
+      isError: s.isError,
+    })),
+  );
+  const prompt = buildStep3Prompt(subtasks, summary);
+  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness);
+  const json = extractJSON(raw);
+  if (!json) throw new Error("Step 3: No JSON found in LLM response");
+  const parsed = JSON.parse(json);
+  const agentsResult = validateAgentNodes(parsed["agents"] ?? []);
+  if (!agentsResult.ok) throw new Error(`Step 3 agents: ${agentsResult.errors.join("; ")}`);
+  const flowsResult = validateStepDataFlows(parsed["dataFlows"] ?? []);
+  if (!flowsResult.ok) throw new Error(`Step 3 data flows: ${flowsResult.errors.join("; ")}`);
+  return { agents: agentsResult.value, dataFlows: flowsResult.value };
+}
+
+async function executeStep4(
+  subtasks: Subtask[],
+  agentNodes: AgentNode[],
+  harness: HarnessAPI,
+): Promise<AgentEdge[]> {
+  const prompt = buildStep4Prompt(subtasks, agentNodes);
+  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness);
+  const json = extractJSON(raw);
+  if (!json) throw new Error("Step 4: No JSON found in LLM response");
+  const parsed = JSON.parse(json);
+  const arr = Array.isArray(parsed) ? parsed : parsed["edges"];
+  const result = validateAgentEdges(arr);
+  if (!result.ok) throw new Error(`Step 4 validation: ${result.errors.join("; ")}`);
+  return result.value;
+}
+
+async function executeStep5(
+  question: string,
+  steps: HistoryStep[],
+  graphStore: CausalGraphStore,
+  harness: HarnessAPI,
+): Promise<CandidateSet> {
+  const summary = buildHistorySummary(
+    steps.map((s) => ({
+      stepId: s.stepId,
+      agent: s.agent,
+      action: s.action,
+      thought: s.thought,
+      isError: s.isError,
+    })),
+  );
+  const snapshot = graphStore.snapshot();
+  const prompt = buildStep5Prompt(question, summary, snapshot);
+  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness);
+  const json = extractJSON(raw);
+  if (!json) throw new Error("Step 5: No JSON found in LLM response");
+  const parsed = JSON.parse(json);
+  const result = validateCandidateSet(parsed);
+  if (!result.ok) throw new Error(`Step 5 validation: ${result.errors.join("; ")}`);
+  if (result.value.steps.length < 5) throw new Error(`Step 5: Only ${result.value.steps.length} candidates (need >= 5)`);
+  return result.value;
+}
+
+async function executeStep6(
+  candidateSet: CandidateSet,
+  graphStore: CausalGraphStore,
+  harness: HarnessAPI,
+): Promise<Attribution> {
+  const snapshot = graphStore.snapshot();
+  const prompt = buildStep6Prompt(candidateSet, snapshot);
+  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness);
+  const json = extractJSON(raw);
+  if (!json) throw new Error("Step 6: No JSON found in LLM response");
+  const parsed = JSON.parse(json);
+  const result = validateAttribution(parsed);
+  if (!result.ok) throw new Error(`Step 6 validation: ${result.errors.join("; ")}`);
+  return result.value;
+}
+
+// ── Pipeline Result Merger ──
+
+function mergePipelineResults(
+  ruleResult: EvalResult,
+  attribution: Attribution,
+  candidateSet: CandidateSet,
+  graphStore: CausalGraphStore,
+): EvalResult {
+  const snapshot = graphStore.snapshot();
+
+  // Derive phases from subtasks
+  const subtasks = graphStore.getSubtasks();
+  const phases = subtasks.map((s) => {
+    const agents = graphStore.getAgentNodes().filter((n) => n.subtaskId === s.id);
+    const hasErrors = agents.some((a) => {
+      return ruleResult.stats.toolErrors > 0;
+    });
+    return {
+      label: s.name,
+      startIdx: s.stepStart,
+      endIdx: s.stepEnd,
+      status: (hasErrors ? "warn" : "ok") as "ok" | "warn" | "danger",
+      summary: s.oracle.goal,
+      toolCalls: { total: agents.length, errors: 0 },
+    };
+  });
+
+  // Derive deviations from candidate set
+  const deviations: DeviationPoint[] = candidateSet.steps.map((c) => ({
+    messageIdx: c.stepId,
+    screenshotKeyword: c.dataItem,
+    targetKeyword: "",
+    severity: c.impactScore > 0.7 ? "high" : c.impactScore > 0.4 ? "medium" : "low",
+    description: c.irrecoverableReason || (c.dataIssue ? `Data issue with ${c.dataItem}` : "Candidate error step"),
+  }));
+
+  // Root cause from attribution
+  const rootCauses: RootCause[] = [{
+    title: `${attribution.mistakeAgent} at Step ${attribution.mistakeStep}`,
+    description: attribution.reason,
+    evidenceIndices: [attribution.mistakeStep],
+    severity: "primary",
+  }];
+
   return {
     metadata: ruleResult.metadata,
     stats: ruleResult.stats,
-    phases: Array.isArray(llmResult.phases) && llmResult.phases.length > 0
-      ? llmResult.phases : ruleResult.phases,
-    deviations: Array.isArray(llmResult.deviations)
-      ? llmResult.deviations.map((d: any) => ({
-          messageIdx: d.messageIdx ?? 0,
-          screenshotKeyword: d.screenshotKeyword ?? "",
-          targetKeyword: d.targetKeyword ?? "",
-          severity: d.severity ?? "medium",
-          description: d.description ?? "",
-        }))
-      : ruleResult.deviations,
-    rootCauses: Array.isArray(llmResult.rootCauses)
-      ? llmResult.rootCauses : ruleResult.rootCauses,
-    suggestions: Array.isArray(llmResult.suggestions) && llmResult.suggestions.length > 0
-      ? llmResult.suggestions : ruleResult.suggestions,
+    phases,
+    deviations,
+    rootCauses,
+    suggestions: [
+      `[Rule1/2/3] ${attribution.rulesApplied.join(", ")} applied — root cause at ${attribution.mistakeAgent}:${attribution.mistakeStep}`,
+      `Root cause: ${attribution.reason}`,
+    ],
     timeline: ruleResult.timeline,
     analysisMode: "llm",
+    causalGraph: snapshot,
+    attribution,
+    rulesApplied: attribution.rulesApplied,
   };
 }
 
-export async function analyzeWithLLM(
+// ── Main Pipeline ──
+
+export async function runCausalGraphPipeline(
   data: SerializedSession,
   harness: HarnessAPI,
 ): Promise<EvalResult> {
@@ -102,43 +280,56 @@ export async function analyzeWithLLM(
   const ruleResult = analyzeSession(data, compacted);
 
   try {
-    const userMessage = buildAnalysisPrompt(compacted, ruleResult.metadata);
-
-    // Build model from harness config — no agent involved
-    const model = resolveModel(harness.config.provider, harness.config.modelId);
-
-    // Direct one-shot API call — no agent, no session, no state pollution
-    const response = await completeSimple(
-      model,
-      {
-        systemPrompt: SYSTEM_PROMPT,
-        messages: [{ role: "user" as const, content: userMessage, timestamp: Date.now() }],
-      },
-      { apiKey: harness.config.apiKey },
-    );
-
-    // Extract text from response
-    const content = typeof response.content === "string"
-      ? response.content
-      : Array.isArray(response.content)
-        ? (response.content as any[]).find((b: any) => b.type === "text")?.text ?? ""
-        : "";
-
-    // Parse JSON
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (jsonMatch) {
-      try {
-        const llmResult = JSON.parse(jsonMatch[0]);
-        if (llmResult && typeof llmResult === "object") {
-          return mergeResults(ruleResult, llmResult);
-        }
-      } catch {
-        // JSON parse failed — fall through to rule engine
-      }
+    // Step 0: Parse session to history steps
+    const steps = parseSessionToSteps(data);
+    if (steps.length === 0) {
+      throw new Error("No analysable steps found in session");
     }
-  } catch {
-    // API call failed — fall through to rule engine
-  }
 
-  return ruleResult;
+    const question = data.metadata.preview || data.metadata.title || "Unknown task";
+    const graphStore = new CausalGraphStore();
+    graphStore.setTotalSteps(steps.length);
+
+    // Step 1: Subtask decomposition
+    const subtasks = await executeStep1(steps, question, harness);
+    graphStore.addSubtasks(subtasks);
+
+    // Step 2: Subtask edges
+    const subtaskEdges = await executeStep2(subtasks, steps, harness);
+    graphStore.addSubtaskEdges(subtaskEdges);
+
+    // Step 3: Agent nodes + step data flows
+    const { agents, dataFlows } = await executeStep3(subtasks, steps, harness);
+    graphStore.addAgentNodes(agents);
+    graphStore.addStepDataFlows(dataFlows);
+
+    // Step 4: Agent edges
+    const agentEdges = await executeStep4(subtasks, agents, harness);
+    graphStore.addAgentEdges(agentEdges);
+
+    // Gate: graph must be complete before proceeding
+    if (!graphStore.isGraphComplete()) {
+      const issues = graphStore.validateCoverage();
+      throw new Error(`Causal graph incomplete: ${issues.join("; ")}`);
+    }
+
+    // Step 5: Candidate error set
+    const candidateSet = await executeStep5(question, steps, graphStore, harness);
+
+    // Step 6: Counterfactual attribution
+    const attribution = await executeStep6(candidateSet, graphStore, harness);
+
+    return mergePipelineResults(ruleResult, attribution, candidateSet, graphStore);
+  } catch {
+    // Any error in the pipeline → fall back to rule engine
+    return ruleResult;
+  }
+}
+
+// Keep the old one-shot method as a compatibility shim (calls the pipeline)
+export async function analyzeWithLLM(
+  data: SerializedSession,
+  harness: HarnessAPI,
+): Promise<EvalResult> {
+  return runCausalGraphPipeline(data, harness);
 }

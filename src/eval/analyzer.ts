@@ -681,6 +681,9 @@ export function analyzeSession(
     suggestions: [],
     timeline,
     analysisMode: "rule",
+    causalGraph: null,
+    attribution: null,
+    rulesApplied: [],
   };
   const suggestions = generateSuggestions(partial);
   partial.suggestions = suggestions;

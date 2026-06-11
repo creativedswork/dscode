@@ -29,13 +29,13 @@ The session store SHALL load version 1 session files without error.
 
 ### Requirement: SessionStore loadSessionFile Public Method
 
-The `SessionStore` class SHALL expose a public method `loadSessionFile(sessionId: string): Promise<SerializedSession | null>` that reads a session JSON file from disk and returns the raw serialized data. Returns `null` on any error (missing file, invalid JSON, validation failure).
+The `SessionStore` class SHALL expose a public method `loadSessionFile(sessionId: string): Promise<SerializedSession | null>` that reads a session JSON file from disk and returns the raw serialized data. Returns `null` on any error (missing file, invalid JSON, validation failure). The returned data SHALL include all message fields required for CHIFF causal graph analysis: thinking blocks, toolCall blocks (name, arguments), toolResult content blocks, usage statistics, stopReason, and responseId.
 
 #### Scenario: Load existing session file
 
 - **WHEN** `loadSessionFile("00MPX37L8RW7I64DNM725JX5MK")` is called and the session JSON file exists on disk
 - **THEN** the method SHALL return the parsed `SerializedSession` object
-- **AND** the object SHALL contain all raw message data including toolResult content blocks
+- **AND** the object SHALL contain all raw message data including thinking, toolCall, toolResult, usage, and stopReason fields
 
 #### Scenario: Session file not found
 

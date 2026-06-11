@@ -1,3 +1,5 @@
+import type { CausalGraphSnapshot, Attribution } from "./schemas.js";
+
 // ── Eval Types ──
 // Data structures for session quality analysis.
 
@@ -51,6 +53,7 @@ export interface TimelineEvent {
   severity?: "ok" | "warn" | "danger";
 }
 
+
 export interface EvalResult {
   metadata: SessionMeta;
   stats: ToolStats;
@@ -60,6 +63,9 @@ export interface EvalResult {
   suggestions: string[];
   analysisMode: "llm" | "rule";
   timeline: TimelineEvent[];
+  causalGraph: CausalGraphSnapshot | null;
+  attribution: Attribution | null;
+  rulesApplied: string[];
 }
 
 export interface CompactMessage {

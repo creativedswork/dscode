@@ -59,7 +59,7 @@ export async function runEval(
 
     ui.addInfo(`正在分析 session ${resolvedId.slice(0, 8)}...`);
 
-    // Analyze — LLM for deep semantic analysis, rule engine as fallback
+    // Analyze — CHIFF causal graph pipeline, rule engine as fallback
     const result = await analyzeWithLLM(sessionData, harness);
 
     // Generate dashboard
@@ -69,10 +69,14 @@ export async function runEval(
     // Open in browser
     openDashboard(outputPath);
 
+    const analysisLabel = result.analysisMode === "llm" ? "CHIFF Causal Graph" : "Rule Engine";
+    const attributionInfo = result.attribution
+      ? ` | Root cause: ${result.attribution.mistakeAgent}@Step${result.attribution.mistakeStep}`
+      : "";
     ui.addInfo(
       `Dashboard generated: ${outputPath}\n` +
-      `Messages: ${result.metadata.totalMessages} | Tool calls: ${result.stats.toolCalls} | ` +
-      `Error rate: ${result.stats.errorRate} | Deviations: ${result.deviations.length}`,
+      `[${analysisLabel}] Messages: ${result.metadata.totalMessages} | Tool calls: ${result.stats.toolCalls} | ` +
+      `Error rate: ${result.stats.errorRate}${attributionInfo}`,
     );
   } catch (err) {
     ui.addError(`eval: ${err instanceof Error ? err.message : String(err)}`);

@@ -5,6 +5,7 @@ import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { exec } from "node:child_process";
 import { join, dirname } from "node:path";
 import type { EvalResult } from "./types.js";
+import type { CausalGraphSnapshot, Attribution } from "./schemas.js";
 
 // ── HTML Escape ──
 
@@ -43,6 +44,88 @@ function statusEmoji(status: "ok" | "warn" | "danger"): string {
     case "warn": return "⚠";
     case "danger": return "✗";
   }
+}
+
+// ── Causal Graph SVG Generator ──
+
+function generateCausalGraphHTML(result: EvalResult): string {
+  const graph = result.causalGraph;
+  if (!graph) return "";
+  const subs = graph.subtasks;
+  if (subs.length === 0) return "";
+
+  const barWidth = 100 / subs.length;
+  const barHTML = subs.map((s) => {
+    const color = s.status === "danger" ? COLORS.danger : s.status === "warn" ? COLORS.warn : COLORS.ok;
+    return `<div style="background:${color};width:${barWidth.toFixed(1)}%;min-width:80px;padding:6px 4px;text-align:center;font-size:10px;border-right:1px solid ${COLORS.bg};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(s.name)} (${s.stepRange})\nGoal: ${escapeHtml(s.oracleGoal)}\nAgents: ${s.agentCount}\n${escapeHtml(s.loopSummary)}">${escapeHtml(s.name)}</div>`;
+  }).join("");
+
+  const edgeList = graph.subtaskEdges.map((e) => `
+    <div style="font-size:12px;padding:2px 8px;color:${COLORS.textMuted};">
+      ${escapeHtml(e.src)} → ${escapeHtml(e.dst)} [${escapeHtml(e.type)}, strength=${e.strength.toFixed(2)}]
+      ${e.keyDataTransfers.length > 0 ? ` · data: ${e.keyDataTransfers.map(escapeHtml).join(", ")}` : ""}
+      ${e.failureModeSummary ? ` · ⚠ ${escapeHtml(e.failureModeSummary)}` : ""}
+    </div>`).join("");
+
+  const flowRows = graph.dataFlows.slice(0, 10).map((f) => `
+    <tr>
+      <td style="font-family:monospace;font-size:12px;padding:4px 8px;border-bottom:1px solid ${COLORS.border};">${escapeHtml(f.dataItem)}</td>
+      <td style="font-size:12px;padding:4px 8px;border-bottom:1px solid ${COLORS.border};color:${COLORS.textMuted};">${escapeHtml(f.path)}</td>
+      <td style="font-size:12px;padding:4px 8px;border-bottom:1px solid ${COLORS.border};color:${f.correctness === "correct" ? COLORS.ok : COLORS.warn};">${escapeHtml(f.correctness)}</td>
+    </tr>`).join("");
+
+  return `
+<h2>Causal Graph</h2>
+<div class="phase-bar" style="margin-bottom:8px;">
+  ${barHTML}
+</div>
+
+<h3>Subtask Dependencies</h3>
+<div style="background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:6px;padding:12px;margin-bottom:16px;">
+  ${edgeList || '<div class="no-issues">No edge data</div>'}
+</div>
+
+<h3>Data Flow Paths</h3>
+<div style="background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:6px;overflow-x:auto;margin-bottom:16px;">
+  <table style="width:100%;border-collapse:collapse;">
+    <tr style="background:${COLORS.bg};">
+      <th style="text-align:left;padding:8px;font-size:12px;color:${COLORS.textMuted};border-bottom:1px solid ${COLORS.border};">Data Item</th>
+      <th style="text-align:left;padding:8px;font-size:12px;color:${COLORS.textMuted};border-bottom:1px solid ${COLORS.border};">Path</th>
+      <th style="text-align:left;padding:8px;font-size:12px;color:${COLORS.textMuted};border-bottom:1px solid ${COLORS.border};">Correctness</th>
+    </tr>
+    ${flowRows || '<tr><td colspan="3" style="padding:12px;text-align:center;color:${COLORS.textMuted};">No data flows tracked</td></tr>'}
+  </table>
+</div>
+`;
+}
+
+// ── Rule Chain Generator ──
+
+function generateRuleChainHTML(attribution: Attribution, rulesApplied: string[]): string {
+  const ruleDescriptions: Record<string, string> = {
+    "Rule1": "Control Flow / Loop adjudication — determines whether the agent entered an unjustified repair loop, or whether an action within a loop caused irreversible damage",
+    "Rule2": "Data Flow traceback — traces key data from source to final consumer; identifies whether data was misinterpreted, fabricated, or misused",
+    "Rule3": "Irrecoverable Point — identifies the FIRST step that made the correct path unrecoverable (not necessarily the first error)",
+  };
+
+  const ruleItems = rulesApplied.map((r) => `
+    <div style="padding:8px 12px;margin:4px 0;background:${r === "Rule3" ? "rgba(248,81,73,0.15)" : "rgba(88,166,255,0.1)"};border-left:3px solid ${r === "Rule3" ? COLORS.danger : COLORS.accent};border-radius:4px;">
+      <strong style="color:${COLORS.accent};font-size:13px;">${escapeHtml(r)}</strong>
+      <div style="font-size:12px;color:${COLORS.textMuted};margin-top:2px;">${escapeHtml(ruleDescriptions[r] ?? "")}</div>
+    </div>`).join("");
+
+  return `
+<h2>Rule Reasoning Chain</h2>
+<div style="background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:6px;padding:16px;margin-bottom:16px;">
+  <div style="font-size:14px;margin-bottom:12px;">
+    <strong>Root Cause</strong>: ${escapeHtml(attribution.mistakeAgent)} at Step ${attribution.mistakeStep}
+  </div>
+  <div style="font-size:13px;color:${COLORS.textMuted};margin-bottom:16px;">
+    ${escapeHtml(attribution.reason)}
+  </div>
+  ${ruleItems}
+</div>
+`;
 }
 
 // ── HTML Template ──
@@ -113,8 +196,8 @@ h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #e6edf3; }
   </div>
   <div style="margin-top:8px;">
     ${result.analysisMode === "llm"
-      ? `<span style="background:${COLORS.ok};color:#000;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">🤖 LLM 深度分析</span>`
-      : `<span style="background:${COLORS.warn};color:#000;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">⚙ 规则引擎分析（LLM 不可用）</span>`}
+      ? `<span style="background:${COLORS.ok};color:#000;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">🤖 CHIFF Causal Graph Analysis</span>`
+      : `<span style="background:${COLORS.warn};color:#000;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">⚙ 规则引擎分析（LLM Unavailable）</span>`}
   </div>
   <div class="header-meta">
     <div class="meta-item">
@@ -194,6 +277,12 @@ ${phases.map((p) => `
   <div class="phase-summary">${escapeHtml(p.summary)} · ${p.toolCalls.total} tool calls, ${p.toolCalls.errors} errors</div>
 </div>
 `).join("")}
+
+<!-- Causal Graph (LLM mode only) -->
+${result.causalGraph ? generateCausalGraphHTML(result) : ""}
+
+<!-- Rule Reasoning Chain (LLM mode only) -->
+${result.attribution ? generateRuleChainHTML(result.attribution, result.rulesApplied) : ""}
 
 <!-- Root Causes -->
 <h2>Root Cause Analysis</h2>
