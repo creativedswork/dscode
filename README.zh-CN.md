@@ -27,17 +27,17 @@
 <table align="center">
 <tr>
 <td align="center" width="50%">
-  <img src="docs/screen_shots/show_dscode_web_ui.gif" alt="dscode Web UI" width="100%" />
+  <video src="https://github.com/user-attachments/assets/b92aedab-93cc-4188-976a-0fcae614c04d" controls width="100%"></video>
   <br /><sub><b>Web UI</b> — 流式对话、工具调用、权限确认</sub>
 </td>
 <td align="center" width="50%">
-  <img src="docs/screen_shots/show_dscode_tui.gif" alt="dscode TUI" width="100%" />
+  <video src="https://github.com/user-attachments/assets/79790daa-d6f3-4d43-8306-e1d93561600c" controls width="100%"></video>
   <br /><sub><b>Terminal UI</b> — 实时流式、斜杠命令、内联渲染</sub>
 </td>
 </tr>
 </table>
 
-> **提示：** GIF 在 GitHub 自动播放。点击图片可查看全尺寸。
+> **提示：** 视频可直接在 GitHub 内播放——点击即可观看演示。
 
 ---
 
@@ -150,17 +150,17 @@ dscode 启动时自动连接，工具以 `mcp_blender_*` 和 `mcp_playwright_*` 
 <table align="center">
 <tr>
 <td align="center" width="50%">
-  <img src="docs/screen_shots/show_playcanvas.gif" alt="PlayCanvas + MCP" width="100%" />
+  <video src="https://github.com/user-attachments/assets/917414f9-9f39-457e-9358-98f6abe01220" controls width="100%"></video>
   <br /><sub><b>PlayCanvas + MCP</b> — 纯自然语言构建一个跳跃小游戏</sub>
 </td>
 <td align="center" width="50%">
-  <img src="docs/screen_shots/show_blender.gif" alt="Blender + MCP" width="100%" />
+  <video src="https://github.com/user-attachments/assets/cf62021e-bb1c-4aa3-953d-b0d09631a1ef" controls width="100%"></video>
   <br /><sub><b>Blender + MCP</b> — 对话式 3D 建模与场景搭建</sub>
 </td>
 </tr>
 </table>
 
-> **提示：** 以上为真实 MCP 工作流 —— dscode 像调用原生 API 一样编排 PlayCanvas 和 Blender。
+> **提示：** 视频可直接播放——以上为真实 MCP 工作流，点击观看。
 
 ---
 

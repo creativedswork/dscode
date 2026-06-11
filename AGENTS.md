@@ -2,21 +2,6 @@
 
 本文件供 AI Agent 快速理解项目结构。
 
-## 代码导航
-
-对代码进行理解、导航、重构时，优先使用 LSP 工具（需先 `search_tools` 加载），避免直接 grep/read_file。
-
-| 意图 | LSP 工具 | 禁止 |
-|------|---------|------|
-| 调用链/查找引用 | `references` | grep |
-| 定义/跳转 | `definition` | grep + read_file |
-| 类型/接口 | `hover` / `typeDefinition` | read_file |
-| 符号/文件结构 | `documentSymbol` | grep |
-| 实现 | `implementation` | grep |
-| 重命名 | `rename` | sed |
-| 全局符号 | `workspace_symbol` | grep -r |
-
-仅在搜索非代码文本时回退到 grep/read_file。
 
 ## 编码规范
 
