@@ -24,6 +24,15 @@ const SLASH_COMMANDS = [
   { name: "image", description: "Attach an image (file path or 'clipboard')" },
 ];
 
+function sessionsEqual(a: SessionInfo[], b: SessionInfo[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((s, i) =>
+    s.id === b[i].id &&
+    s.updatedAt === b[i].updatedAt &&
+    s.messageCount === b[i].messageCount
+  );
+}
+
 function getInitialTheme(): "light" | "dark" {
   const saved = localStorage.getItem("dscode-theme");
   if (saved === "dark" || saved === "light") return saved;
@@ -99,7 +108,7 @@ export function App() {
           turnStartRef.current = 0;
         }
         break;
-      case "sessions": setSessions(event.data); setCurrentSessionId((event as any).currentSessionId ?? null); break;
+      case "sessions": setSessions((prev) => sessionsEqual(prev, event.data) ? prev : event.data); setCurrentSessionId((event as any).currentSessionId ?? null); break;
       case "mcp_state": setMcpServers(event.servers); break;
       case "mcp_open_browser": setSidebarOpen(true); setSidebarTab("mcp"); break;
       case "model": setModel(event.name); break;

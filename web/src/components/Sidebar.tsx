@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
 import { useResizablePanel } from "../hooks/useResizablePanel";
 import type { SessionInfo, McpServerInfo, ConfigData } from "../types";
 import { X, Trash, CaretDown, CaretRight, Plus } from "@phosphor-icons/react";
@@ -37,6 +37,37 @@ export function Sidebar({
   const { width, panelRef, handleProps } = useResizablePanel({
     storageKey: "dscode-sidebar-width",
   });
+
+  // ── Scroll position preservation ──
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const savedScrollTopRef = useRef(0);
+  const prevActiveTabRef = useRef(activeTab);
+
+  const handleScroll = useCallback(() => {
+    if (scrollContainerRef.current) {
+      savedScrollTopRef.current = scrollContainerRef.current.scrollTop;
+    }
+  }, []);
+
+  // Reset saved scroll position on tab switch
+  useLayoutEffect(() => {
+    if (prevActiveTabRef.current !== activeTab) {
+      savedScrollTopRef.current = 0;
+      prevActiveTabRef.current = activeTab;
+    }
+  }, [activeTab]);
+
+  // Restore scroll position when sessions change (only when sessions tab is active)
+  useLayoutEffect(() => {
+    if (
+      activeTab === "sessions" &&
+      scrollContainerRef.current &&
+      savedScrollTopRef.current > 0
+    ) {
+      scrollContainerRef.current.scrollTop = savedScrollTopRef.current;
+    }
+  }, [sessions, activeTab]);
+
 
   return (
     <>
@@ -98,7 +129,7 @@ export function Sidebar({
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-3">
+        <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-3">
           {activeTab === "sessions" && (
             <SessionsPanel
               sessions={sessions}
