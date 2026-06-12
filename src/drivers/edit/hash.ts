@@ -235,6 +235,7 @@ interface ValidationResult {
   ambiguousAnchors?: AmbiguousAnchor[];
   suggested_action?: string;
   invalidRangeOrder?: { startLine: number; endLine: number };
+  auto_corrections?: Array<{ type: string; detail: string }>;
   lowEntropyAnchors?: { hash: string; line: number; content: string; neighborAnchors: string[] }[];
 }
 
@@ -430,6 +431,75 @@ function tryProximityResolve(
 }
 
 
+
+function detectAndResolveOverlaps(ops: EditOperation[]): 
+  { resolved: EditOperation[]; warnings: string[] } 
+  | { error: string; suggested_action: string } 
+{
+  const hashToOps = new Map<string, EditOperation[]>();
+  for (const op of ops) {
+    const hash = extractOpHash(op);
+    if (!hash) continue;
+    if (!hashToOps.has(hash)) hashToOps.set(hash, []);
+    hashToOps.get(hash)!.push(op);
+  }
+
+  const warnings: string[] = [];
+  const resolved: EditOperation[] = [...ops];
+
+  for (const [hash, hashOps] of hashToOps) {
+    if (hashOps.length <= 1) continue;
+
+    const replaceOp = hashOps.find(o => o.op === "replace_line") as 
+      (EditOperation & { op: "replace_line" }) | undefined;
+    const insertAfterOp = hashOps.find(o => o.op === "insert_after") as
+      (EditOperation & { op: "insert_after" }) | undefined;
+    const insertBeforeOp = hashOps.find(o => o.op === "insert_before") as
+      (EditOperation & { op: "insert_before" }) | undefined;
+    const deleteOp = hashOps.find(o => o.op === "delete_line");
+
+    // Safe merge: replace_line + insert_after
+    if (replaceOp && insertAfterOp) {
+      replaceOp.content = replaceOp.content + "\n" + insertAfterOp.content;
+      const idx = resolved.indexOf(insertAfterOp);
+      if (idx >= 0) resolved.splice(idx, 1);
+      warnings.push(`Auto-merged replace_line + insert_after on hash ${hash} into single replace_line`);
+      continue;
+    }
+
+    // Safe merge: insert_before + replace_line
+    if (insertBeforeOp && replaceOp) {
+      replaceOp.content = insertBeforeOp.content + "\n" + replaceOp.content;
+      const idx = resolved.indexOf(insertBeforeOp);
+      if (idx >= 0) resolved.splice(idx, 1);
+      warnings.push(`Auto-merged insert_before + replace_line on hash ${hash} into single replace_line`);
+      continue;
+    }
+
+    // Conflict: replace + delete
+    if (replaceOp && deleteOp) {
+      return { 
+        error: "overlapping_operations", 
+        suggested_action: `Semantic conflict on hash ${hash}: replace_line and delete_line are incompatible. Split into separate batches.` 
+      };
+    }
+
+    // Conflict: insert_after + insert_before
+    if (insertAfterOp && insertBeforeOp) {
+      return { 
+        error: "overlapping_operations", 
+        suggested_action: `Order ambiguous on hash ${hash}: insert_after + insert_before. Split into separate edit calls.` 
+      };
+    }
+  }
+
+  return { resolved, warnings };
+}
+
+function extractOpHash(op: EditOperation): string | null {
+  if ("hash" in op) return op.hash;
+  return null;
+}
 export function validateOperations(
   ops: EditOperation[],
   ctx: ResolutionContext,
@@ -438,6 +508,24 @@ export function validateOperations(
   const ambiguousAnchors: AmbiguousAnchor[] = [];
   const lowEntropyAnchors: { hash: string; line: number; content: string; neighborAnchors: string[] }[] = [];
   const resolvedMap = new Map<string, ResolvedAnchor>();
+
+  // T4: detect and auto-merge overlapping operations on the same hash
+  let autoCorrections: Array<{ type: string; detail: string }> | undefined;
+  const mergedOps = detectAndResolveOverlaps(ops);
+  if ("error" in mergedOps) {
+    return {
+      valid: false,
+      error: "overlapping_operations",
+      suggested_action: mergedOps.suggested_action,
+    };
+  }
+  if (mergedOps.warnings.length > 0) {
+    if (!autoCorrections) autoCorrections = [];
+    for (const w of mergedOps.warnings) {
+      autoCorrections.push({ type: "overlap_merged", detail: w });
+    }
+  }
+  ops = mergedOps.resolved;
 
   for (const op of ops) {
     if (isRangeOp(op)) {
@@ -467,6 +555,18 @@ export function validateOperations(
       const endRes = resolvedMap.get(op.end_hash);
       if (startRes && "lineNum" in startRes && endRes && "lineNum" in endRes) {
         if (startRes.lineNum > endRes.lineNum) {
+          // Auto-correct: swap the endpoints instead of rejecting
+          const swappedStart = { ...endRes };
+          const swappedEnd = { ...startRes };
+          resolvedMap.set(op.start_hash, swappedStart);
+          resolvedMap.set(op.end_hash, swappedEnd);
+          if (!autoCorrections) autoCorrections = [];
+          autoCorrections.push({
+            type: "range_order_swapped",
+            detail: `start_line (${startRes.lineNum}) was after end_line (${endRes.lineNum}). Swapped automatically.`,
+          });
+        } else if (startRes.lineNum === endRes.lineNum) {
+          // Same line for both hashes: no-op range, reject
           return {
             valid: false,
             error: "invalid_range_order",
@@ -571,7 +671,7 @@ export function validateOperations(
     }
   }
 
-  return { valid: true };
+  return { valid: true, auto_corrections: autoCorrections };
 }
 
 // --- Apply operations ---

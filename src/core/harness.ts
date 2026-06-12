@@ -29,6 +29,7 @@ import { ImageCache } from "../utils/image-cache.js";
 import type { ImageRef, VisionMessage } from "./types.js";
 import { initCheckpointSystem, shutdownCheckpointSystem } from "../checkpoint/index.js";
 import { ConfigWatch } from "./config-watch.js";
+import { recordInvalidation, consumePendingNotices } from "../context/anchor-invalidation.js";
 
 export class Harness implements HarnessAPI {
   agent!: Agent;
@@ -134,6 +135,14 @@ export class Harness implements HarnessAPI {
       }),
       transformContext: async (msgs: AgentMessage[], signal?: AbortSignal) => {
         try {
+          // S2b: Inject anchor invalidation notices into conversation (NOT system prompt)
+          const invalidationNotice = consumePendingNotices();
+          if (invalidationNotice) {
+            msgs.unshift({
+              role: "user",
+              content: invalidationNotice,
+            } as AgentMessage);
+          }
           // Update tools based on current discovery state
           self.agent.state.tools = self.toolRegistry.buildToolsForRequest();
           // Update system prompt with current deferred tools hint
@@ -154,6 +163,20 @@ export class Harness implements HarnessAPI {
           if (ctx.toolCall.name === "search_tools" && ctx.context.tools) {
             ctx.context.tools = self.toolRegistry.buildToolsForRequest();
           }
+            // S2b: Record anchor invalidation on write_file/overwrite_file success
+            const toolName = ctx.toolCall.name;
+            if ((toolName === "write_file" || toolName === "overwrite_file") &&
+                ctx.result && !("error" in (ctx.result as any))) {
+              const args = ctx.toolCall.arguments as any;
+              const res = ctx.result as any;
+              if (res.details?.file_version && args.path) {
+                recordInvalidation(
+                  args.path,
+                  res.details?.lines ?? 0,
+                  res.details.file_version,
+                );
+              }
+            }
         } catch (err) {
           console.error("[harness] afterToolCall error:", err);
         }

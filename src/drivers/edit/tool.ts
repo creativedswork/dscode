@@ -27,11 +27,13 @@ import {
 } from "./hash.js";
 
 const editParams = Type.Object({
-  file_path: Type.String({ description: "Absolute path of the file to edit" }),
+  path: Type.String({ description: "Absolute path of the file to edit" }),
+  file_path: Type.Optional(Type.String({ description: "[deprecated] Use 'path' instead. Will be removed in a future version." })),
   operations: Type.Array(EditOperationSchema, { description: "Ordered list of edit operations to apply" }),
   expected_file_version: Type.Optional(Type.String({ description: "File version from the last read_file(hashes: true). When provided and the file has changed, the edit tool will attempt to recover by replaying operations on the snapshot and merging the result onto the current file (3-way merge recovery)." })),
-});
+  safety_check: Type.Optional(Type.String({ description: "Safety check strictness: 'strict' (default, reject on imbalance), 'warn' (apply but warn), 'off' (skip checks)." })),
 
+});
 // --- Sanity checks (4.1) ---
 
 interface SanityResult {
@@ -143,8 +145,19 @@ export const editTool: AgentTool<typeof editParams> = {
     "The edit tool resolves ambiguous short hashes automatically via longer hash and context matching. " +
     "Example: { op: \"replace_line\", hash: \"a1b2c3\", content: \"new line content\" }",
   parameters: editParams,
-  execute: async (_id, { file_path, operations, expected_file_version }) => {
-    const resolved = resolve(file_path);
+  execute: async (_id, { path, file_path, operations, expected_file_version, safety_check }) => {
+    // Resolve path alias: file_path is deprecated, path takes precedence
+    const effectivePath = path ?? file_path;
+    if (!effectivePath) {
+      return {
+        content: [{ type: "text", text: "Error: 'path' parameter is required" }],
+        details: { error: "missing_parameter", suggested_action: "provide_path" },
+      };
+    }
+    if (file_path && !path) {
+      console.warn('[edit] file_path is deprecated, use path instead');
+    }
+    const resolved = resolve(effectivePath);
 
     if (!existsSync(resolved)) {
       return {
@@ -304,6 +317,7 @@ export const editTool: AgentTool<typeof editParams> = {
             writeFileSync(resolved, recoveredContent);
             if (cpm) cpm.commit(resolved);
             const recoveredVersion = computeFileVersion(recoveredContent);
+            const crossVersionWarning = undefined;
             if (ss) ss.record(resolved, recoveredVersion, recoveredContent);
 
             return {
@@ -322,7 +336,9 @@ export const editTool: AgentTool<typeof editParams> = {
                 file_version: recoveredVersion,
                 diff_preview: recovery.diffPreview,
                 baseline_continuity: baselineContinuity,
-                writer_type: "edit" as WriterType,
+        writer_type: "edit" as WriterType,
+        auto_corrections: validation.auto_corrections,
+        cross_version: crossVersionWarning || undefined,
               },
             };
           }
@@ -364,6 +380,7 @@ export const editTool: AgentTool<typeof editParams> = {
             writeFileSync(resolved, retryContent);
             if (cpm) cpm.commit(resolved);
             const retryVersion = computeFileVersion(retryContent);
+            const crossVersionWarning = undefined;
             if (ss) ss.record(resolved, retryVersion, retryContent);
 
             return {
@@ -386,6 +403,8 @@ export const editTool: AgentTool<typeof editParams> = {
                 file_version: retryVersion,
                 baseline_continuity: baselineContinuity,
                 writer_type: "edit" as WriterType,
+        auto_corrections: validation.auto_corrections,
+        cross_version: crossVersionWarning || undefined,
               },
             };
           }
@@ -435,34 +454,56 @@ export const editTool: AgentTool<typeof editParams> = {
     writeFileSync(resolved, newContent);
 
     const newFileVersion = computeFileVersion(newContent);
-    const sanity = runSanityChecks(lines, resultLines, affectedMinLine,
-      Math.min(lines.length, resultLines.length));
+    const safetyMode = safety_check ?? "strict";
+    let safetyWarnings: string[] = [];
+    let safetyStatus: "clean" | "suspicious" = "clean";
 
-    // 4.2: Rollback on suspicious, commit on clean
-    // 4.2: Only rollback on severe safety issues (unbalanced delimiters, orphan fragments)
-    const severeWarnings = sanity.warnings.filter(w => !w.startsWith("duplicate_line"));
-    if (sanity.status === "suspicious" && severeWarnings.length > 0) {
-      if (cpm) {
-        try { cpm.rollback(resolved); } catch { /* best-effort rollback */ }
+    if (safetyMode !== "off") {
+      const sanity = runSanityChecks(lines, resultLines, affectedMinLine,
+        Math.min(lines.length, resultLines.length));
+      safetyWarnings = sanity.warnings;
+      safetyStatus = sanity.status;
+
+      const severeWarnings = safetyWarnings.filter((w: string) => !w.startsWith("duplicate_line"));
+      if (safetyStatus === "suspicious" && severeWarnings.length > 0) {
+        if (safetyMode === "strict") {
+          if (cpm) {
+            try { cpm.rollback(resolved); } catch { /* best-effort rollback */ }
+          }
+          const diagParts: string[] = [];
+          diagParts.push("Edit rejected: safety check failed. File rolled back.");
+          diagParts.push("┌─ Safety Check Diagnostics ────────────────────────────────┐");
+          for (const w of safetyWarnings) {
+            diagParts.push("│ " + w);
+          }
+          diagParts.push("│");
+          diagParts.push("│ Total: " + safetyWarnings.length + " warning(s)");
+          diagParts.push("│ Hint: review the per-operation delta and re-read before retrying.");
+          diagParts.push("└──────────────────────────────────────────────────────────┘");
+          return {
+            content: [{ type: "text", text: diagParts.join("\n") }],
+            details: {
+              error: "safety_check_failed",
+              safety_warnings: safetyWarnings,
+              baseline_continuity: baselineContinuity,
+              writer_type: "edit",
+              suggested_action: "re-read_file",
+            },
+          };
+        }
+        // safetyMode === "warn": continue with warnings attached
       }
-      return {
-        content: [{
-          type: "text",
-          text:
-            `Edit rejected: safety check failed. File rolled back.\n` +
-            `Warnings: ${sanity.warnings.join("; ")}\n` +
-            `Hint: review the edit operations for correctness and re-read the file before retrying.`,
-        }],
-        details: {
-          error: "safety_check_failed",
-          safety_warnings: sanity.warnings,
-          baseline_continuity: baselineContinuity,
-          writer_type: "edit",
-          suggested_action: "re-read_file",
-        },
-      };
     }
     if (cpm) cpm.commit(resolved);
+
+    // T2: Check cross-version — warn if file was modified since snapshot
+    let crossVersionWarning: string | undefined;
+    if (expected_file_version) {
+      const currentFv = computeFileVersion(newContent);
+      if (currentFv !== expected_file_version) {
+        crossVersionWarning = "cross_version: file was modified since snapshot, but all anchors resolved correctly.";
+      }
+    }
     const ss2 = getSnapshotStore();
     if (ss2) ss2.record(resolved, newFileVersion, newContent);
 
@@ -517,10 +558,12 @@ export const editTool: AgentTool<typeof editParams> = {
         must_refresh_from_line: mustRefreshFromLine,
         new_anchors: diffResult.newAnchors,
         diff_preview: diffResult.diffPreview,
-        safety_status: sanity.status,
-        safety_warnings: sanity.warnings,
+        safety_status: safetyStatus,
+        safety_warnings: safetyWarnings,
         baseline_continuity: baselineContinuity,
         writer_type: "edit" as WriterType,
+        auto_corrections: validation.auto_corrections,
+        cross_version: crossVersionWarning || undefined,
       },
     };
   },

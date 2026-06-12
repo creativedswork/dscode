@@ -69,10 +69,23 @@ export const readFileTool: AgentTool<typeof readFileParams> = {
         recommendedAnchors.push(`${idx + 1}#${computeLineHash(lines[idx])}`);
       }
 
+      // Compute occurrence counts for low-quality line warnings
+      const hashCounts = new Map<string, number>();
+      for (const l of lines) {
+        const h = computeLineHash(l);
+        hashCounts.set(h, (hashCounts.get(h) ?? 0) + 1);
+      }
+
       numbered = slice.map((l, i) => {
         const lineNum = start + i + 1;
         const hash = computeLineHash(l);
         const quality = sliceQualities[i];
+        if (quality === "low") {
+          const occurrences = hashCounts.get(hash) ?? 1;
+          if (occurrences > 1 || l.trim().length === 0) {
+            return `${lineNum}#${hash} [low] occurrences=${occurrences} WARNING:ambiguous_anchor | ${l}`;
+          }
+        }
         return formatHashedLine(lineNum, hash, l, quality);
       }).join("\n");
     } else {
@@ -85,6 +98,16 @@ export const readFileTool: AgentTool<typeof readFileParams> = {
       const fileVersion = computeFileVersion(raw);
       parts.push(`\n[file_version: ${fileVersion}]`);
       parts.push(`\n(${lines.length} lines total, showing ${start + 1}-${start + slice.length}${useHashes ? ", anchors enabled" : ""})`);
+
+      // S3: RECOMMENDED ANCHORS visual block
+      if (recommendedAnchors && recommendedAnchors.length > 0) {
+        parts.push("\n--- RECOMMENDED ANCHORS (use these for edit operations) ---");
+        for (const anchor of recommendedAnchors) {
+          const [lineStr, hashStr] = anchor.split("#");
+          parts.push(`  line ${lineStr.padStart(4)}   hash  ${hashStr}   quality  [high]   0 repeats`);
+        }
+        parts.push("--- END RECOMMENDED ANCHORS ---");
+      }
     }
 
     return {
@@ -219,6 +242,20 @@ export const writeFileTool: AgentTool<typeof writeFileParams> = {
     const newLines = content.split("\n");
     const previewLimit = Math.min(newLines.length, 50);
     const newQualities = classifyLinesWithFrequency(newLines);
+
+    // Build high-quality preview anchors (max 10, only 'high' quality)
+    const previewAnchors: Array<{ line: number; hash: string; content_preview: string }> = [];
+    for (let i = 0; i < newLines.length && previewAnchors.length < 10; i++) {
+      if (newQualities[i] === "high") {
+        previewAnchors.push({
+          line: i + 1,
+          hash: computeLineHash(newLines[i]),
+          content_preview: newLines[i].length > 60 ? newLines[i].slice(0, 57) + "..." : newLines[i],
+        });
+      }
+    }
+
+    // Full anchor preview for display (existing behavior, up to 50 lines)
     const newAnchors = newLines.slice(0, previewLimit)
       .map((l, i) => `${i + 1}#${computeLineHash(l)}`);
     const anchorPreview = newLines.slice(0, previewLimit)
@@ -243,6 +280,10 @@ export const writeFileTool: AgentTool<typeof writeFileParams> = {
       responseParts.push(
         "\nNote: use these new anchors or re-read for full file. Previous anchors are invalid."
       );
+      responseParts.push("");
+      responseParts.push(
+        "⚠️  ANCHORS INVALIDATED — Before calling edit on this file, run: read_file({ path: \"" + path + "\", hashes: true })"
+      );
     }
 
     return {
@@ -256,6 +297,9 @@ export const writeFileTool: AgentTool<typeof writeFileParams> = {
         baseline_continuity: baselineContinuity,
         writer_type: "write_file",
         new_anchors: newAnchors,
+        anchors_invalidated: true,
+        hint: "All previous hash anchors are invalid. Re-read with read_file({ path: \"" + path + "\", hashes: true }) before calling edit.",
+        preview_anchors: previewAnchors,
       },
     };
   },
@@ -340,6 +384,20 @@ export const overwriteFileTool: AgentTool<typeof overwriteFileParams> = {
     const newLines = content.split("\n");
     const previewLimit = Math.min(newLines.length, 50);
     const newQualities = classifyLinesWithFrequency(newLines);
+
+    // Build high-quality preview anchors (max 10, only 'high' quality)
+    const previewAnchors: Array<{ line: number; hash: string; content_preview: string }> = [];
+    for (let i = 0; i < newLines.length && previewAnchors.length < 10; i++) {
+      if (newQualities[i] === "high") {
+        previewAnchors.push({
+          line: i + 1,
+          hash: computeLineHash(newLines[i]),
+          content_preview: newLines[i].length > 60 ? newLines[i].slice(0, 57) + "..." : newLines[i],
+        });
+      }
+    }
+
+    // Full anchor preview for display (existing behavior, up to 50 lines)
     const newAnchors = newLines.slice(0, previewLimit)
       .map((l, i) => `${i + 1}#${computeLineHash(l)}`);
     const anchorPreview = newLines.slice(0, previewLimit)
@@ -349,12 +407,25 @@ export const overwriteFileTool: AgentTool<typeof overwriteFileParams> = {
     const responseParts: string[] = [
       `Written ${bytes} bytes to ${resolved}`,
       `New file version: ${newFileVersion}`,
-      `\nNew anchors preview${newLines.length > previewLimit ? ` (first ${previewLimit} of ${newLines.length} lines)` : ""}:`,
-      anchorPreview,
     ];
 
-    if (newLines.length > previewLimit) {
-      responseParts.push(`... (${newLines.length - previewLimit} more lines)`);
+    if (newLines.length > 0) {
+      responseParts.push(
+        `\nNew anchors preview${newLines.length > previewLimit ? ` (first ${previewLimit} of ${newLines.length} lines)` : ""}:`,
+        anchorPreview,
+      );
+
+      if (newLines.length > previewLimit) {
+        responseParts.push(`... (${newLines.length - previewLimit} more lines)`);
+      }
+
+      responseParts.push(
+        "\nNote: use these new anchors or re-read for full file. Previous anchors are invalid."
+      );
+      responseParts.push("");
+      responseParts.push(
+        "⚠️  ANCHORS INVALIDATED — Before calling edit on this file, run: read_file({ path: \"" + path + "\", hashes: true })"
+      );
     }
 
     return {
@@ -368,6 +439,9 @@ export const overwriteFileTool: AgentTool<typeof overwriteFileParams> = {
         baseline_continuity: bc,
         writer_type: "overwrite_file",
         new_anchors: newAnchors,
+        anchors_invalidated: true,
+        hint: "All previous hash anchors are invalid. Re-read with read_file({ path: \"" + path + "\", hashes: true }) before calling edit.",
+        preview_anchors: previewAnchors,
       },
     };
   },
