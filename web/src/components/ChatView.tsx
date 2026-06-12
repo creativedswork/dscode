@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef, useState, useCallback, useLayoutEffect } from "react";
 import type { UIMessage } from "../types";
 import { ToolCard } from "./ToolCard";
 import { Markdown } from "./Markdown";
@@ -22,6 +22,8 @@ interface ChatViewProps {
 }
 export function ChatView({ messages, processing, hasStreaming, turnStartRef, permissionPrompt, onPermission }: ChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isAtBottomRef = useRef(true);
   const [elapsed, setElapsed] = useState(0);
 
   // Elapsed timer driven by turnStartRef (set on handleSend / loader:show, reset on loader:hide / error)
@@ -42,9 +44,27 @@ export function ChatView({ messages, processing, hasStreaming, turnStartRef, per
     return () => cancelAnimationFrame(raf);
   }, [turnStartRef]);
 
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: hasStreaming ? "instant" : "smooth" });
+  // ── Auto-scroll to bottom, gated by user scroll position ──
+  useLayoutEffect(() => {
+    if (isAtBottomRef.current && bottomRef.current) {
+      bottomRef.current.scrollIntoView({ behavior: hasStreaming ? "instant" : "smooth" });
+    }
   }, [messages, processing, permissionPrompt]);
+
+  const handleChatScroll = useCallback(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const wasAtBottom = isAtBottomRef.current;
+    const nowAtBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 64;
+    isAtBottomRef.current = nowAtBottom;
+
+    // Immediate snap when user scrolls back to bottom during streaming
+    if (!wasAtBottom && nowAtBottom && hasStreaming) {
+      requestAnimationFrame(() => {
+        bottomRef.current?.scrollIntoView({ behavior: "instant" });
+      });
+    }
+  }, [hasStreaming]);
 
   if (messages.length === 0 && !permissionPrompt) {
     return (
@@ -102,7 +122,7 @@ export function ChatView({ messages, processing, hasStreaming, turnStartRef, per
   }
 
   return (
-    <div className="flex-1 overflow-y-auto min-h-0 px-4 py-4 space-y-4">
+    <div ref={scrollContainerRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto min-h-0 px-4 py-4 space-y-4">
       {messages.map((msg) => (
         <ErrorBoundary key={msg.id} fallback={<FallbackBubble message={msg} />}>
           <MessageBubble message={msg} elapsed={elapsed} />
