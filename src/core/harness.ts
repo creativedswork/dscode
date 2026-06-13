@@ -817,6 +817,17 @@ You are working in: ${this.config.projectPath}.
 - Answer in the user's language. Be concise and direct.
 - When writing code, produce complete, working implementations. Do not leave placeholders or TODOs.
 
+- **Multi-file editing**: When modifying multiple files, complete all operations on one file before moving to the next. Batch operations targeting the same file into a single \`edit\` call where possible (all operations in one call are atomic against the same snapshot). Avoid interleaving reads and edits across different files — read A → edit A → read B → edit B, not read A → read B → edit A → edit B.
+
+| Situation | Recommended Operation |
+|-----------|----------------------|
+| Change a single line with unique content | \`replace_line\` |
+| Change a contiguous block of lines | \`replace_range\` |
+| Insert new content between two existing lines | \`insert_after\` / \`insert_before\` |
+| Remove a single unique line | \`delete_line\` |
+| Remove a contiguous block of lines | \`delete_range\` |
+| Target line is repetitive (empty line, \`}\`, boilerplate) | \`replace_range\` wrapping it with unique neighbor anchors |
+
 ## Tool Search
 
 You have a \`search_tools\` tool for discovering additional tools. Some tools (especially MCP tools from connected servers) are not loaded by default to save context. These tools are listed in the "Discoverable Tools" section below.

@@ -134,6 +134,11 @@ export const editTool: AgentTool<typeof editParams> = {
     "Edit a file using content-based hash anchors. " +
     "First read the file with read_file(hashes: true) to get line hashes (format: lineNum#hash|content), " +
     "then use this tool to make precise changes. " +
+    "After reading a file with read_file(hashes: true), apply edits to that file in the " +
+    "same response turn or the immediate next turn. Do not read file A, then read file B, " +
+    "then later edit file A — the anchors from A will be stale and cause cross-version " +
+    "conflicts. Process one file completely (read → edit) before reading anchors for " +
+    "another file. " +
     "Line numbers in anchors are advisory (snapshot position); hashes are content-based identity (the guard material). " +
     "Operations: replace_line, replace_range, insert_after, insert_before, delete_line, delete_range. " +
     "All operations in a single call are applied atomically against the same initial file snapshot — " +
@@ -141,8 +146,21 @@ export const editTool: AgentTool<typeof editParams> = {
     "If any hash is invalid, ambiguous, or out of order, the entire batch is rejected and no changes are made. " +
     "For duplicate-content lines, use the `occurrence` field (1-indexed) to specify which matching line to target. " +
     "For ambiguous hashes, use the `line` field (advisory line number from read_file) to select the candidate closest to that line. " +
+    "Anchor selection guidance: Prefer lines with unique, distinctive content as anchors. " +
+    "Avoid anchoring on empty lines, closing braces (`}`), or frequently repeated boilerplate " +
+    "(e.g., `position: fixed;`, `display: flex;` in CSS, `</div>` in HTML). For files with " +
+    "repetitive content, use `replace_range` with two unique boundary anchors instead of " +
+    "`replace_line` — range operations enforce uniqueness on both endpoints and are " +
+    "rejected if ambiguous. When a `replace_line` anchor matches multiple lines, use the " +
+    "`occurrence` field (1-indexed) and `line` field (advisory line number) together to " +
+    "disambiguate. " +
     "Range operations (replace_range, delete_range) require both endpoint hashes to be unique and will be rejected if ambiguous. " +
     "The edit tool resolves ambiguous short hashes automatically via longer hash and context matching. " +
+    "Parameter notes: " +
+    "- Use `path` to specify the file; `file_path` is deprecated and will be rejected. " +
+    "- `replace_line` / `delete_line` / `insert_after` / `insert_before` use `hash` (single anchor). " +
+    "- `replace_range` / `delete_range` use `start_hash` + `end_hash` (two anchors). " +
+    "- Mixing these (e.g., `start_hash` on a `replace_line`) causes validation failure. " +
     "Example: { op: \"replace_line\", hash: \"a1b2c3\", content: \"new line content\" }",
   parameters: editParams,
   execute: async (_id, { path, file_path, operations, expected_file_version, safety_check }) => {
