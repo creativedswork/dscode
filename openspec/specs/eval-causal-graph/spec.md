@@ -219,3 +219,48 @@ The system SHALL report progress to the UI during the 6-step analysis pipeline. 
 - **WHEN** `/eval` is invoked on a valid session
 - **THEN** the UI SHALL show "正在解析 session..." for Step 0
 - **AND** then "Step 1/6: 分解子任务..." through "Step 6/6: 反事实根因裁决..."
+
+### Requirement: Step 7 — LLM Autonomous Rule Attribution
+
+After Step 6 attribution is complete, the system SHALL execute Step 7: Rule Attribution. This step SHALL be LLM-based and SHALL provide the full CHIFF context (causal graph snapshot, data flows with correctness anomalies, candidate error set, attribution) plus session key fragments and current Agent configuration to the LLM, as specified in `eval-llm-rule-attribution`.
+
+The step SHALL NOT use any pre-defined rule catalog, detector registry, or CHIFF→Rule mapping. The LLM autonomously identifies which Agent configuration layers need improvement and generates structured `HarnessRule` objects.
+
+#### Scenario: Step 7 runs after successful Step 6
+
+- **WHEN** CHIFF Steps 1-6 complete successfully and produce an `Attribution`
+- **THEN** Step 7 SHALL call the LLM with the full CHIFF context
+- **AND** produce a `HarnessRule[]` array generated autonomously by the LLM
+
+#### Scenario: Step 7 runs on rule-engine fallback
+
+- **WHEN** the pipeline falls back to rule-engine mode before Step 6
+- **THEN** Step 7 SHALL still call the LLM with session statistics and key fragments (no causal graph)
+- **AND** SHALL produce rules based on observable session patterns
+
+### Requirement: Step 8 — LLM Semantic Rule Merge
+
+After Step 7 extraction, the system SHALL execute Step 8: Semantic Rule Merge. This step SHALL load the existing `RuleStore`, call the LLM for semantic matching between new and existing rules, apply the merge decisions, and save the merged result. This step SHALL use LLM-based semantic matching as specified in `eval-semantic-rule-merge`.
+
+#### Scenario: New rules semantically merged with existing store
+
+- **WHEN** Step 7 produces new rules and the store has existing rules
+- **THEN** the LLM SHALL output merge decisions
+- **AND** semantically matching rules SHALL be merged (evidence appended, severity recalculated)
+- **AND** non-matching rules SHALL be added as new entries
+
+#### Scenario: No new rules triggered
+
+- **WHEN** Step 7 produces an empty `HarnessRule[]`
+- **THEN** Step 8 SHALL skip the LLM call
+- **AND** SHALL preserve existing rules unchanged
+
+### Requirement: Progress Reporting
+
+The system SHALL report progress to the UI during the 8-step analysis pipeline. Each step (0-8) SHALL display a message: "Step X/8: <step_description>...". Step 0 (deterministic parsing and stats) SHALL complete immediately. Steps 1-8 SHALL be LLM calls.
+
+#### Scenario: Progress during analysis
+
+- **WHEN** `/eval` is invoked on a valid session
+- **THEN** the UI SHALL show "正在解析 session..." for Step 0
+- **AND** then "Step 1/8: 分解子任务..." through "Step 8/8: LLM 语义规则合并..."

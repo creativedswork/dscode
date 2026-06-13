@@ -613,3 +613,107 @@ export function parseSessionToSteps(data: SerializedSession): HistoryStep[] {
 
   return steps;
 }
+
+// ── Harness Rule Schemas (LLM output validation) ──
+
+const VALID_CATEGORIES = ["identity", "tool_use", "tool_registry", "agents_md", "skill", "other"];
+const VALID_ACTIONS = ["modify", "add", "remove", "reorder"];
+
+export function validateRuleSuggestion(obj: unknown, errors: string[]): { layer: string; action: "modify" | "add" | "remove" | "reorder"; current?: string; proposed: string; rationale: string } | null {
+  if (!isObject(obj)) { errors.push("suggestion must be an object"); return null; }
+  const layer = requiredString(obj, "layer", errors);
+  const actionRaw = optionalString(obj, "action");
+  const action = VALID_ACTIONS.includes(actionRaw) ? actionRaw as "modify" | "add" | "remove" | "reorder" : "modify";
+  const current = obj["current"];
+  const proposed = requiredString(obj, "proposed", errors);
+  const rationale = requiredString(obj, "rationale", errors);
+  if (errors.length > 0) return null;
+  return { layer, action, current: isString(current) ? current : undefined, proposed, rationale };
+}
+
+export interface HarnessRuleOutput {
+  id: string;
+  category: string;
+  targetLayer: string;
+  abstract: string;
+  rawDescription: string;
+  severity: number;
+  suggestion: { layer: string; action: "modify" | "add" | "remove" | "reorder"; current?: string; proposed: string; rationale: string };
+}
+
+export function validateHarnessRuleOutput(obj: unknown): ValidationResult<HarnessRuleOutput> {
+  const errors: string[] = [];
+  if (!isObject(obj)) return { ok: false, errors: ["Expected an object"] };
+
+  const id = requiredString(obj, "id", errors);
+  const categoryRaw = optionalString(obj, "category");
+  const category = VALID_CATEGORIES.includes(categoryRaw) ? categoryRaw : "other";
+  const targetLayer = requiredString(obj, "targetLayer", errors) || optionalString(obj, "target_layer");
+  const abstract = requiredString(obj, "abstract", errors);
+  const rawDescription = requiredString(obj, "rawDescription", errors) || optionalString(obj, "raw_description");
+  const severity = requiredNumber(obj, "severity", errors);
+
+  const suggObj = obj["suggestion"];
+  const suggestion = isObject(suggObj) ? validateRuleSuggestion(suggObj, errors) : null;
+  if (!suggestion) errors.push("Missing or invalid suggestion");
+
+  if (errors.length > 0) return { ok: false, errors };
+  return {
+    ok: true,
+    value: {
+      id, category, targetLayer, abstract, rawDescription,
+      severity: Math.max(0, Math.min(1, severity)),
+      suggestion: suggestion!,
+    },
+  };
+}
+
+export function validateHarnessRuleOutputs(obj: unknown): ValidationResult<HarnessRuleOutput[]> {
+  if (!isArray(obj)) return { ok: false, errors: ["Expected an array of rule outputs"] };
+  const results: HarnessRuleOutput[] = [];
+  const allErrors: string[] = [];
+  for (let i = 0; i < obj.length; i++) {
+    const r = validateHarnessRuleOutput(obj[i]);
+    if (r.ok) results.push(r.value);
+    else allErrors.push(`Rule[${i}]: ${r.errors.join("; ")}`);
+  }
+  return allErrors.length === 0 ? { ok: true, value: results } : { ok: false, errors: allErrors };
+}
+
+export interface MergeDecision {
+  newRuleId: string;
+  decision: "merge" | "new";
+  targetRuleId?: string;
+  reasoning: string;
+}
+
+export function validateMergeDecision(obj: unknown): ValidationResult<MergeDecision> {
+  const errors: string[] = [];
+  if (!isObject(obj)) return { ok: false, errors: ["Expected an object"] };
+
+  const newRuleId = requiredString(obj, "newRuleId", errors) || optionalString(obj, "new_rule_id");
+  const decisionRaw = optionalString(obj, "decision");
+  const decision = decisionRaw === "merge" || decisionRaw === "new" ? decisionRaw : "new";
+  const targetRuleId = optionalString(obj, "targetRuleId") || optionalString(obj, "target_rule_id") || undefined;
+  const reasoning = requiredString(obj, "reasoning", errors);
+
+  if (decision === "merge" && !targetRuleId) {
+    errors.push("Merge decision requires targetRuleId");
+  }
+
+  if (errors.length > 0) return { ok: false, errors };
+  return { ok: true, value: { newRuleId, decision: decision as "merge" | "new", targetRuleId, reasoning } };
+}
+
+export function validateMergeDecisions(obj: unknown): ValidationResult<MergeDecision[]> {
+  if (!isArray(obj)) return { ok: false, errors: ["Expected an array of merge decisions"] };
+  const results: MergeDecision[] = [];
+  const allErrors: string[] = [];
+  for (let i = 0; i < obj.length; i++) {
+    const r = validateMergeDecision(obj[i]);
+    if (r.ok) results.push(r.value);
+    else allErrors.push(`Decision[${i}]: ${r.errors.join("; ")}`);
+  }
+  return allErrors.length === 0 ? { ok: true, value: results } : { ok: false, errors: allErrors };
+}
+

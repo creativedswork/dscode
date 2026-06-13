@@ -1,8 +1,8 @@
 // ── CHIFF Causal Graph Pipeline ──
-// 6-step LLM analysis pipeline following the CHIFF methodology.
+// 8-step analysis pipeline: 6 LLM steps (CHIFF) + 2 LLM rule steps.
 // Falls back to rule-engine analysis on any failure.
 
-import type { EvalResult, DeviationPoint, RootCause } from "./types.js";
+import type { EvalResult, DeviationPoint, RootCause, HarnessRule } from "./types.js";
 import type { HarnessAPI } from "../core/harness-api.js";
 import type { SerializedSession } from "../session/types.js";
 import { resolveModel } from "../models/index.js";
@@ -10,6 +10,7 @@ import { completeSimple } from "@mariozechner/pi-ai";
 import { CausalGraphStore } from "./graph-store.js";
 import { parseSessionToSteps, validateSubtasks, validateSubtaskEdges, validateAgentNodes, validateAgentEdges, validateCandidateSet, validateAttribution, validateStepDataFlows, type HistoryStep, type Subtask, type SubtaskEdge, type AgentNode, type AgentEdge, type StepDataFlow, type CandidateSet, type Attribution } from "./schemas.js";
 import { analyzeSession, compactSession } from "./analyzer.js";
+import { attributeWithLLM } from "./rules/extraction.js";
 import {
   CHIFF_SYSTEM_PROMPT,
   buildHistorySummary,
@@ -214,6 +215,7 @@ function mergePipelineResults(
   attribution: Attribution,
   candidateSet: CandidateSet,
   graphStore: CausalGraphStore,
+  rules: HarnessRule[],
 ): EvalResult {
   const snapshot = graphStore.snapshot();
 
@@ -257,12 +259,9 @@ function mergePipelineResults(
     phases,
     deviations,
     rootCauses,
-    suggestions: [
-      `[Rule1/2/3] ${attribution.rulesApplied.join(", ")} applied — root cause at ${attribution.mistakeAgent}:${attribution.mistakeStep}`,
-      `Root cause: ${attribution.reason}`,
-    ],
+    rules,
+    analysisMode: "llm" as const,
     timeline: ruleResult.timeline,
-    analysisMode: "llm",
     causalGraph: snapshot,
     attribution,
     rulesApplied: attribution.rulesApplied,
@@ -319,10 +318,15 @@ export async function runCausalGraphPipeline(
     // Step 6: Counterfactual attribution
     const attribution = await executeStep6(candidateSet, graphStore, harness);
 
-    return mergePipelineResults(ruleResult, attribution, candidateSet, graphStore);
+    // Step 7: LLM autonomous rule attribution
+    const rules = await attributeWithLLM(data, steps, ruleResult.stats, ruleResult.metadata, graphStore, attribution, harness, ruleResult.metadata.sessionId, Date.now());
+    return mergePipelineResults(ruleResult, attribution, candidateSet, graphStore, rules);
   } catch {
     // Any error in the pipeline → fall back to rule engine
-    return ruleResult;
+    // Step 7 on fallback: LLM attribution without causal graph / attribution
+    const steps = parseSessionToSteps(data);
+    const rules = await attributeWithLLM(data, steps, ruleResult.stats, ruleResult.metadata, null, null, harness, ruleResult.metadata.sessionId, Date.now());
+    return { ...ruleResult, rules };
   }
 }
 

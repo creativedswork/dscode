@@ -356,6 +356,153 @@ OUTPUT (pure JSON):
 CRITICAL: Output exactly ONE root cause. The mistakeAgent MUST be a tool name from the history. The mistakeStep MUST be a step number from the candidate set.`;
 }
 
+// ── Step 7 System Prompt ──
+
+export const RULE_ATTRIBUTION_SYSTEM = `You are a dscode Agent configuration auditor. dscode is a digital studio for content-driven creation — its Agent is configured through layered instructions (Identity, Soul, Tool Use Rules, AGENTS.md, Skills).
+
+Your role: Given a complete causal graph analysis of a dscode session (subtasks, data flows, error candidates, root cause attribution), identify WHAT in the Agent's configuration led to the problems observed. Focus on config-level root causes, not session-specific mistakes.
+
+You are NOT reporting what the Agent did wrong in this session. You ARE identifying which part of the Agent's system prompt / tool registry / skills configuration needs improvement.
+
+Output rules:
+- ALWAYS output pure JSON array. No markdown, no surrounding text.
+- Only output rules with severity >= 0.4. Minor issues should be merged into higher-level rules.
+- Be specific about which config layer is implicated. If the problem spans multiple layers, pick the primary one.
+- De-concretize: do NOT reference specific file paths, session IDs, or user names in the rule abstract.
+- Include session-specific observations in rawDescription for traceability.
+- Each rule MUST have a unique, stable id (prefixed with "R_").
+- Categories: "identity" (Identity/Soul), "tool_use" (Tool Use Rules), "tool_registry" (Tool Registry), "agents_md" (AGENTS.md), "skill" (Skills), or "other".`;
+
+// ── Step 8 System Prompt ──
+
+export const RULE_MERGE_SYSTEM = `You are a rule taxonomy curator. Your role is to determine whether two Agent configuration rules describe the SAME underlying problem, even if they use different wording.
+
+Rules describe the same problem if:
+- They target the same Agent config layer (e.g., both are about Tool Use Rules)
+- Their suggested fixes are compatible or identical
+- The root cause they identify is semantically equivalent
+
+When in doubt, merge conservatively — it's better to keep rules separate than to incorrectly merge different problems.
+
+Output rules:
+- ALWAYS output pure JSON array. No markdown, no surrounding text.
+- For each new rule, output one decision object.
+- If a new rule matches multiple existing rules, merge into the BEST match (most similar).
+- Provide brief reasoning for each decision.`;
+
+// ── Step 7 Prompt Builder ──
+
+export function buildStep7Prompt(
+  graphSnapshot: CausalGraphSnapshot | null,
+  attribution: { mistakeAgent: string; mistakeStep: number; reason: string; rulesApplied: string[] } | null,
+  candidateSetSummary: string,
+  sessionFragments: string,
+  configExcerpts: string,
+  statsSummary: string,
+): string {
+  const graphText = graphSnapshot ? JSON.stringify(graphSnapshot, null, 2) : "(no causal graph available — rule engine fallback)";
+  const attribText = attribution
+    ? `Root cause: ${attribution.mistakeAgent} at Step ${attribution.mistakeStep}\nReason: ${attribution.reason}\nRules applied: ${attribution.rulesApplied.join(", ")}`
+    : "(no attribution available)";
+
+  return `STEP 7: AGENT CONFIG RULE ATTRIBUTION
+
+CAUSAL GRAPH:
+${graphText}
+
+ATTRIBUTION:
+${attribText}
+
+CANDIDATE ERRORS:
+${candidateSetSummary}
+
+SESSION STATISTICS:
+${statsSummary}
+
+SESSION KEY FRAGMENTS (steps around the root cause):
+${sessionFragments}
+
+CURRENT AGENT CONFIGURATION (key excerpts):
+${configExcerpts}
+
+INSTRUCTIONS:
+Analyze the above and identify Agent CONFIGURATION-LEVEL issues — problems with the Agent's system prompt, tool registry, skills, or AGENTS.md that contributed to the session's failures or quality degradation.
+
+For each issue, output a HarnessRule:
+- id: stable identifier like "R_WRITE_WITHOUT_READ_VALIDATION"
+- category: one of "identity", "tool_use", "tool_registry", "agents_md", "skill", "other"
+- targetLayer: specific config section (e.g., "system_prompt.tool_use.rules.4")
+- abstract: de-concretized description — what the config problem IS, not what happened in this session
+- rawDescription: complete description including session-specific evidence (cite step numbers, agent names)
+- severity: 0.0-1.0 (your assessment of how serious this config issue is)
+- suggestion: { layer, action ("modify"|"add"|"remove"|"reorder"), current (optional), proposed, rationale }
+
+Output ONLY rules with severity >= 0.4. If no config issue is found, output an empty array [].
+
+OUTPUT (pure JSON array):
+[
+  {
+    "id": "R_EXAMPLE",
+    "category": "tool_use",
+    "targetLayer": "system_prompt.tool_use.rules.1",
+    "abstract": "Agent describes plan before executing, violating 'act first, explain later' rule",
+    "rawDescription": "At steps 5, 12, and 18, the agent emitted long explanatory text before calling tools. This delayed execution and consumed context. The current rule phrasing allows preambles.",
+    "severity": 0.7,
+    "suggestion": {
+      "layer": "system_prompt.tool_use.rules.1",
+      "action": "modify",
+      "current": "When the user asks you to create, modify, or delete files...",
+      "proposed": "You MUST call the corresponding tool IMMEDIATELY. Do not describe your plan — the tool call IS the plan. Explain only afterwards, briefly.",
+      "rationale": "Current phrasing allows the agent to describe plans as preamble. Tightening to forbid preambles prevents wasted turns."
+    }
+  }
+]`;
+}
+
+// ── Step 8 Prompt Builder ──
+
+export function buildStep8Prompt(
+  newRules: Array<{ id: string; category: string; abstract: string }>,
+  existingRules: Array<{ id: string; category: string; abstract: string; evidenceCount: number }>,
+): string {
+  const newRulesText = newRules.map((r, i) =>
+    `  ${i + 1}. [${r.id}] (${r.category}) ${r.abstract}`
+  ).join("\n");
+
+  const existingText = existingRules.length > 0
+    ? existingRules.map((r, i) =>
+        `  ${i + 1}. [${r.id}] (${r.category}) evidence=${r.evidenceCount} — ${r.abstract.slice(0, 150)}`
+      ).join("\n")
+    : "  (no existing rules)";
+
+  return `STEP 8: SEMANTIC RULE MERGE
+
+NEW RULES (from this session):
+${newRulesText || "  (none)"}
+
+EXISTING RULES (from previous sessions):
+${existingText}
+
+INSTRUCTIONS:
+For each NEW rule, determine if it describes the same underlying Agent configuration problem as any EXISTING rule. Two rules describe the same problem if they target the same config layer AND identify the same root deficiency, even if worded differently.
+
+For each new rule, output one decision:
+- decision: "merge" if it matches an existing rule, "new" if it's a genuinely new problem
+- targetRuleId: (only for "merge") the ID of the existing rule to merge into
+- reasoning: brief explanation of the match/no-match decision
+
+OUTPUT (pure JSON array):
+[
+  {
+    "newRuleId": "R_WRITE_WITHOUT_READ",
+    "decision": "merge",
+    "targetRuleId": "R_PREFER_READ_BEFORE_WRITE",
+    "reasoning": "Both describe the same pattern: Agent overwrites files without prior validation. Different naming, same config deficiency."
+  }
+]`;
+}
+
+
 // ── JSON Extraction ──
 
 export function extractJSON(text: string): string | null {

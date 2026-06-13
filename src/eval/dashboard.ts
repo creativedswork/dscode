@@ -131,7 +131,7 @@ function generateRuleChainHTML(attribution: Attribution, rulesApplied: string[])
 // ── HTML Template ──
 
 export function generateDashboardHTML(result: EvalResult): string {
-  const { metadata, stats, phases, deviations, rootCauses, suggestions, timeline } = result;
+  const { metadata, stats, phases, deviations, rootCauses, rules, timeline } = result;
 
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -254,6 +254,10 @@ h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #e6edf3; }
     <div class="stat-value" style="color:${deviations.length > 0 ? COLORS.warn : COLORS.ok}">${deviations.length}</div>
     <div class="stat-label">Deviations</div>
   </div>
+  <div class="stat-card">
+    <div class="stat-value" style="color:${rules.length > 0 ? COLORS.warn : COLORS.ok}">${rules.length}</div>
+    <div class="stat-label">Triggered Rules</div>
+  </div>
 </div>
 
 <!-- Phase Timeline -->
@@ -313,14 +317,87 @@ ${deviations.map((d) => `
 `).join("")}
 ` : ""}
 
-<!-- Suggestions -->
-<h2>Suggestions</h2>
-${suggestions.map((s, i) => `
+<!-- Harness Rules -->
+<h2>Harness Rules — Agent 配置优化建议</h2>
+${(() => {
+  if (rules.length === 0) return `<div class="suggestion-item"><span style="color:${COLORS.ok};">✅ 未检测到 Agent 配置问题</span></div>`;
+
+  // Group rules by category
+  const catLabels: Record<string, string> = { identity: "# Identity / Soul", tool_use: "# Tool Use Rules", tool_registry: "Tool Registry", agents_md: "# AGENTS.md", skill: "# Skills", other: "Other" };
+  const grouped: Record<string, typeof rules> = {};
+  for (const r of rules) {
+    const cat = (r.category as string) || "other";
+    if (!grouped[cat]) grouped[cat] = [];
+    grouped[cat].push(r);
+  }
+
+  return Object.entries(grouped).map(([cat, catRules]) => `
+<h3 style="font-size:15px;font-weight:600;margin:24px 0 12px;color:#e6edf3;">${escapeHtml(catLabels[cat] ?? cat)}</h3>
+${catRules.map((r: any) => {
+  const sevLabel = r.severity >= 1 ? 'ERROR' : r.severity >= 0.6 ? 'WARN' : 'INFO';
+  const sevColor = r.severity >= 1 ? COLORS.danger : r.severity >= 0.6 ? COLORS.warn : COLORS.accent;
+  const evidenceCount = r.evidence ? r.evidence.length : 0;
+  const lastEvidence = evidenceCount > 0 ? r.evidence[r.evidence.length - 1] : null;
+  const lastDate = lastEvidence?.timestamp ? new Date(lastEvidence.timestamp).toISOString().slice(0, 10) : "-";
+  const mergedCount = r.mergedFrom ? r.mergedFrom.length : 0;
+
+  return `
+<div class="deviation-card" style="border-left:3px solid ${sevColor};margin-bottom:16px;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+    <span class="badge" style="background:${sevColor};font-size:10px;padding:2px 6px;border-radius:3px;">${sevLabel}</span>
+    <strong>${escapeHtml(r.id)}</strong>
+    <span style="color:${COLORS.textMuted};font-size:11px;">→ ${escapeHtml(r.targetLayer)}</span>
+    ${evidenceCount > 0 ? `<span style="color:${COLORS.textMuted};font-size:10px;">📊 ${evidenceCount} sessions</span>` : ""}
+    ${mergedCount > 0 ? `<span style="color:${COLORS.accent};font-size:10px;" title="Merged from: ${escapeHtml((r.mergedFrom as string[]).join(", "))}">🔗 合并自 ${mergedCount} 条规则</span>` : ""}
+  </div>
+  <p style="color:${COLORS.textMuted};margin:0 0 6px 0;font-size:13px;">${escapeHtml(r.abstract)}</p>
+  ${r.rawDescription ? `
+  <details style="margin-bottom:8px;">
+    <summary style="font-size:11px;color:${COLORS.accent};cursor:pointer;">📝 详细描述</summary>
+    <p style="font-size:12px;color:${COLORS.textMuted};margin:4px 0;padding:8px;background:rgba(88,166,255,0.05);border-radius:4px;white-space:pre-wrap;">${escapeHtml(r.rawDescription)}</p>
+  </details>` : ""}
+  ${r.severity >= 1 ? `<div style="font-size:11px;color:${COLORS.danger};margin-bottom:6px;">⚠ 建议持久化到 Agent 配置 (${escapeHtml(r.targetLayer)})</div>` : ""}
+  <div style="background:${COLORS.card};border-radius:4px;padding:10px 12px;">
+    <div style="font-size:11px;color:${COLORS.warn};margin-bottom:4px;">💡 建议${r.suggestion.action === 'modify' ? '修改' : r.suggestion.action === 'add' ? '新增' : r.suggestion.action === 'remove' ? '移除' : '调整'}</div>
+    <div style="font-size:13px;line-height:1.5;margin-bottom:6px;"><strong>${escapeHtml(r.suggestion.proposed)}</strong></div>
+    <div style="font-size:11px;color:${COLORS.textMuted};">📋 ${escapeHtml(r.suggestion.rationale)}</div>
+  </div>
+</div>`;}).join("")}
+`).join("");
+})() }
+<!-- Harness Rules -->
+<h2>Harness Rules — Agent 配置优化建议</h2>
+${rules.length > 0
+  ? rules.map((r: any, i: number) => {
+    const sevLabel = r.severity >= 1 ? 'ERROR' : r.severity >= 0.6 ? 'WARN' : 'INFO';
+    const sevColor = r.severity >= 1 ? COLORS.danger : r.severity >= 0.6 ? COLORS.warn : COLORS.accent;
+    return `
+<div class="deviation-card" style="border-left: 3px solid ${sevColor}; margin-bottom: 16px;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+    <span class="badge" style="background:${sevColor};font-size:10px;padding:2px 6px;border-radius:3px;">${sevLabel}</span>
+    <strong>${escapeHtml(r.id)}</strong>
+    <span style="color:${COLORS.textMuted};font-size:11px;">→ ${escapeHtml(r.targetLayer)}</span>
+  </div>
+  <p style="color:${COLORS.textMuted};margin:0 0 8px 0;font-size:13px;">${escapeHtml(r.abstract)}</p>
+  <div style="background:${COLORS.card};border-radius:4px;padding:10px 12px;">
+    <div style="font-size:11px;color:${COLORS.warn};margin-bottom:4px;">💡 建议${r.suggestion.action === 'modify' ? '修改' : r.suggestion.action === 'add' ? '新增' : r.suggestion.action === 'remove' ? '移除' : '调整'}</div>
+    <div style="font-size:13px;line-height:1.5;margin-bottom:6px;"><strong>${escapeHtml(r.suggestion.proposed)}</strong></div>
+    <div style="font-size:11px;color:${COLORS.textMuted};">📋 ${escapeHtml(r.suggestion.rationale)}</div>
+  </div>
+</div>`;
+  }).join("")
+  : `<div class="suggestion-item"><span style="color:${COLORS.ok};">✅ 未检测到 Agent 配置问题</span></div>`
+}
+<!-- Harness Rules -->
+<h2>Harness Rules</h2>
+${rules.length > 0
+  ? rules.map((r, i) => `
 <div class="suggestion-item">
   <span class="suggestion-num">${i + 1}.</span>
-  <span>${escapeHtml(s)}</span>
-</div>
-`).join("")}
+  <span><strong>${escapeHtml(r.id)}</strong> — ${escapeHtml(r.abstract)}</span>
+</div>`).join("")
+  : `<div class="suggestion-item"><span>No Agent configuration issues detected.</span></div>`
+}
 
 <!-- Timeline -->
 <h2>Event Timeline</h2>

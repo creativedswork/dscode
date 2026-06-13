@@ -9,6 +9,7 @@ import type { SerializedSession } from "../session/types.js";
 import { analyzeSession, compactSession } from "./analyzer.js";
 import { generateDashboard, openDashboard } from "./dashboard.js";
 import { analyzeWithLLM } from "./llm.js";
+import { loadRuleStore, semanticMerge, saveRuleStore } from "./rules/store.js";
 
 function evalDir(): string {
   return join(homedir(), ".dscode", "eval");
@@ -62,7 +63,13 @@ export async function runEval(
     // Analyze — CHIFF causal graph pipeline, rule engine as fallback
     const result = await analyzeWithLLM(sessionData, harness);
 
-    // Generate dashboard
+    // Step 8: LLM semantic rule merge (use session's projectPath, not harness cwd)
+    const projectPath = sessionData?.metadata?.projectPath ?? harness.config?.projectPath;
+    if (projectPath) {
+      const store = loadRuleStore(projectPath);
+      const merged = await semanticMerge(result.rules, store, harness);
+      saveRuleStore(merged);
+    }
     const outputPath = join(evalDir(), `${resolvedId.slice(0, 8)}.html`);
     generateDashboard(result, outputPath);
 
@@ -73,10 +80,11 @@ export async function runEval(
     const attributionInfo = result.attribution
       ? ` | Root cause: ${result.attribution.mistakeAgent}@Step${result.attribution.mistakeStep}`
       : "";
+    const rulesTriggered = result.rules ? result.rules.length : 0;
     ui.addInfo(
       `Dashboard generated: ${outputPath}\n` +
       `[${analysisLabel}] Messages: ${result.metadata.totalMessages} | Tool calls: ${result.stats.toolCalls} | ` +
-      `Error rate: ${result.stats.errorRate}${attributionInfo}`,
+      `Error rate: ${result.stats.errorRate}${attributionInfo} | Rules: ${rulesTriggered}`,
     );
   } catch (err) {
     ui.addError(`eval: ${err instanceof Error ? err.message : String(err)}`);
@@ -84,4 +92,4 @@ export async function runEval(
 }
 
 export { analyzeSession, compactSession, generateDashboard, openDashboard, analyzeWithLLM };
-export type { EvalResult, PhaseInfo, DeviationPoint, RootCause, SessionMeta, ToolStats, TimelineEvent, CompactMessage } from "./types.js";
+export type { EvalResult, PhaseInfo, DeviationPoint, RootCause, SessionMeta, ToolStats, TimelineEvent, CompactMessage, HarnessRule } from "./types.js";

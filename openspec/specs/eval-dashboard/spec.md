@@ -265,3 +265,38 @@ Before sending data to the LLM, the system SHALL compress the session via `compa
 - Keep first 500 chars of all tool results; annotate oversized results with `[toolName output: N chars]`
 - Keep screenshot descriptions up to 500 chars
 - Skip empty assistant messages to reduce noise
+
+### Requirement: Harness Rules Section
+
+The dashboard SHALL include a "Harness Rules" section that displays `HarnessRule[]` from `EvalResult.rules`. Rules SHALL be grouped by `category` with category headers. Each rule card SHALL display: rule `id` and `abstract`, `rawDescription` as expandable detail, `severity` as a colored badge (INFO=#58a6ff, WARN=#d2991d, ERROR=#f85149), evidence count, expandable `suggestion`, `mergedFrom` merge chain indicator, and a persistence callout for ERROR-level rules.
+
+#### Scenario: Rules section with mixed severities
+
+- **WHEN** the evaluation produces rules with severities 0.2 (INFO), 0.6 (WARN), and 1.0 (ERROR)
+- **THEN** each rule SHALL be displayed with its corresponding color badge
+- **AND** ERROR-level rules SHALL show the "建议持久化到 Agent 配置" callout
+
+#### Scenario: No rules triggered
+
+- **WHEN** the evaluation produces an empty `rules` array
+- **THEN** the Harness Rules section SHALL display "未检测到 Agent 配置问题"
+
+#### Scenario: Rule was merged from previous sessions
+
+- **WHEN** a rule has `mergedFrom` with multiple IDs
+- **THEN** the rule card SHALL display a merge chain indicator with count
+
+### Requirement: Rule Trends Visualization
+
+The dashboard SHALL include a "Rule Trends" section that loads the full Rule Store and visualizes cross-session rule accumulation with a horizontal bar chart sorted by evidence count, color-coded by category, with WARN+ highlighting and merge chain indicators.
+
+#### Scenario: Trends show multi-session rule accumulation
+
+- **WHEN** the Rule Store has rules with varying evidence counts
+- **THEN** rules SHALL be displayed in evidence count descending order
+- **AND** rules with evidence count ≥ 3 SHALL be highlighted
+
+#### Scenario: Trends load from empty store
+
+- **WHEN** `rules.json` does not exist or is empty
+- **THEN** the trends section SHALL display "暂无跨 session 规则数据"

@@ -1,4 +1,7 @@
 import type { CausalGraphSnapshot, Attribution } from "./schemas.js";
+import type { HarnessRule } from "./rules/types.js";
+export type { HarnessRule } from "./rules/types.js";
+
 
 // ── Eval Types ──
 // Data structures for session quality analysis.
@@ -60,7 +63,7 @@ export interface EvalResult {
   phases: PhaseInfo[];
   deviations: DeviationPoint[];
   rootCauses: RootCause[];
-  suggestions: string[];
+  rules: HarnessRule[];
   analysisMode: "llm" | "rule";
   timeline: TimelineEvent[];
   causalGraph: CausalGraphSnapshot | null;

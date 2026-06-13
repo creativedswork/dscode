@@ -428,77 +428,6 @@ export function inferRootCauses(
   return causes;
 }
 
-// ── Suggestions ──
-
-export function generateSuggestions(result: EvalResult): string[] {
-  const suggestions: string[] = [];
-  const { stats, deviations, rootCauses, phases } = result;
-
-  // 1. Error rate -> agent should self-pause
-  if (stats.toolCalls > 0 && stats.toolErrors / stats.toolCalls > 0.15) {
-    const dangerPhasesWithErrors = phases.filter((p) => p.toolCalls.errors > 0 && p.status === "danger");
-    if (dangerPhasesWithErrors.length > 0) {
-      suggestions.push(
-        `Agent 在 ${dangerPhasesWithErrors.length} 个阶段中持续出现工具调用错误而未主动暂停。` +
-        `建议在 agent system prompt 中增加：当单阶段工具错误率超过 15% 时，暂停当前方向并向用户确认是否继续。`
-      );
-    }
-  }
-
-  // 2. Deviations -> agent should verify after screenshots
-  if (deviations.length > 0) {
-    const blindSpot = rootCauses.find((c) => c.title === "截图感知盲区");
-    if (blindSpot) {
-      suggestions.push(
-        `Agent 在 M${blindSpot.evidenceIndices.slice(0, 3).join(", M")} 获取截图后未识别到画面异常（感知盲区）。` +
-        `建议在 agent workflow 中增加截图后验证步骤：要求 agent 在每次 get_screenshot 后显式对比用户原始目标，输出"当前截图 vs 目标差异"检查清单。`
-      );
-    } else {
-      suggestions.push(
-        `检测到 ${deviations.length} 次 agent 输出偏离用户目标。` +
-        `建议在 agent 的 system prompt 中加入：每次创建/修改视觉效果后，必须调用 get_screenshot 并逐项对比用户需求描述。`
-      );
-    }
-  }
-
-  // 3. Effect overload -> agent should layer incrementally
-  const overload = rootCauses.find((c) => c.title === "效果过载");
-  if (overload) {
-    suggestions.push(
-      `Agent 在相邻消息中同时启用了多个重叠机制（效果过载），导致画面失控。` +
-      `建议在 system prompt 中明确：视觉效果的添加应遵循"一次只加一个，截图验证后再加下一个"的增量原则。`
-    );
-  }
-
-  // 4. Fix cascade -> agent should revert on complaint
-  const cascade = rootCauses.find((c) => c.title.includes("修复连锁"));
-  if (cascade) {
-    suggestions.push(
-      `Agent 在修复一个问题时引入了新问题，形成修复连锁反应。` +
-      `建议在 agent 的 error recovery 策略中增加：当用户在相邻 3 轮内连续表达不满（匹配"不对""不是""错了"模式），自动回退最近的非核心修改，而非继续追加修复。`
-    );
-  }
-
-  // 5. Scope creep -> agent should limit feature expansion
-  const creep = rootCauses.find((c) => c.title.includes("需求蔓延"));
-  if (creep) {
-    suggestions.push(
-      `Agent 在后半段引入了用户未明确请求的功能，导致范围蔓延。` +
-      `建议在 system prompt 中加入"scope lock"机制：在完成用户初始需求并通过截图验证之前，禁止主动添加额外功能或效果。`
-    );
-  }
-
-  // 6. General: suggest regular eval
-  if (suggestions.length === 0) {
-    if (phases.every((p) => p.status === "ok")) {
-      suggestions.push("Session 整体表现良好，所有阶段均正常。可作为 agent 行为基线记录，用于后续对比分析。");
-    } else {
-      suggestions.push("未检测到明确的反模式。建议用 /eval 定期监控 session 质量，对比多轮 session 的趋势变化。");
-    }
-  }
-
-  return suggestions;
-}
 
 // ── Compact session (preprocessing for LLM) ──
 
@@ -678,15 +607,12 @@ export function analyzeSession(
     phases,
     deviations,
     rootCauses,
-    suggestions: [],
+    rules: [],
     timeline,
     analysisMode: "rule",
     causalGraph: null,
     attribution: null,
     rulesApplied: [],
   };
-  const suggestions = generateSuggestions(partial);
-  partial.suggestions = suggestions;
-
   return partial;
 }
