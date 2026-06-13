@@ -54,6 +54,7 @@ describe("DriverRegistry", () => {
     expect(toolNames).toEqual([
       "bash",
       "edit",
+      "edit_undo",
       "glob",
       "grep",
       "list_files",

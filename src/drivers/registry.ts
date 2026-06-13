@@ -4,7 +4,7 @@ import type { Driver } from "../core/types.js";
 import { readFileTool, writeFileTool, overwriteFileTool, listFilesTool } from "./fs.js";
 import { bashTool } from "./shell.js";
 import { grepTool, globTool } from "./search.js";
-import { editTool } from "./edit/index.js";
+import { editTool, editUndoTool } from "./edit/index.js";
 
 const BUILTIN_DRIVERS: Driver[] = [
   {
@@ -28,7 +28,7 @@ const BUILTIN_DRIVERS: Driver[] = [
   {
     name: "edit",
     description: "Anchor-based file editing (replace, insert, delete by content hash)",
-    tools: [editTool],
+    tools: [editTool, editUndoTool],
     source: "builtin",
   },
 ];

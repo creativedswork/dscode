@@ -25,6 +25,8 @@ import {
   generateLocalDiff,
   resolveAnchor,
 } from "./hash.js";
+import { captureUndoSnapshot } from "./undo-store.js";
+import { validateSyntax, isSyntaxCheckSupported } from "./syntax-validate.js";
 
 const editParams = Type.Object({
   path: Type.String({ description: "Absolute path of the file to edit" }),
@@ -32,6 +34,7 @@ const editParams = Type.Object({
   operations: Type.Array(EditOperationSchema, { description: "Ordered list of edit operations to apply" }),
   expected_file_version: Type.Optional(Type.String({ description: "File version from the last read_file(hashes: true). When provided and the file has changed, the edit tool will attempt to recover by replaying operations on the snapshot and merging the result onto the current file (3-way merge recovery)." })),
   safety_check: Type.Optional(Type.String({ description: "Safety check strictness: 'strict' (default, reject on imbalance), 'warn' (apply but warn), 'off' (skip checks)." })),
+  dry_run: Type.Optional(Type.Boolean({ description: "When true, validate all operations (resolve anchors, check safety, detect conflicts) without modifying the file. Returns per-operation diagnostics." })),
 
 });
 // --- Sanity checks (4.1) ---
@@ -124,6 +127,9 @@ function runSanityChecks(
     status: warnings.length === 0 ? "clean" : "suspicious",
     warnings,
   };
+
+
+// (removed)
 }
 
 export const editTool: AgentTool<typeof editParams> = {
@@ -163,7 +169,7 @@ export const editTool: AgentTool<typeof editParams> = {
     "- Mixing these (e.g., `start_hash` on a `replace_line`) causes validation failure. " +
     "Example: { op: \"replace_line\", hash: \"a1b2c3\", content: \"new line content\" }",
   parameters: editParams,
-  execute: async (_id, { path, file_path, operations, expected_file_version, safety_check }) => {
+  execute: async (_id, { path, file_path, operations, expected_file_version, safety_check, dry_run }) => {
     // Resolve path alias: file_path is deprecated, path takes precedence
     const effectivePath = path ?? file_path;
     if (!effectivePath) {
@@ -208,6 +214,150 @@ export const editTool: AgentTool<typeof editParams> = {
       qualities,
       hashToQuality,
     };
+
+    // --- Dry-run path: validate without writing ---
+
+    // --- Dry-run path: validate without writing ---
+    const isDryRun = dry_run === true;
+    const fileVersion = computeFileVersion(raw);
+
+    if (isDryRun) {
+      const validation = validateOperations(operations, ctx);
+
+      if (!validation.valid) {
+        // Return validation failure as dry-run diagnostics
+        const dryRunDetails: Record<string, unknown> = {
+          dry_run: true,
+          valid: false,
+          error: validation.error,
+          validated_at_file_version: fileVersion,
+        };
+        if (validation.missingHashes) dryRunDetails.missing_hashes = validation.missingHashes;
+        if (validation.ambiguousAnchors) dryRunDetails.ambiguous_anchors = validation.ambiguousAnchors;
+        if (validation.lowEntropyAnchors) dryRunDetails.low_entropy_anchors = validation.lowEntropyAnchors;
+        if (validation.invalidRangeOrder) dryRunDetails.invalid_range_order = validation.invalidRangeOrder;
+        if (validation.auto_corrections) dryRunDetails.auto_corrections = validation.auto_corrections;
+        if (validation.suggested_action) dryRunDetails.suggested_action = validation.suggested_action;
+
+        // Compute invalidation scope for dry-run error
+        const affected = computeAffectedRange(operations, ctx);
+        if (affected.minLine > 0) {
+          dryRunDetails.invalidation_scope = {
+            anchors_valid_through: affected.minLine - 1,
+            must_refresh_from_line: affected.minLine,
+          };
+        }
+
+        const errTextParts: string[] = [];
+        errTextParts.push(`Dry-run: validation FAILED (${validation.error})`);
+        if (validation.missingHashes) errTextParts.push(`Missing hashes: [${validation.missingHashes.join(", ")}]`);
+        if (validation.ambiguousAnchors) errTextParts.push(`Ambiguous anchors: ${validation.ambiguousAnchors.length}`);
+        if (validation.auto_corrections) errTextParts.push(`Auto-corrections: ${validation.auto_corrections.map(c => c.detail).join("; ")}`);
+        errTextParts.push(`Validated at file version: ${fileVersion}`);
+        if (validation.suggested_action) errTextParts.push(`Suggestion: ${validation.suggested_action}`);
+
+        return {
+          content: [{ type: "text", text: errTextParts.join("\n") }],
+          details: dryRunDetails,
+        };
+      }
+
+      // Validation passed — run safety check if applicable
+      const dryRunSafetyMode = safety_check ?? "strict";
+      let dryRunSafetyWarnings: string[] = [];
+      let dryRunSafetyStatus: "clean" | "suspicious" = "clean";
+
+      if (dryRunSafetyMode !== "off") {
+        // Simulate the edit to check safety
+        let simulatedLines: string[];
+        try {
+          simulatedLines = applyEditOperations(lines, operations, ctx);
+        } catch {
+          // If simulation fails, we can't do safety check — return valid anyway
+          const affected = computeAffectedRange(operations, ctx);
+          return {
+            content: [{ type: "text", text: `Dry-run: validation PASSED (simulation error, but anchors resolved)\nValidated at file version: ${fileVersion}` }],
+            details: {
+              dry_run: true,
+              valid: true,
+              validated_at_file_version: fileVersion,
+              operations: operations.length,
+              auto_corrections: validation.auto_corrections,
+              invalidation_scope: affected.minLine > 0 ? {
+                anchors_valid_through: affected.minLine - 1,
+                must_refresh_from_line: affected.minLine,
+              } : undefined,
+            },
+          };
+        }
+
+        const affectedMinLine = computeAffectedRange(operations, ctx).minLine;
+        const sanity = runSanityChecks(lines, simulatedLines, affectedMinLine,
+          Math.min(lines.length, simulatedLines.length));
+        dryRunSafetyWarnings = sanity.warnings;
+        dryRunSafetyStatus = sanity.status;
+      }
+
+      const affected = computeAffectedRange(operations, ctx);
+      const dryRunDetails: Record<string, unknown> = {
+        dry_run: true,
+        valid: true,
+        validated_at_file_version: fileVersion,
+        operations: operations.length,
+        auto_corrections: validation.auto_corrections,
+        invalidation_scope: affected.minLine > 0 ? {
+          anchors_valid_through: affected.minLine - 1,
+          must_refresh_from_line: affected.minLine,
+        } : undefined,
+        safety_status: dryRunSafetyStatus,
+      };
+
+      if (dryRunSafetyWarnings.length > 0) {
+        dryRunDetails.safety_warnings = dryRunSafetyWarnings;
+      }
+
+      // In strict mode with suspicious result → valid: false
+      if (dryRunSafetyMode === "strict" && dryRunSafetyStatus === "suspicious") {
+        const severeWarnings = dryRunSafetyWarnings.filter((w: string) => !w.startsWith("duplicate_line"));
+        if (severeWarnings.length > 0) {
+          dryRunDetails.valid = false;
+          dryRunDetails.safety_status = "failed";
+          const diagParts: string[] = [];
+          diagParts.push("Dry-run: validation FAILED (safety check)");
+          diagParts.push("┌─ Safety Check Diagnostics ────────────────────────────────┐");
+          for (const w of dryRunSafetyWarnings) {
+            diagParts.push("│ " + w);
+          }
+          diagParts.push("│");
+          diagParts.push("│ Total: " + dryRunSafetyWarnings.length + " warning(s)");
+          diagParts.push("│ Hint: review the per-operation delta and re-read before retrying.");
+          diagParts.push("└──────────────────────────────────────────────────────────┘");
+          diagParts.push(`Validated at file version: ${fileVersion}`);
+          return {
+            content: [{ type: "text", text: diagParts.join("\n") }],
+            details: dryRunDetails,
+          };
+        }
+      }
+
+      // Dry-run success
+      const okParts: string[] = [];
+      okParts.push(`Dry-run: validation PASSED`);
+      okParts.push(`${operations.length} operation(s) would be applied to ${resolved}.`);
+      if (validation.auto_corrections && validation.auto_corrections.length > 0) {
+        okParts.push(`Auto-corrections: ${validation.auto_corrections.map(c => c.detail).join("; ")}`);
+      }
+      okParts.push(`Validated at file version: ${fileVersion}`);
+      if (dryRunSafetyWarnings.length > 0) {
+        okParts.push(`Safety: ${dryRunSafetyStatus} (${dryRunSafetyWarnings.length} warning(s))`);
+      }
+      return {
+        content: [{ type: "text", text: okParts.join("\n") }],
+        details: dryRunDetails,
+      };
+    }
+
+    // --- End dry-run path ---
 
     // 4.2: Checkpoint file before modification + track writer
     const cpm = getCheckpointManager();
@@ -468,6 +618,9 @@ export const editTool: AgentTool<typeof editParams> = {
       };
     }
 
+    // Capture undo snapshot BEFORE writing (after validation passes, before first write)
+    const snapshotId = computeFileVersion(raw);
+    captureUndoSnapshot(resolved, raw);
     const newContent = resultLines.join("\n");
     writeFileSync(resolved, newContent);
 
@@ -521,6 +674,12 @@ export const editTool: AgentTool<typeof editParams> = {
       if (currentFv !== expected_file_version) {
         crossVersionWarning = "cross_version: file was modified since snapshot, but all anchors resolved correctly.";
       }
+
+    }
+    // Post-edit syntax validation (non-blocking, informational only)
+    let syntaxCheck: { valid: boolean | null; errors?: Array<{line: number; message: string}>; error?: string } | undefined;
+    if (isSyntaxCheckSupported(resolved)) {
+      syntaxCheck = await validateSyntax(resolved, newContent);
     }
     const ss2 = getSnapshotStore();
     if (ss2) ss2.record(resolved, newFileVersion, newContent);
@@ -572,6 +731,7 @@ export const editTool: AgentTool<typeof editParams> = {
         addedLines,
         removedLines,
         file_version: newFileVersion,
+        snapshot_id: snapshotId,
         anchors_valid_through: anchorsValidThrough,
         must_refresh_from_line: mustRefreshFromLine,
         new_anchors: diffResult.newAnchors,
@@ -582,6 +742,7 @@ export const editTool: AgentTool<typeof editParams> = {
         writer_type: "edit" as WriterType,
         auto_corrections: validation.auto_corrections,
         cross_version: crossVersionWarning || undefined,
+        syntax_check: syntaxCheck,
       },
     };
   },

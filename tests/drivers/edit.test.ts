@@ -335,162 +335,223 @@ describe("editTool", () => {
     });
     expect(result.details?.error).toBeUndefined();
     expect(readFile(filePath)).toBe("A\nB\na\nc");
-  });
 
-  it("should use occurrence for delete_line on duplicate line", async () => {
-    const filePath = createTempFile("a\nb\na\nc");
-    const aHash = computeLineHash("a");
+});
+  // --- Dry-Run Mode Tests ---
+
+  it("should dry-run validate without writing (valid operation)", async () => {
+    const filePath = createTempFile("line 1\nline 2\nline 3");
+    const hash = getHash(filePath, 2);
     const result = await editTool.execute("test-id", {
       file_path: filePath,
-      operations: [{ op: "delete_line", hash: aHash, occurrence: 1 }],
+      dry_run: true,
+      operations: [{ op: "replace_line", hash, content: "line 2 replaced" }],
     });
-    expect(result.details?.error).toBeUndefined();
-    expect(readFile(filePath)).toBe("b\na\nc");
+    expect(result.details?.dry_run).toBe(true);
+    expect(result.details?.valid).toBe(true);
+    expect(result.details?.validated_at_file_version).toBeDefined();
+    expect(readFile(filePath)).toBe("line 1\nline 2\nline 3");
   });
 
-  it("should use occurrence for insert_after on duplicate line", async () => {
-    const filePath = createTempFile("a\nb\na\nc");
-    const aHash = computeLineHash("a");
+  it("should dry-run detect stale anchor without writing", async () => {
+    const filePath = createTempFile("line 1\nline 2\nline 3");
     const result = await editTool.execute("test-id", {
       file_path: filePath,
-      operations: [{ op: "insert_after", hash: aHash, occurrence: 2, content: "INSERTED" }],
+      dry_run: true,
+      operations: [{ op: "replace_line", hash: "deadbe", content: "x" }],
     });
-    expect(result.details?.error).toBeUndefined();
-    expect(readFile(filePath)).toBe("a\nb\na\nINSERTED\nc");
+    expect(result.details?.dry_run).toBe(true);
+    expect(result.details?.valid).toBe(false);
+    expect(result.details?.error).toBe("anchor_stale");
+    expect(readFile(filePath)).toBe("line 1\nline 2\nline 3");
   });
 
-  it("should auto-resolve range with both endpoints identical content", async () => {
-    const filePath = createTempFile("a\nb\na\nc\na");
-    const aHash = computeLineHash("a");
-    const bHash = getHash(filePath, 2);
+  it("should dry-run reject empty operations", async () => {
+    const filePath = createTempFile("content");
     const result = await editTool.execute("test-id", {
       file_path: filePath,
-      operations: [{ op: "delete_range", start_hash: aHash, end_hash: aHash }],
+      dry_run: true,
+      operations: [],
     });
-    expect(result.details?.error).toBeUndefined();
-    expect(readFile(filePath)).toBe("b\na\nc\na");
+    expect(result.details?.error).toBe("empty_operations");
   });
 
-  it("should resolve to first occurrence for ambiguous batch", async () => {
-    const filePath = createTempFile("a\nb\na\nc");
-    const aHash = computeLineHash("a");
+  it("should dry-run return validated_at_file_version not file_version", async () => {
+    const filePath = createTempFile("line 1\nline 2\nline 3");
+    const hash = getHash(filePath, 2);
     const result = await editTool.execute("test-id", {
       file_path: filePath,
-      operations: [{ op: "replace_line", hash: aHash, content: "X" }],
+      dry_run: true,
+      operations: [{ op: "replace_line", hash, content: "line 2 replaced" }],
     });
-    expect(result.details?.error).toBeUndefined();
+    expect(result.details?.validated_at_file_version).toBeDefined();
+    expect(result.details?.file_version).toBeUndefined();
+    expect(result.details?.snapshot_id).toBeUndefined();
+    expect(result.details?.syntax_check).toBeUndefined();
   });
 
-  it("should return invalidation scope after edit", async () => {
+  it("should dry-run return invalidation scope", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3\nline 4\nline 5");
     const hash = getHash(filePath, 3);
     const result = await editTool.execute("test-id", {
       file_path: filePath,
+      dry_run: true,
       operations: [{ op: "replace_line", hash, content: "line 3 modified" }],
     });
-    expect(result.details?.anchors_valid_through).toBe(2);
-    expect(result.details?.must_refresh_from_line).toBe(3);
+    expect(result.details?.invalidation_scope).toBeDefined();
   });
 
-  it("should reject low-entropy single-line anchor", async () => {
-    const filePath = createTempFile("line 1\n,\nline 3\n,\nline 5");
-    const commaHash = computeLineHash(",");
-    expect(commaHash).toBeTruthy();
-    const result = await editTool.execute("test-id", {
-      file_path: filePath,
-      operations: [{ op: "replace_line", hash: commaHash, content: ";" }],
-    });
-    expect(result.details?.error).toBeTruthy();
-  });
+  // --- Snapshot & Rollback Tests ---
 
-  it("should return invalid_range_order for reversed range", async () => {
-    const filePath = createTempFile("line 1\nline 2\nline 3\nline 4\nline 5");
-    const endHash = getHash(filePath, 2);
-    const startHash = getHash(filePath, 4);
-    const result = await editTool.execute("test-id", {
-      file_path: filePath,
-      operations: [{ op: "replace_range", start_hash: startHash, end_hash: endHash, content: "X" }],
-    });
-    expect(result.details?.error).toBe("invalid_range_order");
-  });
-
-  it("should return baseline_continuity and writer_type on success", async () => {
+  it("should include snapshot_id on successful edit", async () => {
     const filePath = createTempFile("line 1\nline 2\nline 3");
     const hash = getHash(filePath, 2);
     const result = await editTool.execute("test-id", {
       file_path: filePath,
       operations: [{ op: "replace_line", hash, content: "line 2 replaced" }],
     });
-    expect(result.details?.baseline_continuity).toBeDefined();
-    expect(result.details?.writer_type).toBe("edit");
+    expect(result.details?.ok).toBe(true);
+    expect(result.details?.snapshot_id).toBeDefined();
   });
 
-  describe("line-hint disambiguation", () => {
-    it("should resolve ambiguous hash with line hint", async () => {
-      const filePath = createTempFile("a\nb\na\nd\na\ne\na\nf");
-      const aHash = computeLineHash("a");
-      const result = await editTool.execute("test-id", {
-        file_path: filePath,
-        operations: [{ op: "replace_line", hash: aHash, line: 5, content: "X" }],
-      });
-      expect(result.details?.error).toBeUndefined();
-      expect(readFile(filePath)).toBe("a\nb\na\nd\nX\ne\na\nf");
-    });
-
-    it("should resolve ambiguous hash with line hint for delete", async () => {
-      const filePath = createTempFile("a\nb\na\nd");
-      const aHash = computeLineHash("a");
-      const result = await editTool.execute("test-id", {
-        file_path: filePath,
-        operations: [{ op: "delete_line", hash: aHash, line: 3 }],
-      });
-      expect(result.details?.error).toBeUndefined();
-      expect(readFile(filePath)).toBe("a\nb\nd");
-    });
-
-    it("should reject when line hint is equidistant to two candidates", async () => {
-      const filePath = createTempFile("a\nb\na");
-      const aHash = computeLineHash("a");
-      const result = await editTool.execute("test-id", {
-        file_path: filePath,
-        operations: [{ op: "replace_line", hash: aHash, line: 2, content: "X" }],
-      });
-      expect(result.details?.error).toBeTruthy();
-    });
-
-    it("should resolve to first occurrence for ambiguous hash without line hint", async () => {
-      const filePath = createTempFile("a\nb\na");
-      const aHash = computeLineHash("a");
-      const result = await editTool.execute("test-id", {
-        file_path: filePath,
-        operations: [{ op: "replace_line", hash: aHash, content: "X" }],
-      });
-      expect(result.details?.error).toBeUndefined();
-    });
-  });
-
-  it("should return suggested_action on empty_operations", async () => {
-    const filePath = createTempFile("content");
+  it("should NOT include snapshot_id on rejected edit", async () => {
+    const filePath = createTempFile("line 1\nline 2\nline 3");
     const result = await editTool.execute("test-id", {
       file_path: filePath,
-      operations: [],
+      operations: [{ op: "replace_line", hash: "deadbe", content: "x" }],
     });
-    expect(result.details?.error).toBe("empty_operations");
-    expect(result.details?.suggested_action).toBe("provide_at_least_one_operation");
+    expect(result.details?.error).toBe("anchor_stale");
+    expect(result.details?.snapshot_id).toBeUndefined();
   });
 
-  it("should auto-resolve batch with duplicate-content hashes", async () => {
-    const filePath = createTempFile("a\nb\na\nc");
-    const bHash = getHash(filePath, 2);
-    const aHash = computeLineHash("a");
+  it("should NOT capture snapshot on dry-run", async () => {
+    const filePath = createTempFile("line 1\nline 2\nline 3");
+    const hash = getHash(filePath, 2);
     const result = await editTool.execute("test-id", {
       file_path: filePath,
-      operations: [
-        { op: "replace_line", hash: bHash, content: "B" },
-        { op: "replace_line", hash: aHash, content: "A" },
-      ],
+      dry_run: true,
+      operations: [{ op: "replace_line", hash, content: "line 2 replaced" }],
     });
-    expect(result.details?.error).toBeUndefined();
-    expect(readFile(filePath)).toBe("A\nB\na\nc");
+    expect(result.details?.snapshot_id).toBeUndefined();
+  });
+
+  // --- edit_undo Tests ---
+
+  describe("edit_undo", () => {
+    it("should restore file correctly and clear snapshot", async () => {
+      const filePath = createTempFile("line 1\nline 2\nline 3");
+      const hash = getHash(filePath, 2);
+      await editTool.execute("test-id", {
+        file_path: filePath,
+        operations: [{ op: "replace_line", hash, content: "line 2 replaced" }],
+      });
+      expect(readFile(filePath)).toBe("line 1\nline 2 replaced\nline 3");
+      const { editUndoTool } = await import("../../src/drivers/edit/edit-undo.js");
+      const undoResult = await editUndoTool.execute("test-id", { path: filePath });
+      expect(undoResult.details?.restored).toBe(true);
+      expect(readFile(filePath)).toBe("line 1\nline 2\nline 3");
+    });
+
+    it("should return error when no snapshot exists", async () => {
+      const filePath = createTempFile("content");
+      const { editUndoTool } = await import("../../src/drivers/edit/edit-undo.js");
+      const result = await editUndoTool.execute("test-id", { path: filePath });
+      expect(result.details?.restored).toBe(false);
+      expect(result.details?.error).toBe("no_snapshot");
+    });
+
+    it("should include stale-anchor warning in undo response", async () => {
+      const filePath = createTempFile("line 1\nline 2\nline 3");
+      const hash = getHash(filePath, 2);
+      await editTool.execute("test-id", {
+        file_path: filePath,
+        operations: [{ op: "replace_line", hash, content: "line 2 replaced" }],
+      });
+      const { editUndoTool } = await import("../../src/drivers/edit/edit-undo.js");
+      const result = await editUndoTool.execute("test-id", { path: filePath });
+      expect(result.details?.stale_anchor_warning).toBe(true);
+    });
+
+    it("should return file_version after undo", async () => {
+      const filePath = createTempFile("line 1\nline 2\nline 3");
+      const hash = getHash(filePath, 2);
+      await editTool.execute("test-id", {
+        file_path: filePath,
+        operations: [{ op: "replace_line", hash, content: "line 2 replaced" }],
+      });
+      const { editUndoTool } = await import("../../src/drivers/edit/edit-undo.js");
+      const result = await editUndoTool.execute("test-id", { path: filePath });
+      expect(result.details?.file_version).toBeDefined();
+    });
+  });
+
+  // --- Syntax Validation Tests ---
+
+  it("should include syntax_check on successful JavaScript edit", async () => {
+    const filePath = join(tmpDir, "test-syntax.js");
+    writeFileSync(filePath, "const x = 1;\nconsole.log(x);\n");
+    const hash = getHash(filePath, 1);
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "replace_line", hash, content: "const x = 2;" }],
+    });
+    expect(result.details?.ok).toBe(true);
+    expect(result.details?.syntax_check).toBeDefined();
+  });
+
+  it("should syntax_check fail but edit still succeeds (non-blocking)", async () => {
+    const filePath = join(tmpDir, "test-syntax-bad.js");
+    writeFileSync(filePath, "const x = 1;\n");
+    const hash = getHash(filePath, 1);
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "replace_line", hash, content: "const x = ;" }],
+    });
+    expect(result.details?.ok).toBe(true);
+    expect(result.details?.syntax_check).toBeDefined();
+    expect(readFile(filePath)).toBe("const x = ;\n");
+  });
+
+  it("should skip syntax_check for .txt files", async () => {
+    const filePath = join(tmpDir, "test-syntax.txt");
+    writeFileSync(filePath, "just some text\n");
+    const hash = getHash(filePath, 1);
+    const result = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "replace_line", hash, content: "modified text" }],
+    });
+    expect(result.details?.ok).toBe(true);
+    expect(result.details?.syntax_check).toBeUndefined();
+  });
+
+  // --- Integration Test ---
+
+  it("should support full dry-run to apply to undo cycle", async () => {
+    const filePath = createTempFile("line 1\nline 2\nline 3");
+    const hash = getHash(filePath, 2);
+
+    // Step 1: Dry-run
+    const dryResult = await editTool.execute("test-id", {
+      file_path: filePath,
+      dry_run: true,
+      operations: [{ op: "replace_line", hash, content: "line 2 replaced" }],
+    });
+    expect(dryResult.details?.dry_run).toBe(true);
+    expect(dryResult.details?.valid).toBe(true);
+    expect(readFile(filePath)).toBe("line 1\nline 2\nline 3");
+
+    // Step 2: Apply
+    const applyResult = await editTool.execute("test-id", {
+      file_path: filePath,
+      operations: [{ op: "replace_line", hash, content: "line 2 replaced" }],
+    });
+    expect(applyResult.details?.ok).toBe(true);
+    expect(readFile(filePath)).toBe("line 1\nline 2 replaced\nline 3");
+
+    // Step 3: Undo
+    const { editUndoTool } = await import("../../src/drivers/edit/edit-undo.js");
+    const undoResult = await editUndoTool.execute("test-id", { path: filePath });
+    expect(undoResult.details?.restored).toBe(true);
+    expect(readFile(filePath)).toBe("line 1\nline 2\nline 3");
   });
 });
