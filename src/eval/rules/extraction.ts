@@ -14,7 +14,7 @@ import { resolveModel } from "../../models/index.js";
 import { completeSimple } from "@mariozechner/pi-ai";
 import { parseSessionToSteps, type HistoryStep } from "../schemas.js";
 import { RULE_ATTRIBUTION_SYSTEM, buildStep7Prompt, buildHistorySummary, extractJSON } from "../prompts.js";
-import { validateHarnessRuleOutputs, type HarnessRuleOutput } from "../schemas.js";
+import { safeJsonParse, validateHarnessRuleOutputs, type HarnessRuleOutput } from "../schemas.js";
 import { computeSeverity } from "./types.js";
 
 // ── Helper: LLM call ──
@@ -23,6 +23,7 @@ async function callLLM(
   systemPrompt: string,
   userMessage: string,
   harness: HarnessAPI,
+  maxTokens?: number,
 ): Promise<string> {
   const model = resolveModel(harness.config.provider, harness.config.modelId);
   const response = await completeSimple(
@@ -31,7 +32,7 @@ async function callLLM(
       systemPrompt,
       messages: [{ role: "user" as const, content: userMessage, timestamp: Date.now() }],
     },
-    { apiKey: harness.config.apiKey },
+    { apiKey: harness.config.apiKey, maxTokens },
   );
   const content = typeof response.content === "string"
     ? response.content
@@ -212,19 +213,19 @@ export async function attributeWithLLM(
       return [];
     }
 
-    const parsed = validateHarnessRuleOutputs(JSON.parse(json));
-    if (parsed.ok) {
-      rulesOutput = parsed.value;
+    const parsed = safeJsonParse(json, "rule-attribution", validateHarnessRuleOutputs);
+    if (parsed !== null) {
+      rulesOutput = parsed;
       break;
     }
 
     if (attempt === 0) {
-      const retryPrompt = prompt + `\n\n⚠ Validation errors: ${parsed.errors.join("; ")}. Output PURE JSON array with correct fields.`;
+      const retryPrompt = prompt + `\n\n⚠ JSON parse or validation failed. Output PURE JSON array with correct fields.`;
       try {
         rawOutput = await callLLM(RULE_ATTRIBUTION_SYSTEM, retryPrompt, harness);
         continue;
       } catch {
-        console.warn("[harness-rule-attribution] Validation retry failed:", parsed.errors.join("; "));
+        console.warn("[harness-rule-attribution] Validation retry failed");
         return [];
       }
     }

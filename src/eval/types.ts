@@ -69,6 +69,7 @@ export interface EvalResult {
   causalGraph: CausalGraphSnapshot | null;
   attribution: Attribution | null;
   rulesApplied: string[];
+  cascadePath?: import("./focus/types.js").CascadeEdge[];
 }
 
 export interface CompactMessage {

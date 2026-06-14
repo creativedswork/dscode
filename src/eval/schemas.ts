@@ -205,6 +205,31 @@ export type ValidationResult<T> =
   | { ok: true; value: T }
   | { ok: false; errors: string[] };
 
+// ── Safe JSON Parse ──
+// Unified try/catch wrapper for all LLM JSON parsing.
+// Returns null on failure instead of throwing.
+
+export function safeJsonParse<T>(
+  json: string,
+  stepName: string,
+  validator: (parsed: unknown) => ValidationResult<T>,
+): T | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(json);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.warn(`[${stepName}] JSON parse: ${msg}`);
+    return null;
+  }
+  const result = validator(parsed);
+  if (!result.ok) {
+    console.warn(`[${stepName}] validation: ${result.errors.join("; ")}`);
+    return null;
+  }
+  return result.value;
+}
+
 function isString(v: unknown): v is string {
   return typeof v === "string";
 }

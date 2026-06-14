@@ -1,4 +1,5 @@
 // ── Dashboard HTML Generator ──
+import type { CascadeEdge } from "./focus/types.js";
 // Generates a dark-themed, self-contained HTML diagnostic dashboard.
 
 import { writeFileSync, mkdirSync, existsSync } from "node:fs";
@@ -126,6 +127,42 @@ function generateRuleChainHTML(attribution: Attribution, rulesApplied: string[])
   ${ruleItems}
 </div>
 `;
+}
+
+// ── Cascade Path Generator ──
+
+const CASCADE_MECHANISM_LABELS: Record<string, string> = {
+  data_contamination: "数据污染",
+  irreversible_lock_in: "不可逆锁定",
+  perception_blind_spot: "感知盲区",
+  repair_cascade: "修复连锁",
+  taste_drift_propagation: "品味漂移传播",
+};
+
+function generateCascadePathHTML(cascadePath: CascadeEdge[]): string {
+  if (cascadePath.length === 0) return "";
+
+  const edges = cascadePath.map((e) => {
+    const mechanismLabel = CASCADE_MECHANISM_LABELS[e.mechanism] ?? e.mechanism;
+    return `
+    <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:6px;margin-bottom:8px;">
+      <span style="background:${COLORS.danger};color:#fff;padding:4px 8px;border-radius:4px;font-size:11px;font-weight:600;">🔴 根因</span>
+      <span style="font-family:monospace;font-size:13px;color:${COLORS.accent};">${escapeHtml(e.fromZoneId)}:${e.fromStepId}</span>
+      <span style="color:${COLORS.textMuted};font-size:18px;">→</span>
+      <span style="font-family:monospace;font-size:13px;">${escapeHtml(e.toZoneId)}:${e.toStepId}</span>
+      <span style="background:rgba(88,166,255,0.15);padding:2px 8px;border-radius:4px;font-size:11px;color:${COLORS.accent};">${mechanismLabel}</span>
+      <span style="font-size:11px;color:${COLORS.textMuted};">数据: ${escapeHtml(e.dataItem)}</span>
+    </div>`;
+  }).join("");
+
+  return `
+<h2>级联路径 (Cascade Path)</h2>
+<div style="background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:6px;padding:16px;margin-bottom:16px;">
+  <div style="font-size:13px;color:${COLORS.textMuted};margin-bottom:12px;">
+    错误传播路径 — 展示根因如何从源 Zone 扩散到其他 Zone
+  </div>
+  ${edges}
+</div>`;
 }
 
 // ── HTML Template ──
@@ -286,6 +323,9 @@ ${phases.map((p) => `
 ${result.causalGraph ? generateCausalGraphHTML(result) : ""}
 
 <!-- Rule Reasoning Chain (LLM mode only) -->
+
+<!-- Cascade Path (focus pipeline only) -->
+${result.cascadePath && result.analysisMode !== "rule" ? generateCascadePathHTML(result.cascadePath) : ""}
 ${result.attribution ? generateRuleChainHTML(result.attribution, result.rulesApplied) : ""}
 
 <!-- Root Causes -->

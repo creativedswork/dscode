@@ -8,7 +8,7 @@ import type { SerializedSession } from "../session/types.js";
 import { resolveModel } from "../models/index.js";
 import { completeSimple } from "@mariozechner/pi-ai";
 import { CausalGraphStore } from "./graph-store.js";
-import { parseSessionToSteps, validateSubtasks, validateSubtaskEdges, validateAgentNodes, validateAgentEdges, validateCandidateSet, validateAttribution, validateStepDataFlows, type HistoryStep, type Subtask, type SubtaskEdge, type AgentNode, type AgentEdge, type StepDataFlow, type CandidateSet, type Attribution } from "./schemas.js";
+import { parseSessionToSteps, safeJsonParse, validateSubtasks, validateSubtaskEdges, validateAgentNodes, validateAgentEdges, validateCandidateSet, validateAttribution, validateStepDataFlows, type HistoryStep, type Subtask, type SubtaskEdge, type AgentNode, type AgentEdge, type StepDataFlow, type CandidateSet, type Attribution } from "./schemas.js";
 import { analyzeSession, compactSession } from "./analyzer.js";
 import { attributeWithLLM } from "./rules/extraction.js";
 import {
@@ -29,6 +29,7 @@ async function callLLM(
   systemPrompt: string,
   userMessage: string,
   harness: HarnessAPI,
+  maxTokens?: number,
 ): Promise<string> {
   const model = resolveModel(harness.config.provider, harness.config.modelId);
   const response = await completeSimple(
@@ -37,7 +38,7 @@ async function callLLM(
       systemPrompt,
       messages: [{ role: "user" as const, content: userMessage, timestamp: Date.now() }],
     },
-    { apiKey: harness.config.apiKey },
+    { apiKey: harness.config.apiKey, maxTokens },
   );
   const content = typeof response.content === "string"
     ? response.content
@@ -52,11 +53,12 @@ async function callLLMWithRetry(
   userMessage: string,
   harness: HarnessAPI,
   maxRetries = 1,
+  maxTokens?: number,
 ): Promise<string> {
   let lastError: Error | null = null;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
-      const content = await callLLM(systemPrompt, userMessage, harness);
+      const content = await callLLM(systemPrompt, userMessage, harness, maxTokens);
       if (content) return content;
       lastError = new Error("Empty LLM response");
     } catch (err) {
@@ -87,12 +89,13 @@ async function executeStep1(
     })),
   );
   const prompt = buildStep1Prompt(question, summary, steps.length);
-  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness);
+  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness, 1, 8192);
   const json = extractJSON(raw);
   if (!json) throw new Error("Step 1: No JSON found in LLM response");
-  const parsed = JSON.parse(json);
+  const parsed = safeJsonParse(json, "Step 1", () => ({ ok: true as const, value: null }));
+  if (parsed === null) throw new Error("Step 1: JSON parse failed");
   // Handle both {"subtasks": [...]} and [...] formats
-  const arr = Array.isArray(parsed) ? parsed : parsed["subtasks"];
+  const arr = Array.isArray(parsed) ? parsed : (parsed as Record<string, unknown>)["subtasks"];
   const result = validateSubtasks(arr);
   if (!result.ok) throw new Error(`Step 1 validation: ${result.errors.join("; ")}`);
   return result.value;
@@ -113,11 +116,12 @@ async function executeStep2(
     })),
   );
   const prompt = buildStep2Prompt(subtasks, summary);
-  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness);
+  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness, 1, 8192);
   const json = extractJSON(raw);
   if (!json) throw new Error("Step 2: No JSON found in LLM response");
-  const parsed = JSON.parse(json);
-  const arr = Array.isArray(parsed) ? parsed : parsed["edges"];
+  const parsed = safeJsonParse(json, "Step 2", () => ({ ok: true as const, value: null }));
+  if (parsed === null) throw new Error("Step 2: JSON parse failed");
+  const arr = Array.isArray(parsed) ? parsed : (parsed as Record<string, unknown>)["edges"];
   const result = validateSubtaskEdges(arr);
   if (!result.ok) throw new Error(`Step 2 validation: ${result.errors.join("; ")}`);
   return result.value;
@@ -138,13 +142,14 @@ async function executeStep3(
     })),
   );
   const prompt = buildStep3Prompt(subtasks, summary);
-  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness);
+  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness, 1, 8192);
   const json = extractJSON(raw);
   if (!json) throw new Error("Step 3: No JSON found in LLM response");
-  const parsed = JSON.parse(json);
-  const agentsResult = validateAgentNodes(parsed["agents"] ?? []);
+  const parsed = safeJsonParse(json, "Step 3", () => ({ ok: true as const, value: null }));
+  if (parsed === null) throw new Error("Step 3: JSON parse failed");
+  const agentsResult = validateAgentNodes((parsed as Record<string, unknown>)["agents"] ?? []);
   if (!agentsResult.ok) throw new Error(`Step 3 agents: ${agentsResult.errors.join("; ")}`);
-  const flowsResult = validateStepDataFlows(parsed["dataFlows"] ?? []);
+  const flowsResult = validateStepDataFlows((parsed as Record<string, unknown>)["dataFlows"] ?? []);
   if (!flowsResult.ok) throw new Error(`Step 3 data flows: ${flowsResult.errors.join("; ")}`);
   return { agents: agentsResult.value, dataFlows: flowsResult.value };
 }
@@ -155,11 +160,12 @@ async function executeStep4(
   harness: HarnessAPI,
 ): Promise<AgentEdge[]> {
   const prompt = buildStep4Prompt(subtasks, agentNodes);
-  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness);
+  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness, 1, 8192);
   const json = extractJSON(raw);
   if (!json) throw new Error("Step 4: No JSON found in LLM response");
-  const parsed = JSON.parse(json);
-  const arr = Array.isArray(parsed) ? parsed : parsed["edges"];
+  const parsed = safeJsonParse(json, "Step 4", () => ({ ok: true as const, value: null }));
+  if (parsed === null) throw new Error("Step 4: JSON parse failed");
+  const arr = Array.isArray(parsed) ? parsed : (parsed as Record<string, unknown>)["edges"];
   const result = validateAgentEdges(arr);
   if (!result.ok) throw new Error(`Step 4 validation: ${result.errors.join("; ")}`);
   return result.value;
@@ -182,14 +188,13 @@ async function executeStep5(
   );
   const snapshot = graphStore.snapshot();
   const prompt = buildStep5Prompt(question, summary, snapshot);
-  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness);
+  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness, 1, 8192);
   const json = extractJSON(raw);
   if (!json) throw new Error("Step 5: No JSON found in LLM response");
-  const parsed = JSON.parse(json);
-  const result = validateCandidateSet(parsed);
-  if (!result.ok) throw new Error(`Step 5 validation: ${result.errors.join("; ")}`);
-  if (result.value.steps.length < 5) throw new Error(`Step 5: Only ${result.value.steps.length} candidates (need >= 5)`);
-  return result.value;
+  const parsed = safeJsonParse(json, "Step 5", validateCandidateSet);
+  if (parsed === null) throw new Error("Step 5: JSON parse or validation failed");
+  if (parsed.steps.length < 5) throw new Error(`Step 5: Only ${parsed.steps.length} candidates (need >= 5)`);
+  return parsed;
 }
 
 async function executeStep6(
@@ -199,13 +204,12 @@ async function executeStep6(
 ): Promise<Attribution> {
   const snapshot = graphStore.snapshot();
   const prompt = buildStep6Prompt(candidateSet, snapshot);
-  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness);
+  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness, 1, 8192);
   const json = extractJSON(raw);
   if (!json) throw new Error("Step 6: No JSON found in LLM response");
-  const parsed = JSON.parse(json);
-  const result = validateAttribution(parsed);
-  if (!result.ok) throw new Error(`Step 6 validation: ${result.errors.join("; ")}`);
-  return result.value;
+  const parsed = safeJsonParse(json, "Step 6", validateAttribution);
+  if (parsed === null) throw new Error("Step 6: JSON parse or validation failed");
+  return parsed;
 }
 
 // ── Pipeline Result Merger ──
@@ -331,6 +335,8 @@ export async function runCausalGraphPipeline(
 }
 
 // Keep the old one-shot method as a compatibility shim (calls the pipeline)
+// Re-export focus pipeline for use by eval/index.ts
+export { runFocusPipeline } from "./focus/index.js";
 export async function analyzeWithLLM(
   data: SerializedSession,
   harness: HarnessAPI,

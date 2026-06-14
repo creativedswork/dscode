@@ -75,7 +75,12 @@ function getToolCallNames(msg: any): string[] {
 function isToolResultError(msg: any): boolean {
   if (msg?.role !== "toolResult") return false;
   if (msg?.isError === true) return true;
-  if (msg?.details?.error) return true;
+  if (msg?.details?.error) {
+    // Exclude false positives: "Exit code: 0" means success
+    const content = getMessageContent(msg).trim();
+    if (content === "Exit code: 0") return false;
+    return true;
+  }
   return false;
 }
 
@@ -275,7 +280,9 @@ export function detectPhases(messages: any[]): PhaseInfo[] {
     }
 
     if (isToolResultError(msg)) {
-      signals.push({ idx: i, type: "error", label: "Tool error" });
+      const toolName = msg?.toolName ?? "unknown";
+      const errSummary = getMessageContent(msg).slice(0, 60);
+      signals.push({ idx: i, type: "error", label: `${toolName}: ${errSummary}` });
     }
   }
 
@@ -411,7 +418,99 @@ export function inferRootCauses(
       description: `Session 经历 ${phases.length} 个阶段，后期出现用户投诉，可能存在功能范围漂移。`,
       evidenceIndices: complaintPhases.map((p) => p.startIdx),
       severity: "secondary",
+
     });
+  }
+
+  // Tool-specific error analysis
+  const toolErrors: Array<{ toolName: string; msgIdx: number; summary: string; errType: string }> = [];
+  for (let i = 0; i < messages.length; i++) {
+    const msg = messages[i];
+    if (isToolResultError(msg)) {
+      const toolName = msg?.toolName ?? "unknown";
+      const summary = getMessageContent(msg).slice(0, 120);
+      let errType = "unknown";
+      // Classify error type from error message content
+      if (summary.includes("hash") || summary.includes("low-entropy") || summary.includes("ambiguous") || summary.includes("anchor")) {
+        errType = "hash_ambiguity";
+      } else if (summary.includes("timeout") || summary.includes("timed out") || summary.includes("ETIMEDOUT")) {
+        errType = "network_timeout";
+      } else if (summary.includes("permission") || summary.includes("denied") || summary.includes("EACCES")) {
+        errType = "permission_denied";
+      } else if (summary.includes("not found") || summary.includes("ENOENT") || summary.includes("no such file")) {
+        errType = "file_not_found";
+      } else if (summary.includes("syntax") || summary.includes("SyntaxError") || summary.includes("Unexpected token")) {
+        errType = "syntax_error";
+      } else if (summary.includes("Exit code") || summary.includes("runtime") || summary.includes("Error:")) {
+        errType = "runtime_error";
+      } else if (summary.includes("overlapping") || summary.includes("combine them")) {
+        errType = "tool_misuse";
+      }
+      toolErrors.push({ toolName, msgIdx: i, summary, errType });
+    }
+  }
+
+  // Report dominant tool error pattern
+  if (toolErrors.length > 0) {
+    const byTool = new Map<string, Array<{ msgIdx: number; errType: string }>>();
+    for (const te of toolErrors) {
+      const key = `${te.toolName}:${te.errType}`;
+      if (!byTool.has(key)) byTool.set(key, []);
+      byTool.get(key)!.push({ msgIdx: te.msgIdx, errType: te.errType });
+    }
+
+    // Find dominant error pattern
+    let dominantPattern = "";
+    let dominantCount = 0;
+    for (const [key, instances] of byTool) {
+      if (instances.length > dominantCount) {
+        dominantCount = instances.length;
+        dominantPattern = key;
+      }
+    }
+
+    if (dominantCount >= 2 && dominantPattern) {
+      const [domTool, domErrType] = dominantPattern.split(":");
+      const errLabels: Record<string, string> = {
+        hash_ambiguity: "哈希锚点歧义",
+        network_timeout: "网络超时",
+        permission_denied: "权限拒绝",
+        file_not_found: "文件不存在",
+        syntax_error: "语法错误",
+        runtime_error: "运行时错误",
+        tool_misuse: "批量操作冲突",
+        unknown: "未知错误",
+      };
+      const label = errLabels[domErrType] ?? domErrType;
+      const totalByTool = toolErrors.filter((te) => te.toolName === domTool);
+      const evidence = totalByTool.map((te) => te.msgIdx);
+
+      // Determine if tool_error or tool_misuse
+      const errLayer = domErrType === "tool_misuse" ? "agent_error" : "tool_error";
+
+      causes.push({
+        title: `${domTool} 工具${label} (${errLayer === "tool_error" ? "工具层" : "调用层"})`,
+        description: `${domTool} 工具失败 ${dominantCount} 次（${label}），共 ${totalByTool.length} 次错误。${errLayer === "tool_error" ? "这是工具本身的问题，建议调整 Agent 的工具使用策略或等待工具修复。" : "这是 Agent 的工具调用方式问题，建议在 AGENTS.md 中添加相关指导规则。"} 错误样本: ${toolErrors.filter((te) => te.toolName === domTool).slice(0, 3).map((te) => te.summary.slice(0, 80)).join(" | ")}`,
+        evidenceIndices: evidence,
+        severity: dominantCount >= 5 ? "primary" : totalByTool.length >= 3 ? "primary" : "secondary",
+      });
+    }
+
+    // Also add per-tool breakdown if multiple different tools failed
+    const uniqueTools = new Set(toolErrors.map((te) => te.toolName));
+    if (uniqueTools.size >= 2) {
+      const breakdown = [...uniqueTools].map((t) => {
+        const count = toolErrors.filter((te) => te.toolName === t).length;
+        const types = [...new Set(toolErrors.filter((te) => te.toolName === t).map((te) => te.errType))];
+        return `${t}(${count}次: ${types.join(",")})`;
+      }).join("; ");
+      causes.push({
+        title: `多工具错误分布`,
+        description: `多个工具出现错误: ${breakdown}`,
+        evidenceIndices: toolErrors.map((te) => te.msgIdx),
+        severity: "secondary",
+      });
+    }
   }
 
   // Fix cascade
@@ -594,7 +693,7 @@ export function analyzeSession(
       timeline.push({
         messageIdx: i,
         type: "error" as const,
-        label: "Tool error",
+        label: `${messages[i]?.toolName ?? "unknown"}: ${getMessageContent(messages[i]).slice(0, 60)}`,
         severity: "warn",
       });
     }

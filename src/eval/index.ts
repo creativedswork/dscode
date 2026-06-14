@@ -8,8 +8,10 @@ import type { UiBackend } from "../ui/backend.js";
 import type { SerializedSession } from "../session/types.js";
 import { analyzeSession, compactSession } from "./analyzer.js";
 import { generateDashboard, openDashboard } from "./dashboard.js";
-import { analyzeWithLLM } from "./llm.js";
+import { analyzeWithLLM, runCausalGraphPipeline } from "./llm.js";
 import { loadRuleStore, semanticMerge, saveRuleStore } from "./rules/store.js";
+import { runFocusPipeline, FOCUS_PATH_THRESHOLD } from "./focus/index.js";
+import { parseSessionToSteps } from "./schemas.js";
 
 function evalDir(): string {
   return join(homedir(), ".dscode", "eval");
@@ -61,7 +63,11 @@ export async function runEval(
     ui.addInfo(`正在分析 session ${resolvedId.slice(0, 8)}...`);
 
     // Analyze — CHIFF causal graph pipeline, rule engine as fallback
-    const result = await analyzeWithLLM(sessionData, harness);
+    // Analyze — path selection based on session size
+    const steps = parseSessionToSteps(sessionData);
+    const result = steps.length >= FOCUS_PATH_THRESHOLD
+      ? await runFocusPipeline(sessionData, harness, analyzeSession(sessionData, compactSession(sessionData)))
+      : await runCausalGraphPipeline(sessionData, harness);
 
     // Step 8: LLM semantic rule merge (use session's projectPath, not harness cwd)
     const projectPath = sessionData?.metadata?.projectPath ?? harness.config?.projectPath;
@@ -93,3 +99,5 @@ export async function runEval(
 
 export { analyzeSession, compactSession, generateDashboard, openDashboard, analyzeWithLLM };
 export type { EvalResult, PhaseInfo, DeviationPoint, RootCause, SessionMeta, ToolStats, TimelineEvent, CompactMessage, HarnessRule } from "./types.js";
+export type { SessionSkeleton, FocusReport, AttentionZone, ZoneAnalysis, ScanResult, FocusAttribution, CascadeEdge } from "./focus/types.js";
+export { buildSkeleton } from "./focus/skeleton.js";
