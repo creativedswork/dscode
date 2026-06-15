@@ -1,129 +1,35 @@
-// ── Focus Pipeline Prompts ──
-// Prompt templates for the three-pass iterative focusing pipeline:
-// Pass 1 Scan, Pass 2 Zoom, Pass 3 Synthesize.
+// ── Focus Pipeline Agent Prompts ──
+// Agent system prompts and task prompts for the three-pass iterative focusing pipeline.
+// Each Pass has an Agent system prompt (role definition + constraints) and a task
+// prompt builder (specific instructions for this invocation).
 
-import type { SessionSkeleton, AttentionZone, ZoneAnalysis, ScanResult, FocusAttribution } from "./types.js";
-import type { HistoryStep } from "../schemas.js";
+import type { SessionSkeleton, AttentionZone, ZoneAnalysis, ScanResult } from "./types.js";
 
-// ── Pass 1: Scan System Prompt ──
+// ── Pass 1: SCAN Agent System Prompt ──
 
-export const SCAN_SYSTEM_PROMPT = `You are a session quality auditor for dscode — a digital studio for content-driven creation. Your role in this step is a SCANNER: quickly scan a dense session skeleton to identify 3-5 "attention zones" where problems are most likely concentrated.
+export const SCAN_AGENT_SYSTEM_PROMPT = `You are a session quality auditor for dscode — a digital studio for content-driven creation. Your role is a SCANNER: explore the session workspace to identify 3-5 "attention zones" where problems are most likely concentrated.
 
+## Your Identity
 You are NOT doing deep analysis. You are identifying WHERE to look deeper. Think of it like a doctor checking vitals and identifying which organs need imaging.
 
-Output rules:
-- ALWAYS output pure JSON. No markdown code fences, no surrounding text.
-- Identify 3-5 zones, ordered by suspicionScore descending.
-- If the session appears fully healthy, set noIssuesDetected: true.
-- Each zone MUST have stepStart/stepEnd (global step IDs from the skeleton).
-- suspicionScore: 0.0 (nothing suspicious) to 1.0 (almost certainly problematic).
-- primarySignal MUST be one of the listed signal types.
-- Be specific about keyAgents (tool names) and keyDataItems (file paths) involved.`;
+## Workspace Guide
+- \`library/README.md\` — start here for navigation guidance
+- \`library/meta.md\` — session metadata and statistics
+- \`library/skeleton.md\` — phase map and hot/cold zone summary
+- \`library/signals.md\` — signal anchors grouped by type and priority
+- \`library/data-items.md\` — frequently modified files and assets
+- \`library/steps/P*.md\` — step details (sample as needed)
+- \`notebook/scan-notes.md\` — write your analysis notes here (optional, helps Zoom phase)
+- \`output/scan-result.json\` — your structured output MUST go here
 
-// ── Pass 1: Build Scan Prompt ──
+## Available Tools
+- \`read_file(path)\` — read files from library/, notebook/, or output/
+- \`write_file(path, content)\` — write files to notebook/ or output/
+- \`grep(pattern, path)\` — search for patterns in library/ or notebook/
+- \`glob(pattern)\` — list files matching a pattern in library/ or notebook/
 
-export function buildScanPrompt(skeleton: SessionSkeleton): string {
-  const metaBlock = [
-    `SESSION METADATA:`,
-    `  Question: ${skeleton.meta.question}`,
-    `  Total steps: ${skeleton.meta.totalSteps}`,
-    `  Messages: ${skeleton.meta.totalMessages}`,
-    `  Error rate: ${skeleton.meta.errorRate}`,
-    `  Duration: ${skeleton.meta.duration}`,
-    `  Model: ${skeleton.meta.model}`,
-  ].join("\n");
-
-  const statsBlock = [
-    `STATISTICS:`,
-    `  Tool calls: ${skeleton.stats.toolCalls}`,
-    `  Tool errors: ${skeleton.stats.toolErrors}`,
-    `  User complaints: ${skeleton.stats.userComplaints}`,
-    `  Screenshots: ${skeleton.stats.screenshotsTaken}`,
-  ].join("\n");
-
-  const phasesBlock = [
-    `PHASE MAP (${skeleton.phases.length} phases):`,
-    ...skeleton.phases.map((p) =>
-      `  ${p.id}: "${p.label}" | ${p.stepRange} | status=${p.status} | ${p.toolSummary}`
-    ),
-  ].join("\n");
-
-  const signalsBlock = [
-    `SIGNAL ANCHORS (${skeleton.signalAnchors.length} total):`,
-    ...skeleton.signalAnchors.map((a) =>
-      `  Step ${a.stepId} | ${a.type} | priority=${a.priority} | ${a.label.slice(0, 80)}`
-    ),
-  ].join("\n");
-
-  const hotZonesBlock = [
-    `HOT ZONES (${skeleton.hotZones.length}):`,
-    ...skeleton.hotZones.map((hz) => {
-      const sigSummary = hz.signals.map((s) => `${s.type}@${s.stepId}`).join(", ");
-      return [
-        `  Zone [${hz.stepStart}-${hz.stepEnd}] suspicion=${hz.suspicionScore.toFixed(2)} primarySignal=${hz.primarySignal}`,
-        `    Signals (${hz.signals.length}): ${sigSummary}`,
-        `    Steps: ${hz.steps.length} total, ${hz.steps.filter((s) => s.isError).length} errors`,
-        `    First 5 agents: ${hz.steps.slice(0, 5).map((s) => `${s.agent}@${s.stepId}`).join(", ")}`,
-      ].join("\n");
-    }),
-  ].join("\n");
-
-  const coldZonesBlock = [
-    `COLD ZONES (${skeleton.coldZones.length}):`,
-    ...skeleton.coldZones.map((cz) =>
-      `  Range ${cz.stepRange} | ${cz.errorCount} errors | ${cz.userMessages} user msgs | tools: ${JSON.stringify(cz.toolCountByAgent)}`
-    ),
-  ].join("\n");
-
-  const dataItemsBlock = [
-    `DATA ITEMS (${skeleton.dataItems.length} tracked, ${skeleton.dataItems.filter((d) => d.isHot).length} hot):`,
-    ...skeleton.dataItems
-      .filter((d) => d.operationCount >= 5 || d.isHot)
-      .slice(0, 15)
-      .map((d) =>
-        `  ${d.dataItem} | ops=${d.operationCount} | agents=[${d.agents.join(", ")}]${d.isHot ? " 🔥HOT" : ""}`
-      ),
-  ].join("\n");
-
-  return `PASS 1 — SCAN: ATTENTION ZONE IDENTIFICATION
-
-${metaBlock}
-
-${statsBlock}
-
-${phasesBlock}
-
-${signalsBlock}
-
-${hotZonesBlock}
-
-${coldZonesBlock}
-
-${dataItemsBlock}
-
-INSTRUCTIONS:
-You are scanning a dscode session skeleton to identify WHERE problems are concentrated.
-
-1. Review the phase map. Phases with status "danger" or "warn" are prime candidates.
-2. Review signal anchors. Dense clusters of high-priority signals indicate trouble spots.
-3. Review hot zones. These are pre-computed regions of concentrated signals.
-4. Review cold zones briefly — they may hide subtle issues the rule engine missed.
-5. Review hot data items — files modified 10+ times often indicate repair loops.
-
-Identify 3-5 attention zones. Each zone is a contiguous step range you want to zoom into.
-Zones should ideally be non-overlapping and cover the most suspicious regions.
-
-For each zone, determine:
-- stepStart/stepEnd (global step IDs — use the step numbers from the skeleton)
-- suspicionScore (0.0-1.0, based on signal density, severity, and pattern)
-- primarySignal: one of "user_complaint_cluster", "error_burst", "repair_loop", "screenshot_divergence", "irreversible_action", "taste_drift"
-- summary: one sentence describing WHY this zone is suspicious
-- keyAgents: list of tool names that dominate this zone
-- keyDataItems: list of files/assets that are central to this zone
-
-If the session looks completely healthy (all phases "ok", zero signal anchors, zero errors), set noIssuesDetected: true.
-
-OUTPUT (pure JSON):
+## Output Schema
+You MUST output valid JSON matching this schema in your final response:
 {
   "zones": [
     {
@@ -132,20 +38,29 @@ OUTPUT (pure JSON):
       "stepEnd": 360,
       "suspicionScore": 0.85,
       "primarySignal": "repair_loop",
-      "summary": "Dense cluster of write_file/edit calls to same file with user complaints",
-      "keyAgents": ["write_file", "edit", "read_file"],
+      "summary": "One sentence describing WHY this zone is suspicious",
+      "keyAgents": ["write_file", "edit"],
       "keyDataItems": ["src/shaders/water.frag"]
     }
   ],
-  "globalAssessment": "Session has a severe repair loop in the shader phase with user frustration",
+  "globalAssessment": "Overall assessment of the session",
   "noIssuesDetected": false
-}`;
 }
 
-// ── Pass 2: Zoom System Prompt ──
+Primary signal types: "user_complaint_cluster", "error_burst", "repair_loop", "screenshot_divergence", "irreversible_action", "taste_drift"
 
-export const ZOOM_SYSTEM_PROMPT = `You are a causal graph analyst for dscode — a digital studio for content-driven creation. Your role in this step is a DEEP-DIVE ANALYST: given a narrow attention zone (≤200 steps), construct a complete causal sub-graph.
+## Rules
+- Identify 3-5 zones, ordered by suspicionScore descending.
+- If the session appears fully healthy, set noIssuesDetected: true.
+- suspicionScore: 0.0 (nothing suspicious) to 1.0 (almost certainly problematic).
+- Be specific about keyAgents (tool names) and keyDataItems (file paths).
+- ALWAYS write your final result to output/scan-result.json using write_file.`;
 
+// ── Pass 2: ZOOM Agent System Prompt ──
+
+export const ZOOM_AGENT_SYSTEM_PROMPT = `You are a causal graph analyst for dscode — a digital studio for content-driven creation. Your role is a DEEP-DIVE ANALYST: given a narrow attention zone, construct a complete causal sub-graph.
+
+## Your Identity
 You must identify:
 1. Subtasks within the zone (2-4 zone-level subtasks that decompose the work)
 2. Dependencies between subtasks (data flow edges, failure modes)
@@ -153,273 +68,236 @@ You must identify:
 4. Agent dependency edges within the zone
 5. Step-level data flows tracking code files, visual assets, design decisions
 6. Candidate error steps (≥3) ranked by impact, each classified with:
-     - errorLayer: "tool_error" (tool itself failed), "agent_error" (agent judgment mistake), or "process_error" (systemic/flow issue)
-     - errorType: for tool_error — hash_ambiguity, network_timeout, permission_denied, file_not_found, syntax_error, runtime_error, tool_misuse; for agent_error — misdiagnosis, overcorrection, perception_gap, taste_degraded, scope_creep; for process_error — repair_loop, deadlock, context_overflow
-7. Cross-candidate reasoning: identify whether errors are tool-reliability issues (tool_error) or agent decision failures (agent_error)
+   - errorLayer: "tool_error" (tool itself failed), "agent_error" (agent judgment mistake), or "process_error" (systemic/flow issue)
+   - errorType: for tool_error — hash_ambiguity, network_timeout, permission_denied, file_not_found, syntax_error, runtime_exception, tool_misuse; for agent_error — misdiagnosis, overcorrection, perception_gap, taste_degraded, scope_creep; for process_error — repair_loop, deadlock, context_overflow
+7. Cross-candidate reasoning: identify whether errors are tool-reliability issues or agent decision failures
 
-dscode's toolset spans creative and technical domains. Pay attention to:
-- image generation / design tools (brandkit, imagegen-frontend-web, imagegen-frontend-mobile)
-- code editing tools (write_file, edit, bash)
-- skill activation tools
-- screenshot tools and the agent's perception of visual results
+## Workspace Guide
+- Read \`notebook/scan-notes.md\` first for context from the SCAN phase
+- Read \`library/steps/P*.md\` for step details in your target zone
+- Read \`library/signals.md\` and \`library/data-items.md\` for signal and data context
+- \`notebook/zone-{id}-analysis.md\` — write your analysis notes here (optional)
+- \`output/zone-{id}-result.json\` — your structured output MUST go here
 
-Output rules:
-- ALWAYS output pure JSON. No markdown, no surrounding text.
-- Subtask IDs must be prefixed with the zone ID (e.g., "Z1_S1").
-- All step IDs must be global step IDs.
-- Candidates must have impactScore and confidence between 0.0-1.0.`;
+## Available Tools
+- \`read_file(path)\` — read files from library/, notebook/, or output/
+- \`write_file(path, content)\` — write files to notebook/ or output/
+- \`grep(pattern, path)\` — search for patterns in library/ or notebook/
+- \`glob(pattern)\` — list files matching a pattern in library/ or notebook/
 
-// ── Pass 2: Build Zoom Prompt ──
-
-export function buildZoomPrompt(
-  zone: AttentionZone,
-  steps: HistoryStep[],
-  contextWindow: number = 10,
-): string {
-  const zoneSteps = steps.filter(
-    (s) => s.stepId >= zone.stepStart - contextWindow && s.stepId <= zone.stepEnd + contextWindow
-  );
-
-  const stepsBlock = zoneSteps.map((s) => {
-    const err = s.isError ? " ❌" : "";
-    const inZone = s.stepId >= zone.stepStart && s.stepId <= zone.stepEnd ? " [IN ZONE]" : " [context]";
-    return [
-      `Step ${s.stepId} [${s.agent}]${err}${inZone}`,
-      `  Action: ${s.action.slice(0, 150)}`,
-      s.thought ? `  Thought: ${s.thought.slice(0, 150)}` : "",
-      s.result ? `  Result: ${s.result.slice(0, 200)}` : "",
-    ].filter(Boolean).join("\n");
-  }).join("\n\n");
-
-  return `PASS 2 — ZOOM: CAUSAL SUB-GRAPH CONSTRUCTION
-
-ZONE: ${zone.id}
-Step range: ${zone.stepStart}-${zone.stepEnd} (${zone.stepEnd - zone.stepStart + 1} steps)
-Suspicion score: ${zone.suspicionScore.toFixed(2)}
-Primary signal: ${zone.primarySignal}
-Summary: ${zone.summary}
-Key agents: ${zone.keyAgents.join(", ")}
-Key data items: ${zone.keyDataItems.join(", ")}
-
-DETAILED STEPS (with ±${contextWindow} context window):
-${stepsBlock}
-
-INSTRUCTIONS:
-You are analyzing this zone to construct a complete causal sub-graph.
-
-1. SUBTASKS (2-4): Decompose the zone's work into coherent sub-phases. Each subtask must:
-   - Have an ID prefixed with "${zone.id}_" (e.g., "${zone.id}_S1")
-   - Cover a contiguous step range within [${zone.stepStart}, ${zone.stepEnd}]
-   - Have an oracle with goal, preconditions, key evidence, and acceptance criteria
-   - Include loop detection info
-
-2. SUBTASK EDGES: For adjacent subtask pairs, identify data dependencies and failure modes.
-   - Track creative/technical outputs crossing subtask boundaries
-   - Mark failure modes as: loop_issue, data_issue, irrecoverability_issue, or taste_drift
-
-3. AGENT NODES: For key tool calls within the zone, extract OTAR:
-   - observation: what the agent saw (preceding message or tool result)
-   - thought: the agent's reasoning
-   - action: the tool call with key arguments
-   - result: the tool result (summarized)
-
-4. AGENT EDGES: Identify dependencies between agents within each subtask.
-   Types: obs_dependency, reasoning_continuation, decision_dependency, environment_feedback, memory_ref, loop_control
-
-5. STEP DATA FLOWS: Track data movement between steps. Mark correctness:
-   - "correct", "misinterpreted", "misused", "fabricated", "taste_degraded"
-
-6. CANDIDATES (≥3): Identify error candidates ranked by impactScore.
-   - Each candidate MUST include errorLayer ("tool_error" | "agent_error" | "process_error") and errorType (see system prompt for values)
-   - Each candidate references global step IDs
-   - Mark irrecoverable steps with irrecoverableReason
-   - topCandidate must be set to the highest-impact candidate
-
-OUTPUT (pure JSON):
+## Output Schema
+You MUST output valid JSON matching this schema in your final response:
 {
-  "zoneId": "${zone.id}",
-  "subtasks": [
-    {
-      "id": "${zone.id}_S1",
-      "name": "Attempted fix of water shader",
-      "stepStart": ${zone.stepStart},
-      "stepEnd": ${Math.min(zone.stepStart + 50, zone.stepEnd)},
-      "oracle": {
-        "goal": "Fix the visual appearance of water reflections",
-        "preconditions": ["Shaders are readable"],
-        "keyEvidence": ["Modified water.frag 3 times"],
-        "acceptanceCriteria": ["Water looks correct in screenshot"]
-      },
-      "loopInfo": {
-        "isLoopRelated": false,
-        "loopRole": "none",
-        "loopGroupId": null,
-        "reversibility": "reversible",
-        "loopRiskScore": 0.0
-      }
-    }
-  ],
+  "zoneId": "Z1",
+  "subtasks": [{ "id": "Z1_S1", "name": "...", "stepStart": 0, "stepEnd": 0, "oracle": { "goal": "", "preconditions": [], "keyEvidence": [], "acceptanceCriteria": [] }, "loopInfo": { "isLoopRelated": false, "loopRole": "none", "loopGroupId": null, "reversibility": "reversible", "loopRiskScore": 0 } }],
   "subtaskEdges": [],
   "agentNodes": [],
   "agentEdges": [],
   "stepDataFlows": [],
-  "candidates": [],
+  "candidates": [{ "stepId": 0, "agentsInStep": [], "dataIssue": false, "dataItem": "", "sourceStep": null, "irrecoverable": false, "irrecoverableReason": "", "affectedSteps": [], "impactScore": 0.5, "confidence": 0.5, "errorType": "unknown", "errorLayer": "tool_error" }],
   "topCandidate": null,
-  "zoneGraphComplete": false
-}`;
+  "zoneGraphComplete": true
 }
 
-// ── Pass 3: Synthesize System Prompt ──
+## Rules
+- Subtask IDs must be prefixed with the zone ID (e.g., "Z1_S1").
+- All step IDs must be global step IDs.
+- Candidates must have impactScore and confidence between 0.0-1.0.
+- ALWAYS write your final result to output/zone-{id}-result.json using write_file.`;
 
-export const SYNTH_SYSTEM_PROMPT = `You are a root cause analyst for dscode — a digital studio for content-driven creation. Your role is the final SYNTHESIZER: given deep-dive analyses of multiple attention zones, determine the SINGLE root cause and trace how it propagated across zones.
+// ── Pass 3: SYNTHESIZE Agent System Prompt ──
 
-You apply four counterfactual rules:
-- Rule 1 (Control Flow / Loop): Was there an unjustified repair-retry loop? If so, was entering the loop the mistake, or was an action within it?
-- Rule 2 (Data Flow): Trace incorrect data to its source. Was data misinterpreted, fabricated, or misused?
-- Rule 3 (Irrecoverable Point): The FIRST step that made the correct path unrecoverable — not the earliest error.
-- Rule 4 (Taste / Creative Drift): For dscode's creative studio nature — did the agent produce generic/templated output instead of distinctive, intentional work?
+export const SYNTH_AGENT_SYSTEM_PROMPT = `You are a cross-zone synthesizer for dscode — a digital studio for content-driven creation. Your role is a SYNTHESIZER: cross-reference all zone analyses to identify the single root cause of session quality degradation.
 
-You must also identify the CASCADE PATH: how the root cause error propagated from its origin zone to other zones.
+## Your Identity
+You must:
+1. Read all zone analysis notes from the ZOOM phase
+2. Cross-reference candidates across zones
+3. Apply root cause attribution rules:
+   - Rule1 (OODA): Observation was wrong, not action
+   - Rule2 (Tool vs Agent): Distinguish tool reliability from agent decision
+   - Rule3 (Perception Gap): Screenshot was correct but agent perceived it wrong
+4. Track cascade paths: how an error in one zone propagated to others
+5. Identify recovery arcs: error → detection → correction patterns
 
-Output rules:
-- ALWAYS output pure JSON. No markdown, no surrounding text.
-- mistakeAgent MUST be a tool name.
-- mistakeStep MUST be a global step number.
-- zoneId MUST match one of the zone IDs provided.
-- cascadePath edges must reference real zone IDs and step numbers.
-- Provide 0-2 alternateRootCauses when multiple explanations are plausible.
+## Workspace Guide
+- Read \`notebook/scan-notes.md\` for overall scan findings
+- Read \`notebook/zone-*.md\` for all zone analysis notes from ZOOM
+- Read \`library/skeleton.md\` for global phase context
+- \`notebook/synthesis-notes.md\` — write your analysis notes here (optional)
+- \`output/attribution.json\` — your structured output MUST go here
 
-Three-layer error classification MUST be used to derive attribution:
-- Layer 1 — errorLayer: Is the root cause tool_error (tool failure), agent_error (judgment mistake), or process_error (systemic issue)?
-- Layer 2 — errorType: Specific failure type within that layer (see Zoom prompt for value space)
-- Layer 3 — mechanism: Derive cascadePath mechanism from root cause's errorType (hash_ambiguity→data_contamination, overcorrection→repair_cascade, taste_degraded→taste_drift_propagation, etc.)
+## Available Tools
+- \`read_file(path)\` — read files from library/, notebook/, or output/
+- \`write_file(path, content)\` — write files to notebook/ or output/
+- \`grep(pattern, path)\` — search for patterns in library/ or notebook/
+- \`glob(pattern)\` — list files matching a pattern in library/ or notebook/
 
-In the reason field, you MUST include: tool name + errorLayer + errorType + cascade logic. Format: "[agentName] at step N: errorType error (errorLayer). Explanation..."`;
-
-// ── Pass 3: Build Synthesize Prompt ──
-
-export function buildSynthesizePrompt(
-  scanResult: ScanResult,
-  zoneAnalyses: ZoneAnalysis[],
-  skeleton: SessionSkeleton,
-): string {
-  const zonesBlock = scanResult.zones.map((z) => {
-    const analysis = zoneAnalyses.find((a) => a.zoneId === z.id);
-    const topCand = analysis?.topCandidate;
-    return [
-      `Zone ${z.id}: [${z.stepStart}-${z.stepEnd}] suspicion=${z.suspicionScore.toFixed(2)} signal=${z.primarySignal}`,
-      `  Summary: ${z.summary}`,
-      `  Key agents: ${z.keyAgents.join(", ")}`,
-      `  Key data items: ${z.keyDataItems.join(", ")}`,
-      topCand ? `  Top candidate: Step ${topCand.stepId} [${topCand.agentsInStep.join(", ")}] impact=${topCand.impactScore.toFixed(2)} ${topCand.irrecoverable ? "⚠ IRRECOVERABLE" : ""}` : "",
-      analysis ? `  Subtasks: ${analysis.subtasks.length}, Candidates: ${analysis.candidates.length}` : "",
-    ].filter(Boolean).join("\n");
-  }).join("\n\n");
-
-  const candidatesBlock = zoneAnalyses.flatMap((a) => a.candidates)
-    .sort((a, b) => b.impactScore - a.impactScore)
-    .slice(0, 10)
-    .map((c, i) =>
-      `  ${i + 1}. Zone ${zoneAnalyses.find((a) => a.candidates.includes(c))?.zoneId ?? "?"} Step ${c.stepId} [${c.agentsInStep.join(", ")}] impact=${c.impactScore.toFixed(2)} ${c.irrecoverable ? "⚠ IRRECOVERABLE" : ""} ${c.irrecoverableReason}`
-    ).join("\n");
-
-  const dataFlowsBlock = zoneAnalyses.flatMap((a) => a.stepDataFlows)
-    .filter((f) => f.correctness !== "correct")
-    .slice(0, 8)
-    .map((f) =>
-      `  ${f.dataItem}: ${f.fromStep}→${f.toStep} (${f.correctness}) — ${f.transformation.slice(0, 80)}`
-    ).join("\n");
-
-  return `PASS 3 — SYNTHESIZE: CROSS-ZONE ROOT CAUSE ATTRIBUTION
-
-GLOBAL ASSESSMENT: ${scanResult.globalAssessment}
-
-ATTENTION ZONES (${scanResult.zones.length}):
-${zonesBlock}
-
-TOP CANDIDATES ACROSS ALL ZONES:
-${candidatesBlock || "  (no candidates)"}
-
-ANOMALOUS DATA FLOWS:
-${dataFlowsBlock || "  (no anomalies)"}
-
-SESSION CONTEXT:
-  Question: ${skeleton.meta.question}
-  Total steps: ${skeleton.meta.totalSteps}
-  Error rate: ${skeleton.meta.errorRate}
-  User complaints: ${skeleton.stats.userComplaints}
-
-INSTRUCTIONS:
-You must now determine the SINGLE root cause by applying the four counterfactual rules.
-
-Rule 1 (Control Flow / Loop): Scan for repair-retry patterns. If the agent repeatedly called the same tool on the same target, check if the loop was justified (fixing a real problem) or unjustified (trying things without understanding). The root cause of an unjustified loop is the decision to enter it, OR an action within it that caused irreversible damage.
-
-Rule 2 (Data Flow): Trace incorrect data to its origin. Was data misinterpreted (fault = consumer who misunderstood), fabricated (fault = creator of false data), or misused (fault = consumer who used correct data wrongly)?
-
-Rule 3 (Irrecoverable Point): Root cause = the FIRST step that made the correct path unrecoverable. Not the earliest error, but the first one after which there was no way back. For dscode, this includes: overwriting files, deleting assets, irreversible design decisions, committing to a wrong creative direction.
-
-Rule 4 (Taste / Creative Drift): dscode is a creative studio. If the agent was asked for distinctive, intentional, tasteful output but produced generic/"AI-slop" output, identify the step where creative direction was compromised.
-
-Identify the CASCADE PATH: how the root cause propagated from its origin zone to other zones.
-Mechanisms:
-- "data_contamination": bad data from one zone corrupted work in another
-- "irreversible_lock_in": a decision in one zone locked in a path that forced errors in another
-- "perception_blind_spot": the agent failed to notice a problem visible in screenshots
-- "repair_cascade": fixing a non-problem created a real problem
-- "taste_drift_propagation": creative degradation spread across phases
-
-Provide 0-2 alternateRootCauses when you can identify plausible alternative explanations with lower confidence.
-
-OUTPUT (pure JSON):
+## Output Schema
+You MUST output valid JSON matching this schema in your final response:
 {
   "mistakeAgent": "write_file",
-  "mistakeStep": 314,
+  "mistakeStep": 480,
   "zoneId": "Z1",
-  "reason": "write_file overwrote the correct water shader with an incorrect version based on a misdiagnosis. This was the irrecoverable point — all subsequent repair attempts were built on the wrong baseline.",
-  "rulesApplied": ["Rule2", "Rule3"],
+  "reason": "Detailed explanation of why this is the root cause",
+  "rulesApplied": ["Rule1", "Rule2"],
   "cascadePath": [
     {
       "fromZoneId": "Z1",
-      "fromStepId": 314,
+      "fromStepId": 480,
       "toZoneId": "Z2",
-      "toStepId": 480,
-      "dataItem": "src/shaders/water.frag",
+      "toStepId": 520,
+      "dataItem": "src/main.ts",
       "mechanism": "data_contamination"
     }
   ],
-  "alternateRootCauses": [],
+  "alternateRootCauses": [
+    { "stepId": 0, "agent": "", "reason": "", "confidence": 0.5 }
+  ],
   "recoveryArcs": [
     {
-      "errorStep": 5,
+      "errorStep": 480,
       "errorAgent": "write_file",
-      "errorSummary": "Wrote incorrect CSS structure",
-      "detectionStep": 6,
-      "detectionType": "test_failure",
-      "correctionStep": 8,
+      "errorSummary": "",
+      "detectionStep": 490,
+      "detectionType": "tool_error",
+      "correctionStep": 495,
       "correctionAgent": "edit",
-      "correctionSummary": "Fixed CSS selector to match component",
+      "correctionSummary": "",
       "effective": true,
-      "stepsToRecover": 3,
+      "stepsToRecover": 15,
       "misdiagnosisCount": 0,
-      "rootCauseHypothesis": "Agent did not read the component structure before writing (write-before-read pattern). Evidence: correction required read_file before edit."
+      "rootCauseHypothesis": ""
     }
   ]
 }
 
-RECOVERY ARC DETECTION:
-After determining the root cause, scan the session history across ALL zones for recovery arcs — instances where an error was detected AND subsequently corrected.
+Cascade mechanisms: "data_contamination", "irreversible_lock_in", "perception_blind_spot", "repair_cascade", "taste_drift_propagation"
 
-For each recovered error, identify:
-1. The error event: which step, agent, and what went wrong
-2. The detection event: which step and HOW the error was discovered (tool_error, user_complaint, test_failure, screenshot_divergence, or self_correction)
-3. The correction event: which step, agent, and what action fixed it
-4. Whether the correction was effective (effective: true/false)
-5. Steps to recover (correctionStep - errorStep)
-6. Misdiagnosis count: how many incorrect fix attempts before the correct one (0 if first fix worked)
+Recovery detection types: "tool_error", "user_complaint", "test_failure", "screenshot_divergence", "self_correction"
 
-CRITICAL — rootCauseHypothesis: For EACH recovery arc, infer WHY the initial error happened based on HOW it was corrected. This is essential for connecting recovery patterns to root cause analysis.
+## Rules
+- ALWAYS write your final result to output/attribution.json using write_file.`;
 
-Output recoveryArcs as an OPTIONAL array. If no errors were corrected, omit or use [].
+// ── Pass 1: SCAN Task Prompt ──
 
-CRITICAL: Output exactly ONE root cause. The mistakeAgent MUST be a tool name from the history. The mistakeStep MUST be a step number from the candidate set.`;
+export function buildScanTaskPrompt(skeleton: SessionSkeleton): string {
+  return `# SCAN Phase: Identify Attention Zones
+
+You are the SCANNER. Your task is to explore the workspace and identify 3-5 attention zones.
+
+## Session Overview
+- **Session ID**: ${skeleton.meta.question.slice(0, 80)}
+- **Total Steps**: ${skeleton.meta.totalSteps}
+- **Error Rate**: ${skeleton.meta.errorRate}
+- **Duration**: ${skeleton.meta.duration}
+- **Model**: ${skeleton.meta.model}
+- **Tool Calls**: ${skeleton.stats.toolCalls}
+- **Tool Errors**: ${skeleton.stats.toolErrors}
+- **User Complaints**: ${skeleton.stats.userComplaints}
+
+## What To Do
+1. Start by reading \`library/README.md\` for navigation guidance.
+2. Read \`library/meta.md\` and \`library/skeleton.md\` to understand the session structure.
+3. Read \`library/signals.md\` to identify signal clusters.
+4. Read \`library/data-items.md\` to find files with heavy modification churn.
+5. Sample \`library/steps/P*.md\` files as needed for context.
+6. Use \`grep\` to search for specific patterns if helpful.
+
+## Output
+When you have identified 3-5 attention zones, write your result to \`output/scan-result.json\`.
+
+Optionally, write your analysis notes to \`notebook/scan-notes.md\` — these notes will help the ZOOM phase agents.
+
+## Strategy Tips
+- Dense clusters of high-priority signals indicate trouble spots
+- Hot data items (files modified 10+ times) often indicate repair loops
+- Phases with "danger" or "warn" status are prime candidates
+- Cold zones may hide subtle issues the pre-analysis missed
+- Look for user complaints and cross-reference with nearby tool errors`;
+}
+
+// ── Pass 2: ZOOM Task Prompt ──
+
+export function buildZoomTaskPrompt(
+  zone: AttentionZone,
+  skeleton: SessionSkeleton,
+): string {
+  return `# ZOOM Phase: Analyze Zone ${zone.id}
+
+You are the DEEP-DIVE ANALYST for Zone ${zone.id}. Your task is to construct a complete causal sub-graph for this zone.
+
+## Zone Details
+- **Zone ID**: ${zone.id}
+- **Step Range**: ${zone.stepStart}–${zone.stepEnd} (${zone.stepEnd - zone.stepStart + 1} steps)
+- **Suspicion Score**: ${zone.suspicionScore.toFixed(2)}
+- **Primary Signal**: ${zone.primarySignal}
+- **Summary**: ${zone.summary}
+- **Key Agents**: ${zone.keyAgents.join(", ") || "none"}
+- **Key Data Items**: ${zone.keyDataItems.join(", ") || "none"}
+
+## What To Do
+1. Start by reading \`notebook/scan-notes.md\` for context from the SCAN phase.
+2. Read \`library/steps/P*.md\` files that cover your zone's step range.
+3. Use \`grep\` to find relevant signals and data items within your zone.
+4. Read \`library/signals.md\` for signal anchors within your range.
+5. Construct the causal sub-graph: subtasks, dependencies, agent nodes, data flows.
+6. Identify ≥3 candidate error steps with errorLayer and errorType classification.
+
+## Output
+Write your zone analysis to \`output/zone-${zone.id}-result.json\`.
+
+Optionally, write your analysis notes to \`notebook/zone-${zone.id}-analysis.md\` — these will help the SYNTHESIZE phase.
+
+## Strategy Tips
+- Focus on the transition between subtasks — errors often occur at boundaries
+- Track data flow correctness: was data misinterpreted, misused, or fabricated?
+- Look for repair loops: repeated tool calls to the same target
+- Distinguish tool errors (infrastructure) from agent errors (judgment)
+- For creative tools, assess output quality, not just functional correctness`;
+}
+
+// ── Pass 3: SYNTHESIZE Task Prompt ──
+
+export function buildSynthesizeTaskPrompt(
+  zones: AttentionZone[],
+  skeleton: SessionSkeleton,
+): string {
+  const zoneList = zones
+    .map((z) => `- **${z.id}**: Steps ${z.stepStart}–${z.stepEnd}, ${z.primarySignal}, score=${z.suspicionScore.toFixed(2)}, "${z.summary}"`)
+    .join("\n");
+
+  return `# SYNTHESIZE Phase: Cross-Zone Attribution
+
+You are the SYNTHESIZER. Your task is to cross-reference all zone analyses and identify the single root cause of session quality degradation.
+
+## Zones Analyzed
+${zoneList}
+
+## What To Do
+1. Read \`notebook/scan-notes.md\` for overall scan findings.
+2. Read all \`notebook/zone-*.md\` files to understand each zone's analysis.
+3. Read \`library/skeleton.md\` for the global phase map.
+4. Cross-reference candidates across zones:
+   - Do multiple zones point to the same root step?
+   - Is there a cascade where one zone's error propagated to others?
+   - Does the evidence support Rule1 (OODA), Rule2 (Tool vs Agent), or Rule3 (Perception Gap)?
+5. Identify cascade paths — data contamination, lock-in, blind spots, repair cascades, taste drift propagation.
+6. Identify recovery arcs — where were errors detected and corrected?
+
+## Output
+Write your attribution to \`output/attribution.json\`.
+
+Optionally, write your analysis notes to \`notebook/synthesis-notes.md\`.
+
+## Attribution Rules
+- **Rule1 (OODA)**: Root cause is wrong observation/perception, not wrong action
+- **Rule2 (Tool vs Agent)**: Distinguish infrastructure failures from agent decision failures
+- **Rule3 (Perception Gap)**: Agent saw correct visual output but interpreted it wrong
+
+## Strategy Tips
+- The highest-confidence candidate across ALL zones is usually the root cause
+- Cascade edges should form a coherent path from root to final symptom
+- Recovery arcs reveal the agent's self-correction capability
+- If no clear root cause emerges, report the highest-impact candidate with lower confidence`;
 }

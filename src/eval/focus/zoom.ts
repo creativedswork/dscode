@@ -1,15 +1,16 @@
-// ── Pass 2: Zoom ──
-// Per-zone deep-dive causal sub-graph construction.
-// Supports recursive splitting for zones >200 steps.
+// ── Pass 2: ZOOM Agent ──
+// Spawns Agent sessions for each attention zone to construct causal sub-graphs.
+// Supports recursive splitting for zones >200 steps, with each sub-zone
+// spawning its own Agent session.
 
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import type { HarnessAPI } from "../../core/harness-api.js";
-import { resolveModel } from "../../models/index.js";
-import { completeSimple } from "@mariozechner/pi-ai";
 import { safeJsonParse, type ValidationResult, type HistoryStep, type SubtaskEdge, type AgentNode, type AgentEdge, type StepDataFlow } from "../schemas.js";
-import { extractJSON } from "../prompts.js";
-import type { AttentionZone, ZoneAnalysis, ZoneSubtask, ZoneCandidate } from "./types.js";
-import { ZOOM_SYSTEM_PROMPT, buildZoomPrompt } from "./prompts.js";
-import { budgetGuard } from "./budget-guard.js";
+import type { AttentionZone, ZoneAnalysis, ZoneSubtask, ZoneCandidate, SessionSkeleton } from "./types.js";
+import { ZOOM_AGENT_SYSTEM_PROMPT, buildZoomTaskPrompt } from "./prompts.js";
+import { agentLoop } from "./agent-loop.js";
+import type { ProgressDisplay } from "./progress.js";
 
 // ── Constants ──
 
@@ -18,7 +19,7 @@ const MAX_RECURSIVE_DEPTH = 3;
 
 // ── Validation ──
 
-function validateZoneAnalysis(obj: unknown): ValidationResult<ZoneAnalysis> {
+export function validateZoneAnalysis(obj: unknown): ValidationResult<ZoneAnalysis> {
   if (typeof obj !== "object" || obj === null) return { ok: false, errors: ["Expected object"] };
   const o = obj as Record<string, unknown>;
 
@@ -103,29 +104,17 @@ function validateZoneAnalysis(obj: unknown): ValidationResult<ZoneAnalysis> {
   };
 }
 
-// ── LLM Call ──
+// ── Read Agent Output ──
 
-async function callLLM(
-  systemPrompt: string,
-  userMessage: string,
-  harness: HarnessAPI,
-  maxTokens?: number,
-): Promise<string> {
-  const model = resolveModel(harness.config.provider, harness.config.modelId);
-  const response = await completeSimple(
-    model,
-    {
-      systemPrompt,
-      messages: [{ role: "user" as const, content: userMessage, timestamp: Date.now() }],
-    },
-    { apiKey: harness.config.apiKey, maxTokens },
-  );
-  const content = typeof response.content === "string"
-    ? response.content
-    : Array.isArray(response.content)
-      ? ((response.content as unknown) as Record<string, unknown>[]).find((b) => b["type"] === "text")?.["text"] as string ?? ""
-      : "";
-  return content;
+function readZoneOutput(workspacePath: string, zoneId: string): ZoneAnalysis | null {
+  const outputPath = join(workspacePath, "output", `zone-${zoneId}-result.json`);
+  if (!existsSync(outputPath)) return null;
+  try {
+    const raw = readFileSync(outputPath, "utf-8");
+    return safeJsonParse(raw, "Zoom", validateZoneAnalysis);
+  } catch {
+    return null;
+  }
 }
 
 // ── Merge Sub-Analyses ──
@@ -178,19 +167,38 @@ export async function zoomZone(
   zone: AttentionZone,
   allSteps: HistoryStep[],
   harness: HarnessAPI,
+  workspacePath: string,
+  sessionId: string,
+  skeleton: SessionSkeleton,
   depth: number = 0,
+  progress?: ProgressDisplay,
 ): Promise<ZoneAnalysis> {
   const zoneSize = zone.stepEnd - zone.stepStart + 1;
 
-  // Base case: zone fits in one Zoom call
+  // Base case: zone fits in one Agent session
   if (zoneSize <= MAX_ZONE_STEPS) {
-    const prompt = buildZoomPrompt(zone, allSteps);
-    const trimmed = budgetGuard.trimString(prompt);
+    const taskPrompt = buildZoomTaskPrompt(zone, skeleton);
 
-    const raw = await callLLM(ZOOM_SYSTEM_PROMPT, trimmed, harness, 8192);
-    const json = extractJSON(raw);
+    const result = await agentLoop<ZoneAnalysis>({
+      sessionId,
+      workspacePath,
+      systemPrompt: ZOOM_AGENT_SYSTEM_PROMPT,
+      taskPrompt,
+      harness,
+      maxToolCalls: 30,
+      outputSchemaDescription: "ZoneAnalysis JSON with subtasks, candidates, agentNodes, zoneGraphComplete",
+      validator: validateZoneAnalysis,
+      phase: `ZOOM-${zone.id}`,
+      onProgress: (event) => {
+        progress?.onPhaseProgress(2, event, zone.id);
+      },
+    });
 
-    if (!json) {
+    if (!result) {
+      // Try reading from file as fallback
+      const fileResult = readZoneOutput(workspacePath, zone.id);
+      if (fileResult) return fileResult;
+      // Agent failure
       return {
         zoneId: zone.id,
         subtasks: [],
@@ -204,50 +212,36 @@ export async function zoomZone(
       };
     }
 
-    const result = safeJsonParse(json, `Zoom-${zone.id}`, validateZoneAnalysis);
-    return result ?? {
-      zoneId: zone.id,
-      subtasks: [],
-      subtaskEdges: [],
-      agentNodes: [],
-      agentEdges: [],
-      stepDataFlows: [],
-      candidates: [],
-      topCandidate: null,
-      zoneGraphComplete: false,
-    };
+    return result;
   }
 
-  // Recursive case: zone too large
+  // Recursive case: split zone for large zones
   if (depth >= MAX_RECURSIVE_DEPTH) {
-    console.warn(`[Zoom] Zone ${zone.id} recursive depth exceeded, truncating to first ${MAX_ZONE_STEPS} steps`);
+    // Max depth reached, proceed with truncated zone
     const truncatedZone: AttentionZone = {
       ...zone,
       stepEnd: zone.stepStart + MAX_ZONE_STEPS - 1,
     };
-    return zoomZone(truncatedZone, allSteps, harness, depth);
+    return zoomZone(truncatedZone, allSteps, harness, workspacePath, sessionId, skeleton, depth, progress);
   }
 
-  // Split zone: divide into sub-zones, scan each, then zoom recursively
-  const subZoneSize = Math.ceil(zoneSize / 2);
-  const subZone1: AttentionZone = {
+  // Split into two halves
+  const mid = zone.stepStart + Math.floor(zoneSize / 2);
+  const leftZone: AttentionZone = {
     ...zone,
-    id: `${zone.id}_A`,
-    stepEnd: zone.stepStart + subZoneSize - 1,
+    id: `${zone.id}_L`,
+    stepEnd: mid - 1,
   };
-  const subZone2: AttentionZone = {
+  const rightZone: AttentionZone = {
     ...zone,
-    id: `${zone.id}_B`,
-    stepStart: zone.stepStart + subZoneSize,
+    id: `${zone.id}_R`,
+    stepStart: mid,
   };
 
-  const [analysis1, analysis2] = await Promise.all([
-    zoomZone(subZone1, allSteps, harness, depth + 1),
-    zoomZone(subZone2, allSteps, harness, depth + 1),
+  const [leftAnalysis, rightAnalysis] = await Promise.all([
+    zoomZone(leftZone, allSteps, harness, workspacePath, sessionId, skeleton, depth + 1, progress),
+    zoomZone(rightZone, allSteps, harness, workspacePath, sessionId, skeleton, depth + 1, progress),
   ]);
 
-  // Merge preserving parent zone ID
-  const merged = mergeSubAnalyses([analysis1, analysis2]);
-  merged.zoneId = zone.id;
-  return merged;
+  return mergeSubAnalyses([leftAnalysis, rightAnalysis]);
 }

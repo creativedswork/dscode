@@ -1,15 +1,16 @@
-// ── Pass 3: Synthesize ──
+// ── Pass 3: SYNTHESIZE Agent ──
 // Cross-zone root cause attribution. Merges zone sub-graphs into
 // a unified CausalGraphSnapshot and determines single root cause.
 
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import type { HarnessAPI } from "../../core/harness-api.js";
-import { resolveModel } from "../../models/index.js";
-import { completeSimple } from "@mariozechner/pi-ai";
 import { safeJsonParse, type ValidationResult, type CausalGraphSnapshot, type SubtaskSummary, type EdgeSummary, type AgentSummary, type DataFlowSummary } from "../schemas.js";
-import { extractJSON } from "../prompts.js";
-import type { ScanResult, ZoneAnalysis, FocusAttribution, CascadeEdge, AlternateRootCause, SessionSkeleton, CascadeMechanism } from "./types.js";
 import type { RecoveryArc } from "../schemas.js";
-import { SYNTH_SYSTEM_PROMPT, buildSynthesizePrompt } from "./prompts.js";
+import type { ScanResult, ZoneAnalysis, FocusAttribution, CascadeEdge, AlternateRootCause, SessionSkeleton, CascadeMechanism } from "./types.js";
+import { SYNTH_AGENT_SYSTEM_PROMPT, buildSynthesizeTaskPrompt } from "./prompts.js";
+import { agentLoop } from "./agent-loop.js";
+import type { ProgressDisplay } from "./progress.js";
 
 // ── Validation ──
 
@@ -55,7 +56,7 @@ function validateRecoveryArcs(obj: Record<string, unknown>): RecoveryArc[] | und
   return validated.length > 0 ? validated : undefined;
 }
 
-function validateFocusAttribution(obj: unknown): ValidationResult<FocusAttribution> {
+export function validateFocusAttribution(obj: unknown): ValidationResult<FocusAttribution> {
   if (typeof obj !== "object" || obj === null) return { ok: false, errors: ["Expected object"] };
   const o = obj as Record<string, unknown>;
 
@@ -101,34 +102,22 @@ function validateFocusAttribution(obj: unknown): ValidationResult<FocusAttributi
   };
 }
 
-// ── LLM Call ──
+// ── Read Agent Output ──
 
-async function callLLM(
-  systemPrompt: string,
-  userMessage: string,
-  harness: HarnessAPI,
-  maxTokens?: number,
-): Promise<string> {
-  const model = resolveModel(harness.config.provider, harness.config.modelId);
-  const response = await completeSimple(
-    model,
-    {
-      systemPrompt,
-      messages: [{ role: "user" as const, content: userMessage, timestamp: Date.now() }],
-    },
-    { apiKey: harness.config.apiKey, maxTokens },
-  );
-  const content = typeof response.content === "string"
-    ? response.content
-    : Array.isArray(response.content)
-      ? ((response.content as unknown) as Record<string, unknown>[]).find((b) => b["type"] === "text")?.["text"] as string ?? ""
-      : "";
-  return content;
+function readAttributionOutput(workspacePath: string): FocusAttribution | null {
+  const outputPath = join(workspacePath, "output", "attribution.json");
+  if (!existsSync(outputPath)) return null;
+  try {
+    const raw = readFileSync(outputPath, "utf-8");
+    return safeJsonParse(raw, "Synthesize", validateFocusAttribution);
+  } catch {
+    return null;
+  }
 }
 
 // ── Zone Sub-Graph Merging ──
 
-function buildMergedGraphSnapshot(
+export function buildMergedGraphSnapshot(
   zoneAnalyses: ZoneAnalysis[],
   skeleton: SessionSkeleton,
 ): CausalGraphSnapshot {
@@ -213,6 +202,20 @@ function buildMergedGraphSnapshot(
   };
 }
 
+// ── Default Attribution ──
+
+function defaultAttribution(): FocusAttribution {
+  return {
+    mistakeAgent: "unknown",
+    mistakeStep: 0,
+    zoneId: "",
+    reason: "Synthesize Agent failed to produce output",
+    rulesApplied: [],
+    cascadePath: [],
+    alternateRootCauses: [],
+  };
+}
+
 // ── Main ──
 
 export async function synthesize(
@@ -220,31 +223,35 @@ export async function synthesize(
   zoneAnalyses: ZoneAnalysis[],
   skeleton: SessionSkeleton,
   harness: HarnessAPI,
+  workspacePath: string,
+  sessionId: string,
+  progress?: ProgressDisplay,
 ): Promise<{ attribution: FocusAttribution; mergedGraph: CausalGraphSnapshot }> {
-  const prompt = buildSynthesizePrompt(scanResult, zoneAnalyses, skeleton);
+  const taskPrompt = buildSynthesizeTaskPrompt(scanResult.zones, skeleton);
 
-  const raw = await callLLM(SYNTH_SYSTEM_PROMPT, prompt, harness, 6144);
-  const json = extractJSON(raw);
+  const result = await agentLoop<FocusAttribution>({
+    sessionId,
+    workspacePath,
+    systemPrompt: SYNTH_AGENT_SYSTEM_PROMPT,
+    taskPrompt,
+    harness,
+    maxToolCalls: 30,
+    outputSchemaDescription: "FocusAttribution JSON with mistakeAgent, mistakeStep, reason, rulesApplied, cascadePath, recoveryArcs",
+    validator: validateFocusAttribution,
+    phase: "SYNTHESIZE",
+    onProgress: (event) => {
+      progress?.onPhaseProgress(3, event);
+    },
+  });
 
-  const attribution: FocusAttribution = json
-    ? (safeJsonParse(json, "Synthesize", validateFocusAttribution) ?? {
-        mistakeAgent: "unknown",
-        mistakeStep: 0,
-        zoneId: "",
-        reason: "Synthesize parse/validation failed",
-        rulesApplied: [],
-        cascadePath: [],
-        alternateRootCauses: [],
-      })
-    : {
-        mistakeAgent: "unknown",
-        mistakeStep: 0,
-        zoneId: "",
-        reason: "Synthesize produced no JSON",
-        rulesApplied: [],
-        cascadePath: [],
-        alternateRootCauses: [],
-      };
+  // Try reading from file as fallback
+  let attribution: FocusAttribution;
+  if (result) {
+    attribution = result;
+  } else {
+    const fileResult = readAttributionOutput(workspacePath);
+    attribution = fileResult ?? defaultAttribution();
+  }
 
   const mergedGraph = buildMergedGraphSnapshot(zoneAnalyses, skeleton);
 

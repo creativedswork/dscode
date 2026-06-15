@@ -1,17 +1,19 @@
-// ── Pass 1: Scan ──
-// Calls LLM to identify 3-5 attention zones from a SessionSkeleton.
+// ── Pass 1: SCAN Agent ──
+// Spawns an Agent session that explores the workspace library/ directory
+// to identify 3-5 attention zones. Output is written to output/scan-result.json.
 
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import type { HarnessAPI } from "../../core/harness-api.js";
-import { resolveModel } from "../../models/index.js";
-import { completeSimple } from "@mariozechner/pi-ai";
 import { safeJsonParse, type ValidationResult } from "../schemas.js";
-import { extractJSON } from "../prompts.js";
 import type { ScanResult, AttentionZone, SessionSkeleton } from "./types.js";
-import { SCAN_SYSTEM_PROMPT, buildScanPrompt } from "./prompts.js";
+import { SCAN_AGENT_SYSTEM_PROMPT, buildScanTaskPrompt } from "./prompts.js";
+import { agentLoop } from "./agent-loop.js";
+import type { ProgressDisplay } from "./progress.js";
 
 // ── Validation ──
 
-function validateScanResult(obj: unknown): ValidationResult<ScanResult> {
+export function validateScanResult(obj: unknown): ValidationResult<ScanResult> {
   if (typeof obj !== "object" || obj === null) return { ok: false, errors: ["Expected object"] };
   const o = obj as Record<string, unknown>;
 
@@ -44,29 +46,17 @@ function validateScanResult(obj: unknown): ValidationResult<ScanResult> {
   };
 }
 
-// ── LLM Call ──
+// ── Read Agent Output ──
 
-async function callLLM(
-  systemPrompt: string,
-  userMessage: string,
-  harness: HarnessAPI,
-  maxTokens?: number,
-): Promise<string> {
-  const model = resolveModel(harness.config.provider, harness.config.modelId);
-  const response = await completeSimple(
-    model,
-    {
-      systemPrompt,
-      messages: [{ role: "user" as const, content: userMessage, timestamp: Date.now() }],
-    },
-    { apiKey: harness.config.apiKey, maxTokens },
-  );
-  const content = typeof response.content === "string"
-    ? response.content
-    : Array.isArray(response.content)
-      ? ((response.content as unknown) as Record<string, unknown>[]).find((b) => b["type"] === "text")?.["text"] as string ?? ""
-      : "";
-  return content;
+function readScanOutput(workspacePath: string): ScanResult | null {
+  const outputPath = join(workspacePath, "output", "scan-result.json");
+  if (!existsSync(outputPath)) return null;
+  try {
+    const raw = readFileSync(outputPath, "utf-8");
+    return safeJsonParse(raw, "Scan", validateScanResult);
+  } catch {
+    return null;
+  }
 }
 
 // ── Main ──
@@ -74,19 +64,42 @@ async function callLLM(
 export async function scanSession(
   skeleton: SessionSkeleton,
   harness: HarnessAPI,
+  workspacePath: string,
+  sessionId: string,
+  progress?: ProgressDisplay,
 ): Promise<ScanResult> {
-  const prompt = buildScanPrompt(skeleton);
-  const raw = await callLLM(SCAN_SYSTEM_PROMPT, prompt, harness, 4096);
-  const json = extractJSON(raw);
+  const taskPrompt = buildScanTaskPrompt(skeleton);
 
-  if (!json) {
-    // LLM produced no JSON — assume no issues detected
-    return { zones: [], globalAssessment: "LLM produced no parseable output", noIssuesDetected: true };
-  }
+  const result = await agentLoop<ScanResult>({
+    sessionId,
+    workspacePath,
+    systemPrompt: SCAN_AGENT_SYSTEM_PROMPT,
+    taskPrompt,
+    harness,
+    maxToolCalls: 30,
+    outputSchemaDescription: "ScanResult JSON with zones array, globalAssessment, noIssuesDetected",
+    validator: validateScanResult,
+    phase: "SCAN",
+    onProgress: (event) => {
+      progress?.onPhaseProgress(1, event);
+    },
+  });
 
-  const result = safeJsonParse(json, "Scan", validateScanResult);
+  // Try reading Agent output from file as fallback
   if (!result) {
-    return { zones: [], globalAssessment: "Scan parse/validation failed", noIssuesDetected: true };
+    const fileResult = readScanOutput(workspacePath);
+    if (fileResult) {
+      // Enforce 3-5 zones, sorted by suspicionScore
+      fileResult.zones = fileResult.zones
+        .sort((a, b) => b.suspicionScore - a.suspicionScore)
+        .slice(0, 5);
+      if (fileResult.zones.length === 0) {
+        fileResult.noIssuesDetected = true;
+      }
+      return fileResult;
+    }
+    // Agent failure
+    return { zones: [], globalAssessment: "SCAN Agent failed to produce output", noIssuesDetected: true };
   }
 
   // Enforce 3-5 zones, sorted by suspicionScore

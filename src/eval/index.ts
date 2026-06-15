@@ -66,7 +66,7 @@ export async function runEval(
     // Analyze — path selection based on session size
     const steps = parseSessionToSteps(sessionData);
     const result = steps.length >= FOCUS_PATH_THRESHOLD
-      ? await runFocusPipeline(sessionData, harness, computeStats(sessionData))
+      ? await runFocusPipeline(sessionData, harness, computeStats(sessionData), (msg: string) => ui.addInfo(msg))
       : await runCausalGraphPipeline(sessionData, harness);
 
     // Step 8: LLM semantic rule merge (use session's projectPath, not harness cwd)
