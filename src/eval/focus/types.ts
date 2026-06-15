@@ -199,6 +199,7 @@ export interface FocusAttribution {
   rulesApplied: string[];
   cascadePath: CascadeEdge[];
   alternateRootCauses: AlternateRootCause[];
+  recoveryArcs?: import("../schemas.js").RecoveryArc[];
 }
 
 // ── Focus Report (pipeline output) ──
@@ -208,6 +209,5 @@ export interface FocusReport {
   scan: ScanResult;
   zoneAnalyses: ZoneAnalysis[];
   attribution: FocusAttribution;
-  analysisMode: "llm" | "rule";
   totalLLMCalls: number;
 }

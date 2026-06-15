@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { HarnessAPI } from "../core/harness-api.js";
 import type { UiBackend } from "../ui/backend.js";
 import type { SerializedSession } from "../session/types.js";
-import { analyzeSession, compactSession } from "./analyzer.js";
+import { computeStats } from "./stats.js";
 import { generateDashboard, openDashboard } from "./dashboard.js";
 import { analyzeWithLLM, runCausalGraphPipeline } from "./llm.js";
 import { loadRuleStore, semanticMerge, saveRuleStore } from "./rules/store.js";
@@ -66,7 +66,7 @@ export async function runEval(
     // Analyze — path selection based on session size
     const steps = parseSessionToSteps(sessionData);
     const result = steps.length >= FOCUS_PATH_THRESHOLD
-      ? await runFocusPipeline(sessionData, harness, analyzeSession(sessionData, compactSession(sessionData)))
+      ? await runFocusPipeline(sessionData, harness, computeStats(sessionData))
       : await runCausalGraphPipeline(sessionData, harness);
 
     // Step 8: LLM semantic rule merge (use session's projectPath, not harness cwd)
@@ -82,7 +82,7 @@ export async function runEval(
     // Open in browser
     openDashboard(outputPath);
 
-    const analysisLabel = result.analysisMode === "llm" ? "CHIFF Causal Graph" : "Rule Engine";
+    const analysisLabel = "CHIFF Causal Graph";
     const attributionInfo = result.attribution
       ? ` | Root cause: ${result.attribution.mistakeAgent}@Step${result.attribution.mistakeStep}`
       : "";
@@ -97,7 +97,7 @@ export async function runEval(
   }
 }
 
-export { analyzeSession, compactSession, generateDashboard, openDashboard, analyzeWithLLM };
+export { computeStats, generateDashboard, openDashboard, analyzeWithLLM };
 export type { EvalResult, PhaseInfo, DeviationPoint, RootCause, SessionMeta, ToolStats, TimelineEvent, CompactMessage, HarnessRule } from "./types.js";
 export type { SessionSkeleton, FocusReport, AttentionZone, ZoneAnalysis, ScanResult, FocusAttribution, CascadeEdge } from "./focus/types.js";
 export { buildSkeleton } from "./focus/skeleton.js";

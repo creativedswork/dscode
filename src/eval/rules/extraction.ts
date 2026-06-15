@@ -1,10 +1,11 @@
 // ── LLM Autonomous Rule Attribution (CHIFF Step 7) ──
+import { logEval } from "../logger.js";
 // Replaces all deterministic rule extraction. The LLM receives the
 // full CHIFF context and autonomously identifies Agent config issues.
 
 import type { HarnessRule, RuleEvidence } from "./types.js";
 import type { CausalGraphStore } from "../graph-store.js";
-import type { Attribution } from "../schemas.js";
+import type { Attribution, RecoveryArc } from "../schemas.js";
 import type { SessionMeta, ToolStats } from "../types.js";
 import type { SerializedSession } from "../../session/types.js";
 import { existsSync, readFileSync } from "node:fs";
@@ -161,6 +162,7 @@ export async function attributeWithLLM(
   sessionId: string,
   timestamp: number,
 ): Promise<HarnessRule[]> {
+  const recoveryArcs = attribution?.recoveryArcs;
   const mistakeStep = attribution?.mistakeStep ?? null;
 
   const graphSnapshot = graphStore?.snapshot() ?? null;
@@ -181,14 +183,16 @@ export async function attributeWithLLM(
     sessionFragments,
     configExcerpts,
     statsSummary,
+    recoveryArcs,
   );
 
+  logEval("info", "RuleAttribution", `Prompt size: ${prompt.length} chars, graph ${graphSnapshot ? `${graphSnapshot.dataFlows.length} dataFlows, ${graphSnapshot.subtasks.length} subtasks` : 'none'}`);
   // LLM call with retry
   let rawOutput: string;
   let rulesOutput: HarnessRuleOutput[] = [];
 
   try {
-    rawOutput = await callLLM(RULE_ATTRIBUTION_SYSTEM, prompt, harness);
+    rawOutput = await callLLM(RULE_ATTRIBUTION_SYSTEM, prompt, harness, 16384);
   } catch (err) {
     console.warn("[harness-rule-attribution] LLM call failed:", (err as Error).message);
     return [];
@@ -202,7 +206,7 @@ export async function attributeWithLLM(
         // Retry with format hint
         const retryPrompt = prompt + "\n\n⚠ Your previous response was not valid JSON. Output PURE JSON array only.";
         try {
-          rawOutput = await callLLM(RULE_ATTRIBUTION_SYSTEM, retryPrompt, harness);
+          rawOutput = await callLLM(RULE_ATTRIBUTION_SYSTEM, retryPrompt, harness, 16384);
           continue;
         } catch {
           console.warn("[harness-rule-attribution] Retry LLM call failed");
@@ -222,13 +226,17 @@ export async function attributeWithLLM(
     if (attempt === 0) {
       const retryPrompt = prompt + `\n\n⚠ JSON parse or validation failed. Output PURE JSON array with correct fields.`;
       try {
-        rawOutput = await callLLM(RULE_ATTRIBUTION_SYSTEM, retryPrompt, harness);
+        rawOutput = await callLLM(RULE_ATTRIBUTION_SYSTEM, retryPrompt, harness, 16384);
         continue;
       } catch {
         console.warn("[harness-rule-attribution] Validation retry failed");
         return [];
       }
     }
+  }
+  logEval("info", "RuleAttribution", `Generated ${rulesOutput.length} rules`);
+  if (rulesOutput.length === 0) {
+    logEval("info", "RuleAttribution", `Raw LLM response (first 500): ${rawOutput.slice(0, 500)}`);
   }
 
   // Convert HarnessRuleOutput → HarnessRule

@@ -387,6 +387,39 @@ OUTPUT (pure JSON):
       "mechanism": "data_contamination"
     }
   ],
-  "alternateRootCauses": []
-}`;
+  "alternateRootCauses": [],
+  "recoveryArcs": [
+    {
+      "errorStep": 5,
+      "errorAgent": "write_file",
+      "errorSummary": "Wrote incorrect CSS structure",
+      "detectionStep": 6,
+      "detectionType": "test_failure",
+      "correctionStep": 8,
+      "correctionAgent": "edit",
+      "correctionSummary": "Fixed CSS selector to match component",
+      "effective": true,
+      "stepsToRecover": 3,
+      "misdiagnosisCount": 0,
+      "rootCauseHypothesis": "Agent did not read the component structure before writing (write-before-read pattern). Evidence: correction required read_file before edit."
+    }
+  ]
+}
+
+RECOVERY ARC DETECTION:
+After determining the root cause, scan the session history across ALL zones for recovery arcs — instances where an error was detected AND subsequently corrected.
+
+For each recovered error, identify:
+1. The error event: which step, agent, and what went wrong
+2. The detection event: which step and HOW the error was discovered (tool_error, user_complaint, test_failure, screenshot_divergence, or self_correction)
+3. The correction event: which step, agent, and what action fixed it
+4. Whether the correction was effective (effective: true/false)
+5. Steps to recover (correctionStep - errorStep)
+6. Misdiagnosis count: how many incorrect fix attempts before the correct one (0 if first fix worked)
+
+CRITICAL — rootCauseHypothesis: For EACH recovery arc, infer WHY the initial error happened based on HOW it was corrected. This is essential for connecting recovery patterns to root cause analysis.
+
+Output recoveryArcs as an OPTIONAL array. If no errors were corrected, omit or use [].
+
+CRITICAL: Output exactly ONE root cause. The mistakeAgent MUST be a tool name from the history. The mistakeStep MUST be a step number from the candidate set.`;
 }

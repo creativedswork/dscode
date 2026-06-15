@@ -8,6 +8,7 @@ import { completeSimple } from "@mariozechner/pi-ai";
 import { safeJsonParse, type ValidationResult, type CausalGraphSnapshot, type SubtaskSummary, type EdgeSummary, type AgentSummary, type DataFlowSummary } from "../schemas.js";
 import { extractJSON } from "../prompts.js";
 import type { ScanResult, ZoneAnalysis, FocusAttribution, CascadeEdge, AlternateRootCause, SessionSkeleton, CascadeMechanism } from "./types.js";
+import type { RecoveryArc } from "../schemas.js";
 import { SYNTH_SYSTEM_PROMPT, buildSynthesizePrompt } from "./prompts.js";
 
 // ── Validation ──
@@ -19,6 +20,40 @@ const VALID_MECHANISMS: CascadeMechanism[] = [
   "repair_cascade",
   "taste_drift_propagation",
 ];
+
+const VALID_RECOVERY_DETECTION_TYPES = ["tool_error", "user_complaint", "test_failure", "screenshot_divergence", "self_correction"] as const;
+
+function validateRecoveryArcs(obj: Record<string, unknown>): RecoveryArc[] | undefined {
+  const raw = obj["recoveryArcs"];
+  if (!Array.isArray(raw)) return undefined;
+  const validated: RecoveryArc[] = [];
+  for (const item of raw) {
+    if (typeof item !== "object" || item === null) continue;
+    const arc = item as Record<string, unknown>;
+    const errorStep = typeof arc["errorStep"] === "number" ? arc["errorStep"] : -1;
+    const correctionStep = typeof arc["correctionStep"] === "number" ? arc["correctionStep"] : -1;
+    if (errorStep < 0 || correctionStep < 0 || errorStep >= correctionStep) continue;
+    const detectionType = typeof arc["detectionType"] === "string" ? arc["detectionType"] : "";
+    if (!(VALID_RECOVERY_DETECTION_TYPES as readonly string[]).includes(detectionType)) continue;
+    const rootCauseHypothesis = typeof arc["rootCauseHypothesis"] === "string" ? arc["rootCauseHypothesis"] : "";
+    if (!rootCauseHypothesis) continue;
+    validated.push({
+      errorStep,
+      errorAgent: typeof arc["errorAgent"] === "string" ? arc["errorAgent"] : "",
+      errorSummary: typeof arc["errorSummary"] === "string" ? arc["errorSummary"] : "",
+      detectionStep: typeof arc["detectionStep"] === "number" ? arc["detectionStep"] : errorStep,
+      detectionType: detectionType as RecoveryArc["detectionType"],
+      correctionStep,
+      correctionAgent: typeof arc["correctionAgent"] === "string" ? arc["correctionAgent"] : "",
+      correctionSummary: typeof arc["correctionSummary"] === "string" ? arc["correctionSummary"] : "",
+      effective: arc["effective"] === true,
+      stepsToRecover: typeof arc["stepsToRecover"] === "number" ? arc["stepsToRecover"] : (correctionStep - errorStep),
+      misdiagnosisCount: typeof arc["misdiagnosisCount"] === "number" && arc["misdiagnosisCount"] >= 0 ? arc["misdiagnosisCount"] : 0,
+      rootCauseHypothesis,
+    });
+  }
+  return validated.length > 0 ? validated : undefined;
+}
 
 function validateFocusAttribution(obj: unknown): ValidationResult<FocusAttribution> {
   if (typeof obj !== "object" || obj === null) return { ok: false, errors: ["Expected object"] };
@@ -61,6 +96,7 @@ function validateFocusAttribution(obj: unknown): ValidationResult<FocusAttributi
       rulesApplied: Array.isArray(o["rulesApplied"]) ? o["rulesApplied"].map(String) : [],
       cascadePath,
       alternateRootCauses,
+      recoveryArcs: validateRecoveryArcs(o),
     },
   };
 }

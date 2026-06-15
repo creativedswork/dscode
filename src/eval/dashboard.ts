@@ -6,7 +6,57 @@ import { writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { exec } from "node:child_process";
 import { join, dirname } from "node:path";
 import type { EvalResult } from "./types.js";
-import type { CausalGraphSnapshot, Attribution } from "./schemas.js";
+import type { CausalGraphSnapshot, Attribution, RecoveryArc } from "./schemas.js";
+
+
+// ── Recovery Timeline Generator ──
+
+function generateRecoveryTimelineHTML(recoveryArcs: RecoveryArc[]): string {
+  if (!recoveryArcs || recoveryArcs.length === 0) return "";
+
+  const rows = recoveryArcs.map((arc, i) => {
+    const effectiveColor = arc.effective ? COLORS.ok : "rgba(210,153,29,0.5)";
+    const effectiveIcon = arc.effective ? "✅" : "⚠️";
+    const detectionLabel: Record<string, string> = {
+      tool_error: "工具报错",
+      user_complaint: "用户反馈",
+      test_failure: "测试失败",
+      screenshot_divergence: "截图偏离",
+      self_correction: "Agent 自纠",
+    };
+    const detLabel = detectionLabel[arc.detectionType] ?? arc.detectionType;
+
+    return `
+    <div style="background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:6px;padding:14px 16px;margin-bottom:12px;">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px;">
+        <span style="background:${COLORS.danger};color:#fff;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:600;white-space:nowrap;">🔴 Step ${arc.errorStep}</span>
+        <span style="color:${COLORS.textMuted};font-size:14px;">→</span>
+        <span style="background:${COLORS.warn};color:#000;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:600;white-space:nowrap;">🔍 Step ${arc.detectionStep}</span>
+        <span style="color:${COLORS.textMuted};font-size:14px;">→</span>
+        <span style="background:${effectiveColor};color:#000;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:600;white-space:nowrap;">${effectiveIcon} Step ${arc.correctionStep}</span>
+        <span style="background:rgba(88,166,255,0.15);padding:2px 8px;border-radius:4px;font-size:11px;color:${COLORS.accent};">${detLabel}</span>
+        <span style="font-size:11px;color:${COLORS.textMuted};">${arc.stepsToRecover} steps</span>
+        ${arc.misdiagnosisCount > 0 ? `<span style="background:rgba(210,153,29,0.15);padding:2px 8px;border-radius:4px;font-size:11px;color:${COLORS.warn};">${arc.misdiagnosisCount} 次误判</span>` : ""}
+      </div>
+      <div style="font-size:13px;color:${COLORS.text};margin-bottom:4px;">
+        <span style="color:${COLORS.danger};">${escapeHtml(arc.errorAgent)}</span>: ${escapeHtml(arc.errorSummary)}
+        → <span style="color:${effectiveColor};">${escapeHtml(arc.correctionAgent)}</span>: ${escapeHtml(arc.correctionSummary)}
+      </div>
+      <div style="font-size:12px;color:${COLORS.accent};font-style:italic;padding:8px 12px;background:rgba(88,166,255,0.08);border-radius:4px;border-left:3px solid ${COLORS.accent};margin-top:8px;">
+        💡 根因假说: ${escapeHtml(arc.rootCauseHypothesis)}
+      </div>
+    </div>`;
+  }).join("");
+
+  return `
+<h2>Recovery Timeline — 恢复时间线</h2>
+<div style="background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:6px;padding:16px;margin-bottom:16px;">
+  <div style="font-size:13px;color:${COLORS.textMuted};margin-bottom:12px;">
+    错误恢复轨迹 — 展示 Agent 从犯错到纠正的完整弧线
+  </div>
+  ${rows}
+</div>`;
+}
 
 // ── HTML Escape ──
 
@@ -232,9 +282,7 @@ h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #e6edf3; }
     ${escapeHtml(metadata.sessionId)}
   </div>
   <div style="margin-top:8px;">
-    ${result.analysisMode === "llm"
-      ? `<span style="background:${COLORS.ok};color:#000;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">🤖 CHIFF Causal Graph Analysis</span>`
-      : `<span style="background:${COLORS.warn};color:#000;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">⚙ 规则引擎分析（LLM Unavailable）</span>`}
+    <span style="background:${COLORS.ok};color:#000;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">🤖 CHIFF Causal Graph Analysis</span>
   </div>
   <div class="header-meta">
     <div class="meta-item">
@@ -322,10 +370,13 @@ ${phases.map((p) => `
 <!-- Causal Graph (LLM mode only) -->
 ${result.causalGraph ? generateCausalGraphHTML(result) : ""}
 
+${result.recoveryArcs && result.recoveryArcs.length > 0 ? `<!-- Recovery Timeline -->
+${generateRecoveryTimelineHTML(result.recoveryArcs)}` : ""}
+
 <!-- Rule Reasoning Chain (LLM mode only) -->
 
 <!-- Cascade Path (focus pipeline only) -->
-${result.cascadePath && result.analysisMode !== "rule" ? generateCascadePathHTML(result.cascadePath) : ""}
+${result.cascadePath ? generateCascadePathHTML(result.cascadePath) : ""}
 ${result.attribution ? generateRuleChainHTML(result.attribution, result.rulesApplied) : ""}
 
 <!-- Root Causes -->
@@ -405,39 +456,6 @@ ${catRules.map((r: any) => {
 </div>`;}).join("")}
 `).join("");
 })() }
-<!-- Harness Rules -->
-<h2>Harness Rules — Agent 配置优化建议</h2>
-${rules.length > 0
-  ? rules.map((r: any, i: number) => {
-    const sevLabel = r.severity >= 1 ? 'ERROR' : r.severity >= 0.6 ? 'WARN' : 'INFO';
-    const sevColor = r.severity >= 1 ? COLORS.danger : r.severity >= 0.6 ? COLORS.warn : COLORS.accent;
-    return `
-<div class="deviation-card" style="border-left: 3px solid ${sevColor}; margin-bottom: 16px;">
-  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
-    <span class="badge" style="background:${sevColor};font-size:10px;padding:2px 6px;border-radius:3px;">${sevLabel}</span>
-    <strong>${escapeHtml(r.id)}</strong>
-    <span style="color:${COLORS.textMuted};font-size:11px;">→ ${escapeHtml(r.targetLayer)}</span>
-  </div>
-  <p style="color:${COLORS.textMuted};margin:0 0 8px 0;font-size:13px;">${escapeHtml(r.abstract)}</p>
-  <div style="background:${COLORS.card};border-radius:4px;padding:10px 12px;">
-    <div style="font-size:11px;color:${COLORS.warn};margin-bottom:4px;">💡 建议${r.suggestion.action === 'modify' ? '修改' : r.suggestion.action === 'add' ? '新增' : r.suggestion.action === 'remove' ? '移除' : '调整'}</div>
-    <div style="font-size:13px;line-height:1.5;margin-bottom:6px;"><strong>${escapeHtml(r.suggestion.proposed)}</strong></div>
-    <div style="font-size:11px;color:${COLORS.textMuted};">📋 ${escapeHtml(r.suggestion.rationale)}</div>
-  </div>
-</div>`;
-  }).join("")
-  : `<div class="suggestion-item"><span style="color:${COLORS.ok};">✅ 未检测到 Agent 配置问题</span></div>`
-}
-<!-- Harness Rules -->
-<h2>Harness Rules</h2>
-${rules.length > 0
-  ? rules.map((r, i) => `
-<div class="suggestion-item">
-  <span class="suggestion-num">${i + 1}.</span>
-  <span><strong>${escapeHtml(r.id)}</strong> — ${escapeHtml(r.abstract)}</span>
-</div>`).join("")
-  : `<div class="suggestion-item"><span>No Agent configuration issues detected.</span></div>`
-}
 
 <!-- Timeline -->
 <h2>Event Timeline</h2>

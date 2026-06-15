@@ -42,6 +42,7 @@ export interface Subtask {
   stepEnd: number;                 // inclusive
   oracle: Oracle;
   loopInfo: LoopInfo;
+  phaseStatus?: "ok" | "warn" | "danger";
 }
 
 // ── Step 2: Subtask Edges ──
@@ -135,6 +136,7 @@ export interface CandidateStep {
   irrecoverable: boolean;
   irrecoverableReason: string;
   affectedSteps: number[];
+  deviationDescription?: string;
   impactScore: number;             // 0.0-1.0
   confidence: number;              // 0.0-1.0
 }
@@ -151,7 +153,27 @@ export interface Attribution {
   mistakeAgent: string;
   mistakeStep: number;
   reason: string;
-  rulesApplied: ("Rule1" | "Rule2" | "Rule3")[];
+  rootCauseTitle?: string;
+  rootCauseSeverity?: "primary" | "secondary";
+  rulesApplied: ("Rule1" | "Rule2" | "Rule3" | "Rule4")[];
+  recoveryArcs?: RecoveryArc[];
+}
+
+// ── Recovery Arc ──
+
+export interface RecoveryArc {
+  errorStep: number;
+  errorAgent: string;
+  errorSummary: string;
+  detectionStep: number;
+  detectionType: "tool_error" | "user_complaint" | "test_failure" | "screenshot_divergence" | "self_correction";
+  correctionStep: number;
+  correctionAgent: string;
+  correctionSummary: string;
+  effective: boolean;
+  stepsToRecover: number;
+  misdiagnosisCount: number;
+  rootCauseHypothesis: string;
 }
 
 // ── Causal Graph Snapshot (for LLM prompt injection) ──
@@ -314,18 +336,29 @@ function validateOracle(obj: Record<string, unknown>, errors: string[]): Oracle 
   };
 }
 
+function requiredNumberOr(obj: Record<string, unknown>, camel: string, snake: string, errors: string[]): number {
+  const camVal = obj[camel];
+  if (isNumber(camVal)) return camVal;
+  const snkVal = obj[snake];
+  if (isNumber(snkVal)) return snkVal;
+  errors.push(`Missing or invalid number field: ${camel}/${snake} (got ${JSON.stringify(camVal)})`);
+  return 0;
+}
+
 export function validateSubtask(obj: unknown): ValidationResult<Subtask> {
   const errors: string[] = [];
   if (!isObject(obj)) return { ok: false, errors: ["Expected an object"] };
   const id = requiredString(obj, "id", errors);
-  const stepStart = requiredNumber(obj, "stepStart", errors) || requiredNumber(obj, "step_start", errors);
-  const stepEnd = requiredNumber(obj, "stepEnd", errors) || requiredNumber(obj, "step_end", errors);
+  const stepStart = requiredNumberOr(obj, "stepStart", "step_start", errors);
+  const stepEnd = requiredNumberOr(obj, "stepEnd", "step_end", errors);
   const oracleObj = obj["oracle"];
   const oracle = isObject(oracleObj) ? validateOracle(oracleObj, errors) : { goal: "", preconditions: [], keyEvidence: [], acceptanceCriteria: [] };
   const loopObj = obj["loopInfo"] || obj["loop_info"] || {};
   const loopInfo = isObject(loopObj) ? validateLoopInfo(loopObj, errors) : { isLoopRelated: false, loopRole: "none" as const, loopGroupId: null, reversibility: "reversible" as const, loopRiskScore: 0 };
+  const phaseStatusRaw = optionalString(obj, "phaseStatus") || optionalString(obj, "phase_status");
+  const phaseStatus = (phaseStatusRaw === "ok" || phaseStatusRaw === "warn" || phaseStatusRaw === "danger") ? phaseStatusRaw : undefined;
   return errors.length === 0
-    ? { ok: true, value: { id, name: requiredString(obj, "name", errors) || `Subtask ${id}`, stepStart, stepEnd, oracle, loopInfo } }
+    ? { ok: true, value: { id, name: requiredString(obj, "name", errors) || `Subtask ${id}`, stepStart, stepEnd, oracle, loopInfo, phaseStatus } }
     : { ok: false, errors };
 }
 
@@ -448,7 +481,7 @@ export function validateCandidateSet(obj: unknown): ValidationResult<CandidateSe
     const s = stepsArr[i];
     if (!isObject(s)) continue;
     steps.push({
-      stepId: requiredNumber(s, "stepId", errors) || requiredNumber(s, "step_id", errors),
+      stepId: requiredNumberOr(s, "stepId", "step_id", errors),
       agentsInStep: optionalStringArray(s, "agentsInStep") || optionalStringArray(s, "agents_in_step"),
       inLoop: s["inLoop"] === true || s["in_loop"] === true,
       loopRole: (optionalString(s, "loopRole") || optionalString(s, "loop_role") || "none") as CandidateStep["loopRole"],
@@ -460,6 +493,7 @@ export function validateCandidateSet(obj: unknown): ValidationResult<CandidateSe
       affectedSteps: (optionalStringArray(s, "affectedSteps") || optionalStringArray(s, "affected_steps")).map(Number).filter((n: number) => !isNaN(n)),
       impactScore: optionalNumber(s, "impactScore", 0) || optionalNumber(s, "impact_score", 0),
       confidence: optionalNumber(s, "confidence", 0.5),
+      deviationDescription: optionalString(s, "deviationDescription") || optionalString(s, "deviation_description") || undefined,
     });
   }
   return errors.length === 0
@@ -472,12 +506,18 @@ export function validateAttribution(obj: unknown): ValidationResult<Attribution>
   const errors: string[] = [];
   const validRules = ["Rule1", "Rule2", "Rule3"];
   const rawRules = optionalStringArray(obj, "rulesApplied") || optionalStringArray(obj, "rules_applied");
+  const rootCauseTitleRaw = optionalString(obj, "rootCauseTitle") || optionalString(obj, "root_cause_title");
   const rulesApplied = rawRules.filter((r: string) => validRules.includes(r)) as Attribution["rulesApplied"];
+  const rootCauseSeverityRaw = optionalString(obj, "rootCauseSeverity") || optionalString(obj, "root_cause_severity");
+  const rootCauseTitle = rootCauseTitleRaw || undefined;
+  const rootCauseSeverity = (rootCauseSeverityRaw === "primary" || rootCauseSeverityRaw === "secondary") ? rootCauseSeverityRaw : undefined;
   const result: Attribution = {
     mistakeAgent: requiredString(obj, "mistakeAgent", errors) || requiredString(obj, "mistake_agent", errors) || requiredString(obj, "Agent Name", errors),
-    mistakeStep: requiredNumber(obj, "mistakeStep", errors) || requiredNumber(obj, "mistake_step", errors) || requiredNumber(obj, "Step Number", errors),
+    mistakeStep: requiredNumberOr(obj, "mistakeStep", "mistake_step", errors) || requiredNumber(obj, "Step Number", errors),
     reason: requiredString(obj, "reason", errors) || requiredString(obj, "Reason for Mistake", errors),
     rulesApplied,
+    rootCauseTitle,
+    rootCauseSeverity,
   };
   return errors.length === 0 ? { ok: true, value: result } : { ok: false, errors };
 }
@@ -492,8 +532,8 @@ export function validateStepDataFlows(obj: unknown): ValidationResult<StepDataFl
     const errors: string[] = [];
     results.push({
       subtaskId: requiredString(f, "subtaskId", errors) || requiredString(f, "subtask_id", errors),
-      fromStep: requiredNumber(f, "fromStep", errors) || requiredNumber(f, "from_step", errors),
-      toStep: requiredNumber(f, "toStep", errors) || requiredNumber(f, "to_step", errors),
+      fromStep: requiredNumberOr(f, "fromStep", "from_step", errors),
+      toStep: requiredNumberOr(f, "toStep", "to_step", errors),
       sourceAgent: requiredString(f, "sourceAgent", errors) || requiredString(f, "source_agent", errors),
       targetAgent: requiredString(f, "targetAgent", errors) || requiredString(f, "target_agent", errors),
       dataItem: requiredString(f, "dataItem", errors) || requiredString(f, "data_item", errors),

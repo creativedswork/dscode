@@ -2,7 +2,7 @@
 // Prompt templates for each step of the CHIFF 6-step causal graph pipeline.
 // Each function builds a prompt string that instructs the LLM to output structured JSON.
 
-import type { Subtask, AgentNode, CandidateSet, CausalGraphSnapshot } from "./schemas.js";
+import type { Subtask, AgentNode, CandidateSet, CausalGraphSnapshot, RecoveryArc, HistoryStep } from "./schemas.js";
 
 // ── System Prompt ──
 
@@ -137,47 +137,36 @@ OUTPUT (pure JSON):
 
 // ── Step 3: Agent Nodes + Step Data Flows ──
 
-export function buildStep3Prompt(subtasks: Subtask[], historySummary: string): string {
-  const subtaskList = subtasks
-    .map((s) => `- ${s.id}: "${s.name}" (steps ${s.stepStart}-${s.stepEnd})`)
-    .join("\n");
+export function buildStep3Prompt(subtasks: Subtask[], steps: HistoryStep[]): string {
+  // Build subtask-level summaries: step range + agent/action list per subtask
+  const subtaskSections: string[] = [];
+  for (const s of subtasks) {
+    const lines: string[] = [];
+    lines.push(`- ${s.id}: "${s.name}" (steps ${s.stepStart}-${s.stepEnd})`);
+    for (let stepId = s.stepStart; stepId <= s.stepEnd; stepId++) {
+      const step = steps[stepId];
+      if (!step) continue;
+      lines.push(`    Step ${step.stepId} [${step.agent}]${step.isError ? " ❌ ERROR" : ""}`);
+      lines.push(`      Action: ${step.action.slice(0, 120)}`);
+    }
+    subtaskSections.push(lines.join("\n"));
+  }
 
-  return `STEP 3: AGENT NODES (OTAR) AND STEP DATA FLOWS
+  return `STEP 3: STEP DATA FLOWS
 
 SUBTASKS:
-${subtaskList}
-
-${historySummary}
+${subtaskSections.join("\n\n")}
 
 INSTRUCTIONS:
-For each subtask, extract agent nodes and data flows. dscode's toolset spans both creative and technical domains — tools like write_file, bash, edit for code; but also image generation tools, design tools (brandkit, imagegen-frontend-web, imagegen-frontend-mobile), and skill activation tools. Treat all tools equally as agent actions.
-1. Agent nodes: map each tool call to OTAR (Observation, Thought, Action, Result).
-1. Agent nodes: map each tool call to OTAR (Observation, Thought, Action, Result).
-   - observation = what the agent saw (preceding user message or tool result)
-   - thought = the thinking text
-   - action = what tool was called with what key arguments
-   - result = the tool result text (first 500 chars)
-2. Step data flows: track data movement between steps within each subtask.
-   - Track code files, visual assets, design parameters, brand decisions, configuration values — any information that flows between steps.
-   - For creative tools (image generation, brandkit, design skills), track: generated images, design parameters, palette choices, composition decisions.
-   - Mark correctness: "correct", "misinterpreted", "misused", "fabricated", or "taste_degraded" (for creative output that is functional but generic/low-quality).
-   - Mark correctness: "correct", "misinterpreted", "misused", or "fabricated"
+For each subtask, extract step data flows that track data movement between steps. dscode's toolset spans both creative and technical domains — tools like write_file, bash, edit for code; but also image generation tools, design tools (brandkit, imagegen-frontend-web, imagegen-frontend-mobile), and skill activation tools. Treat all tools equally as agent actions.
+
+Track data movement between steps within each subtask:
+- Track code files, visual assets, design parameters, brand decisions, configuration values — any information that flows between steps.
+- For creative tools (image generation, brandkit, design skills), track: generated images, design parameters, palette choices, composition decisions.
+- Mark correctness: "correct", "misinterpreted", "misused", "fabricated", or "taste_degraded" (for creative output that is functional but generic/low-quality).
 
 OUTPUT (pure JSON):
 {
-  "agents": [
-    {
-      "subtaskId": "S1",
-      "agent": "read_file",
-      "otar": {
-        "observation": "User asked to modify the reflection system",
-        "thought": "Let me first read the current implementation",
-        "action": "read_file(path='src/reflections.ts')",
-        "result": "export class ReflectionSystem { ... }"
-      },
-      "stepIds": [0]
-    }
-  ],
   "dataFlows": [
     {
       "subtaskId": "S1",
@@ -188,14 +177,75 @@ OUTPUT (pure JSON):
       "dataItem": "src/reflections.ts",
       "dataType": "text",
       "transformation": "read then modified",
-      "correctness": "misinterpreted",
-      "confidence": 0.6
+      "correctness": "correct",
+      "confidence": 0.8
     }
   ]
 }`;
 }
 
 // ── Step 4: Agent Edges ──
+// ── Step 3 (Single Subtask variant): Per-subtask data flows ──
+// Used by the divide-and-conquer path in executeStep3 for sessions
+// where the combined prompt would exceed LLM output token limits.
+
+export function buildStep3SingleSubtaskPrompt(subtask: Subtask, steps: HistoryStep[], allSubtasks: Subtask[]): string {
+  const lines: string[] = [];
+  lines.push(`Target Subtask: ${subtask.id}: "${subtask.name}" (steps ${subtask.stepStart}-${subtask.stepEnd})`);
+  lines.push("");
+  lines.push("STEPS IN THIS SUBTASK:");
+  for (let stepId = subtask.stepStart; stepId <= subtask.stepEnd; stepId++) {
+    const step = steps[stepId];
+    if (!step) continue;
+    lines.push(`  Step ${step.stepId} [${step.agent}]${step.isError ? " ❌ ERROR" : ""}`);
+    lines.push(`    Action: ${step.action.slice(0, 120)}`);
+  }
+
+  // Brief context: adjacent subtasks (data may flow from/to them)
+  const adjacentIds = new Set<string>();
+  const idx = allSubtasks.findIndex(s => s.id === subtask.id);
+  if (idx > 0) adjacentIds.add(allSubtasks[idx - 1].id);
+  if (idx < allSubtasks.length - 1) adjacentIds.add(allSubtasks[idx + 1].id);
+  const adjacent = allSubtasks.filter(s => adjacentIds.has(s.id));
+  if (adjacent.length > 0) {
+    lines.push("");
+    lines.push("ADJACENT SUBTASKS (data may cross boundaries):");
+    for (const adj of adjacent) {
+      lines.push(`  ${adj.id}: "${adj.name}" (steps ${adj.stepStart}-${adj.stepEnd})`);
+    }
+  }
+
+  return `STEP 3 (SINGLE SUBTASK): DATA FLOWS FOR ${subtask.id}
+
+${lines.join("\n")}
+
+INSTRUCTIONS:
+Extract step data flows for subtask ${subtask.id} ONLY. Track data movement between steps within this subtask. dscode's toolset spans both creative and technical domains — tools like write_file, bash, edit for code; but also image generation tools, design tools (brandkit, imagegen-frontend-web, imagegen-frontend-mobile), and skill activation tools. Treat all tools equally as agent actions.
+
+Track data movement between steps within this subtask:
+- Track code files, visual assets, design parameters, brand decisions, configuration values — any information that flows between steps.
+- For creative tools (image generation, brandkit, design skills), track: generated images, design parameters, palette choices, composition decisions.
+- Mark correctness: "correct", "misinterpreted", "misused", "fabricated", or "taste_degraded" (for creative output that is functional but generic/low-quality).
+- Data that originates in an adjacent subtask and is consumed here: mark the fromStep as the step in THIS subtask that first accesses it.
+
+OUTPUT (pure JSON):
+{
+  "dataFlows": [
+    {
+      "subtaskId": "${subtask.id}",
+      "fromStep": 0,
+      "toStep": 3,
+      "sourceAgent": "read_file",
+      "targetAgent": "write_file",
+      "dataItem": "src/reflections.ts",
+      "dataType": "text",
+      "transformation": "read then modified",
+      "correctness": "correct",
+      "confidence": 0.8
+    }
+  ]
+}`;
+}
 
 export function buildStep4Prompt(subtasks: Subtask[], agentNodes: AgentNode[]): string {
   const bySubtask = new Map<string, AgentNode[]>();
@@ -399,6 +449,7 @@ export function buildStep7Prompt(
   sessionFragments: string,
   configExcerpts: string,
   statsSummary: string,
+  recoveryArcs?: RecoveryArc[],
 ): string {
   const graphText = graphSnapshot ? JSON.stringify(graphSnapshot, null, 2) : "(no causal graph available — rule engine fallback)";
   const attribText = attribution

@@ -1,6 +1,7 @@
-import type { CausalGraphSnapshot, Attribution } from "./schemas.js";
+import type { CausalGraphSnapshot, Attribution, RecoveryArc } from "./schemas.js";
 import type { HarnessRule } from "./rules/types.js";
 export type { HarnessRule } from "./rules/types.js";
+export type { RecoveryArc } from "./schemas.js";
 
 
 // ── Eval Types ──
@@ -64,11 +65,11 @@ export interface EvalResult {
   deviations: DeviationPoint[];
   rootCauses: RootCause[];
   rules: HarnessRule[];
-  analysisMode: "llm" | "rule";
   timeline: TimelineEvent[];
   causalGraph: CausalGraphSnapshot | null;
   attribution: Attribution | null;
   rulesApplied: string[];
+  recoveryArcs?: RecoveryArc[];
   cascadePath?: import("./focus/types.js").CascadeEdge[];
 }
 

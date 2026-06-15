@@ -6,7 +6,7 @@ import type { EvalResult, DeviationPoint, RootCause, HarnessRule, PhaseInfo } fr
 import type { HarnessAPI } from "../../core/harness-api.js";
 import type { SerializedSession } from "../../session/types.js";
 import { parseSessionToSteps, type Attribution } from "../schemas.js";
-import { analyzeSession, compactSession } from "../analyzer.js";
+import { computeStats, type SessionStats } from "../stats.js";
 import { attributeWithLLM } from "../rules/extraction.js";
 import { buildSkeleton } from "./skeleton.js";
 import { scanSession } from "./scan.js";
@@ -22,7 +22,7 @@ export const FOCUS_PATH_THRESHOLD = 500;
 // ── FocusReport → EvalResult Conversion ──
 
 function composeEvalResult(
-  ruleResult: EvalResult,
+  sessionStats: SessionStats,
   report: FocusReport,
   rules: HarnessRule[],
 ): EvalResult {
@@ -66,14 +66,14 @@ function composeEvalResult(
   }];
 
   return {
-    metadata: ruleResult.metadata,
-    stats: ruleResult.stats,
+    metadata: sessionStats.metadata,
+    stats: sessionStats.stats,
     phases,
     deviations,
     rootCauses,
     rules,
-    analysisMode: "llm",
-    timeline: ruleResult.timeline,
+    
+    timeline: [],
     causalGraph: null, // populated by the merged graph in synthesize
     attribution: evalAttribution,
     rulesApplied: attribution.rulesApplied,
@@ -86,17 +86,17 @@ function composeEvalResult(
 export async function runFocusPipeline(
   data: SerializedSession,
   harness: HarnessAPI,
-  ruleResult: EvalResult,
+  sessionStats: SessionStats,
 ): Promise<EvalResult> {
   const steps = parseSessionToSteps(data);
   if (steps.length === 0) {
-    return { ...ruleResult, rules: [] };
+    return { metadata: sessionStats.metadata, stats: sessionStats.stats, phases: [], deviations: [], rootCauses: [], rules: [], timeline: [], causalGraph: null, attribution: null, rulesApplied: [] };
   }
 
   let totalLLMCalls = 0;
 
   // Build skeleton (deterministic, no LLM)
-  const skeleton = buildSkeleton(steps, ruleResult);
+  const skeleton = buildSkeleton(steps, { metadata: sessionStats.metadata, stats: sessionStats.stats, phases: [], deviations: [], timeline: [], rootCauses: [] } as any);
 
   // Pass 1: Scan
   const scanResult = await scanSession(skeleton, harness);
@@ -105,10 +105,10 @@ export async function runFocusPipeline(
   if (scanResult.noIssuesDetected) {
     // Early return — no significant issues found
     const rules = await attributeWithLLM(
-      data, steps, ruleResult.stats, ruleResult.metadata,
-      null, null, harness, ruleResult.metadata.sessionId, Date.now(),
+      data, steps, sessionStats.stats, sessionStats.metadata,
+      null, null, harness, sessionStats.metadata.sessionId, Date.now(),
     );
-    return { ...ruleResult, rules, analysisMode: "rule" };
+    return { ...sessionStats, phases: [], deviations: [], rootCauses: [], rules, timeline: [], causalGraph: null, attribution: null, rulesApplied: [] };
   }
 
   // Pass 2: Zoom each zone
@@ -125,7 +125,7 @@ export async function runFocusPipeline(
 
   // Step 7: Rule extraction from focused context
   const rules = await attributeWithLLM(
-    data, steps, ruleResult.stats, ruleResult.metadata,
+    data, steps, sessionStats.stats, sessionStats.metadata,
     null, // graphStore not available for focus path
     {
       mistakeAgent: attribution.mistakeAgent,
@@ -133,7 +133,7 @@ export async function runFocusPipeline(
       reason: attribution.reason,
       rulesApplied: attribution.rulesApplied as ("Rule1" | "Rule2" | "Rule3")[],
     },
-    harness, ruleResult.metadata.sessionId, Date.now(),
+    harness, sessionStats.metadata.sessionId, Date.now(),
   );
 
   const report: FocusReport = {
@@ -141,11 +141,11 @@ export async function runFocusPipeline(
     scan: scanResult,
     zoneAnalyses,
     attribution,
-    analysisMode: "llm",
+    
     totalLLMCalls,
   };
 
-  const result = composeEvalResult(ruleResult, report, rules);
+  const result = composeEvalResult(sessionStats, report, rules);
   result.causalGraph = mergedGraph;
   return result;
 }
