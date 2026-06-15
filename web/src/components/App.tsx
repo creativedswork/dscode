@@ -86,6 +86,7 @@ export function App() {
         break;
       case "clear_conversation":
         setMessages((prev) => conversationReducer(prev, event));
+        setPermissionPrompt(null);
         break;
       case "assistant_start":
         break;

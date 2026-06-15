@@ -781,6 +781,11 @@ export class WebUiBackend implements UiBackend {
           return;
         }
         const match = matches[0];
+        // Deny any pending permission from the previous session before switching
+        if (this.permissionResolve) {
+          this.permissionResolve({ decision: "deny" });
+          this.permissionResolve = null;
+        }
         const result = await sessionManager.loadSession(match.id, agent);
         if (!result.success) {
           client.send({ type: "error", text: `Failed to load session: ${result.error}` });
