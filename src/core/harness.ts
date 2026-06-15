@@ -1096,6 +1096,8 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
           this.ui.startAssistantMessage();
         }
         if (event.type === "turn_end") {
+          // Save session before broadcasting so sidebar gets fresh metadata
+          this.sessionManager.trySaveSession(this.agent);
           this.ui.finishAssistantMessage();
           const msg = event.message as AssistantMessage;
           if (msg?.stopReason === "length") {

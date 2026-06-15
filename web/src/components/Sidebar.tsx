@@ -204,7 +204,6 @@ function SessionsPanel({
               style={{
                 borderRadius: "8px",
                 backgroundColor: isActive ? "var(--color-accent-bg)" : "transparent",
-                borderLeft: isActive ? "3px solid var(--color-accent)" : "3px solid transparent",
                 opacity: isDisabled ? 0.4 : 1,
                 pointerEvents: isDisabled ? "none" : "auto",
               }}
@@ -220,7 +219,6 @@ function SessionsPanel({
                 className="flex-1 text-left min-w-0"
               >
                 <div className="text-sm truncate flex items-center gap-1.5" style={{ color: "var(--color-text)" }}>
-                  {isActive && <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: 'var(--color-accent)', flexShrink: 0, display: 'inline-block' }} />}
                   {s.title}
                 </div>
                 <div className="text-xs" style={{ color: "var(--color-text-muted)" }}>
@@ -231,8 +229,8 @@ function SessionsPanel({
                 <Spinner size={14} weight="bold" style={{ color: "var(--color-accent)", opacity: 0.6, animation: "spin 1s linear infinite" }} />
               )}
               <button
-              onClick={() => { if (!isDisabled) onAction("delete", s.id); }}
-                className="opacity-0 group-hover:opacity-100 p-1 rounded transition-all"
+              onClick={() => { if (!isDisabled && !isProcessing) onAction("delete", s.id); }}
+                className={`opacity-0 group-hover:opacity-100 p-1 rounded transition-all ${isProcessing ? "!opacity-0" : ""}`}
                 style={{ color: "var(--color-error-text)" }}
                 title="Delete"
               >

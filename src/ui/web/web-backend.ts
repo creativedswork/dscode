@@ -198,7 +198,28 @@ export class WebUiBackend implements UiBackend {
   finishAssistantMessage(): void {
     this.currentAssistant = null;
     this.broadcast({ type: "assistant_end" });
-  }
+
+    const sm2 = this.harness.sessionManager;
+    if (sm2) {
+      const sessions2 = sm2.listSessions();
+      const currentId2 = sm2.getCurrentSessionId?.();
+      let sessionList2 = sessions2;
+      if (currentId2) {
+        const currentMeta = sm2.getCurrentMetadata();
+        if (currentMeta && !sessionList2.find((s: any) => s.id === currentId2)) {
+          sessionList2 = [currentMeta, ...sessionList2];
+        }
+      }
+      this.wsServer.broadcast({
+        type: "sessions",
+        currentSessionId: currentId2 ?? undefined,
+        data: sessionList2.slice(0, 50).map((s: any) => ({
+          id: s.id, title: s.title, updatedAt: s.updatedAt, createdAt: s.createdAt,
+          messageCount: s.messageCount, modelProvider: s.modelProvider, modelId: s.modelId,
+          projectPath: s.projectPath || "", preview: s.preview || "",
+        })),
+      });
+    }  }
 
   // ── UiBackend System Messages ──
 
@@ -370,6 +391,7 @@ export class WebUiBackend implements UiBackend {
         }
         // Broadcast user message to client before sending to agent
         client.send({ type: "user_message", text, images: images && images.length > 0 ? images : undefined } as any);
+        this.pushSessionList(client);
 
         try {
           if (images && images.length > 0) {
@@ -538,10 +560,18 @@ export class WebUiBackend implements UiBackend {
     if (!sessionManager) return;
     const sessions = sessionManager.listSessions();
     const currentId = sessionManager.getCurrentSessionId?.() ?? undefined;
+    // Always include the current session even if it has no messages yet
+    let sessionList = sessions;
+    if (currentId) {
+      const currentMeta = sessionManager.getCurrentMetadata();
+      if (currentMeta && !sessionList.find((s: any) => s.id === currentId)) {
+        sessionList = [currentMeta, ...sessionList];
+      }
+    }
     client.send({
       type: "sessions",
       currentSessionId: currentId,
-      data: sessions.slice(0, 50).map((s: any) => ({
+      data: sessionList.slice(0, 50).map((s: any) => ({
         id: s.id,
         title: s.title,
         updatedAt: s.updatedAt,
