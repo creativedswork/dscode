@@ -781,7 +781,9 @@ export class WebUiBackend implements UiBackend {
           return;
         }
         const match = matches[0];
-        // Deny any pending permission from the previous session before switching
+        // Silently abort, save, and deny any pending permission before switching
+        this.harness.abort();
+        this.harness.saveSessionNow();
         if (this.permissionResolve) {
           this.permissionResolve({ decision: "deny" });
           this.permissionResolve = null;
