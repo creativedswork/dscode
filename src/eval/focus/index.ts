@@ -15,22 +15,21 @@ import { synthesize } from "./synthesize.js";
 import { createWorkspace, writeLibrary, cleanOldWorkspaces } from "./workspace.js";
 import { ProgressDisplay, type CompletionSummary } from "./progress.js";
 import type { FocusReport, SessionSkeleton, ScanResult, ZoneAnalysis, FocusAttribution } from "./types.js";
+import { logEval } from "../logger.js";
 
 // ── Constants ──
 
-/** Hardcoded threshold: ≥500 steps → focus pipeline, <500 → fast path */
 export const FOCUS_PATH_THRESHOLD = 500;
+
+// ── Helpers ──
+
+const yieldTui = () => new Promise<void>((r) => setTimeout(r, 5));
 
 // ── FocusReport → EvalResult Conversion ──
 
-function composeEvalResult(
-  sessionStats: SessionStats,
-  report: FocusReport,
-  rules: HarnessRule[],
-): EvalResult {
-  const { scan, zoneAnalyses, attribution, skeleton } = report;
+function composeEvalResult(sessionStats: SessionStats, report: FocusReport, rules: HarnessRule[]): EvalResult {
+  const { scan, zoneAnalyses, attribution } = report;
 
-  // Map FocusAttribution to existing Attribution type
   const evalAttribution: Attribution = {
     mistakeAgent: attribution.mistakeAgent,
     mistakeStep: attribution.mistakeStep,
@@ -38,7 +37,6 @@ function composeEvalResult(
     rulesApplied: attribution.rulesApplied as Attribution["rulesApplied"],
   };
 
-  // Map AttentionZones to phases
   const phases: PhaseInfo[] = scan.zones.map((z) => ({
     label: `Zone ${z.id}: ${z.summary.slice(0, 60)}`,
     startIdx: z.stepStart,
@@ -48,7 +46,6 @@ function composeEvalResult(
     toolCalls: { total: zoneAnalyses.find((a) => a.zoneId === z.id)?.subtasks.length ?? 0, errors: 0 },
   }));
 
-  // Map zone candidates to deviations
   const deviations: DeviationPoint[] = zoneAnalyses.flatMap((za) =>
     za.candidates.map((c) => ({
       messageIdx: c.stepId,
@@ -59,7 +56,6 @@ function composeEvalResult(
     } as DeviationPoint))
   );
 
-  // Root causes
   const rootCauses: RootCause[] = attribution.mistakeStep > 0 ? [{
     title: `${attribution.mistakeAgent} at Step ${attribution.mistakeStep}`,
     description: attribution.reason,
@@ -74,9 +70,8 @@ function composeEvalResult(
     deviations,
     rootCauses,
     rules,
-
     timeline: [],
-    causalGraph: null, // populated by the merged graph in synthesize
+    causalGraph: null,
     attribution: evalAttribution,
     rulesApplied: attribution.rulesApplied,
     cascadePath: attribution.cascadePath,
@@ -101,47 +96,42 @@ export async function runFocusPipeline(
 
   const pipelineStart = Date.now();
   let totalLLMCalls = 0;
+  logEval("info", "FocusPipeline", `Start: ${steps.length} steps, session ${sessionId.slice(0, 8)}`);
 
-  const progress = new ProgressDisplay(false, onLog);
+  const progress = new ProgressDisplay({ onLog });
 
-  // ── Phase 0: Build Skeleton + Write Library ──
+  // ═══ Phase 0: Build Skeleton + Write Library ═══
   progress.onPhaseStart(0);
+  await yieldTui();
 
   const ruleResult: EvalResult = {
-    metadata: sessionStats.metadata,
-    stats: sessionStats.stats,
-    phases: [],
-    deviations: [],
-    timeline: [],
-    rootCauses: [],
-    rules: [],
-    causalGraph: null,
-    attribution: null,
-    rulesApplied: [],
+    metadata: sessionStats.metadata, stats: sessionStats.stats,
+    phases: [], deviations: [], timeline: [], rootCauses: [],
+    rules: [], causalGraph: null, attribution: null, rulesApplied: [],
   };
   const skeleton = buildSkeleton(steps, ruleResult);
-
   const workspacePath = createWorkspace(sessionId);
   const { fileCount } = writeLibrary(skeleton, steps, ruleResult, "SCAN", workspacePath);
-
-  // Clean old workspaces
   cleanOldWorkspaces(10);
+  logEval("info", "Phase0", `Library: ${fileCount} files → ${workspacePath}`);
 
   progress.onPhaseDone(0, `写入 ${fileCount} 个文件`, Date.now() - pipelineStart);
+  await yieldTui();
 
-  // ── Pass 1: SCAN Agent ──
+  // ═══ Phase 1: SCAN Agent ═══
   progress.onPhaseStart(1);
+  await yieldTui();
 
   const scanResult = await scanSession(skeleton, harness, workspacePath, sessionId, progress);
   totalLLMCalls++;
 
-  progress.onPhaseDone(
-    1,
-    scanResult.noIssuesDetected
-      ? "未检测到问题"
-      : `识别到 ${scanResult.zones.length} 个 attention zones: ${scanResult.zones.map((z) => z.id).join(", ")}`,
-    Date.now() - pipelineStart,
-  );
+  const scanSummary = scanResult.noIssuesDetected
+    ? "未检测到问题"
+    : `识别到 ${scanResult.zones.length} 个 attention zones: ${scanResult.zones.map((z) => z.id).join(", ")}`;
+  logEval("info", "SCAN", scanSummary);
+
+  progress.onPhaseDone(1, scanSummary, Date.now() - pipelineStart);
+  await yieldTui();
 
   if (scanResult.noIssuesDetected || scanResult.zones.length === 0) {
     progress.dispose();
@@ -149,74 +139,53 @@ export async function runFocusPipeline(
       data, steps, sessionStats.stats, sessionStats.metadata,
       null, null, harness, sessionStats.metadata.sessionId, Date.now(),
     );
-    return {
-      ...sessionStats,
-      phases: [],
-      deviations: [],
-      rootCauses: [],
-      rules,
-      timeline: [],
-      causalGraph: null,
-      attribution: null,
-      rulesApplied: [],
-    };
+    logEval("info", "FocusPipeline", "Early exit: no issues detected");
+    return { ...sessionStats, phases: [], deviations: [], rootCauses: [], rules, timeline: [], causalGraph: null, attribution: null, rulesApplied: [] };
   }
 
-  // ── Pass 2: ZOOM Agent (one per zone) ──
+  // ═══ Phase 2: ZOOM Agent (one per zone) ═══
   progress.onPhaseStart(2);
+  await yieldTui();
+
   progress.setSubZones(2, scanResult.zones.map((z) => ({
-    id: z.id,
-    label: `Zone ${z.id} [${z.stepStart}-${z.stepEnd}]`,
+    id: z.id, label: `Zone ${z.id} [${z.stepStart}-${z.stepEnd}]`,
   })));
 
   const zoneAnalyses: ZoneAnalysis[] = [];
   for (const zone of scanResult.zones) {
     try {
-      const analysis = await zoomZone(
-        zone, steps, harness, workspacePath, sessionId, skeleton, 0, progress,
-      );
-      totalLLMCalls += analysis.zoneGraphComplete ? 1 : 2; // estimate
+      const analysis = await zoomZone(zone, steps, harness, workspacePath, sessionId, skeleton, 0, progress);
+      totalLLMCalls += analysis.zoneGraphComplete ? 1 : 2;
       zoneAnalyses.push(analysis);
     } catch {
-      // Zone failed — push empty analysis
-      zoneAnalyses.push({
-        zoneId: zone.id,
-        subtasks: [],
-        subtaskEdges: [],
-        agentNodes: [],
-        agentEdges: [],
-        stepDataFlows: [],
-        candidates: [],
-        topCandidate: null,
-        zoneGraphComplete: false,
-      });
+      zoneAnalyses.push({ zoneId: zone.id, subtasks: [], subtaskEdges: [], agentNodes: [], agentEdges: [], stepDataFlows: [], candidates: [], topCandidate: null, zoneGraphComplete: false });
     }
   }
+  logEval("info", "ZOOM", `${zoneAnalyses.length} zones, ${zoneAnalyses.filter((z) => z.zoneGraphComplete).length} complete`);
 
-  progress.onPhaseDone(
-    2,
-    `${zoneAnalyses.length} zones 分析完成`,
-    Date.now() - pipelineStart,
-  );
+  progress.onPhaseDone(2, `${zoneAnalyses.length} zones 分析完成`, Date.now() - pipelineStart);
+  await yieldTui();
 
-  // ── Pass 3: SYNTHESIZE Agent ──
+  // ═══ Phase 3: SYNTHESIZE Agent ═══
   progress.onPhaseStart(3);
+  await yieldTui();
 
   const { attribution, mergedGraph } = await synthesize(
     scanResult, zoneAnalyses, skeleton, harness, workspacePath, sessionId, progress,
   );
   totalLLMCalls++;
 
-  progress.onPhaseDone(
-    3,
-    attribution.mistakeStep > 0
-      ? `根因: ${attribution.mistakeAgent}@Step ${attribution.mistakeStep}`
-      : "归因完成",
-    Date.now() - pipelineStart,
-  );
+  const synthSummary = attribution.mistakeStep > 0
+    ? `根因: ${attribution.mistakeAgent}@Step ${attribution.mistakeStep}`
+    : "归因完成";
+  logEval("info", "SYNTH", synthSummary);
 
-  // ── Phase 4: Rule Extraction ──
+  progress.onPhaseDone(3, synthSummary, Date.now() - pipelineStart);
+  await yieldTui();
+
+  // ═══ Phase 4: Rule Extraction ═══
   progress.onPhaseStart(4);
+  await yieldTui();
 
   const rules = await attributeWithLLM(
     data, steps, sessionStats.stats, sessionStats.metadata,
@@ -229,33 +198,22 @@ export async function runFocusPipeline(
     } : null,
     harness, sessionStats.metadata.sessionId, Date.now(),
   );
+  logEval("info", "Phase4", `${rules.length} rules extracted`);
 
   progress.onPhaseDone(4, `${rules.length} 条规则`, Date.now() - pipelineStart);
 
-  // ── Completion Summary ──
+  // ═══ Completion ═══
   const totalDuration = Date.now() - pipelineStart;
   const keyFindings = attribution.mistakeStep > 0
     ? `根因: ${attribution.mistakeAgent}@Step ${attribution.mistakeStep}`
     : "未检测到明确根因";
+  logEval("info", "FocusPipeline", `Done: ${(totalDuration / 1000).toFixed(1)}s, ${totalLLMCalls} LLM calls, ${keyFindings}`);
 
-  progress.showCompletion({
-    totalDurationMs: totalDuration,
-    totalLLMCalls,
-    keyFindings,
-  });
+  progress.showCompletion({ totalDurationMs: totalDuration, totalLLMCalls, keyFindings });
   progress.dispose();
 
-  // ── Compose Result ──
-  const report: FocusReport = {
-    skeleton,
-    scan: scanResult,
-    zoneAnalyses,
-    attribution,
-    totalLLMCalls,
-  };
-
+  const report: FocusReport = { skeleton, scan: scanResult, zoneAnalyses, attribution, totalLLMCalls };
   const result = composeEvalResult(sessionStats, report, rules);
   result.causalGraph = mergedGraph;
-
   return result;
 }

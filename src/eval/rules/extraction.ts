@@ -198,6 +198,59 @@ export async function attributeWithLLM(
     return [];
   }
 
+  // Parse and validate — with detailed retry feedback
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const json = extractJSON(rawOutput);
+    if (!json) {
+      if (attempt === 0) {
+        const retryPrompt = prompt + "\n\n⚠ Your previous response was not valid JSON. Output PURE JSON array only.";
+        try {
+          rawOutput = await callLLM(RULE_ATTRIBUTION_SYSTEM, retryPrompt, harness, 16384);
+          continue;
+        } catch {
+          console.warn("[harness-rule-attribution] Retry LLM call failed");
+          return [];
+        }
+      }
+      console.warn("[harness-rule-attribution] No JSON found in LLM response after retry");
+      return [];
+    }
+
+    let parsed: unknown;
+    try { parsed = JSON.parse(json); } catch {
+      if (attempt === 0) {
+        const retryPrompt = prompt + "\n\n⚠ Failed to parse JSON. Output PURE JSON array, no markdown wrapping.";
+        try {
+          rawOutput = await callLLM(RULE_ATTRIBUTION_SYSTEM, retryPrompt, harness, 16384);
+          continue;
+        } catch { return []; }
+      }
+      return [];
+    }
+
+    const result = validateHarnessRuleOutputs(parsed);
+    if (result.ok) {
+      rulesOutput = result.value;
+      break;
+    }
+
+    // Partial results: keep what we can, retry with specific errors
+    if (result.partial && result.partial.length > 0) {
+      rulesOutput = result.partial;
+    }
+
+    if (attempt === 0 && result.errors.length > 0) {
+      const errorDetail = result.errors.slice(0, 5).join("\n");
+      const retryPrompt = prompt + `\n\n⚠ ${result.errors.length} rule(s) failed validation. Fix these missing/invalid fields:\n${errorDetail}\n\nOutput the FULL corrected JSON array.`;
+      try {
+        rawOutput = await callLLM(RULE_ATTRIBUTION_SYSTEM, retryPrompt, harness, 16384);
+        continue;
+      } catch {
+        console.warn("[harness-rule-attribution] Validation retry failed");
+        break;
+      }
+    }
+  }
   // Parse and validate
   for (let attempt = 0; attempt < 2; attempt++) {
     const json = extractJSON(rawOutput);

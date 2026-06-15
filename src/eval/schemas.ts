@@ -225,7 +225,7 @@ export interface CausalGraphSnapshot {
 
 export type ValidationResult<T> =
   | { ok: true; value: T }
-  | { ok: false; errors: string[] };
+  | { ok: false; errors: string[]; partial?: T };
 
 // ── Safe JSON Parse ──
 // Unified try/catch wrapper for all LLM JSON parsing.
@@ -242,11 +242,12 @@ export function safeJsonParse<T>(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.warn(`[${stepName}] JSON parse: ${msg}`);
-    return null;
   }
   const result = validator(parsed);
   if (!result.ok) {
     console.warn(`[${stepName}] validation: ${result.errors.join("; ")}`);
+    // Return partial results if available
+    if (result.partial !== undefined) return result.partial;
     return null;
   }
   return result.value;
@@ -268,31 +269,31 @@ function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
-function requiredString(obj: Record<string, unknown>, key: string, errors: string[]): string {
-  const v = obj[key];
-  if (!isString(v) || v.length === 0) {
-    errors.push(`Missing or empty field: ${key}`);
-    return "";
+function requiredString(obj: Record<string, unknown>, errors: string[], ...keys: string[]): string {
+  for (const key of keys) {
+    const v = obj[key];
+    if (isString(v) && v.length > 0) return v;
   }
-  return v;
+  errors.push(`Missing or empty field: ${keys.join("/")}`);
+  return "";
 }
 
-function requiredNumber(obj: Record<string, unknown>, key: string, errors: string[]): number {
-  const v = obj[key];
-  if (!isNumber(v)) {
-    errors.push(`Missing or invalid number field: ${key} (got ${JSON.stringify(v)})`);
-    return 0;
+function requiredNumber(obj: Record<string, unknown>, errors: string[], ...keys: string[]): number {
+  for (const key of keys) {
+    const v = obj[key];
+    if (isNumber(v)) return v;
   }
-  return v;
+  errors.push(`Missing or invalid number field: ${keys.join("/")}`);
+  return 0;
 }
 
-function requiredArray(obj: Record<string, unknown>, key: string, errors: string[]): unknown[] {
-  const v = obj[key];
-  if (!isArray(v)) {
-    errors.push(`Missing or invalid array field: ${key}`);
-    return [];
+function requiredArray(obj: Record<string, unknown>, errors: string[], ...keys: string[]): unknown[] {
+  for (const key of keys) {
+    const v = obj[key];
+    if (isArray(v)) return v;
   }
-  return v;
+  errors.push(`Missing or invalid array field: ${keys.join("/")}`);
+  return [];
 }
 
 function optionalString(obj: Record<string, unknown>, key: string): string {
@@ -309,6 +310,18 @@ function optionalStringArray(obj: Record<string, unknown>, key: string): string[
   const v = obj[key];
   if (!isArray(v)) return [];
   return v.filter(isString);
+}
+
+
+function unwrapArray(obj: unknown, ...keys: string[]): unknown[] | null {
+  if (isArray(obj)) return obj;
+  if (isObject(obj)) {
+    for (const key of keys) {
+      const v = obj[key];
+      if (isArray(v)) return v;
+    }
+  }
+  return null;
 }
 
 // ── Validators ──
@@ -329,28 +342,28 @@ function validateLoopInfo(obj: Record<string, unknown>, errors: string[]): LoopI
 
 function validateOracle(obj: Record<string, unknown>, errors: string[]): Oracle {
   return {
-    goal: requiredString(obj, "goal", errors),
+    goal: requiredString(obj, errors, "goal"),
     preconditions: optionalStringArray(obj, "preconditions"),
     keyEvidence: optionalStringArray(obj, "keyEvidence") || optionalStringArray(obj, "key_evidence"),
     acceptanceCriteria: optionalStringArray(obj, "acceptanceCriteria") || optionalStringArray(obj, "acceptance_criteria"),
   };
 }
 
-function requiredNumberOr(obj: Record<string, unknown>, camel: string, snake: string, errors: string[]): number {
-  const camVal = obj[camel];
-  if (isNumber(camVal)) return camVal;
-  const snkVal = obj[snake];
-  if (isNumber(snkVal)) return snkVal;
-  errors.push(`Missing or invalid number field: ${camel}/${snake} (got ${JSON.stringify(camVal)})`);
+function requiredNumberOr(obj: Record<string, unknown>, errors: string[], ...keys: string[]): number {
+  for (const key of keys) {
+    const v = obj[key];
+    if (isNumber(v)) return v;
+  }
+  errors.push(`Missing or invalid number field: ${keys.join("/")}`);
   return 0;
 }
 
 export function validateSubtask(obj: unknown): ValidationResult<Subtask> {
   const errors: string[] = [];
   if (!isObject(obj)) return { ok: false, errors: ["Expected an object"] };
-  const id = requiredString(obj, "id", errors);
-  const stepStart = requiredNumberOr(obj, "stepStart", "step_start", errors);
-  const stepEnd = requiredNumberOr(obj, "stepEnd", "step_end", errors);
+  const id = requiredString(obj, errors, "id");
+  const stepStart = requiredNumberOr(obj, errors, "stepStart", "step_start");
+  const stepEnd = requiredNumberOr(obj, errors, "stepEnd", "step_end");
   const oracleObj = obj["oracle"];
   const oracle = isObject(oracleObj) ? validateOracle(oracleObj, errors) : { goal: "", preconditions: [], keyEvidence: [], acceptanceCriteria: [] };
   const loopObj = obj["loopInfo"] || obj["loop_info"] || {};
@@ -358,17 +371,18 @@ export function validateSubtask(obj: unknown): ValidationResult<Subtask> {
   const phaseStatusRaw = optionalString(obj, "phaseStatus") || optionalString(obj, "phase_status");
   const phaseStatus = (phaseStatusRaw === "ok" || phaseStatusRaw === "warn" || phaseStatusRaw === "danger") ? phaseStatusRaw : undefined;
   return errors.length === 0
-    ? { ok: true, value: { id, name: requiredString(obj, "name", errors) || `Subtask ${id}`, stepStart, stepEnd, oracle, loopInfo, phaseStatus } }
+    ? { ok: true, value: { id, name: requiredString(obj, errors, "name") || `Subtask ${id}`, stepStart, stepEnd, oracle, loopInfo, phaseStatus } }
     : { ok: false, errors };
 }
 
 export function validateSubtasks(obj: unknown): ValidationResult<Subtask[]> {
-  if (!isArray(obj)) return { ok: false, errors: ["Expected an array of subtasks"] };
+  const arr = unwrapArray(obj, "subtasks", "tasks");
+  if (!arr) return { ok: false, errors: ["Expected an array of subtasks"] };
   const results: Subtask[] = [];
   const allErrors: string[] = [];
-  for (let i = 0; i < obj.length; i++) {
-    if (!isObject(obj[i])) continue;
-    const r = validateSubtask(obj[i]);
+  for (let i = 0; i < arr.length; i++) {
+    if (!isObject(arr[i])) continue;
+    const r = validateSubtask(arr[i]);
     if (r.ok) results.push(r.value);
     else allErrors.push(`Subtask[${i}]: ${r.errors.join("; ")}`);
   }
@@ -376,15 +390,16 @@ export function validateSubtasks(obj: unknown): ValidationResult<Subtask[]> {
 }
 
 export function validateSubtaskEdges(obj: unknown): ValidationResult<SubtaskEdge[]> {
-  if (!isArray(obj)) return { ok: false, errors: ["Expected an array of subtask edges"] };
+  const arr = unwrapArray(obj, "edges", "subtaskEdges", "subtask_edges");
+  if (!arr) return { ok: false, errors: ["Expected an array of subtask edges"] };
   const results: SubtaskEdge[] = [];
   const allErrors: string[] = [];
-  for (let i = 0; i < obj.length; i++) {
-    const e = obj[i];
+  for (let i = 0; i < arr.length; i++) {
+    const e = arr[i];
     if (!isObject(e)) continue;
     const errors: string[] = [];
-    const src = requiredString(e, "src", errors) || requiredString(e, "from", errors);
-    const dst = requiredString(e, "dst", errors) || requiredString(e, "to", errors);
+    const src = requiredString(e, errors, "src", "from");
+    const dst = requiredString(e, errors, "dst", "to");
     const type = (optionalString(e, "type") || "data_dependency") as SubtaskEdge["type"];
     const dataTransfer = (isArray(e["dataTransfer"]) || isArray(e["data_transfer"])
       ? (isArray(e["dataTransfer"]) ? e["dataTransfer"] : e["data_transfer"]) as DataTransferItem[]
@@ -408,22 +423,23 @@ export function validateSubtaskEdges(obj: unknown): ValidationResult<SubtaskEdge
 }
 
 export function validateAgentNodes(obj: unknown): ValidationResult<AgentNode[]> {
-  if (!isArray(obj)) return { ok: false, errors: ["Expected an array of agent nodes"] };
+  const arr = unwrapArray(obj, "agents", "agentNodes", "agent_nodes");
+  if (!arr) return { ok: false, errors: ["Expected an array of agent nodes"] };
   const results: AgentNode[] = [];
   const allErrors: string[] = [];
-  for (let i = 0; i < obj.length; i++) {
-    const n = obj[i];
+  for (let i = 0; i < arr.length; i++) {
+    const n = arr[i];
     if (!isObject(n)) continue;
     const errors: string[] = [];
-    const subtaskId = requiredString(n, "subtaskId", errors) || requiredString(n, "subtask_id", errors);
-    const agent = requiredString(n, "agent", errors);
+    const subtaskId = requiredString(n, errors, "subtaskId", "subtask_id");
+    const agent = requiredString(n, errors, "agent");
     const otarObj = n["otar"];
     const otar: OTAR = isObject(otarObj)
       ? {
-          observation: requiredString(otarObj, "observation", errors),
-          thought: requiredString(otarObj, "thought", errors),
-          action: requiredString(otarObj, "action", errors),
-          result: requiredString(otarObj, "result", errors),
+          observation: requiredString(otarObj, errors, "observation"),
+          thought: requiredString(otarObj, errors, "thought"),
+          action: requiredString(otarObj, errors, "action"),
+          result: requiredString(otarObj, errors, "result"),
         }
       : { observation: "", thought: "", action: "", result: "" };
     const stepIds = (isArray(n["stepIds"]) || isArray(n["step_ids"])
@@ -439,20 +455,21 @@ export function validateAgentNodes(obj: unknown): ValidationResult<AgentNode[]> 
 }
 
 export function validateAgentEdges(obj: unknown): ValidationResult<AgentEdge[]> {
-  if (!isArray(obj)) return { ok: false, errors: ["Expected an array of agent edges"] };
+  const arr = unwrapArray(obj, "edges", "agentEdges", "agent_edges");
+  if (!arr) return { ok: false, errors: ["Expected an array of agent edges"] };
   const results: AgentEdge[] = [];
   const allErrors: string[] = [];
   const validDepTypes: AgentDepType[] = [
     "obs_dependency", "reasoning_continuation", "decision_dependency",
     "environment_feedback", "memory_ref", "loop_control",
   ];
-  for (let i = 0; i < obj.length; i++) {
-    const e = obj[i];
+  for (let i = 0; i < arr.length; i++) {
+    const e = arr[i];
     if (!isObject(e)) continue;
     const errors: string[] = [];
-    const subtaskId = requiredString(e, "subtaskId", errors) || requiredString(e, "subtask_id", errors);
-    const srcAgent = requiredString(e, "srcAgent", errors) || requiredString(e, "src_agent", errors) || requiredString(e, "From_agent", errors);
-    const dstAgent = requiredString(e, "dstAgent", errors) || requiredString(e, "dst_agent", errors) || requiredString(e, "To_agent", errors);
+    const subtaskId = requiredString(e, errors, "subtaskId", "subtask_id");
+    const srcAgent = requiredString(e, errors, "srcAgent", "src_agent", "From_agent");
+    const dstAgent = requiredString(e, errors, "dstAgent", "dst_agent", "To_agent");
     const rawDepType = optionalString(e, "depType") || optionalString(e, "agent_dependency_type") || "obs_dependency";
     const depType: AgentDepType = validDepTypes.includes(rawDepType as AgentDepType) ? rawDepType as AgentDepType : "obs_dependency";
     const failureModes = (isArray(e["failureModes"]) || isArray(e["failure_modes"]) || isArray(e["agent_failure_modes"])
@@ -475,13 +492,13 @@ export function validateAgentEdges(obj: unknown): ValidationResult<AgentEdge[]> 
 export function validateCandidateSet(obj: unknown): ValidationResult<CandidateSet> {
   if (!isObject(obj)) return { ok: false, errors: ["Expected an object"] };
   const errors: string[] = [];
-  const stepsArr = requiredArray(obj, "steps", errors);
+  const stepsArr = requiredArray(obj, errors, "steps") || requiredArray(obj, errors, "candidates");
   const steps: CandidateStep[] = [];
   for (let i = 0; i < stepsArr.length; i++) {
     const s = stepsArr[i];
     if (!isObject(s)) continue;
     steps.push({
-      stepId: requiredNumberOr(s, "stepId", "step_id", errors),
+      stepId: requiredNumberOr(s, errors, "stepId", "step_id"),
       agentsInStep: optionalStringArray(s, "agentsInStep") || optionalStringArray(s, "agents_in_step"),
       inLoop: s["inLoop"] === true || s["in_loop"] === true,
       loopRole: (optionalString(s, "loopRole") || optionalString(s, "loop_role") || "none") as CandidateStep["loopRole"],
@@ -512,9 +529,9 @@ export function validateAttribution(obj: unknown): ValidationResult<Attribution>
   const rootCauseTitle = rootCauseTitleRaw || undefined;
   const rootCauseSeverity = (rootCauseSeverityRaw === "primary" || rootCauseSeverityRaw === "secondary") ? rootCauseSeverityRaw : undefined;
   const result: Attribution = {
-    mistakeAgent: requiredString(obj, "mistakeAgent", errors) || requiredString(obj, "mistake_agent", errors) || requiredString(obj, "Agent Name", errors),
-    mistakeStep: requiredNumberOr(obj, "mistakeStep", "mistake_step", errors) || requiredNumber(obj, "Step Number", errors),
-    reason: requiredString(obj, "reason", errors) || requiredString(obj, "Reason for Mistake", errors),
+    mistakeAgent: requiredString(obj, errors, "mistakeAgent", "mistake_agent", "Agent Name"),
+    mistakeStep: requiredNumberOr(obj, errors, "mistakeStep", "mistake_step", "Step Number"),
+    reason: requiredString(obj, errors, "reason", "Reason for Mistake"),
     rulesApplied,
     rootCauseTitle,
     rootCauseSeverity,
@@ -523,20 +540,21 @@ export function validateAttribution(obj: unknown): ValidationResult<Attribution>
 }
 
 export function validateStepDataFlows(obj: unknown): ValidationResult<StepDataFlow[]> {
-  if (!isArray(obj)) return { ok: false, errors: ["Expected an array of step data flows"] };
+  const arr = unwrapArray(obj, "dataFlows", "stepDataFlows", "data_flows");
+  if (!arr) return { ok: false, errors: ["Expected an array of data flows"] };
   const results: StepDataFlow[] = [];
   const allErrors: string[] = [];
-  for (let i = 0; i < obj.length; i++) {
-    const f = obj[i];
+  for (let i = 0; i < arr.length; i++) {
+    const f = arr[i];
     if (!isObject(f)) continue;
     const errors: string[] = [];
     results.push({
-      subtaskId: requiredString(f, "subtaskId", errors) || requiredString(f, "subtask_id", errors),
-      fromStep: requiredNumberOr(f, "fromStep", "from_step", errors),
-      toStep: requiredNumberOr(f, "toStep", "to_step", errors),
-      sourceAgent: requiredString(f, "sourceAgent", errors) || requiredString(f, "source_agent", errors),
-      targetAgent: requiredString(f, "targetAgent", errors) || requiredString(f, "target_agent", errors),
-      dataItem: requiredString(f, "dataItem", errors) || requiredString(f, "data_item", errors),
+      subtaskId: requiredString(f, errors, "subtaskId", "subtask_id"),
+      fromStep: requiredNumberOr(f, errors, "fromStep", "from_step"),
+      toStep: requiredNumberOr(f, errors, "toStep", "to_step"),
+      sourceAgent: requiredString(f, errors, "sourceAgent", "source_agent"),
+      targetAgent: requiredString(f, errors, "targetAgent", "target_agent"),
+      dataItem: requiredString(f, errors, "dataItem", "data_item"),
       dataType: (optionalString(f, "dataType") || optionalString(f, "data_type") || "text") as StepDataFlow["dataType"],
       transformation: optionalString(f, "transformation"),
       correctness: (optionalString(f, "correctness") || "correct") as StepDataFlow["correctness"],
@@ -686,12 +704,12 @@ const VALID_ACTIONS = ["modify", "add", "remove", "reorder"];
 
 export function validateRuleSuggestion(obj: unknown, errors: string[]): { layer: string; action: "modify" | "add" | "remove" | "reorder"; current?: string; proposed: string; rationale: string } | null {
   if (!isObject(obj)) { errors.push("suggestion must be an object"); return null; }
-  const layer = requiredString(obj, "layer", errors);
+  const layer = requiredString(obj, errors, "layer");
   const actionRaw = optionalString(obj, "action");
   const action = VALID_ACTIONS.includes(actionRaw) ? actionRaw as "modify" | "add" | "remove" | "reorder" : "modify";
   const current = obj["current"];
-  const proposed = requiredString(obj, "proposed", errors);
-  const rationale = requiredString(obj, "rationale", errors);
+  const proposed = requiredString(obj, errors, "proposed");
+  const rationale = requiredString(obj, errors, "rationale");
   if (errors.length > 0) return null;
   return { layer, action, current: isString(current) ? current : undefined, proposed, rationale };
 }
@@ -710,13 +728,13 @@ export function validateHarnessRuleOutput(obj: unknown): ValidationResult<Harnes
   const errors: string[] = [];
   if (!isObject(obj)) return { ok: false, errors: ["Expected an object"] };
 
-  const id = requiredString(obj, "id", errors);
+  const id = requiredString(obj, errors, "id");
   const categoryRaw = optionalString(obj, "category");
   const category = VALID_CATEGORIES.includes(categoryRaw) ? categoryRaw : "other";
-  const targetLayer = requiredString(obj, "targetLayer", errors) || optionalString(obj, "target_layer");
-  const abstract = requiredString(obj, "abstract", errors);
-  const rawDescription = requiredString(obj, "rawDescription", errors) || optionalString(obj, "raw_description");
-  const severity = requiredNumber(obj, "severity", errors);
+  const targetLayer = requiredString(obj, errors, "targetLayer") || optionalString(obj, "target_layer");
+  const abstract = requiredString(obj, errors, "abstract");
+  const rawDescription = requiredString(obj, errors, "rawDescription") || optionalString(obj, "raw_description");
+  const severity = requiredNumber(obj, errors, "severity");
 
   const suggObj = obj["suggestion"];
   const suggestion = isObject(suggObj) ? validateRuleSuggestion(suggObj, errors) : null;
@@ -740,9 +758,9 @@ export function validateHarnessRuleOutputs(obj: unknown): ValidationResult<Harne
   for (let i = 0; i < obj.length; i++) {
     const r = validateHarnessRuleOutput(obj[i]);
     if (r.ok) results.push(r.value);
-    else allErrors.push(`Rule[${i}]: ${r.errors.join("; ")}`);
+    else allErrors.push(`Rule[${i}](${typeof obj[i] === "object" && obj[i] ? (obj[i] as Record<string,unknown>)["id"] || "?" : "?"}): ${r.errors.join("; ")}`);
   }
-  return allErrors.length === 0 ? { ok: true, value: results } : { ok: false, errors: allErrors };
+  return allErrors.length === 0 ? { ok: true, value: results } : { ok: false, partial: results, errors: allErrors };
 }
 
 export interface MergeDecision {
@@ -756,11 +774,11 @@ export function validateMergeDecision(obj: unknown): ValidationResult<MergeDecis
   const errors: string[] = [];
   if (!isObject(obj)) return { ok: false, errors: ["Expected an object"] };
 
-  const newRuleId = requiredString(obj, "newRuleId", errors) || optionalString(obj, "new_rule_id");
+  const newRuleId = requiredString(obj, errors, "newRuleId") || optionalString(obj, "new_rule_id");
   const decisionRaw = optionalString(obj, "decision");
   const decision = decisionRaw === "merge" || decisionRaw === "new" ? decisionRaw : "new";
   const targetRuleId = optionalString(obj, "targetRuleId") || optionalString(obj, "target_rule_id") || undefined;
-  const reasoning = requiredString(obj, "reasoning", errors);
+  const reasoning = requiredString(obj, errors, "reasoning");
 
   if (decision === "merge" && !targetRuleId) {
     errors.push("Merge decision requires targetRuleId");

@@ -2,7 +2,7 @@
 // Appends structured log lines to ~/.dscode/logs/eval.log
 // for offline diagnosis of eval pipeline runs.
 
-import { appendFileSync, mkdirSync, existsSync } from "node:fs";
+import { appendFileSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -27,8 +27,11 @@ export function logEval(level: "info" | "warn" | "error", tag: string, message: 
   } catch {
     // best-effort: fall back to console if file write fails
   }
-  // Also print to console for real-time visibility
+  // file-only; console output pollutes TUI
   if (level === "error") console.error(line);
-  else if (level === "warn") console.warn(line);
-  else console.log(line);
+}
+
+export function clearEvalLog(): void {
+  ensureDir();
+  writeFileSync(LOG_PATH, "", "utf-8");
 }

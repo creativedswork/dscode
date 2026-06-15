@@ -12,6 +12,7 @@ import { analyzeWithLLM, runCausalGraphPipeline } from "./llm.js";
 import { loadRuleStore, semanticMerge, saveRuleStore } from "./rules/store.js";
 import { runFocusPipeline, FOCUS_PATH_THRESHOLD } from "./focus/index.js";
 import { parseSessionToSteps } from "./schemas.js";
+import { clearEvalLog, logEval } from "./logger.js";
 
 function evalDir(): string {
   return join(homedir(), ".dscode", "eval");
@@ -60,15 +61,21 @@ export async function runEval(
       }
     }
 
+    clearEvalLog();
     ui.addInfo(`正在分析 session ${resolvedId.slice(0, 8)}...`);
 
-    // Analyze — CHIFF causal graph pipeline, rule engine as fallback
+    // onLog writes to stderr so progress is visible during TUI blocking
+    const onLog = (msg: string) => { ui.addInfo(msg); console.error(msg); };
+
     // Analyze — path selection based on session size
     const steps = parseSessionToSteps(sessionData);
+    const pathLabel = steps.length >= FOCUS_PATH_THRESHOLD
+      ? `Focus (${steps.length} 步 ≥ ${FOCUS_PATH_THRESHOLD})`
+      : `Causal Graph (${steps.length} 步 < ${FOCUS_PATH_THRESHOLD})`;
+    onLog(`📊 ${pathLabel}`);
     const result = steps.length >= FOCUS_PATH_THRESHOLD
-      ? await runFocusPipeline(sessionData, harness, computeStats(sessionData), (msg: string) => ui.addInfo(msg))
-      : await runCausalGraphPipeline(sessionData, harness);
-
+      ? await runFocusPipeline(sessionData, harness, computeStats(sessionData), onLog)
+      : await runCausalGraphPipeline(sessionData, harness, onLog);
     // Step 8: LLM semantic rule merge (use session's projectPath, not harness cwd)
     const projectPath = sessionData?.metadata?.projectPath ?? harness.config?.projectPath;
     if (projectPath) {
@@ -93,6 +100,10 @@ export async function runEval(
       `Error rate: ${result.stats.errorRate}${attributionInfo} | Rules: ${rulesTriggered}`,
     );
   } catch (err) {
+    logEval("error", "Pipeline", `crash: ${err instanceof Error ? err.message : String(err)}`);
+    if (err instanceof Error && err.stack) {
+      logEval("error", "Pipeline", `stack:\n${err.stack}`);
+    }
     ui.addError(`eval: ${err instanceof Error ? err.message : String(err)}`);
   }
 }

@@ -45,26 +45,31 @@ export class ProgressDisplay {
   private spinnerIdx: number = 0;
   private spinnerInterval: NodeJS.Timeout | null = null;
   private lastRender: string = "";
-  private isWebMode: boolean = false;
+  private disableTerminal: boolean = false;
   private onLog: ((text: string) => void) | undefined;
+  private lastOnLogTime: number = 0;
+  private lastProgressBarTime: number = 0;
 
   // Web events buffer for future WebSocket integration
   private webEvents: Array<{ type: string; timestamp: number; data: unknown }> = [];
 
-  /**
-   * @param webMode If true, skip terminal rendering (emit web events instead).
-   * @param onLog If provided, phase transitions are logged through this callback
-   *              instead of (or in addition to) writing to stdout. This is used
-   *              by the TUI backend which owns the terminal.
-   */
-  constructor(webMode: boolean = false, onLog?: (text: string) => void) {
-    this.isWebMode = webMode || !!onLog;
-    this.onLog = onLog;
+  /** Backward-compatible constructor: accepts old boolean or new options object. */
+  constructor(
+    webModeOrOptions?: boolean | { disableTerminal?: boolean; onLog?: (text: string) => void; throttleMs?: number },
+    legacyOnLog?: (text: string) => void,
+  ) {
+    if (typeof webModeOrOptions === "boolean") {
+      this.disableTerminal = webModeOrOptions;
+      this.onLog = legacyOnLog;
+    } else if (webModeOrOptions) {
+      this.disableTerminal = webModeOrOptions.disableTerminal ?? false;
+      this.onLog = webModeOrOptions.onLog;
+    }
     this.initPhases();
     this.startTime = Date.now();
 
     // Only start continuous spinner for raw terminal mode (no TUI takeover)
-    if (!this.isWebMode) {
+    if (!this.disableTerminal) {
       this.startSpinner();
     }
   }
@@ -105,7 +110,11 @@ export class ProgressDisplay {
       this.phases[phaseIndex].detail = "";
     }
     this.emitWebEvent("phaseStart", { phaseIndex });
-    this.onLog?.(`[CHIFF] Phase ${phaseIndex}/4: ${this.phases[phaseIndex]?.label ?? "?"} 开始...`);
+    if (this.onLog) {
+      const labels = ["⏳ Phase 0/4: 落盘...", "🔍 Phase 1/4: SCAN — 扫描 attention zones...", "🔎 Phase 2/4: ZOOM — 深潜分析...", "🧩 Phase 3/4: SYNTHESIZE — 归因分析...", "📊 Phase 4/4: 规则提取..."];
+      this.onLog(labels[phaseIndex] ?? `Phase ${phaseIndex}/4 开始...`);
+      this.logProgressBar();
+    }
     this.render();
   }
 
@@ -131,6 +140,21 @@ export class ProgressDisplay {
 
     this.emitWebEvent("phaseProgress", { phaseIndex, subZoneId, event });
     this.render();
+
+    // Throttled onLog output for agent tool call progress
+    if (this.onLog) {
+      const now = Date.now();
+      const throttleMs = 500;
+      if (now - this.lastOnLogTime >= throttleMs) {
+        this.lastOnLogTime = now;
+        this.onLog("  ⟳ " + event.detail);
+        // Progress bar at longer interval (every 3s)
+        if (now - this.lastProgressBarTime >= 3000) {
+          this.lastProgressBarTime = now;
+          this.logProgressBar();
+        }
+      }
+    }
   }
 
   onPhaseDone(
@@ -145,8 +169,9 @@ export class ProgressDisplay {
     }
     this.emitWebEvent("phaseDone", { phaseIndex, summary, durationMs });
     if (summary && this.onLog) {
-      this.onLog(`[CHIFF] Phase ${phaseIndex}/4 完成: ${summary}`);
+      this.onLog(`✓ ${summary}`);
     }
+    this.logProgressBar();
     this.render();
   }
 
@@ -171,9 +196,10 @@ export class ProgressDisplay {
     this.emitWebEvent("completion", summary);
     if (this.onLog) {
       const sec = (summary.totalDurationMs / 1000).toFixed(1);
-      this.onLog(`[CHIFF] 分析完成 — ${sec}s, ${summary.totalLLMCalls} LLM 调用, ${summary.keyFindings}`);
+      this.onLog(`✅ CHIFF 分析完成 — ${sec}s · ${summary.totalLLMCalls} LLM 调用 · ${summary.keyFindings}`);
+      this.logProgressBar();
     }
-    if (!this.isWebMode) {
+    if (!this.disableTerminal) {
       this.renderCompletion(summary);
     }
   }
@@ -185,7 +211,7 @@ export class ProgressDisplay {
   // ── Terminal Rendering ──
 
   private render(): void {
-    if (this.isWebMode) return;
+    if (this.disableTerminal) return;
 
     const elapsed = Date.now() - this.startTime;
     const progress = this.computeProgress();
@@ -292,10 +318,25 @@ export class ProgressDisplay {
     return Math.min(1, progress);
   }
 
+  // ── Progress Bar (text-based for TUI onLog) ──
+
+  private buildProgressBar(): string {
+    const pct = this.computeProgress();
+    const width = 20;
+    const filled = Math.round(pct * width);
+    const bar = "█".repeat(filled) + "░".repeat(width - filled);
+    return `[${bar}] ${Math.round(pct * 100)}%`;
+  }
+
+  private logProgressBar(): void {
+    if (!this.onLog) return;
+    this.onLog(this.buildProgressBar());
+  }
+
   // ── Web Event Emission (Stub) ──
 
   private emitWebEvent(type: string, data: unknown): void {
-    if (!this.isWebMode) return;
+    if (!this.disableTerminal) return;
     this.webEvents.push({ type, timestamp: Date.now(), data });
   }
 

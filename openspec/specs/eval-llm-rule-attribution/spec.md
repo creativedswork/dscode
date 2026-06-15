@@ -2,14 +2,15 @@
 
 ### Requirement: LLM autonomously generates rules from full CHIFF context
 
-The system SHALL replace all deterministic rule extraction (detector registry, pre-defined catalog, CHIFF→Rule mapping) with a single LLM call. The LLM SHALL receive the complete CHIFF analysis context and autonomously identify Agent configuration issues.
+The system SHALL generate harness rules via a single LLM call that receives the complete CHIFF analysis context. There is no non-attribution fallback path — `attributeWithLLM` is always called after successful CHIFF pipeline completion.
 
 The LLM input SHALL include:
-- CHIFF subtask summary (names, step ranges, oracle goals)
+- CHIFF subtask summary (names, step ranges, oracle goals, phaseStatus)
 - Causal graph key paths (subtask→subtask edges with failure modes, agent→agent edges with errors)
 - Step data flows with correctness anomalies (where `correctness !== "correct"`)
-- Candidate error set (top 5 by impact_score, with irrecoverable reasons)
-- Attribution conclusion (mistake_agent, mistake_step, reason, rules_applied)
+- Candidate error set (top 5 by impact_score, with deviationDescriptions and irrecoverable reasons)
+- Attribution conclusion (mistake_agent, mistake_step, reason, rules_applied, rootCauseTitle, rootCauseSeverity)
+- Recovery arcs summary (when available): error agent/step, detection type, correction agent/step, steps to recover, misdiagnosis count, rootCauseHypothesis per arc
 - Session key fragments: the 5 steps surrounding the mistake_step (thought, action, result)
 - Current Agent configuration excerpts: Identity, Soul, Tool Use Rules, AGENTS.md key lines
 - The total session length and tool call statistics
@@ -31,13 +32,6 @@ The LLM SHALL output a JSON `HarnessRule[]` array where each rule contains:
 - **AND** each rule SHALL have a non-empty `id`, `abstract`, `rawDescription`, and `suggestion`
 - **AND** `category` SHALL be one of the valid `RuleCategory` values
 
-#### Scenario: LLM generates rules on rule-engine fallback
-
-- **WHEN** CHIFF pipeline falls back to rule-engine mode (no causal graph, no attribution)
-- **THEN** Step 7 SHALL still call the LLM with session statistics and key fragments only
-- **AND** the LLM SHALL return rules based on observable patterns in the session data
-- **AND** `EvalResult.analysisMode` SHALL remain `"rule"`
-
 #### Scenario: LLM identifies a novel config issue not in any pre-defined catalog
 
 - **WHEN** the session exhibits a pattern not anticipated by any existing rule template (e.g., "Soul section's 'editorial voice' conflicts with AGENTS.md's 'concise and direct' instruction, causing inconsistent output style")
@@ -51,6 +45,19 @@ The LLM SHALL output a JSON `HarnessRule[]` array where each rule contains:
 - **THEN** the LLM MAY return an empty `HarnessRule[]`
 - **AND** `EvalResult.rules` SHALL be an empty array
 - **AND** the dashboard SHALL display "未检测到 Agent 配置问题"
+
+#### Scenario: LLM generates rules from recovery patterns
+
+- **WHEN** recovery arcs show `misdiagnosisCount >= 2` with `detectionType === "test_failure"`
+- **THEN** the LLM MAY generate a rule targeting the "diagnose before fix" workflow in the Tool Use Rules layer
+- **AND** the rule abstract SHALL reference the recovery pattern as evidence
+- **AND** the suggestion SHALL be de-concretized (not referencing specific step numbers)
+
+#### Scenario: Step 7 without recovery arcs (backward compat)
+
+- **WHEN** Step 7 LLM is called but no recovery arcs are available
+- **THEN** the prompt SHALL omit the recovery arcs section
+- **AND** Harness Rule generation SHALL proceed normally with the existing context
 
 ### Requirement: Simplified HarnessRule type without deterministic pattern
 

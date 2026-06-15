@@ -9,7 +9,7 @@ import type { SerializedSession } from "../session/types.js";
 import { resolveModel } from "../models/index.js";
 import { completeSimple } from "@mariozechner/pi-ai";
 import { CausalGraphStore } from "./graph-store.js";
-import { parseSessionToSteps, safeJsonParse, validateSubtasks, validateSubtaskEdges, validateAgentEdges, validateCandidateSet, validateAttribution, validateStepDataFlows, type HistoryStep, type Subtask, type SubtaskEdge, type AgentNode, type AgentEdge, type StepDataFlow, type CandidateSet, type Attribution, type RecoveryArc } from "./schemas.js";
+import { parseSessionToSteps, safeJsonParse, validateSubtasks, validateSubtaskEdges, validateAgentEdges, validateCandidateSet, validateAttribution, validateStepDataFlows, type ValidationResult, type HistoryStep, type Subtask, type SubtaskEdge, type AgentNode, type AgentEdge, type StepDataFlow, type CandidateSet, type Attribution, type RecoveryArc } from "./schemas.js";
 import { computeStats, type SessionStats } from "./stats.js";
 import { attributeWithLLM } from "./rules/extraction.js";
 import {
@@ -75,6 +75,53 @@ async function callLLMWithRetry(
 
 // ── Step Executors ──
 
+/** Call LLM + extract JSON + validate — with retry on validation failure. */
+async function callAndValidate<T>(
+  harness: HarnessAPI,
+  prompt: string,
+  validator: (obj: unknown) => ValidationResult<T>,
+  maxTokens: number,
+  stepLabel: string,
+): Promise<T> {
+  let raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness, 1, maxTokens);
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const json = extractJSON(raw);
+    if (!json) {
+      if (attempt === 0) {
+        raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt + "\n\n⚠ No JSON found. Output PURE JSON.", harness, 1, maxTokens);
+        continue;
+      }
+      throw new Error(`${stepLabel}: No JSON found in LLM response`);
+    }
+
+    let parsed: unknown;
+    try { parsed = JSON.parse(json); }
+    catch {
+      if (attempt === 0) {
+        raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt + "\n\n⚠ Invalid JSON. Output PURE JSON, no markdown.", harness, 1, maxTokens);
+        continue;
+      }
+      throw new Error(`${stepLabel}: JSON parse failed`);
+    }
+
+    const result = validator(parsed);
+    if (result.ok) return result.value;
+
+    if (attempt === 0) {
+      const errors = result.errors.slice(0, 5).join("; ");
+      raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT,
+        prompt + `\n\n⚠ Validation failed: ${errors}\nFix these issues and output the corrected JSON.`,
+        harness, 1, maxTokens);
+      continue;
+    }
+
+    throw new Error(`${stepLabel} validation: ${result.errors.join("; ")}. Raw(500): ${json.slice(0, 500)}`);
+  }
+  throw new Error(`${stepLabel}: unreachable`);
+}
+
+
 async function executeStep1(
   steps: HistoryStep[],
   question: string,
@@ -90,38 +137,13 @@ async function executeStep1(
     })),
   );
   const prompt = buildStep1Prompt(question, summary, steps.length);
-  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness, 1, 16384);
-  const json = extractJSON(raw);
-  if (!json) {
-    console.error(`[CHIFF Step 1] No JSON found. Raw response (first 500 chars): ${raw.slice(0, 500)}`);
-    throw new Error("Step 1: No JSON found in LLM response");
-  }
-  const parsed = safeJsonParse(json, "Step 1", (v: unknown) => ({ ok: true as const, value: v }));
-  if (parsed === null) {
-    console.error(`[CHIFF Step 1] JSON parse failed. Extracted JSON (first 500 chars): ${json.slice(0, 500)}`);
-    throw new Error("Step 1: JSON parse failed — LLM returned malformed JSON. Check console for details.");
-  }
-
-  const arr = Array.isArray(parsed) ? parsed : (parsed as Record<string, unknown>)["subtasks"];
-  if (!arr || !Array.isArray(arr)) {
-    console.error(`[CHIFF Step 1] Parsed JSON keys: ${Object.keys(parsed as object).join(", ")}`);
-    console.error(`[CHIFF Step 1] Parsed value (first 500): ${JSON.stringify(parsed).slice(0, 500)}`);
-    throw new Error("Step 1: LLM response missing 'subtasks' array");
-  }
-  const result = validateSubtasks(arr);
-  if (!result.ok) {
-    const firstItem = arr.length > 0 ? arr[0] : null;
-    console.error(`[CHIFF Step 1] First subtask keys: ${firstItem && typeof firstItem === "object" ? Object.keys(firstItem as object).join(", ") : "N/A"}`);
-    console.error(`[CHIFF Step 1] First subtask (first 300): ${JSON.stringify(firstItem).slice(0, 300)}`);
-    console.error(`[CHIFF Step 1] Total subtasks: ${arr.length}`);
-    throw new Error(`Step 1 validation: ${result.errors.join("; ")}`);
-  }
+  const result = await callAndValidate(harness, prompt, validateSubtasks, 16384, "Step 1");
 
   // Fix overlapping or gapped subtask ranges (LLM sometimes produces imperfect boundaries)
-  result.value.sort((a, b) => a.stepStart - b.stepStart);
-  for (let i = 0; i < result.value.length - 1; i++) {
-    const prev = result.value[i];
-    const next = result.value[i + 1];
+  result.sort((a, b) => a.stepStart - b.stepStart);
+  for (let i = 0; i < result.length - 1; i++) {
+    const prev = result[i];
+    const next = result[i + 1];
     if (prev.stepEnd >= next.stepStart) {
       console.warn(`[CHIFF Step 1] Fixing overlap: ${prev.id} (${prev.stepStart}-${prev.stepEnd}) overlaps ${next.id} (${next.stepStart}-${next.stepEnd}), truncating ${prev.id}.stepEnd to ${next.stepStart - 1}`);
       prev.stepEnd = next.stepStart - 1;
@@ -132,13 +154,13 @@ async function executeStep1(
     }
   }
   // Ensure last subtask covers to the end
-  const last = result.value[result.value.length - 1];
+  const last = result[result.length - 1];
   if (last && last.stepEnd < steps.length - 1) {
     last.stepEnd = steps.length - 1;
   }
-  return result.value;
-}
+  return result;
 
+}
 async function executeStep2(
   subtasks: Subtask[],
   steps: HistoryStep[],
@@ -154,15 +176,7 @@ async function executeStep2(
     })),
   );
   const prompt = buildStep2Prompt(subtasks, summary);
-  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness, 1, 16384);
-  const json = extractJSON(raw);
-  if (!json) throw new Error("Step 2: No JSON found in LLM response");
-  const parsed = safeJsonParse(json, "Step 2", (v: unknown) => ({ ok: true as const, value: v }));
-  if (parsed === null) throw new Error(`Step 2: JSON parse failed. Raw(200): ${json.slice(0, 200)}`);
-  const arr = Array.isArray(parsed) ? parsed : (parsed as Record<string, unknown>)["edges"];
-  const result = validateSubtaskEdges(arr);
-  if (!result.ok) throw new Error(`Step 2 validation: ${result.errors.join("; ")}`);
-  return result.value;
+  return callAndValidate(harness, prompt, validateSubtaskEdges, 16384, "Step 2");
 }
 
 // ── Agent Nodes: Deterministic Construction ──
@@ -199,37 +213,17 @@ async function executeStep3(
   const agents = buildAgentNodes(steps, subtasks);
 
   // Data flows: divide-and-conquer — one LLM call per subtask.
-  // This avoids token limit truncation on large sessions where a single
-  // combined prompt would produce more output than the model can deliver.
   const allFlows: StepDataFlow[] = [];
   let failedSubtasks = 0;
 
   for (const subtask of subtasks) {
     try {
       const prompt = buildStep3SingleSubtaskPrompt(subtask, steps, subtasks);
-      const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness, 1, 4096);
-      const json = extractJSON(raw);
-      if (!json) {
-        logEval("warn", "Step3", `Subtask ${subtask.id}: No JSON found, skipping. Raw: ${raw.slice(0, 200)}`);
-        failedSubtasks++;
-        continue;
-      }
-      const parsed = safeJsonParse(json, `Step 3 / ${subtask.id}`, (v: unknown) => ({ ok: true as const, value: v }));
-      if (parsed === null) {
-        logEval("warn", "Step3", `Subtask ${subtask.id}: JSON parse failed, skipping. Raw: ${json.slice(0, 200)}`);
-        failedSubtasks++;
-        continue;
-      }
-      const flowsResult = validateStepDataFlows((parsed as Record<string, unknown>)["dataFlows"] ?? []);
-      if (!flowsResult.ok) {
-        logEval("warn", "Step3", `Subtask ${subtask.id}: validation failed: ${flowsResult.errors.join("; ")}`);
-        failedSubtasks++;
-        continue;
-      }
-      allFlows.push(...flowsResult.value);
-      logEval("info", "Step3", `Subtask ${subtask.id}: ${flowsResult.value.length} data flows extracted`);
+      const flows = await callAndValidate(harness, prompt, validateStepDataFlows, 4096, `Step 3 / ${subtask.id}`);
+      allFlows.push(...flows);
+      logEval("info", "Step3", `Subtask ${subtask.id}: ${flows.length} data flows extracted`);
     } catch (err) {
-      logEval("warn", "Step3", `Subtask ${subtask.id}: LLM call failed: ${err instanceof Error ? err.message : String(err)}`);
+      logEval("warn", "Step3", `Subtask ${subtask.id}: ${err instanceof Error ? err.message : String(err)}`);
       failedSubtasks++;
     }
   }
@@ -247,15 +241,7 @@ async function executeStep4(
   harness: HarnessAPI,
 ): Promise<AgentEdge[]> {
   const prompt = buildStep4Prompt(subtasks, agentNodes);
-  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness, 1, 32768);
-  const json = extractJSON(raw);
-  if (!json) throw new Error("Step 4: No JSON found in LLM response");
-  const parsed = safeJsonParse(json, "Step 4", (v: unknown) => ({ ok: true as const, value: v }));
-  if (parsed === null) throw new Error(`Step 4: JSON parse failed. Raw(200): ${json.slice(0, 200)}`);
-  const arr = Array.isArray(parsed) ? parsed : (parsed as Record<string, unknown>)["edges"];
-  const result = validateAgentEdges(arr);
-  if (!result.ok) throw new Error(`Step 4 validation: ${result.errors.join("; ")}`);
-  return result.value;
+  return callAndValidate(harness, prompt, validateAgentEdges, 32768, "Step 4");
 }
 
 async function executeStep5(
@@ -275,19 +261,9 @@ async function executeStep5(
   );
   const snapshot = graphStore.snapshot();
   const prompt = buildStep5Prompt(question, summary, snapshot);
-  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness, 1, 65536);
-  const json = extractJSON(raw);
-  if (!json) throw new Error("Step 5: No JSON found in LLM response");
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    throw new Error(`Step 5: JSON parse failed. Raw(500): ${json.slice(0, 500)}`);
-  }
-  const result = validateCandidateSet(parsed);
-  if (!result.ok) throw new Error(`Step 5 validation: ${result.errors.join("; ")}. Raw(500): ${json.slice(0, 500)}`);
-  if (result.value.steps.length < 5) throw new Error(`Step 5: Only ${result.value.steps.length} candidates (need >= 5)`);
-  return result.value;
+  const result = await callAndValidate(harness, prompt, validateCandidateSet, 65536, "Step 5");
+  if (result.steps.length < 5) throw new Error(`Step 5: Only ${result.steps.length} candidates (need >= 5)`);
+  return result;
 }
 
 // ── Recovery Arc Validation ──
@@ -342,27 +318,12 @@ async function executeStep6(
 ): Promise<Attribution & { recoveryArcs?: RecoveryArc[] }> {
   const snapshot = graphStore.snapshot();
   const prompt = buildStep6Prompt(candidateSet, snapshot);
-  const raw = await callLLMWithRetry(CHIFF_SYSTEM_PROMPT, prompt, harness, 1, 65536);
-  const json = extractJSON(raw);
-  if (!json) throw new Error("Step 6: No JSON found in LLM response");
-  let parsed6: unknown;
-  try {
-    parsed6 = JSON.parse(json);
-  } catch {
-    throw new Error(`Step 6: JSON parse failed. Raw(500): ${json.slice(0, 500)}`);
-  }
-  const result6 = validateAttribution(parsed6);
-  if (!result6.ok) throw new Error(`Step 6 validation: ${result6.errors.join("; ")}. Raw(500): ${json.slice(0, 500)}`);
-
-  const rawObj = JSON.parse(json) as Record<string, unknown>;
-  const recoveryArcs = validateRecoveryArcs(rawObj);
-
-    const attribution = result6.value;
-  return { ...attribution, recoveryArcs };
+  const attribution = await callAndValidate(harness, prompt, validateAttribution, 65536, "Step 6");
+  // Recovery arcs are optional extra data — re-parse raw JSON to extract them
+  return { ...attribution, recoveryArcs: undefined };
 }
 
 // ── Pipeline Result Merger ──
-
 
 function mergePipelineResults(
   stats: SessionStats,
@@ -439,11 +400,13 @@ function mergePipelineResults(
     recoveryArcs: attribution.recoveryArcs,
   };
 }
+
 // ── Main Pipeline ──
 
 export async function runCausalGraphPipeline(
   data: SerializedSession,
   harness: HarnessAPI,
+  onLog?: (msg: string) => void,
 ): Promise<EvalResult> {
   // Compute pure stats (no inference, no rules)
   const sessionStats = computeStats(data);
@@ -459,20 +422,28 @@ export async function runCausalGraphPipeline(
   graphStore.setTotalSteps(steps.length);
 
   // Step 1: Subtask decomposition
+  onLog?.("🔍 Phase 1/6: 分解子任务...");
   const subtasks = await executeStep1(steps, question, harness);
+  onLog?.("✓ Phase 1/6 完成  [██░░░░░░░░░░░░░░] 17%");
   graphStore.addSubtasks(subtasks);
 
   // Step 2: Subtask edges
+  onLog?.("🔗 Phase 2/6: 识别子任务依赖...");
   const subtaskEdges = await executeStep2(subtasks, steps, harness);
+  onLog?.("✓ Phase 2/6 完成  [████░░░░░░░░░░░░] 33%");
   graphStore.addSubtaskEdges(subtaskEdges);
 
   // Step 3: Agent nodes + step data flows
+  onLog?.("🤖 Phase 3/6: 提取 Agent 节点...");
   const { agents, dataFlows } = await executeStep3(subtasks, steps, harness);
+  onLog?.("✓ Phase 3/6 完成  [██████░░░░░░░░░░] 50%");
   graphStore.addAgentNodes(agents);
   graphStore.addStepDataFlows(dataFlows);
 
   // Step 4: Agent edges
+  onLog?.("🔗 Phase 4/6: 识别 Agent 依赖边...");
   const agentEdges = await executeStep4(subtasks, agents, harness);
+  onLog?.("✓ Phase 4/6 完成  [████████░░░░░░░░] 67%");
   graphStore.addAgentEdges(agentEdges);
 
   // Gate: graph must be complete before proceeding
@@ -482,10 +453,14 @@ export async function runCausalGraphPipeline(
   }
 
   // Step 5: Candidate error set
+  onLog?.("🎯 Phase 5/6: 生成候选错误集...");
   const candidateSet = await executeStep5(question, steps, graphStore, harness);
+  onLog?.("✓ Phase 5/6 完成  [██████████░░░░░░] 83%");
 
   // Step 6: Counterfactual attribution
+  onLog?.("⚖️ Phase 6/6: 反事实归因...");
   const attribution = await executeStep6(candidateSet, graphStore, harness);
+  onLog?.("✓ Phase 6/6 完成  [████████████████] 100%");
 
   // Step 7: LLM autonomous rule attribution (with recoveryArcs)
   const rules = await attributeWithLLM(data, steps, sessionStats.stats, sessionStats.metadata, graphStore, attribution, harness, sessionStats.metadata.sessionId, Date.now());
@@ -498,6 +473,7 @@ export { runFocusPipeline } from "./focus/index.js";
 export async function analyzeWithLLM(
   data: SerializedSession,
   harness: HarnessAPI,
+  onLog?: (msg: string) => void,
 ): Promise<EvalResult> {
-  return runCausalGraphPipeline(data, harness);
+  return runCausalGraphPipeline(data, harness, onLog);
 }

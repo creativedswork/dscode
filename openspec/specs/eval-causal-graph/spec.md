@@ -2,7 +2,7 @@
 
 ## Purpose
 
-基于 CHIFF（From Flat Logs to Causal Graphs）方法论的 session 因果图分析引擎。将 dscode session 日志从扁平消息序列转换为结构化的因果图（包含子任务分解、Agent OTAR 节点、数据流边、Agent 依赖边），并通过反事实推理（Rule1/2/3）定位单一根因。
+基于 CHIFF（From Flat Logs to Causal Graphs）方法论的 session 因果图分析引擎。将 dscode session 日志从扁平消息序列转换为结构化的因果图（包含子任务分解、Agent OTAR 节点、数据流边、Agent 依赖边），并通过反事实推理（Rule1/2/3/4）定位单一根因。支持 Completion-based 快速路径（<500 steps）和 Agent-based Focus 路径（≥500 steps）。
 
 ## ADDED Requirements
 
@@ -40,22 +40,53 @@ Each `HistoryStep` SHALL contain:
 - **WHEN** an assistant message has `toolCall` blocks but no `thinking` block
 - **THEN** `thought` SHALL be set to the assistant's text response (first 200 characters) or empty string if none exists
 
+### Requirement: Adaptive Pipeline Path Selection
+
+The system SHALL select between the Agent-based focus pipeline and the completion-based fast path based on session step count.
+
+When `steps.length >= FOCUS_PATH_THRESHOLD` (default 500):
+- The system SHALL use the Agent-based pipeline (`runFocusPipeline`)
+- The system SHALL first write the workspace to `~/.dscode/eval/{sessionId}/library/`
+- Each CHIFF Pass SHALL spawn an independent Agent session with file system tools
+- The system SHALL display Phase progress during Agent execution
+
+When `steps.length < FOCUS_PATH_THRESHOLD`:
+- The system SHALL use the completion-based pipeline (`runCausalGraphPipeline`)
+- The system SHALL NOT create a workspace directory
+- Behavior SHALL be identical to the fast path
+
+#### Scenario: Large session triggers Agent path
+
+- **WHEN** `/eval` is run on a session with 800 steps
+- **THEN** the system SHALL select the Agent-based focus pipeline
+- **AND** SHALL create `~/.dscode/eval/{sessionId}/` with library/, notebook/, output/
+- **AND** SHALL display Phase progress (Phase 0/4 → 1/4 → 2/4 → 3/4 → 4/4)
+
+#### Scenario: Small session uses fast path
+
+- **WHEN** `/eval` is run on a session with 200 steps
+- **THEN** the system SHALL select `runCausalGraphPipeline`
+- **AND** SHALL NOT create a workspace directory
+
 ### Requirement: Step 1 — Subtask Decomposition (LLM)
 
 The system SHALL call an LLM to decompose the session into a sequence of subtasks. The LLM prompt SHALL include:
 - The session question/title
 - A summary of history steps (stepId, agent, action, thought first 100 chars)
-- Instruction to output subtasks with: name, step range (inclusive), oracle (goal + preconditions + key evidence + acceptance criteria), and loop info (is_loop_related, loop_role, reversibility, risk_score)
+- Instruction to output subtasks with: name, step range (inclusive), oracle (goal + preconditions + key evidence + acceptance criteria), loop info (is_loop_related, loop_role, reversibility, risk_score), and **phaseStatus** ("ok" | "warn" | "danger" — derived from error/complaint presence in the subtask's step range)
 
-The LLM output SHALL be parsed as JSON and validated against the `Subtask[]` schema. Each subtask SHALL have a unique ID ("S1", "S2", ...). Step ranges MUST cover all steps from 0 to N-1, be non-overlapping, and be contiguous.
+The LLM output SHALL be parsed as JSON and validated against the `Subtask[]` schema. Each subtask SHALL have a unique ID ("S1", "S2", ...). Step ranges MUST cover all steps from 0 to N-1, be non-overlapping, and be contiguous. The subtask array SHALL serve as the **sole source** of phase information for the eval dashboard.
 
-The oracle field SHALL be structured as `{ goal, preconditions[], key_evidence[], acceptance_criteria[] }` — an upgrade from CHIFF's original one-line oracle.
+The oracle field SHALL be structured as `{ goal, preconditions[], key_evidence[], acceptance_criteria[] }`.
+
+When `onLog` callback is provided, the system SHALL call `onLog("🔍 Phase 1/6: 分解子任务...")` before the LLM call and `onLog("✓ Phase 1/6 完成")` after successful completion.
 
 #### Scenario: Successful subtask decomposition
 
 - **WHEN** Step 1 LLM call returns valid JSON with subtask array
 - **THEN** subtasks SHALL cover all history steps without gaps or overlaps
-- **AND** each subtask SHALL have a non-empty name and oracle with at least a goal
+- **AND** each subtask SHALL have a non-empty name, oracle with at least a goal, and phaseStatus
+- **AND** phaseStatus SHALL be "danger" for subtasks containing tool errors or user frustration
 - **AND** loop_info SHALL default to `{ is_loop_related: false, loop_role: "none", reversibility: "reversible", loop_risk_score: 0 }`
 
 #### Scenario: Subtask decomposition with loop detection
@@ -68,7 +99,13 @@ The oracle field SHALL be structured as `{ goal, preconditions[], key_evidence[]
 
 - **WHEN** Step 1 LLM returns text that cannot be parsed as valid JSON matching the Subtask[] schema
 - **THEN** the system SHALL retry once with a correction hint
-- **AND** if retry also fails, SHALL fall back to rule-engine analysis
+- **AND** if retry also fails, SHALL throw an error to the caller
+
+#### Scenario: Progress logged with onLog callback
+
+- **WHEN** `onLog` is provided and Step 1 is about to execute
+- **THEN** `onLog("🔍 Phase 1/6: 分解子任务...")` SHALL be called before the LLM call
+- **AND** `onLog("✓ Phase 1/6 完成")` SHALL be called after successful completion
 
 ### Requirement: Step 2 — Subtask Edges (LLM)
 
@@ -79,35 +116,48 @@ The system SHALL call an LLM to identify edges between adjacent subtasks. The LL
 
 Each `SubtaskEdge` SHALL contain: source subtask ID, target subtask ID, dependency type ("data_dependency" | "logical_prereq"), strength (0.0-1.0), explanation, data_transfer items (upstream outputs → downstream usages with consistency_score), and failure_modes (each with type, description, severity).
 
+When `onLog` callback is provided, the system SHALL call `onLog("🔗 Phase 2/6: 识别子任务依赖...")` before the LLM call and `onLog("✓ Phase 2/6 完成")` after successful completion.
+
 #### Scenario: Edge generation for multi-subtask session
 
 - **WHEN** Step 1 produced 3+ subtasks
 - **THEN** Step 2 SHALL produce exactly N-1 edges connecting adjacent pairs
 - **AND** each edge SHALL have at least one data_transfer item or a logical dependency explanation
 
-### Requirement: Step 3 — Agent Nodes and Step Data Flows (LLM)
+### Requirement: Step 3 — Agent Nodes (Deterministic) and Step Data Flows (LLM)
 
-The system SHALL call an LLM to extract agent nodes (OTAR) and step-level data flows for each subtask. The LLM prompt SHALL include:
-- Subtask definitions
-- History steps within each subtask's range
-- Instruction to output AgentNode[] with OTAR fields and StepDataFlow[] with data item tracking
+The system SHALL construct `AgentNode[]` deterministically from `HistoryStep[]` and `Subtask[]` using `buildAgentNodes(steps, subtasks)` without calling an LLM. Agent node construction SHALL NOT fail for any valid input.
 
-Each `AgentNode` SHALL contain: subtask_id, otar (observation, thought, action, result), and step_ids (list of step indices this agent action covers).
+The system SHALL call an LLM for each subtask individually (divide-and-conquer) to extract step-level data flows. For each subtask, a dedicated prompt SHALL include:
+- The target subtask's step range and detailed agent/action list
+- Brief context of adjacent subtasks (IDs and step ranges) for cross-boundary data flow tracking
+- Instruction to output `StepDataFlow[]` with data item tracking for that subtask ONLY
 
-Each `StepDataFlow` SHALL contain: subtask_id, from_step, to_step, source_agent, target_agent, data_item, data_type, transformation, correctness ("correct" | "misinterpreted" | "misused" | "fabricated"), and confidence (0.0-1.0).
+Each `AgentNode` SHALL contain: subtaskId, agent, otar (observation, thought, action, result), and stepIds (list of step indices this agent action covers). Agent nodes SHALL be constructed from `HistoryStep` fields directly without LLM summarization.
 
-#### Scenario: OTAR extraction for tool-call session
+Each `StepDataFlow` SHALL contain: subtaskId, fromStep, toStep, sourceAgent, targetAgent, dataItem, dataType, transformation, correctness ("correct" | "misinterpreted" | "misused" | "fabricated"), and confidence (0.0-1.0).
 
-- **WHEN** the session has clear thinking→toolCall→toolResult sequences
-- **THEN** each `AgentNode.otar` SHALL map thinking→thought, toolCall→action, toolResult→result
-- **AND** `agent` SHALL be the tool name
+`executeStep3` SHALL return `{ agents, dataFlows }` where agents come from `buildAgentNodes()` and dataFlows are aggregated from per-subtask LLM calls. If an individual subtask's LLM call fails, the subtask SHALL be skipped with a warning and processing SHALL continue.
 
-#### Scenario: Data flow between steps
+When `onLog` callback is provided, the system SHALL call `onLog("🤖 Phase 3/6: 提取 Agent 节点...")` before processing and `onLog("✓ Phase 3/6 完成")` after successful completion.
 
-- **WHEN** step 5 reads a file and step 8 modifies the same file
-- **THEN** a `StepDataFlow` SHALL be created with from_step=5, to_step=8
-- **AND** `data_item` SHALL be the file path
-- **AND** `correctness` SHALL be "correct" if the file content was used correctly
+#### Scenario: Agent node construction without LLM
+
+- **WHEN** Step 1 has produced subtasks with valid step ranges and Step 2 has completed
+- **THEN** agent nodes SHALL be built deterministically from `HistoryStep[]` without an LLM call
+- **AND** each `AgentNode.otar` SHALL map directly from the corresponding `HistoryStep` fields
+
+#### Scenario: Divide-and-conquer data flow extraction
+
+- **WHEN** Step 1 produced N subtasks (e.g., N=8)
+- **THEN** the system SHALL make N separate LLM calls, one per subtask, each with maxTokens=4096
+- **AND** the aggregated `dataFlows` SHALL be the union of all successful per-subtask results
+
+#### Scenario: Graceful degradation on per-subtask failure
+
+- **WHEN** a single subtask's LLM call fails
+- **THEN** the system SHALL log a warning identifying the failed subtask
+- **AND** the system SHALL continue processing remaining subtasks
 
 ### Requirement: Step 4 — Agent Edges (LLM)
 
@@ -116,6 +166,8 @@ The system SHALL call an LLM to identify dependency edges between agents within 
 - Instruction to output agent edges with dependency type and failure modes
 
 Each `AgentEdge` SHALL contain: subtask_id, source agent, target agent, dependency type (one of: "obs_dependency", "reasoning_continuation", "decision_dependency", "environment_feedback", "memory_ref", "loop_control"), strength, explanation, and failure_modes.
+
+When `onLog` callback is provided, the system SHALL call `onLog("🔗 Phase 4/6: 识别 Agent 依赖边...")` before the LLM call and `onLog("✓ Phase 4/6 完成")` after successful completion.
 
 #### Scenario: Agent dependency detection
 
@@ -132,7 +184,7 @@ After assembly, `isGraphComplete()` SHALL verify:
 - Every subtask has at least one AgentNode
 - Every adjacent subtask pair has a SubtaskEdge
 
-If `isGraphComplete()` returns false, the system SHALL NOT proceed to Step 5 and SHALL fall back to rule-engine analysis.
+If `isGraphComplete()` returns false, the system SHALL throw an error to the caller.
 
 #### Scenario: Graph completeness validation
 
@@ -140,11 +192,10 @@ If `isGraphComplete()` returns false, the system SHALL NOT proceed to Step 5 and
 - **THEN** `isGraphComplete()` SHALL return true only if all coverage checks pass
 - **AND** `validateCoverage()` SHALL return an empty array on success
 
-#### Scenario: Incomplete graph prevents backtrack phase
+#### Scenario: Incomplete graph throws error
 
 - **WHEN** `isGraphComplete()` returns false (e.g., a subtask has no agent nodes)
-- **THEN** the system SHALL NOT call Step 5 LLM
-- **AND** SHALL fall back to rule-engine analysis
+- **THEN** the system SHALL throw an error
 
 ### Requirement: Step 5 — Candidate Error Set (LLM)
 
@@ -153,19 +204,24 @@ The system SHALL call an LLM to generate a candidate error set from the causal g
 - The original question and history summary
 - Instruction to output at least 5 candidate error steps
 
-Each `CandidateStep` SHALL contain: step_id, agents_in_step, in_loop, loop_role, data_issue, data_item, source_step, irrecoverable, irrecoverable_reason, affected_steps, impact_score, confidence.
+Each `CandidateStep` SHALL contain: step_id, agents_in_step, in_loop, loop_role, data_issue, data_item, source_step, irrecoverable, irrecoverable_reason, affected_steps, impact_score, confidence, and **deviationDescription** (a human-readable description of what went wrong at this step, suitable for display in the dashboard deviations section).
 
 The system SHALL enforce that the candidate set contains at least 5 steps. If the LLM returns fewer, the system SHALL retry with a "need at least 5 candidates" hint.
 
-#### Scenario: Candidate set generation
+The candidate error set SHALL serve as the **sole source** of deviation information for the eval dashboard.
+
+When `onLog` callback is provided, the system SHALL call `onLog("🎯 Phase 5/6: 生成候选错误集...")` before the LLM call and `onLog("✓ Phase 5/6 完成")` after successful completion.
+
+#### Scenario: Candidate set generation with deviation descriptions
 
 - **WHEN** Step 5 LLM is called with a complete causal graph
 - **THEN** the output SHALL contain a `CandidateSet` with at least 5 candidate steps
+- **AND** each candidate SHALL include a `deviationDescription` summarizing the issue
 - **AND** candidates SHALL be ranked by impact_score descending
 
 ### Requirement: Step 6 — Counterfactual Root Cause Attribution (LLM)
 
-The system SHALL call an LLM to determine the single root cause from the candidate set using three counterfactual rules:
+The system SHALL call an LLM to determine the single root cause from the candidate set using four counterfactual rules:
 
 **Rule 1 (Control Flow / Loop)**: If a loop is involved, determine whether the loop was justified. If not, attribute to the decision to enter the loop. If yes, attribute to the irreversible action within or after the loop.
 
@@ -173,7 +229,15 @@ The system SHALL call an LLM to determine the single root cause from the candida
 
 **Rule 3 (Irrecoverable Point)**: Attribute to the FIRST node that made the correct path unrecoverable by normal means, not necessarily the first deviating node.
 
-The LLM SHALL output an `Attribution` with: mistake_agent, mistake_step, reason, and rules_applied (list of "Rule1"/"Rule2"/"Rule3").
+**Rule 4 (Taste / Creative Drift)**: Attribute to the step where the agent chose a generic, templated, or visually degraded approach instead of the distinctive, intentional, tasteful output dscode is designed to produce.
+
+**Recovery Arc Detection**: After determining the root cause, the LLM SHALL also scan the session history for recovery arcs — instances where an error was detected and subsequently corrected by the agent. For each recovered error, the LLM SHALL identify the error event, detection event, correction event, and assess whether the correction was effective.
+
+The LLM SHALL output an `Attribution` with: mistake_agent, mistake_step, reason, rules_applied (list of "Rule1"/"Rule2"/"Rule3"/"Rule4"), **rootCauseTitle** + **rootCauseSeverity** ("primary" | "secondary"), and optionally **recoveryArcs** (array of `RecoveryArc` objects).
+
+Each `RecoveryArc` SHALL contain: errorStep, errorAgent, errorSummary, detectionStep, detectionType, correctionStep, correctionAgent, correctionSummary, effective, stepsToRecover, misdiagnosisCount.
+
+When `onLog` callback is provided, the system SHALL call `onLog("⚖️ Phase 6/6: 反事实归因...")` before the LLM call and `onLog("✓ Phase 6/6 完成")` after successful completion.
 
 #### Scenario: Root cause attributed via Rule 2
 
@@ -181,6 +245,7 @@ The LLM SHALL output an `Attribution` with: mistake_agent, mistake_step, reason,
 - **THEN** `mistake_agent` SHALL be "write_file"
 - **AND** `rules_applied` SHALL include "Rule2"
 - **AND** `reason` SHALL describe the data misinterpretation
+- **AND** `rootCauseTitle` SHALL be a concise summary suitable for dashboard display
 
 #### Scenario: Root cause attributed via Rule 3
 
@@ -193,84 +258,74 @@ The LLM SHALL output an `Attribution` with: mistake_agent, mistake_step, reason,
 
 - **WHEN** Step 6 LLM returns an agent name or step number not present in the session
 - **THEN** the system SHALL retry with a correction hint
-- **AND** if retry also fails, SHALL fall back to the highest-impact candidate from Step 5
+- **AND** if retry also fails, SHALL throw an error to the caller
+
+#### Scenario: Recovery arcs present in attribution
+
+- **WHEN** the session contains an error at step 5 that was corrected at step 8 after a test failure at step 6
+- **THEN** `recoveryArcs` SHALL contain at least one `RecoveryArc`
+- **AND** the arc SHALL have errorStep=5, detectionStep=6, correctionStep=8
+- **AND** detectionType SHALL be "test_failure"
+
+#### Scenario: No recovery arcs in session
+
+- **WHEN** no errors in the session were corrected (e.g., all errors persist)
+- **THEN** `recoveryArcs` SHALL be absent or an empty array
 
 ### Requirement: Structured Output Parsing
 
-All LLM responses SHALL be parsed via `extractJSON(text)` to locate a JSON block, then validated against Zod schemas. Parse failures SHALL trigger at most one retry with a format correction hint. Two consecutive failures for any step SHALL cause fallback to rule-engine analysis.
+All LLM responses SHALL be parsed via `extractJSON(text)` to locate a JSON block, then validated against Zod schemas. Parse failures SHALL trigger at most one retry with a format correction hint. Two consecutive failures for any step SHALL throw an error to the caller.
 
-#### Scenario: JSON block extraction from markdown-wrapped response
+### Requirement: Agent-Based Analysis Pipeline (Focus Path)
 
-- **WHEN** the LLM wraps JSON in ```json code fences
-- **THEN** `extractJSON()` SHALL strip the fences and return the pure JSON string
+The system SHALL implement a three-pass Agent pipeline for large sessions (≥500 steps):
 
-#### Scenario: Malformed JSON from LLM
+**Pass 1 — SCAN Agent**: 
+- System prompt SHALL define the Agent as a session scanner
+- Task prompt SHALL instruct the Agent to explore `library/` and identify 3-5 attention zones
+- The Agent SHALL have access to `read_file`, `grep`, `glob`, `write_file` tools
+- The Agent SHALL write structured output to `output/scan-result.json`
+- The Agent MAY write analysis notes to `notebook/scan-notes.md`
 
-- **WHEN** the LLM returns text without valid JSON
-- **THEN** the system SHALL retry once with hint "Output must be valid JSON matching the specified schema, without markdown wrapping or additional text"
-- **AND** if retry fails, SHALL fall back
+**Pass 2 — ZOOM Agent** (one per attention zone):
+- System prompt SHALL define the Agent as a causal graph analyst
+- Task prompt SHALL instruct the Agent to deep-dive a specific zone's steps
+- The Agent SHALL write structured output to `output/zone-{id}-result.json`
 
-### Requirement: Progress Reporting
+**Pass 3 — SYNTHESIZE Agent**:
+- System prompt SHALL define the Agent as a cross-zone synthesizer
+- The Agent SHALL write structured output to `output/attribution.json`
 
-The system SHALL report progress to the UI during the 8-step analysis pipeline. Each step (0-8) SHALL display a message: "Step X/8: <step_description>...". Step 0 (deterministic parsing and stats) SHALL complete immediately and display initial statistics. Steps 1-6 SHALL be LLM calls (with retry). Steps 7-8 SHALL be deterministic (no LLM). Steps 7-8 SHALL NOT report individual progress messages (they complete near-instantly).
+#### Scenario: Three-pass Agent pipeline execution
 
-#### Scenario: Progress during analysis
+- **WHEN** `runFocusPipeline` is called for a large session
+- **THEN** the system SHALL execute Pass 1 SCAN Agent, wait for completion, and parse `output/scan-result.json`
+- **AND** for each zone, execute a Pass 2 ZOOM Agent
+- **AND** after all zones, execute Pass 3 SYNTHESIZE Agent
+- **AND** compose the final `EvalResult` from the structured outputs
 
-- **WHEN** `/eval` is invoked on a valid session
-- **THEN** the UI SHALL show "正在解析 session..." for Step 0
-- **AND** then "Step 1/8: 分解子任务..." through "Step 6/8: 反事实根因裁决..."
-- **AND** Steps 7-8 SHALL complete silently (no separate progress message needed)
+### Requirement: Pipeline Output Consistency
 
-### Requirement: Step 7 — Rule Abstraction (deterministic)
+The Agent-based focus pipeline SHALL produce `EvalResult` output that is structurally identical to the completion-based pipeline.
 
-After Step 6 attribution is complete, the system SHALL execute Step 7: Rule Abstraction. This step SHALL be deterministic (no LLM call) and SHALL map the CHIFF causal graph (`CausalGraphStore` snapshot) and `Attribution` to a set of `HarnessRule` IDs from the pre-defined catalog, as specified in `harness-rule-extraction`.
+#### Scenario: Agent pipeline produces valid EvalResult
 
-The step SHALL also execute all registered statistical and behavioral detectors against the session data (tool call stats, message patterns, phase info) to trigger additional rules beyond those linked to CHIFF attribution.
+- **WHEN** the Agent-based pipeline completes successfully
+- **THEN** `composeEvalResult` SHALL produce an `EvalResult` with all required fields
+- **AND** the result SHALL pass the same validation as the completion-based pipeline
 
-#### Scenario: Step 7 runs after successful Step 6
+### Requirement: Pipeline Fallback on Agent Failure
 
-- **WHEN** CHIFF Steps 1-6 complete successfully and produce an `Attribution`
-- **THEN** Step 7 SHALL execute `extractRules(causalGraph, attribution, stats)`
-- **AND** produce a `HarnessRule[]` array
-- **AND** the array SHALL include rules linked to the attribution (e.g., R_IRRECOVERABLE_ACTION for Rule3)
+The system SHALL return a partial EvalResult with `agentFailed: true` annotation if the Agent-based pipeline encounters an unrecoverable error. The system SHALL NOT throw — it SHALL always return a valid EvalResult structure.
 
-#### Scenario: Step 7 runs on rule-engine fallback
+#### Scenario: Workspace creation fails
 
-- **WHEN** the pipeline falls back to rule-engine mode before Step 6
-- **THEN** Step 7 SHALL still execute with `attribution = null`
-- **AND** SHALL run all non-attribution-dependent detectors (statistical, behavioral)
-- **AND** produce rules that can be detected without CHIFF attribution
+- **WHEN** the system cannot create `~/.dscode/eval/{sessionId}/` (e.g., disk full, permission denied)
+- **THEN** the system SHALL log a warning
+- **AND** SHALL fall back to `runCausalGraphPipeline` if session <500 steps; if ≥500 steps, return a partial EvalResult with `agentFailed: true`
 
-### Requirement: Step 8 — Rule Deduplication and Merging (deterministic)
+#### Scenario: All Agent passes exceed maxToolCalls
 
-After Step 7 extraction, the system SHALL execute Step 8: Rule Deduplication and Merging. This step SHALL load the existing `RuleStore` from `~/.dscode/eval/rules.json`, call `mergeRules(existing, new)`, and save the merged result back to the store. This step SHALL be deterministic (pure TypeScript data merge, no LLM).
-
-#### Scenario: New rules merged with existing store
-
-- **WHEN** Step 7 produces `[R_BASH_OVERUSE, R_DATA_MISINTERPRET]` and the store already has `R_BASH_OVERUSE` with 2 evidence entries
-- **THEN** the merged store SHALL have `R_BASH_OVERUSE` with 3 evidence entries
-- **AND** `R_DATA_MISINTERPRET` SHALL be added as a new rule
-- **AND** the store SHALL be written to `rules.json`
-
-#### Scenario: No new rules triggered
-
-- **WHEN** Step 7 produces an empty `HarnessRule[]`
-- **THEN** Step 8 SHALL still load and save the store (preserving existing rules)
-- **AND** no rules SHALL be added or modified
-
-### Requirement: EvalResult uses rules instead of suggestions
-
-The `EvalResult` interface SHALL replace `suggestions: string[]` with `rules: HarnessRule[]`. The `mergePipelineResults` function SHALL populate `EvalResult.rules` from the merged Rule Store after Step 8. The output SHALL include all rules currently in the store (both newly triggered and pre-existing), allowing the dashboard to show the complete rule state.
-
-#### Scenario: EvalResult contains rules after pipeline
-
-- **WHEN** `runCausalGraphPipeline` completes successfully
-- **THEN** `EvalResult.rules` SHALL be a `HarnessRule[]`
-- **AND** `EvalResult.suggestions` SHALL NOT exist (removed from interface)
-- **AND** rules SHALL include both newly triggered and pre-existing rules from the store
-
-#### Scenario: EvalResult on fallback contains rules
-
-- **WHEN** the pipeline falls back to rule engine
-- **THEN** `EvalResult.rules` SHALL still be populated from the merged store
-- **AND** `EvalResult.analysisMode` SHALL remain `"rule"`
+- **WHEN** all three Agent passes fail to produce valid output
+- **THEN** the system SHALL return a partial EvalResult with `agentFailed: true`
+- **AND** the dashboard SHALL display "Agent 分析失败（已返回部分结果）"

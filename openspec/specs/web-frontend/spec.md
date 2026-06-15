@@ -198,200 +198,36 @@ The frontend SHALL support attaching images to messages via paste from clipboard
 
 #### Scenario: Paste image from clipboard
 - **WHEN** user pastes image data (Ctrl+V / Cmd+V) while input is focused
-- **THEN** the image is attached to the pending message and shown as a thumbnail with `border-radius: 8px` and `1px solid` border
 
-#### Scenario: Remove attached image
-- **WHEN** user clicks the remove button on an attached image thumbnail
-- **THEN** the image is removed from the pending message
+### Requirement: Session list shows running indicator
+The session list in the sidebar SHALL render a rotating spinner icon for the session that is currently active and processing. The indicator SHALL be driven by `isProcessing` and `currentSessionId` from the `sessions` server event.
 
-### Requirement: Permission dialog
-The frontend SHALL display a flat modal dialog when the server requests tool execution permission, with warm-toned styling that feels advisory rather than alarming.
+#### Scenario: Running indicator visible
+- **WHEN** the frontend receives a `sessions` event with `currentSessionId: "A"`, `isProcessing: true`, and session A is in the list
+- **THEN** session A's row in the sidebar renders a `<Spinner>` icon from Phosphor Icons with CSS rotation animation, opacity 0.6, using `var(--color-accent)` color
 
-### Requirement: Session list sidebar
-The frontend SHALL display a session list in the sidebar under the "Sessions" tab, showing saved conversation sessions sorted by most recently updated. The session list SHALL be contained in a scrollable area within the sidebar content panel. Each session entry SHALL display the session title, last updated date, and message count. The currently active session SHALL be visually highlighted.
+#### Scenario: Running indicator not visible on idle
+- **WHEN** the frontend receives a `sessions` event with `isProcessing: false`
+- **THEN** no session row shows the spinner icon
 
-#### Scenario: Session list displays saved sessions
-- **WHEN** the "Sessions" tab is active and sessions have been loaded from the server
-- **THEN** the sidebar displays a scrollable list of session entries, each showing title, date, and message count
+#### Scenario: Running indicator scoped to current session only
+- **WHEN** `currentSessionId` is "A" and `isProcessing` is true
+- **THEN** only session A's row shows the spinner; other session rows (B, C) do not
 
-#### Scenario: Active session is highlighted
-- **WHEN** a session ID matches `currentSessionId`
-- **THEN** that session entry has a distinct background color (`var(--color-accent-bg)`) to indicate it is the active session
+### Requirement: clear_conversation resets processing state
+The frontend event handler for `clear_conversation` SHALL defensively reset the `processing` state to `false` to ensure the Stop button reverts to Send and the input field becomes enabled, regardless of server event ordering.
 
-#### Scenario: Session list scroll position preserved across data refreshes
-- **WHEN** the server pushes a `sessions` event while the sessions tab is active
-- **THEN** the session list scroll position does not jump to the top; the user's current scroll view is preserved
+#### Scenario: clear_conversation disables processing
+- **WHEN** the frontend processes a `clear_conversation` event
+- **THEN** `processing` is set to `false`
 
-#### Scenario: Session list empty state
-- **WHEN** no sessions exist for the current project
-- **THEN** the sessions panel displays "No saved sessions" in muted text
+### Requirement: currentSessionId tracked from sessions event
+The frontend SHALL store the `currentSessionId` received from each `sessions` event and use it as the canonical active session identifier for UI highlighting and running indicator rendering.
 
-#### Scenario: New session button
-- **WHEN** the user clicks the "New Session" button in the sessions panel
-- **THEN** a `/reset` command is sent to the server, starting a fresh conversation
+#### Scenario: currentSessionId updated on sessions event
+- **WHEN** the frontend receives a `sessions` event with `currentSessionId: "X"`
+- **THEN** `currentSessionId` state is set to `"X"`
 
-#### Scenario: Permission prompt appears
-- **WHEN** server sends a `permission_prompt` event
-- **THEN** a flat modal dialog appears with warm surface background, `border-radius: 12px`, `1px solid` border, and muted amber warning styling (not bright yellow), showing the tool name and a preview
-
-#### Scenario: User allows once
-- **WHEN** user clicks "Allow" on the permission dialog
-- **THEN** a `permission` command with `decision: "allow"` is sent and the dialog closes
-
-#### Scenario: User always allows
-- **WHEN** user clicks "Always Allow" on the permission dialog
-- **THEN** a `permission` command with `decision: "always_allow"` is sent and the dialog closes
-
-#### Scenario: User denies
-- **WHEN** user clicks "Deny" on the permission dialog
-- **THEN** a `permission` command with `decision: "deny"` is sent and the dialog closes
-
-### Requirement: Sidebar with sessions and tools
-The frontend SHALL provide a collapsible sidebar with flat warm-toned surfaces, `1px solid` borders, and a single amber accent for active indicators.
-
-#### Scenario: Sidebar styling
-- **WHEN** the sidebar is rendered
-- **THEN** it uses a warm surface background, `border-right: 1px solid var(--color-border)` as the separator, and a subtle amber underline for active tab — no shadows, no gradients
-
-#### Scenario: Session list
-- **WHEN** user opens the sidebar sessions panel
-- **THEN** all saved sessions are listed with flat card styling (`border-radius: 8px`, `1px solid` border on hover)
-
-#### Scenario: Save current session
-- **WHEN** user clicks "Save" in the session panel
-- **THEN** the current session is saved and appears in the list
-
-#### Scenario: Load a session
-- **WHEN** user clicks on a saved session
-- **THEN** that session is loaded and the conversation view updates
-
-#### Scenario: Delete a session
-- **WHEN** user clicks delete on a session
-- **THEN** the session is removed after confirmation
-
-### Requirement: MCP browser panel
-The frontend SHALL provide a panel to browse connected MCP servers and their tools using warm flat styling. Each server entry SHALL display a Connect or Disconnect button depending on its current connection status, allowing users to control per-server MCP connections without leaving the sidebar.
-
-#### Scenario: Server list display
-- **WHEN** user opens the MCP browser panel
-- **THEN** all configured MCP servers are listed with flat warm-toned cards and muted pastel status indicators
-
-#### Scenario: Tool list for a server
-- **WHEN** user clicks on an MCP server
-- **THEN** the tools provided by that server are displayed in monospace with warm muted styling
-
-#### Scenario: Connect button for disconnected server
-- **WHEN** an MCP server has status `"disconnected"` or `"error"`
-- **THEN** a "Connect" button is displayed next to the server entry, and clicking it sends `{"type":"mcp","action":"connect","serverName":"<name>"}`
-
-#### Scenario: Disconnect button for connected server
-- **WHEN** an MCP server has status `"connected"` or `"connecting"`
-- **THEN** a "Disconnect" button is displayed next to the server entry, and clicking it sends `{"type":"mcp","action":"disconnect","serverName":"<name>"}`
-
-#### Scenario: Refresh button
-- **WHEN** the user clicks the global Refresh button
-- **THEN** server refreshes all MCP tool lists and pushes updated `mcp_state`
-
-#### Scenario: State auto-update
-- **WHEN** the server pushes `mcp_state` unsolicited (after init, connect, or disconnect)
-- **THEN** the MCP panel updates its displayed server states without user action
-
-### Requirement: Configuration panel
-The frontend SHALL provide a settings panel with flat warm-toned form controls and consistent spacing. The vision model configuration section SHALL be conditionally rendered: hidden with an "Add Vision Model" button when no vision model is configured, fully visible with a "Delete" action when configured.
-
-#### Scenario: Settings panel styling
-- **WHEN** the settings panel is rendered
-- **THEN** form inputs and selects use `border-radius: 8px`, `border: 1px solid var(--color-border)`, warm surface background, and amber accent on focus — no shadows, no gradients
-
-#### Scenario: Model switching
-- **WHEN** user selects a different model from the dropdown
-- **THEN** a `config` command is sent with the new model ID
-
-#### Scenario: Thinking level adjustment
-- **WHEN** user selects a thinking level
-- **THEN** a `config` command is sent with the new thinking level
-
-#### Scenario: API key management
-- **WHEN** user enters and saves a new API key
-- **THEN** a `config` command is sent and the key is stored
-
-#### Scenario: Vision model not configured
-- **WHEN** `config.vision` is `undefined` or `null`
-- **THEN** the settings panel does NOT display vision provider, model, or key form fields; instead an "Add Vision Model" button is shown below the main model settings section
-
-#### Scenario: Vision model add button
-- **WHEN** the user clicks the "Add Vision Model" button
-- **THEN** a local form for vision provider, model, and key is displayed inline; the add button is hidden
-
-#### Scenario: Vision model configured
-- **WHEN** `config.vision` is set to `{ provider, model, key? }`
-- **THEN** the settings panel displays the vision provider dropdown, model dropdown, and key input with current values, plus a "Delete" button below the key input styled in error color
-
-#### Scenario: Vision model delete
-- **WHEN** the user clicks the "Delete" button in the vision config section
-- **THEN** a `set_vision_delete` config command is sent; on receiving the updated config, the UI returns to the "Add Vision Model" button state
-
-### Requirement: Responsive layout
-The frontend SHALL adapt to different screen sizes while maintaining the warm flat design language at all breakpoints.
-
-#### Scenario: Desktop layout
-- **WHEN** viewport width is >= 768px
-- **THEN** sidebar is visible by default alongside the main conversation area, separated by a `1px solid` border
-
-#### Scenario: Mobile layout
-- **WHEN** viewport width is < 768px
-- **THEN** sidebar is hidden and accessible via a hamburger menu button
-
-### Requirement: Connection status indicator
-The frontend SHALL display the WebSocket connection status using warm-toned muted pastel indicators.
-
-#### Scenario: Connected state
-- **WHEN** WebSocket connection is active
-- **THEN** a status indicator shows "Connected" using the muted pastel green token
-
-#### Scenario: Disconnected state with reconnection
-- **WHEN** WebSocket connection drops
-- **THEN** a status indicator shows "Reconnecting..." using the muted pastel red token
-
-### Requirement: Error handling and display
-The frontend SHALL display system errors and info messages as flat toast notifications with warm-toned styling.
-
-#### Scenario: Info toast
-- **WHEN** server sends an `info` event
-- **THEN** a flat warm-toned toast notification appears (no shadow, `1px solid` border, `border-radius: 8px`) and auto-dismisses after 3 seconds
-
-#### Scenario: Error toast
-- **WHEN** server sends an `error` event
-- **THEN** a flat error toast appears with muted pastel red background and remains until dismissed
-
-### Requirement: Empty state
-The frontend SHALL display a warm, welcoming empty state when no messages are present.
-
-#### Scenario: Empty conversation
-- **WHEN** the conversation has no messages
-- **THEN** a centered welcome card appears with flat warm styling (`border-radius: 12px`, `1px solid` border, warm surface background), a greeting in proportional font, and helpful hints in muted text
-
-### Requirement: Subtle message animations
-The frontend SHALL use quiet, restrained animations for message appearance. All animations MUST honor `prefers-reduced-motion`.
-
-#### Scenario: New message animation
-- **WHEN** a new message bubble is added to the conversation
-- **THEN** it fades in with `opacity: 0 → 1` and `translateY(12px → 0)` over 600ms, disabled entirely under `prefers-reduced-motion: reduce`
-
-#### Scenario: Tool card expansion
-- **WHEN** a tool card is expanded or collapsed
-- **THEN** the content area transitions smoothly over 200ms
-
-## MODIFIED Requirements
-
-### Requirement: Config event handling
-
-The frontend SHALL handle `config` events from the server in its `handleEvent` switch, updating the local config state so that all config changes (including project path, API key, vision settings, and MCP servers) are immediately reflected in the UI.
-
-#### Scenario: Config event updates local state
-- **WHEN** the server broadcasts a `config` event (triggered by ConfigWatch.onChange via onConfigChange)
-- **THEN** the `handleEvent` switch matches `case "config":` and calls `setConfig(event.data)`
-
-#### Scenario: Project path change reflected immediately
-- **WHEN** the project path is changed via `set_project_path` config action or `/config cwd` slash command
-- **THEN** the frontend receives a `config` event and the sidebar/settings panel updates to show the new project path without requiring a page refresh
+#### Scenario: currentSessionId cleared on null
+- **WHEN** the frontend receives a `sessions` event without a `currentSessionId` field
+- **THEN** `currentSessionId` state is set to `null`
