@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
 import { useResizablePanel } from "../hooks/useResizablePanel";
 import type { SessionInfo, McpServerInfo, ConfigData } from "../types";
-import { X, Trash, CaretDown, CaretRight, Plus } from "@phosphor-icons/react";
+import { X, Trash, CaretDown, CaretRight, Plus, Spinner } from "@phosphor-icons/react";
 
 interface SidebarProps {
   open: boolean;
@@ -17,7 +17,7 @@ interface SidebarProps {
   onMcpServerAction: (action: "connect" | "disconnect", serverName: string) => void;
   onConfigChange: (action: string, value: string) => void;
   onNewSession: () => void;
-}
+  isProcessing: boolean;}
 
 export function Sidebar({
   open,
@@ -33,7 +33,7 @@ export function Sidebar({
   onConfigChange,
   onNewSession,
   onMcpServerAction,
-}: SidebarProps) {
+  isProcessing,}: SidebarProps) {
   const { width, panelRef, handleProps } = useResizablePanel({
     storageKey: "dscode-sidebar-width",
   });
@@ -135,7 +135,7 @@ export function Sidebar({
               sessions={sessions}
               currentSessionId={currentSessionId}
               onAction={onSessionAction}
-              onNewSession={onNewSession}
+              isProcessing={isProcessing}              onNewSession={onNewSession}
             />
           )}
           {activeTab === "mcp" && (
@@ -164,19 +164,21 @@ function SessionsPanel({
   currentSessionId,
   onAction,
   onNewSession,
+  isProcessing,
 }: {
   sessions: SessionInfo[];
   currentSessionId: string | null;
   onAction: (action: "list" | "save" | "load" | "delete", id?: string) => void;
   onNewSession: () => void;
+  isProcessing: boolean;
 }) {
   return (
     <div className="space-y-3">
       <button
-        onClick={onNewSession}
+        onClick={() => { if (!isProcessing) onNewSession(); }}
         className="w-full text-left px-3 py-1.5 text-sm transition-colors duration-200 flex items-center gap-2"
-        style={{ borderRadius: "8px" }}
-        onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--color-surface-hover)"; }}
+        style={{ borderRadius: "8px", opacity: isProcessing ? 0.4 : 1, pointerEvents: isProcessing ? "none" : "auto" }}
+        onMouseEnter={(e) => { if (!isProcessing) (e.currentTarget as HTMLElement).style.backgroundColor = "var(--color-surface-hover)"; }}
         onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}
       >
         <Plus size={14} weight="bold" style={{ color: "var(--color-accent)" }} />
@@ -194,6 +196,7 @@ function SessionsPanel({
         <div className="space-y-1">
           {sessions.map((s) => {
             const isActive = s.id === currentSessionId;
+            const isDisabled = isProcessing && !isActive;
             return (
             <div
               key={s.id}
@@ -201,27 +204,34 @@ function SessionsPanel({
               style={{
                 borderRadius: "8px",
                 backgroundColor: isActive ? "var(--color-accent-bg)" : "transparent",
+                borderLeft: isActive ? "3px solid var(--color-accent)" : "3px solid transparent",
+                opacity: isDisabled ? 0.4 : 1,
+                pointerEvents: isDisabled ? "none" : "auto",
               }}
               onMouseEnter={(e) => {
-                if (!isActive) (e.currentTarget as HTMLElement).style.backgroundColor = "var(--color-surface-hover)";
+                if (!isActive && !isDisabled) (e.currentTarget as HTMLElement).style.backgroundColor = "var(--color-surface-hover)";
               }}
               onMouseLeave={(e) => {
                 (e.currentTarget as HTMLElement).style.backgroundColor = isActive ? "var(--color-accent-bg)" : "transparent";
               }}
             >
               <button
-                onClick={() => onAction("load", s.id)}
+                onClick={() => { if (!isDisabled) onAction("load", s.id); }}
                 className="flex-1 text-left min-w-0"
               >
-                <div className="text-sm truncate" style={{ color: "var(--color-text)" }}>
+                <div className="text-sm truncate flex items-center gap-1.5" style={{ color: "var(--color-text)" }}>
+                  {isActive && <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: 'var(--color-accent)', flexShrink: 0, display: 'inline-block' }} />}
                   {s.title}
                 </div>
                 <div className="text-xs" style={{ color: "var(--color-text-muted)" }}>
                   {new Date(s.updatedAt).toLocaleDateString()} &middot; {s.messageCount} msgs
                 </div>
               </button>
+              {isActive && isProcessing && (
+                <Spinner size={14} weight="bold" style={{ color: "var(--color-accent)", opacity: 0.6, animation: "spin 1s linear infinite" }} />
+              )}
               <button
-                onClick={() => onAction("delete", s.id)}
+              onClick={() => { if (!isDisabled) onAction("delete", s.id); }}
                 className="opacity-0 group-hover:opacity-100 p-1 rounded transition-all"
                 style={{ color: "var(--color-error-text)" }}
                 title="Delete"

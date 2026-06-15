@@ -166,11 +166,15 @@ describe("SessionManager", () => {
     const session = manager.createSession("p1", "m1");
     manager.persistEmptySession();
 
-    // Should appear in list even with 0 messages
+    // Zero-message sessions are filtered from listSessions() (server adds them back in pushSessionList)
     const sessions = manager.listSessions();
-    expect(sessions.length).toBe(1);
-    expect(sessions[0].id).toBe(session.id);
-    expect(sessions[0].messageCount).toBe(0);
+    expect(sessions.length).toBe(0);
+
+    // But current session metadata should still be accessible
+    const current = manager.getCurrentMetadata();
+    expect(current).not.toBeNull();
+    expect(current!.id).toBe(session.id);
+    expect(current!.messageCount).toBe(0);
   });
 
   it("persistEmptySession should not throw with no current session", () => {

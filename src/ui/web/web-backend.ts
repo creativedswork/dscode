@@ -423,6 +423,7 @@ export class WebUiBackend implements UiBackend {
       client.send({ type: "loader", state: "hide" });
           });
         }
+        break;
       }
 
       case "permission": {
@@ -497,7 +498,7 @@ export class WebUiBackend implements UiBackend {
     }
   }
 
-  private handleSlashCommand(client: WebSocketClient, text: string): void {
+  private async handleSlashCommand(client: WebSocketClient, text: string): Promise<void> {
     try {
 
       
@@ -509,7 +510,7 @@ export class WebUiBackend implements UiBackend {
         this.pendingImages = [];
         // Send as user message then prompt the agent
         client.send({ type: 'user_message', text } as any);
-        this.harness.promptAndSave(text).catch((err: any) => {
+        await this.harness.promptAndSave(text).catch((err: any) => {
           client.send({
             type: 'error',
             text: err instanceof Error ? err.message : String(err),

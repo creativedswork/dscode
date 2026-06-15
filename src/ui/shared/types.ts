@@ -168,7 +168,7 @@ export type ServerEvent =
   | { type: "permission_prompt"; toolName: string; preview: string; fuzzyPattern?: string | null; fuzzyArgDesc?: string | null; llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[] }
   | { type: "loader"; state: "show" | "hide"; text?: string }
   | { type: "config"; data: ConfigData }
-  | { type: "sessions"; data: SessionInfo[]; currentSessionId?: string }
+  | { type: "sessions"; data: SessionInfo[]; currentSessionId?: string; isProcessing?: boolean }
   | { type: "mcp_state"; servers: McpServerInfo[] }
   | { type: "model"; name: string }
   | { type: "slash_result"; text: string }

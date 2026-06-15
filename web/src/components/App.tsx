@@ -82,11 +82,12 @@ export function App() {
         setMessages((prev) => conversationReducer(prev, event));
         break;
       case "assistant_end":
+        setMessages((prev) => conversationReducer(prev, event));
+        break;
       case "clear_conversation":
         setMessages((prev) => conversationReducer(prev, event));
         break;
       case "assistant_start":
-        setProcessing(true);
         break;
       case "info": {
         const txt = event.text;
@@ -108,7 +109,7 @@ export function App() {
           turnStartRef.current = 0;
         }
         break;
-      case "sessions": setSessions((prev) => sessionsEqual(prev, event.data) ? prev : event.data); setCurrentSessionId((event as any).currentSessionId ?? null); break;
+      case "sessions": setSessions((prev) => sessionsEqual(prev, event.data) ? prev : event.data); setCurrentSessionId(event.currentSessionId ?? null); break;
       case "mcp_state": setMcpServers(event.servers); break;
       case "mcp_open_browser": setSidebarOpen(true); setSidebarTab("mcp"); break;
       case "model": setModel(event.name); break;
@@ -173,7 +174,7 @@ export function App() {
         <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} activeTab={sidebarTab} onTabChange={setSidebarTab}
           sessions={sessions} currentSessionId={currentSessionId} mcpServers={mcpServers} config={config}
           onSessionAction={handleSessionAction} onMcpAction={handleMcpAction} onMcpServerAction={handleMcpAction}
-          onConfigChange={handleConfigChange} onNewSession={handleNewSession} />
+          onConfigChange={handleConfigChange} isProcessing={processing} onNewSession={handleNewSession} />
         <main className="flex-1 flex flex-col min-w-0">
           <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} turnStartRef={turnStartRef} permissionPrompt={permissionPrompt} onPermission={handlePermission} />
           <MessageInput onSend={handleSend} onAbort={handleAbort} onSlashCommand={handleSlashCommand} onCommand={handleCommand}

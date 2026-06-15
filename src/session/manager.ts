@@ -82,25 +82,43 @@ export class SessionManager {
   }
 
   createSession(provider: string, modelId: string): SessionMetadata {
-    this.current = {
-      id: ulid(),
-      title: "New session",
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      modelProvider: provider,
-      modelId,
-      messageCount: 0,
-      projectPath: this.projectPath,
-      preview: "",
-      hasImages: false,
-      imageCount: 0,
-    };
+    // Reuse existing empty session if one exists (avoid zero-msg session accumulation)
+    const existing = this.store.list().find((s) => s.messageCount === 0);
+    if (existing) {
+      this.current = {
+        ...existing,
+        updatedAt: Date.now(),
+        modelProvider: provider,
+        modelId,
+      };
+    } else {
+      this.current = {
+        id: ulid(),
+        title: "New session",
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        modelProvider: provider,
+        modelId,
+        messageCount: 0,
+        projectPath: this.projectPath,
+        preview: "",
+        hasImages: false,
+        imageCount: 0,
+      };
+    }
     this._visionMessages = [];
     return this.current;
   }
 
   persistEmptySession(): void {
     if (!this.current) return;
+    // Deduplicate: delete other zero-message sessions in current project
+    const emptySessions = this.store.list().filter(
+      (s) => s.messageCount === 0 && s.id !== this.current!.id,
+    );
+    for (const s of emptySessions) {
+      try { this.store.delete(s.id); } catch { /* best-effort */ }
+    }
     const session: SerializedSession = {
       version: 1,
       metadata: this.current,
@@ -213,7 +231,7 @@ export class SessionManager {
   }
 
   listSessions(): SessionMetadata[] {
-    return this.store.list();
+    return this.store.list().filter((s) => s.messageCount > 0);
   }
 
   listAllSessions(): SessionMetadata[] {
