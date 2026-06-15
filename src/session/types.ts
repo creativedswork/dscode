@@ -25,11 +25,19 @@ export interface VisionMessage {
 
 // --- Session ---
 
+export interface PendingPermission {
+  toolName: string;
+  preview: string;
+  fuzzyPattern?: string | null;
+  permissionArgs?: unknown;
+}
+
 export interface SessionMetadata {
   id: string;
   title: string;
   createdAt: number;
   updatedAt: number;
+  pendingPermission?: PendingPermission;
   modelProvider: string;
   modelId: string;
   messageCount: number;

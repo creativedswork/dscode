@@ -127,17 +127,22 @@ export class SessionManager {
     this.store.save(session);
   }
 
-  saveSession(agent: Agent): void {
+  saveSession(agent: Agent, pendingPermission?: import("../core/types.js").PendingPermission): void {
     if (!this.current) return;
     const messages = agent.state.messages as any[];
     if (messages.length === 0) return;
 
+    // Preserve pendingPermission in metadata only — don't touch messages.
     this.current.updatedAt = Date.now();
     this.current.messageCount = messages.filter((m: any) => m.role === "user" || m.role === "assistant").length;
+    if (pendingPermission !== undefined) {
+      this.current.pendingPermission = pendingPermission;
+    }
 
     if (this.current.title === "New session") {
       const first = messages[0];
       const content = (first as any)?.content;
+
       if (Array.isArray(content)) {
         const textBlock = content.find((b: any) => b.type === "text");
         if (textBlock) {
@@ -192,9 +197,9 @@ export class SessionManager {
     this.store.save(session);
   }
 
-  trySaveSession(agent: Agent): void {
+  trySaveSession(agent: Agent, pendingPermission?: import("../core/types.js").PendingPermission): void {
     try {
-      this.saveSession(agent);
+      this.saveSession(agent, pendingPermission);
     } catch (err) {
       console.error("[session] trySaveSession failed:", err);
     }

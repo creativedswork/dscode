@@ -74,6 +74,7 @@ export class WebUiBackend implements UiBackend {
   private permissionResolve: ((result: PermissionPromptResult) => void) | null = null;
   private currentPermissionTool: string = "";
   private currentPermissionArgs: unknown = null;
+  private currentPermissionPreview: string = "";
 
   // Image state
   private pendingImages: ImageContent[] = [];
@@ -217,6 +218,7 @@ export class WebUiBackend implements UiBackend {
           id: s.id, title: s.title, updatedAt: s.updatedAt, createdAt: s.createdAt,
           messageCount: s.messageCount, modelProvider: s.modelProvider, modelId: s.modelId,
           projectPath: s.projectPath || "", preview: s.preview || "",
+          pendingPermission: s.pendingPermission || undefined,
         })),
       });
     }  }
@@ -262,6 +264,7 @@ export class WebUiBackend implements UiBackend {
       return new Promise<PermissionPromptResult>((resolve) => {
         this.currentPermissionTool = toolName;
         this.currentPermissionArgs = args;
+        this.currentPermissionPreview = preview;
         this.permissionResolve = resolve;
         const fuzzy = deriveFuzzyPattern(toolName);
         const fuzzyArgDesc = describeFuzzyArgPattern(toolName, args);
@@ -420,14 +423,29 @@ export class WebUiBackend implements UiBackend {
 
       case "abort": {
         this.harness.abort();
-        // Resolve any pending permission prompt so the agent doesn't hang
+        // Save pending permission to session metadata before denying,
+        // so the session switch flow can detect and restore it.
         if (this.permissionResolve) {
+          const sm = this.harness.sessionManager;
+          const meta = sm.getCurrentMetadata();
+          if (meta) {
+            const fuzzy = deriveFuzzyPattern(this.currentPermissionTool);
+            meta.pendingPermission = {
+              toolName: this.currentPermissionTool,
+              preview: this.currentPermissionPreview,
+              fuzzyPattern: fuzzy,
+              permissionArgs: this.currentPermissionArgs,
+            };
+            // Save immediately with truncation so deny/abort messages
+            // that follow won't persist to disk.
+            console.log("[abort-handler] saving pendingPermission to metadata, then denying");
+            sm.saveSession(this.harness.agent, meta.pendingPermission);
+          }
           this.permissionResolve({ decision: "deny" });
           this.permissionResolve = null;
         }
         break;
       }
-
       case "permission_response": {
         if (this.permissionResolve && (cmd as any).denyReason) {
           const resolve = this.permissionResolve;
@@ -464,14 +482,12 @@ export class WebUiBackend implements UiBackend {
               ? (() => {
                   const mode = ((cmd as any).fuzzyMode as number | undefined) ?? 0;
                   if (mode === 2) {
-                    // fuzzy args
                     const fuzzyArg = deriveFuzzyArgPattern(this.currentPermissionTool, this.currentPermissionArgs);
                     return fuzzyArg
                       ? { tool: this.currentPermissionTool, argPattern: fuzzyArg, decision: "allow" as const }
                       : { tool: this.currentPermissionTool, decision: "allow" as const };
                   }
                   if (mode >= 3) {
-                    // LLM suggestion — pattern is JSON with toolPattern + argPattern
                     try {
                       const p = JSON.parse((cmd as any).toolNamePattern || "{}");
                       return {
@@ -482,14 +498,44 @@ export class WebUiBackend implements UiBackend {
                     } catch { /* fall through */ }
                   }
                   if (mode === 1) {
-                    // fuzzy tool: use toolNamePattern (server glob or raw tool name)
                     return { tool: (cmd as any).toolNamePattern ?? this.currentPermissionTool, decision: "allow" as const };
                   }
-                  // mode 0: exact
                   return { tool: this.currentPermissionTool, decision: "allow" as const };
                 })()
               : undefined,
           });
+        } else {
+          const sm = this.harness.sessionManager;
+          const meta = sm.getCurrentMetadata();
+          if (meta?.pendingPermission && (cmd.decision === "allow" || cmd.decision === "always_allow")) {
+            const toolName = meta.pendingPermission.toolName;
+            this.harness.permissionManager.grantForSession(toolName);
+            meta.pendingPermission = undefined;
+            sm.saveSession(this.harness.agent);
+            const messages = this.harness.agent.state.messages as any[];
+            let lastUserText = "";
+            for (let i = messages.length - 1; i >= 0; i--) {
+              if (messages[i]?.role === "user") {
+                const c = messages[i].content;
+                if (typeof c === "string") { lastUserText = c; }
+                else if (Array.isArray(c)) {
+                  const tb = c.find((b: any) => b.type === "text");
+                  if (tb) lastUserText = tb.text;
+                }
+                break;
+              }
+            }
+            if (lastUserText) {
+              client.send({ type: "loader", state: "show", text: "Resuming..." });
+              this.harness.promptAndSave(lastUserText).catch((err: any) => {
+                client.send({ type: "error", text: err instanceof Error ? err.message : String(err) });
+                client.send({ type: "loader", state: "hide" });
+              });
+            }
+          } else if (meta?.pendingPermission && cmd.decision === "deny") {
+            meta.pendingPermission = undefined;
+            sm.saveSession(this.harness.agent);
+          }
         }
         break;
       }
@@ -581,6 +627,7 @@ export class WebUiBackend implements UiBackend {
         modelId: s.modelId,
         projectPath: s.projectPath || "",
         preview: s.preview || "",
+        pendingPermission: s.pendingPermission || undefined,
       })),
     });
   }
@@ -781,17 +828,56 @@ export class WebUiBackend implements UiBackend {
           return;
         }
         const match = matches[0];
-        // Silently abort, save, and deny any pending permission before switching
-        this.harness.abort();
-        this.harness.saveSessionNow();
+        // If permissionResolve is active, capture and deny it.
+        // If already denied by abort handler, pendingPermission is in metadata.
+        // Either way, save with truncation to keep conversation clean.
+        let pendingPermission: import("../../core/types.js").PendingPermission | undefined;
         if (this.permissionResolve) {
+          const fuzzy = deriveFuzzyPattern(this.currentPermissionTool);
+          pendingPermission = {
+            toolName: this.currentPermissionTool,
+            preview: this.currentPermissionPreview,
+            fuzzyPattern: fuzzy,
+            permissionArgs: this.currentPermissionArgs,
+          };
           this.permissionResolve({ decision: "deny" });
           this.permissionResolve = null;
+        } else {
+          // Check if abort handler already saved pendingPermission to metadata
+          const meta = sessionManager.getCurrentMetadata();
+          if (meta?.pendingPermission) {
+            pendingPermission = meta.pendingPermission;
+            console.log("[web-backend] using pendingPermission from metadata");
+          }
+        }
+        this.harness.abort();
+        if (pendingPermission) {
+          console.log("[web-backend] saving with pendingPermission:", JSON.stringify(pendingPermission));
+          sessionManager.saveSession(agent, pendingPermission);
+        } else {
+          console.log("[web-backend] saving without pendingPermission");
+          this.harness.saveSessionNow();
         }
         const result = await sessionManager.loadSession(match.id, agent);
         if (!result.success) {
           client.send({ type: "error", text: `Failed to load session: ${result.error}` });
           return;
+        }
+        // If loaded session has pendingPermission, clean up the aborted turn
+        // from agent.state.messages so the conversation looks clean.
+        const loadedMeta = sessionManager.getCurrentMetadata();
+        if (loadedMeta?.pendingPermission) {
+          const msgs = agent.state.messages as any[];
+          // Remove the last assistant message with toolCall and everything after it
+          for (let i = msgs.length - 1; i >= 0; i--) {
+            if (msgs[i].role === "assistant") {
+              const c = (msgs[i] as any).content;
+              if (Array.isArray(c) && c.some((b: any) => b.type === "toolCall")) {
+                msgs.length = i;
+                break;
+              }
+            }
+          }
         }
         client.send({
           type: "info",
@@ -814,6 +900,7 @@ export class WebUiBackend implements UiBackend {
           config: this.buildConfigData(),
           messages,
         });
+        this.pushSessionList(client);
         break;
       }
       case "delete": {

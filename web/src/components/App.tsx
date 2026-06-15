@@ -56,6 +56,8 @@ export function App() {
   const [commandPanel, setCommandPanel] = useState<string | null>(null);
   const { toasts, addToast, removeToast } = useToasts();
   const turnStartRef = useRef<number>(0);
+  const permissionPromptRef = useRef(permissionPrompt);
+  permissionPromptRef.current = permissionPrompt;
 
   useEffect(() => {
     const root = document.documentElement;
@@ -110,7 +112,8 @@ export function App() {
           turnStartRef.current = 0;
         }
         break;
-      case "sessions": setSessions((prev) => sessionsEqual(prev, event.data) ? prev : event.data); setCurrentSessionId(event.currentSessionId ?? null); break;
+      case "sessions": { setSessions((p) => sessionsEqual(p, event.data) ? p : event.data); setCurrentSessionId(event.currentSessionId ?? null); if (event.currentSessionId) { const cs = event.data.find((s: SessionInfo) => s.id === event.currentSessionId); if (cs?.pendingPermission && !permissionPromptRef.current) { setPermissionPrompt({ toolName: cs.pendingPermission.toolName, preview: cs.pendingPermission.preview, fuzzyPattern: cs.pendingPermission.fuzzyPattern ?? null }); } } break; }
+        break;
       case "mcp_state": setMcpServers(event.servers); break;
       case "mcp_open_browser": setSidebarOpen(true); setSidebarTab("mcp"); break;
       case "model": setModel(event.name); break;

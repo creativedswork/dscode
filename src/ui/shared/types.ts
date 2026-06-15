@@ -69,6 +69,7 @@ export interface SessionInfo {
   projectPath: string;
   preview: string;
   messageCount: number;
+  pendingPermission?: { toolName: string; preview: string; fuzzyPattern?: string | null };
 }
 
 // ── File listing ──

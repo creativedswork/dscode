@@ -6,6 +6,7 @@ export type {
   ImageRef,
   VisionMessage,
   SessionMetadata,
+  PendingPermission,
   SerializedSession,
   DisplayMessage,
 } from "../session/types.js";
