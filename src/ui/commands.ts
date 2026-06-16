@@ -5,6 +5,20 @@ import type { UiBackend } from "./backend.js";
 import { saveUserConfig, maskApiKey, PROVIDER_ENV_VARS } from "../core/config.js";
 import { getAllProviders, getAllModels, getVisionModels, getVisionProviders } from "../models/index.js";
 import { readImageFile, readClipboardImage } from "../utils/image.js";
+
+function fmtLocalDate(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function fmtLocalTime(ts: number): string {
+  const d = new Date(ts);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function fmtLocalDateTime(ts: number): string {
+  return `${fmtLocalDate(ts)} ${fmtLocalTime(ts)}`;
+}
 import { runEval } from "../eval/index.js";
 
 
@@ -224,8 +238,8 @@ const COMMANDS: SlashCommandDef[] = [
             ? "All sessions:"
             : `Sessions (project: ${ctx.harness.config.projectPath}):`;
           const lines = sessions.slice(0, 30).map((s) => {
-            const date = new Date(s.updatedAt).toISOString().slice(0, 10);
-            const time = new Date(s.updatedAt).toISOString().slice(11, 16);
+            const date = fmtLocalDate(s.updatedAt);
+            const time = fmtLocalTime(s.updatedAt);
             const marker = s.id === currentId ? "*" : " ";
             const title = `"${s.title.slice(0, 60)}"`;
             return `${marker} ${s.id.slice(0, 8)} ${title}  ${s.modelProvider}/${s.modelId}  ${date} ${time}  ${s.messageCount} msgs`;
@@ -270,8 +284,8 @@ const COMMANDS: SlashCommandDef[] = [
             `  Title:    "${match.title}"`,
             `  Model:    ${match.modelProvider} / ${match.modelId}`,
             `  Project:  ${match.projectPath || "(unscoped)"}`,
-            `  Created:  ${new Date(match.createdAt).toISOString().replace("T", " ").slice(0, 16)}`,
-            `  Activity: ${new Date(match.updatedAt).toISOString().replace("T", " ").slice(0, 16)}`,
+            `  Created:  ${fmtLocalDateTime(match.createdAt)}`,
+            `  Activity: ${fmtLocalDateTime(match.updatedAt)}`,
             `  Messages: ${match.messageCount}`,
           ];
           (ctx.ui as any).addInfo(lines.join("\n"));
