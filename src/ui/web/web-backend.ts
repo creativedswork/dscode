@@ -107,6 +107,52 @@ export class WebUiBackend implements UiBackend {
     this.wsServer.onConnectHandler = (client) => this.handleConnect(client);
     this.wsServer.onDisconnectHandler = (_client) => this.handleDisconnect();
     this.wsServer.onMessageHandler = (client, cmd) => this.handleMessage(client, cmd);
+
+    // ── Event bus subscriptions ──
+    const h = this.harness;
+
+    h.events.on("llm:thinking:delta", (e) => { this.broadcast({ type: "thinking_delta", delta: e.delta }); });
+    h.events.on("llm:text:delta", (e) => {
+      if (this.currentAssistant && e.delta != null) this.currentAssistant.text += e.delta;
+      this.broadcast({ type: "text_delta", delta: e.delta });
+    });
+    h.events.on("llm:retry", (e) => { this.broadcast({ type: "retry", info: { attempt: e.attempt, maxRetries: e.maxRetries, delayMs: e.delayMs, error: e.error, level: e.level } }); });
+    h.events.on("tool:start", (e) => { this.broadcast({ type: "tool_start", name: e.name, args: e.args }); });
+    h.events.on("tool:end", (e) => {
+      const rs = typeof e.result === "string" ? e.result.slice(0, 5000) : JSON.stringify(e.result).slice(0, 5000);
+      const imgs = extractImagesFromToolResult(e.result);
+      if (this.currentAssistant) {
+        this.currentAssistant.tools = this.currentAssistant.tools.filter((t) => t.name !== e.name || t.result !== "");
+        this.currentAssistant.tools.push({ name: e.name, args: "", result: rs, isError: e.isError, images: imgs });
+      }
+      this.broadcast({ type: "tool_end", name: e.name, result: rs, isError: e.isError, images: imgs });
+    });
+    h.events.on("turn:streaming:start", () => {
+      this.currentAssistant = { thinking: "", text: "", tools: [] };
+      this.broadcast({ type: "assistant_start" });
+      this.startSessionTimeBroadcast();
+    });
+    h.events.on("turn:end", () => {
+      this.broadcastSessionTime();
+      this.currentAssistant = null;
+      this.broadcast({ type: "assistant_end" });
+      this.pushSessionListToAll();
+    });
+    h.events.on("turn:abort", () => { this.stopSessionTimeBroadcast(); this.broadcast({ type: "loader", state: "hide" }); });
+    h.events.on("turn:error", (e) => { this.broadcast({ type: "error", text: e.error }); });
+    h.events.on("processing:start", () => { this.broadcast({ type: "loader", state: "show", text: "Thinking..." }); });
+    h.events.on("processing:stop", () => { this.stopSessionTimeBroadcast(); this.broadcast({ type: "loader", state: "hide" }); });
+    h.events.on("message:user", (e) => { this.broadcast({ type: "user_message", text: e.text, images: e.images as any }); });
+    h.events.on("ui:info", (e) => { this.broadcast({ type: "info", text: e.text, display: e.display ?? "toast" }); });
+    h.events.on("ui:error", (e) => { this.broadcast({ type: "error", text: e.text }); });
+    h.events.on("ui:warning", (e) => { this.broadcast({ type: "warning", text: e.text }); });
+    h.events.on("ui:image:pending", (e) => { this.pendingImages.push(e.image); });
+    h.events.on("ui:conversation:clear", () => { this.currentAssistant = null; this.pendingImages = []; this.broadcast({ type: "clear_conversation" }); });
+    h.events.on("config:change", (e) => { this.broadcast({ type: "config", data: e.data }); });
+    h.events.on("mcp:state", (e) => { this.broadcast({ type: "mcp_state", servers: e.servers }); });
+    h.events.on("mcp:browser:open", () => { this.pushMcpState(); this.broadcast({ type: "mcp_open_browser" }); });
+    h.events.on("session:saved", () => { this.pushSessionListToAll(); });
+    h.events.on("session:created", () => { this.pushSessionListToAll(); });
   }
 
   setAppHostManager(manager: AppHostManager): void {
@@ -236,9 +282,10 @@ export class WebUiBackend implements UiBackend {
     this.sessionTimeInterval = setInterval(() => {
       const sm = this.harness.sessionManager;
       if (!sm) return;
+      const tickMs = sm.getTotalActiveMs();
       this.wsServer.broadcast({
         type: "session_time",
-        totalActiveMs: sm.getTotalActiveMs(),
+        totalActiveMs: tickMs,
       });
     }, 1000);
   }
@@ -664,6 +711,31 @@ export class WebUiBackend implements UiBackend {
         projectPath: s.projectPath || "",
         preview: s.preview || "",
         totalActiveMs: s.id === currentId ? sessionManager.getTotalActiveMs() : (s.totalActiveMs ?? 0),
+        pendingPermission: s.pendingPermission || undefined,
+      })),
+    });
+  }
+
+  private pushSessionListToAll(): void {
+    const sm = this.harness.sessionManager;
+    if (!sm) return;
+    const sessions = sm.listSessions();
+    const currentId = sm.getCurrentSessionId?.() ?? undefined;
+    let sessionList = sessions;
+    if (currentId) {
+      const currentMeta = sm.getCurrentMetadata();
+      if (currentMeta && !sessionList.find((s: any) => s.id === currentId)) {
+        sessionList = [currentMeta, ...sessionList];
+      }
+    }
+    this.wsServer.broadcast({
+      type: "sessions",
+      currentSessionId: currentId,
+      data: sessionList.slice(0, 50).map((s: any) => ({
+        id: s.id, title: s.title, updatedAt: s.updatedAt, createdAt: s.createdAt,
+        messageCount: s.messageCount, modelProvider: s.modelProvider, modelId: s.modelId,
+        projectPath: s.projectPath || "", preview: s.preview || "",
+        totalActiveMs: s.id === currentId ? sm.getTotalActiveMs() : (s.totalActiveMs ?? 0),
         pendingPermission: s.pendingPermission || undefined,
       })),
     });

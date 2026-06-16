@@ -179,13 +179,13 @@ const COMMANDS: SlashCommandDef[] = [
       };
 
       if (topic && topics[topic]) {
-        ctx.ui.addInfo(topics[topic].join("\n"));
+        (ctx.ui as any).addInfo(topics[topic].join("\n"));
       }
       if (topic) {
-        ctx.ui.addError(`Unknown help topic: ${topic}. Try: ${Object.keys(topics).join("  ")}`);
+        (ctx.ui as any).addError(`Unknown help topic: ${topic}. Try: ${Object.keys(topics).join("  ")}`);
         return;
       }
-      ctx.ui.addInfo(overview.join("\n"));
+      (ctx.ui as any).addInfo(overview.join("\n"));
     },
   },
   {
@@ -199,7 +199,7 @@ const COMMANDS: SlashCommandDef[] = [
       ctx.harness.sessionManager.persistEmptySession();
       // Clear agent state and UI
       ctx.harness.agent.reset();
-      ctx.ui.clearConversationView();
+      (ctx.ui as any).clearConversationView();
     },
   },
   {
@@ -217,7 +217,7 @@ const COMMANDS: SlashCommandDef[] = [
             const msg = all
               ? "No saved sessions."
               : "No sessions in this project. Start a conversation to create one.";
-            ctx.ui.addInfo(msg);
+            (ctx.ui as any).addInfo(msg);
           }
           const currentId = ctx.harness.sessionManager.getCurrentSessionId();
           const header = all
@@ -230,31 +230,31 @@ const COMMANDS: SlashCommandDef[] = [
             const title = `"${s.title.slice(0, 60)}"`;
             return `${marker} ${s.id.slice(0, 8)} ${title}  ${s.modelProvider}/${s.modelId}  ${date} ${time}  ${s.messageCount} msgs`;
           });
-          ctx.ui.addInfo(header + "\n" + lines.join("\n"));
+          (ctx.ui as any).addInfo(header + "\n" + lines.join("\n"));
           break;
         }
         case "save":
           try {
             ctx.harness.sessionManager.saveSession(ctx.harness.agent);
-            ctx.ui.addInfo("Session saved.");
+            (ctx.ui as any).addInfo("Session saved.");
           } catch (err: any) {
-            ctx.ui.addError(`Failed to save session: ${err.message}`);
+            (ctx.ui as any).addError(`Failed to save session: ${err.message}`);
           }
           break;
         case "load": {
           const id = rest[0];
-          if (!id) { ctx.ui.addError("Usage: /session load <id>"); return; }
+          if (!id) { (ctx.ui as any).addError("Usage: /session load <id>"); return; }
           const sessions = ctx.harness.sessionManager.listSessions();
           const matches = sessions.filter((s) => s.id.startsWith(id));
           if (matches.length === 0) {
-            ctx.ui.addError(`Session not found: ${id}`);
+            (ctx.ui as any).addError(`Session not found: ${id}`);
             return;
           }
           if (matches.length > 1) {
             const matchLines = matches.map((s) =>
               `  ${s.id.slice(0, 8)} "${s.title.slice(0, 60)}"  ${s.modelProvider}/${s.modelId}  ${s.messageCount} msgs`,
             );
-            ctx.ui.addError(
+            (ctx.ui as any).addError(
               `Ambiguous session ID prefix. Matching sessions:\n${matchLines.join("\n")}`,
             );
             return;
@@ -262,7 +262,7 @@ const COMMANDS: SlashCommandDef[] = [
           const match = matches[0];
           const result = await ctx.harness.sessionManager.loadSession(match.id, ctx.harness.agent);
           if (!result.success) {
-            ctx.ui.addError(`Failed to load session: ${result.error}`);
+            (ctx.ui as any).addError(`Failed to load session: ${result.error}`);
             return;
           }
           const lines = [
@@ -274,24 +274,24 @@ const COMMANDS: SlashCommandDef[] = [
             `  Activity: ${new Date(match.updatedAt).toISOString().replace("T", " ").slice(0, 16)}`,
             `  Messages: ${match.messageCount}`,
           ];
-          ctx.ui.addInfo(lines.join("\n"));
-          ctx.ui.clearConversationView();
+          (ctx.ui as any).addInfo(lines.join("\n"));
+          (ctx.ui as any).clearConversationView();
           (ctx.ui as any).replayMessages(ctx.harness.agent.state.messages as unknown[]);
           break;
         }
         case "delete": {
           const id = rest[0];
-          if (!id) { ctx.ui.addError("Usage: /session delete <id>"); return; }
+          if (!id) { (ctx.ui as any).addError("Usage: /session delete <id>"); return; }
           const result = ctx.harness.sessionManager.deleteSession(id);
           if (!result.success) {
-            ctx.ui.addError(`Failed to delete session: ${result.error}`);
+            (ctx.ui as any).addError(`Failed to delete session: ${result.error}`);
             return;
           }
-          ctx.ui.addInfo("Session deleted.");
+          (ctx.ui as any).addInfo("Session deleted.");
           break;
         }
         default:
-          ctx.ui.addError("Usage: /session [list|save|load|delete]");
+          (ctx.ui as any).addError("Usage: /session [list|save|load|delete]");
       }
     },
   },
@@ -306,35 +306,35 @@ const COMMANDS: SlashCommandDef[] = [
           const scope = rest[0] as "global" | "project" | undefined;
           const entries = ctx.harness.memoryManager.listMemories(scope);
           if (entries.length === 0) {
-            ctx.ui.addInfo("No memories stored.");
+            (ctx.ui as any).addInfo("No memories stored.");
             return;
           }
           const lines = entries.map((m) => `  [${m.scope}] ${m.content} (${m.id})`);
-          ctx.ui.addInfo("Memories:\n" + lines.join("\n"));
+          (ctx.ui as any).addInfo("Memories:\n" + lines.join("\n"));
           break;
         }
         case "add": {
           const content = rest.join(" ");
-          if (!content) { ctx.ui.addError("Usage: /memory add <content>"); return; }
+          if (!content) { (ctx.ui as any).addError("Usage: /memory add <content>"); return; }
           ctx.harness.memoryManager.addMemory(content, "project", sessionId);
-          ctx.ui.addInfo("Memory added.");
+          (ctx.ui as any).addInfo("Memory added.");
           break;
         }
         case "remove": {
           const id = rest[0];
-          if (!id) { ctx.ui.addError("Usage: /memory remove <id>"); return; }
+          if (!id) { (ctx.ui as any).addError("Usage: /memory remove <id>"); return; }
           ctx.harness.memoryManager.removeMemory(id);
-          ctx.ui.addInfo("Memory removed.");
+          (ctx.ui as any).addInfo("Memory removed.");
           break;
         }
         case "clear": {
           const scope = rest[0] as "global" | "project" | undefined;
           ctx.harness.memoryManager.clearMemories(scope);
-          ctx.ui.addInfo("Memories cleared.");
+          (ctx.ui as any).addInfo("Memories cleared.");
           break;
         }
         default:
-          ctx.ui.addError("Usage: /memory [list|add|remove|clear]");
+          (ctx.ui as any).addError("Usage: /memory [list|add|remove|clear]");
       }
     },
   },
@@ -346,23 +346,23 @@ const COMMANDS: SlashCommandDef[] = [
       switch (sub) {
         case "activate": {
           const name = rest[0];
-          if (!name) { ctx.ui.addError("Usage: /skills activate <name>"); return; }
+          if (!name) { (ctx.ui as any).addError("Usage: /skills activate <name>"); return; }
           try {
             const skill = ctx.harness.skillManager.activate(name, ctx.harness.driverRegistry);
             ctx.harness.agent.state.tools = ctx.harness.toolRegistry.buildToolsForRequest();
             const toolNames = skill.tools.map((t) => t.name).join(", ");
-            ctx.ui.addInfo(`Activated: ${name} (allowed tools: ${toolNames || "none"})`);
+            (ctx.ui as any).addInfo(`Activated: ${name} (allowed tools: ${toolNames || "none"})`);
           } catch (err: any) {
-            ctx.ui.addError(err.message);
+            (ctx.ui as any).addError(err.message);
           }
           break;
         }
         case "deactivate": {
           const name = rest[0];
-          if (!name) { ctx.ui.addError("Usage: /skills deactivate <name>"); return; }
+          if (!name) { (ctx.ui as any).addError("Usage: /skills deactivate <name>"); return; }
           ctx.harness.skillManager.deactivate(name);
           ctx.harness.agent.state.tools = ctx.harness.toolRegistry.buildToolsForRequest();
-          ctx.ui.addInfo(`Deactivated: ${name}`);
+          (ctx.ui as any).addInfo(`Deactivated: ${name}`);
           break;
         }
         default: {
@@ -371,7 +371,7 @@ const COMMANDS: SlashCommandDef[] = [
             const status = active ? "active" : "inactive";
             lines.push(`  ${skill.name} [${status}] (${skill.source}) — ${skill.description}`);
           }
-          ctx.ui.addInfo("Skills:\n" + lines.join("\n"));
+          (ctx.ui as any).addInfo("Skills:\n" + lines.join("\n"));
         }
       }
     },
@@ -386,7 +386,7 @@ const COMMANDS: SlashCommandDef[] = [
         lines.push(`  ${d.name} (${d.source}) — ${d.description}`);
         lines.push(`    tools: ${toolNames}`);
       }
-      ctx.ui.addInfo("Drivers:\n" + lines.join("\n"));
+      (ctx.ui as any).addInfo("Drivers:\n" + lines.join("\n"));
     },
   },
   {
@@ -394,10 +394,10 @@ const COMMANDS: SlashCommandDef[] = [
     description: "Browse MCP servers and tools",
     execute: async (_args, ctx) => {
       if (!ctx.harness.mcpManager || ctx.harness.mcpManager.getStates().length === 0) {
-        ctx.ui.addInfo("No MCP servers configured.");
+        (ctx.ui as any).addInfo("No MCP servers configured.");
         return;
       }
-      ctx.ui.openMcpBrowser();
+      (ctx.ui as any).openMcpBrowser();
     },
   },
   {
@@ -406,11 +406,11 @@ const COMMANDS: SlashCommandDef[] = [
     execute: async (_args, ctx) => {
       const grants = ctx.harness.permissionManager.getSessionGrants();
       if (grants.length === 0) {
-        ctx.ui.addInfo("No session-level grants.");
+        (ctx.ui as any).addInfo("No session-level grants.");
         return;
       }
       const lines = grants.map((g) => `  ✓ ${g}`);
-      ctx.ui.addInfo("Session grants:\n" + lines.join("\n"));
+      (ctx.ui as any).addInfo("Session grants:\n" + lines.join("\n"));
     },
   },
   {
@@ -419,7 +419,7 @@ const COMMANDS: SlashCommandDef[] = [
     execute: async (_args, ctx) => {
       const msgs = ctx.harness.agent.state.messages;
       const tokens = ctx.harness.contextManager.getEstimatedTokens(msgs);
-      ctx.ui.addInfo(`Estimated context: ~${tokens} tokens (${msgs.length} messages)`);
+      (ctx.ui as any).addInfo(`Estimated context: ~${tokens} tokens (${msgs.length} messages)`);
     },
   },
   {
@@ -430,7 +430,7 @@ const COMMANDS: SlashCommandDef[] = [
       const compacted = await ctx.harness.contextManager.transform(ctx.harness.agent.state.messages);
       ctx.harness.agent.state.messages = compacted as any;
       const after = ctx.harness.agent.state.messages.length;
-      ctx.ui.addInfo(`Compacted: ${before} → ${after} messages`);
+      (ctx.ui as any).addInfo(`Compacted: ${before} → ${after} messages`);
     },
   },
   {
@@ -448,7 +448,7 @@ const COMMANDS: SlashCommandDef[] = [
       const [sub, ...rest] = args.split(/\s+/);
       switch (sub) {
         case "help": {
-          ctx.ui.addInfo([
+          (ctx.ui as any).addInfo([
             "/config                  Show current user command config",
             "/config provider <id>     Switch provider (no restart needed)",
             "/config model <id>       Switch model (saved to ~/.dscode/config.json)",
@@ -473,14 +473,14 @@ const COMMANDS: SlashCommandDef[] = [
             const available = getAllProviders();
             const current = ctx.harness.config.provider;
             const lines = available.map((p) => p === current ? `  * ${p} (current)` : `  ${p}`);
-            ctx.ui.addInfo(`Available providers:\n${lines.join("\n")}\n\nUsage: /config provider <provider-id>`);
+            (ctx.ui as any).addInfo(`Available providers:\n${lines.join("\n")}\n\nUsage: /config provider <provider-id>`);
             return;
           }
           try {
             ctx.harness.setProvider(providerId);
-            ctx.ui.addInfo(`Provider switched to: ${providerId}. Default model selected. Conversation reset.`);
+            (ctx.ui as any).addInfo(`Provider switched to: ${providerId}. Default model selected. Conversation reset.`);
           } catch (err: any) {
-            ctx.ui.addError(err.message);
+            (ctx.ui as any).addError(err.message);
           }
           break;
         }
@@ -490,31 +490,31 @@ const COMMANDS: SlashCommandDef[] = [
           if (!modelId) {
             const available = getAllModels(ctx.harness.config.provider);
             const models = available.map((m) => `  ${m.id} — ${m.name}`);
-            ctx.ui.addInfo(`Models for ${ctx.harness.config.provider}:\n${models.join("\n")}\n\nUsage: /config model <model-id>`);
+            (ctx.ui as any).addInfo(`Models for ${ctx.harness.config.provider}:\n${models.join("\n")}\n\nUsage: /config model <model-id>`);
             return;
           }
           ctx.harness.setModel(modelId);
-          ctx.ui.addInfo(`Model switched to: ${modelId}`);
+          (ctx.ui as any).addInfo(`Model switched to: ${modelId}`);
           break;
         }
         case "cwd": {
           const cwd = rest.join(" ");
           if (!cwd) {
-            ctx.ui.addInfo(`Current working directory: ${ctx.harness.config.projectPath}\n\nUsage: /config cwd <path>`);
+            (ctx.ui as any).addInfo(`Current working directory: ${ctx.harness.config.projectPath}\n\nUsage: /config cwd <path>`);
             return;
           }
           const result = await ctx.harness.updateProjectPath(cwd);
           if (result.success) {
-            ctx.ui.addInfo(`Working directory changed to: ${ctx.harness.config.projectPath}`);
+            (ctx.ui as any).addInfo(`Working directory changed to: ${ctx.harness.config.projectPath}`);
           } else {
-            ctx.ui.addError(result.error ?? "Failed to change working directory");
+            (ctx.ui as any).addError(result.error ?? "Failed to change working directory");
           }
           break;
         }
         case "key": {
           const key = rest.join(" ");
           if (!key) {
-            ctx.ui.addError("Usage: /config key <api-key>");
+            (ctx.ui as any).addError("Usage: /config key <api-key>");
             return;
           }
           saveUserConfig({ apiKey: key });
@@ -524,18 +524,18 @@ const COMMANDS: SlashCommandDef[] = [
           if (envVar !== "DEEPSEEK_API_KEY") {
             process.env.DEEPSEEK_API_KEY = key;
           }
-          ctx.ui.addInfo(`API key saved to ~/.dscode/config.json: ${maskApiKey(key)}`);
+          (ctx.ui as any).addInfo(`API key saved to ~/.dscode/config.json: ${maskApiKey(key)}`);
           break;
         }
         case "thinking": {
           const level = rest[0];
           const valid = ["off", "minimal", "low", "medium", "high", "xhigh"];
           if (!level || !valid.includes(level)) {
-            ctx.ui.addError(`Usage: /config thinking <${valid.join("|")}>`);
+            (ctx.ui as any).addError(`Usage: /config thinking <${valid.join("|")}>`);
             return;
           }
           ctx.harness.setThinking(level);
-          ctx.ui.addInfo(`Thinking level set to: ${level}`);
+          (ctx.ui as any).addInfo(`Thinking level set to: ${level}`);
           break;
         }
         case "vision-provider": {
@@ -544,16 +544,16 @@ const COMMANDS: SlashCommandDef[] = [
             const available = getVisionProviders();
             const current = (ctx.harness.config.vision as any)?.provider;
             const lines = available.map((p) => p === current ? `  * ${p} (current)` : `  ${p}`);
-            ctx.ui.addInfo(`Available providers for vision model:\n${lines.join("\n")}\n\nUsage: /config vision-provider <provider-id>`);
+            (ctx.ui as any).addInfo(`Available providers for vision model:\n${lines.join("\n")}\n\nUsage: /config vision-provider <provider-id>`);
             return;
           }
           try {
             const v = { provider: vpId } as any;
             saveUserConfig({ vision: v });
             ctx.harness.configStore.updateVision({ provider: vpId });
-            ctx.ui.addInfo(`Vision provider set to: ${vpId}`);
+            (ctx.ui as any).addInfo(`Vision provider set to: ${vpId}`);
           } catch (err: any) {
-            ctx.ui.addError(err.message);
+            (ctx.ui as any).addError(err.message);
           }
           break;
         }
@@ -562,17 +562,17 @@ const COMMANDS: SlashCommandDef[] = [
           if (!vmId) {
             const vp = (ctx.harness.config.vision as any)?.provider;
             if (!vp) {
-              ctx.ui.addError("No vision provider configured. Set it first: /config vision-provider <id>");
+              (ctx.ui as any).addError("No vision provider configured. Set it first: /config vision-provider <id>");
               return;
             }
             const available = getVisionModels(vp);
             const models = available.map((m) => `  ${m.id} — ${m.name}`);
-            ctx.ui.addInfo(`Models for vision provider ${vp}:\n${models.join("\n")}\n\nUsage: /config vision-model <model-id>`);
+            (ctx.ui as any).addInfo(`Models for vision provider ${vp}:\n${models.join("\n")}\n\nUsage: /config vision-model <model-id>`);
             return;
           }
           const vp = (ctx.harness.config.vision as any)?.provider;
           if (!vp) {
-            ctx.ui.addError("No vision provider configured. Set it first: /config vision-provider <id>");
+            (ctx.ui as any).addError("No vision provider configured. Set it first: /config vision-provider <id>");
             return;
           }
           try {
@@ -580,16 +580,16 @@ const COMMANDS: SlashCommandDef[] = [
             const v = { provider: vp, model: vmId, key: existingKey };
             saveUserConfig({ vision: v });
             ctx.harness.configStore.updateVision({ model: vmId });
-            ctx.ui.addInfo(`Vision model set to: ${vmId}`);
+            (ctx.ui as any).addInfo(`Vision model set to: ${vmId}`);
           } catch (err: any) {
-            ctx.ui.addError(err.message);
+            (ctx.ui as any).addError(err.message);
           }
           break;
         }
         case "vision-key": {
           const key = rest.join(" ");
           if (!key) {
-            ctx.ui.addError("Usage: /config vision-key <api-key>");
+            (ctx.ui as any).addError("Usage: /config vision-key <api-key>");
             return;
           }
           const vp = (ctx.harness.config.vision as any)?.provider ?? "";
@@ -597,7 +597,7 @@ const COMMANDS: SlashCommandDef[] = [
           const v = { provider: vp, model: vm, key };
           saveUserConfig({ vision: v });
           ctx.harness.configStore.updateVision({ key });
-          ctx.ui.addInfo(`Vision API key saved to ~/.dscode/config.json: ${maskApiKey(key)}`);
+          (ctx.ui as any).addInfo(`Vision API key saved to ~/.dscode/config.json: ${maskApiKey(key)}`);
           break;
         }
         default: {
@@ -618,7 +618,7 @@ const COMMANDS: SlashCommandDef[] = [
             "",
             "Type /config help for usage.",
           ];
-          ctx.ui.addInfo("Configuration:\n" + lines.join("\n"));
+          (ctx.ui as any).addInfo("Configuration:\n" + lines.join("\n"));
         }
       }
     },
@@ -629,29 +629,29 @@ const COMMANDS: SlashCommandDef[] = [
     execute: async (args, ctx) => {
       const target = args.trim();
       if (!target) {
-        ctx.ui.addError("Usage: /image <filepath> or /image clipboard");
+        (ctx.ui as any).addError("Usage: /image <filepath> or /image clipboard");
         return;
       }
       if (target === "clipboard") {
         const img = await readClipboardImage();
         if (!img) {
-          ctx.ui.addError("No image found in clipboard (macOS only)");
+          (ctx.ui as any).addError("No image found in clipboard (macOS only)");
           return;
         }
-        ctx.ui.addPendingImage(img);
-        ctx.ui.addInfo(
+        (ctx.ui as any).addPendingImage(img);
+        (ctx.ui as any).addInfo(
           `Image attached from clipboard (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
         );
         return;
       }
       try {
         const img = await readImageFile(target);
-        ctx.ui.addPendingImage(img);
-        ctx.ui.addInfo(
+        (ctx.ui as any).addPendingImage(img);
+        (ctx.ui as any).addInfo(
           `Image attached: ${target} (${img.mimeType}, ${Math.round(img.data.length * 0.75 / 1024)} KB)`,
         );
       } catch {
-        ctx.ui.addError(`Cannot read image: ${target}`);
+        (ctx.ui as any).addError(`Cannot read image: ${target}`);
       }
     },
   },
@@ -678,12 +678,12 @@ export function executeSlashCommand(
     const result = cmd.execute(args, ctx);
     if (result instanceof Promise) {
       result.catch((err) => {
-        ctx.ui.addError(`${commandName}: ${err instanceof Error ? err.message : String(err)}`);
+        (ctx.ui as any).addError(`${commandName}: ${err instanceof Error ? err.message : String(err)}`);
       });
     }
     return commandName;
   } catch (err) {
-    ctx.ui.addError(`${commandName}: ${err instanceof Error ? err.message : String(err)}`);
+    (ctx.ui as any).addError(`${commandName}: ${err instanceof Error ? err.message : String(err)}`);
     return commandName;
   }
 }

@@ -11,6 +11,7 @@ import type { MCPManager } from "../mcp/manager.js";
 import type { HarnessConfig } from "./types.js";
 import type { ConfigWatch } from "./config-watch.js";
 import type { ImagePipeline } from "../drivers/vision/pipeline.js";
+import type { HarnessEventBus } from "./events.js";
 
 /**
  * Public API surface of Harness, consumed by UI backends and slash commands.
@@ -28,6 +29,7 @@ export interface HarnessAPI {
   readonly mcpManager: MCPManager | undefined;
   readonly config: HarnessConfig;
   readonly configStore: ConfigWatch;
+  readonly events: HarnessEventBus;
   readonly imagePipeline: ImagePipeline;
 
   promptWithImages(text: string, images: ImageContent[]): Promise<void>;

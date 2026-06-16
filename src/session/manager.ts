@@ -6,6 +6,7 @@ import { ImageCache } from "../utils/image-cache.js";
 import { SessionStore } from "./store.js";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import type { HarnessEventBus } from "../core/events.js";
 
 export interface LoadResult {
   success: boolean;
@@ -83,6 +84,15 @@ export class SessionManager {
     this._visionMessages = vms;
   }
 
+  /** Subscribe to event bus for autonomous timer management and emit session lifecycle events. */
+  bindEvents(events: HarnessEventBus): void {
+    this.events = events;
+    events.on("turn:start", () => { this.stopActiveTimer(); this.startActiveTimer(); });
+    events.on("processing:stop", () => { this.stopActiveTimer(); });
+  }
+
+  private events?: HarnessEventBus;
+
   createSession(provider: string, modelId: string): SessionMetadata {
     // Reuse existing empty session if one exists (avoid zero-msg session accumulation)
     const existing = this.store.list().find((s) => s.messageCount === 0);
@@ -113,6 +123,7 @@ export class SessionManager {
       this.accumulatedMs = 0;
     }
     this._visionMessages = [];
+    this.events?.emit({ type: "session:created", id: this.current.id });
     return this.current;
   }
 
@@ -131,6 +142,7 @@ export class SessionManager {
       messages: [],
     };
     this.store.save(session);
+    this.events?.emit({ type: "session:saved", id: this.current!.id });
   }
 
   saveSession(agent: Agent, pendingPermission?: import("../core/types.js").PendingPermission): void {
@@ -209,6 +221,7 @@ export class SessionManager {
       session.visionMessages = this._visionMessages;
     }
     this.store.save(session);
+    this.events?.emit({ type: "session:saved", id: this.current!.id });
   }
 
   trySaveSession(agent: Agent, pendingPermission?: import("../core/types.js").PendingPermission): void {
@@ -236,6 +249,7 @@ export class SessionManager {
       this.current = session.metadata;
       this.accumulatedMs = session.metadata.totalActiveMs ?? 0;
       this._visionMessages = session.visionMessages ?? [];
+      this.events?.emit({ type: "session:loaded", id });
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message ?? "Unknown error loading session" };
@@ -261,6 +275,7 @@ export class SessionManager {
   deleteSession(id: string): LoadResult {
     try {
       this.store.delete(id);
+      this.events?.emit({ type: "session:deleted", id });
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message ?? "Unknown error loading session" };

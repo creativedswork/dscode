@@ -30,6 +30,7 @@ import type { ImageRef, VisionMessage } from "./types.js";
 import { initCheckpointSystem, shutdownCheckpointSystem } from "../checkpoint/index.js";
 import { ConfigWatch } from "./config-watch.js";
 import { recordInvalidation, consumePendingNotices } from "../context/anchor-invalidation.js";
+import { HarnessEventBus } from "./events.js";
 
 export class Harness implements HarnessAPI {
   agent!: Agent;
@@ -44,6 +45,7 @@ export class Harness implements HarnessAPI {
   appHostManager?: AppHostManager;
   configStore: ConfigWatch;
   config: HarnessConfig;
+  readonly events: HarnessEventBus;
   imagePipeline: ImagePipeline;
   private ui!: UiBackend;
   private baseSystemPrompt = "";
@@ -59,7 +61,9 @@ export class Harness implements HarnessAPI {
     this.configStore = new ConfigWatch(config);
     this.debug = debug ?? false;
     this.config = this.configStore.get() as HarnessConfig;
+    this.events = new HarnessEventBus();
     this.sessionManager = new SessionManager(config.dataDir, config.projectPath);
+    this.sessionManager.bindEvents(this.events);
     this.contextManager = new ContextManager(config.context);
     this.memoryManager = new MemoryManager(config.dataDir, config.projectPath, config.memory);
     this.driverRegistry = new DriverRegistry();
@@ -75,7 +79,7 @@ export class Harness implements HarnessAPI {
       visionConfig: config.vision,
       fallbackApiKey: config.apiKey,
       onWarning: (msg: string) => {
-        if (this.ui) this.ui.addWarning(msg);
+        if (this.ui) this.events.emit({ type: "ui:warning", text: msg });
       },
     });
   }
@@ -211,8 +215,7 @@ export class Harness implements HarnessAPI {
         (this.agent.state.messages as any[]).length = preTurnLength;
 
         const delay = this.computeRetryDelay(attempt, baseDelay, maxDelay);
-        this.ui.addRetry({
-          attempt,
+        this.events.emit({ type: "llm:retry", attempt,
           maxRetries,
           delayMs: delay,
           error: "",
@@ -221,6 +224,8 @@ export class Harness implements HarnessAPI {
         await this.sleep(delay);
       }
 
+      this.events.emit({ type: "turn:start" });
+      this.events.emit({ type: "turn:streaming:start" });
       await this.agent.prompt(text, images);
 
       // Check if last assistant message has an error
@@ -238,15 +243,14 @@ export class Harness implements HarnessAPI {
 
       // Non-retryable errors: auth, invalid model, etc.
       if (!this.isRetryableError(errorMsg)) {
-        this.ui.addRetry({
-          attempt: attempt + 1,
+        this.events.emit({ type: "llm:retry", attempt: attempt + 1,
           maxRetries,
           delayMs: 0,
           error: errorMsg,
           level: "turn",
         });
-        this.ui.addError(`Model error: ${errorMsg}`);
-        this.sessionManager.trySaveSession(this.agent);
+        this.events.emit({ type: "ui:error", text: `Model error: ${errorMsg}` });
+        this.events.emit({ type: "turn:error", error: errorMsg, attempt: attempt + 1, maxRetries });        this.sessionManager.trySaveSession(this.agent);
 
         return;
       }
@@ -254,21 +258,20 @@ export class Harness implements HarnessAPI {
 
       // Last retry attempt exhausted
       if (attempt >= maxRetries) {
-        this.ui.addRetry({
-          attempt: attempt + 1,
+        this.events.emit({ type: "llm:retry", attempt: attempt + 1,
           maxRetries,
           delayMs: 0,
           error: errorMsg,
           level: "turn",
         });
-        this.ui.addError(`Model error: ${errorMsg}`);
-        this.ui.addError("✗ All retries exhausted");
+        this.events.emit({ type: "ui:error", text: `Model error: ${errorMsg}` });
+        this.events.emit({ type: "turn:error", error: errorMsg, attempt: attempt + 1, maxRetries });        this.events.emit({ type: "ui:error", text: "✗ All retries exhausted" });
         this.sessionManager.trySaveSession(this.agent);
         return;
       }
 
       // Will retry — show progress
-      this.ui.addRetry({
+      this.events.emit({ type: "llm:retry", 
         attempt: attempt + 1,
         maxRetries,
         delayMs: this.computeRetryDelay(attempt + 1, baseDelay, maxDelay),
@@ -387,7 +390,7 @@ export class Harness implements HarnessAPI {
     return resolveVisionModel(
       this.config.vision,
       this.config.apiKey,
-      (msg) => this.ui.addWarning(msg),
+      (msg) => this.events.emit({ type: "ui:warning", text: msg }),
     );
   }
 
@@ -414,8 +417,8 @@ export class Harness implements HarnessAPI {
       }
     }
 
-    this.ui.setProcessing(true);
-    this.ui.addInfo(`Analyzing ${images.length} image(s)...`);
+    this.events.emit({ type: "processing:start" });
+    this.events.emit({ type: "ui:info", text: `Analyzing ${images.length} image(s)...` });
 
     // Create abort controller for vision/OCR pre-processing
     this.visionAbortController = new AbortController();
@@ -426,7 +429,7 @@ export class Harness implements HarnessAPI {
       });
 
       if (result.source === "vision") {
-        this.ui.addInfo(`Image analysis complete, sending to main model...`);
+        this.events.emit({ type: "ui:info", text: `Image analysis complete, sending to main model...` });
         await this.promptAndSave(result.enrichedText);
 
         // Record vision model call
@@ -452,7 +455,7 @@ export class Harness implements HarnessAPI {
       }
 
       if (result.source === "ocr") {
-        this.ui.addInfo(`OCR complete, sending to main model...`);
+        this.events.emit({ type: "ui:info", text: `OCR complete, sending to main model...` });
         await this.promptAndSave(result.enrichedText);
         return;
       }
@@ -469,7 +472,7 @@ export class Harness implements HarnessAPI {
       await this.promptAndSave(result.enrichedText);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
-        this.ui.setProcessing(false);
+        this.events.emit({ type: "processing:stop" });
         return;
       }
       throw err;
@@ -481,6 +484,7 @@ export class Harness implements HarnessAPI {
   /** Abort any in-progress vision/OCR processing AND the current agent run. */
   abort(): void {
     this.visionAbortController?.abort();
+    this.events.emit({ type: "turn:abort", reason: this.shuttingDown ? "system" : "user" });
     this.agent.abort();
   }
 
@@ -526,21 +530,22 @@ export class Harness implements HarnessAPI {
     this.ui = ui;
     // Register config change notification → UI
     this.configStore.onChange(() => {
-      this.ui.onConfigChange?.();
+      (this.ui as any).onConfigChange?.();
     });
 
     await this.ui.start();
 
     try {
       if (this.config.mcp.length > 0) {
-        this.ui.addInfo(`Connecting ${this.config.mcp.length} MCP server(s)...`);
+        this.events.emit({ type: "ui:info", text: `Connecting ${this.config.mcp.length} MCP server(s)...` });
         this.mcpManager = new MCPManager(this.config.mcp);
         this.mcpManager.imagePipeline = this.imagePipeline;
-        this.ui.setMcpManager(this.mcpManager);
+        // mcpManager is directly accessible via harness.mcpManager
         await this.mcpManager.initialize();
         this.mcpEventUnsubscribe = this.mcpManager.onEvent((event) => this.handleMcpEvent(event));
         await this.mcpManager.registerDrivers(this.driverRegistry);
-        this.ui.pushMcpState?.();
+        (this.ui as any).setMcpManager?.(this.mcpManager);
+        (this.ui as any).pushMcpState?.();
 
         if (this.appHostManager) {
           this.appHostManager.setMcpManager(this.mcpManager);
@@ -557,21 +562,21 @@ export class Harness implements HarnessAPI {
         await this.dumpDebugPrompt();
         const connected = this.mcpManager.getStates().filter((s) => s.status === "connected").length;
         const total = this.config.mcp.length;
-        this.ui.addInfo(`MCP: ${connected}/${total} connected`);
+        this.events.emit({ type: "ui:info", text: `MCP: ${connected}/${total} connected` });
         if (connected < total) {
           const errors = this.mcpManager.getStates().filter((s) => s.status === "error");
           for (const err of errors) {
-            this.ui.addInfo(`MCP '${err.config.name}' failed: ${err.error ?? "unknown"}`);
+            this.events.emit({ type: "ui:info", text: `MCP '${err.config.name}' failed: ${err.error ?? "unknown"}` });
           }
         }
-        this.ui.focusEditor();
+        this.events.emit({ type: "ui:focus:editor" });
       } else {
         this.toolRegistry.initialize(this.makeSkillTool());
         this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
       }
 
       if (!this.config.apiKey) {
-        this.ui.addInfo([
+        this.events.emit({ type: "ui:info", text: [
           "Welcome to DSCode! To get started, configure your API key:",
           "",
           `  /config key your-${this.config.provider}-api-key`,
@@ -581,10 +586,10 @@ export class Harness implements HarnessAPI {
           `  /config model ${this.config.modelId}`,
           "",
           "Type /config to see all settings.",
-        ].join("\n"));
+        ].join("\n") });
       }
 
-      this.ui.focusEditor();
+      this.events.emit({ type: "ui:focus:editor" });
       await this.ui.waitForExit();
     } finally {
       await this.shutdown();
@@ -606,7 +611,7 @@ export class Harness implements HarnessAPI {
     // (e.g. image messages from qwen -> deepseek which only supports text)
     if (oldModelId && modelId !== oldModelId) {
       this.agent.reset();
-      this.ui.clearConversationView();
+      this.events.emit({ type: "ui:conversation:clear" });
     }
   }
 
@@ -630,7 +635,7 @@ export class Harness implements HarnessAPI {
     saveUserConfig({ provider: providerId, modelId: defaultModelId, thinkingLevel: this.config.thinkingLevel });
 
     this.agent.reset();
-    this.ui.clearConversationView();
+    this.events.emit({ type: "ui:conversation:clear" });
   }
   setThinking(level: string): void {
     this.configStore.setThinkingLevel(level as any);
@@ -732,8 +737,8 @@ export class Harness implements HarnessAPI {
       }
 
       // Notify UI of updated MCP state
-      this.ui.setMcpManager(this.mcpManager);
-      this.ui.pushMcpState?.();
+      (this.ui as any).setMcpManager?.(this.mcpManager);
+      (this.ui as any).pushMcpState?.();
     } catch (err) {
       console.error("[harness] MCP reload error:", err);
       // Non-fatal: continue with updated path even if MCP reload fails
@@ -995,7 +1000,7 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
       })
       .catch((err) => {
         // No HTML resource — try auto-layout inference from structuredContent
-        this.ui.addInfo(`[MDX] fetchUiResource failed: ${err.message}, falling back to data mode`);
+        this.events.emit({ type: "ui:info", text: `[MDX] fetchUiResource failed: ${err.message}, falling back to data mode` });
         this.registerDataModeApp(uiInfo, toolName, toolResult);
       });
   }
@@ -1012,13 +1017,13 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
     const result = payload as Record<string, unknown> | undefined;
 
     if (!structuredContent) {
-      this.ui.addInfo(`[MDX] no structuredContent (keys: ${result ? Object.keys(result).join(",") : "null"})`);
+      this.events.emit({ type: "ui:info", text: `[MDX] no structuredContent (keys: ${result ? Object.keys(result).join(",") : "null"})` });
       return;
     }
 
     try {
       const layout = inferLayout(structuredContent, uiInfo.toolName);
-      this.ui.addInfo(`[MDX] layout: ${layout.mdx.slice(0, 80)}...`);
+      this.events.emit({ type: "ui:info", text: `[MDX] layout: ${layout.mdx.slice(0, 80)}...` });
 
       const app = this.appHostManager!.registerApp({
         resourceUri: uiInfo.resourceUri,
@@ -1038,7 +1043,7 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
         });
       }
     } catch (e: any) {
-      this.ui.addInfo(`[MDX] error: ${e.message}`);
+      this.events.emit({ type: "ui:info", text: `[MDX] error: ${e.message}` });
     }
   }
 
@@ -1052,32 +1057,33 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
           if (!ev) break;
           switch (ev.type) {
             case "thinking_delta":
-              this.ui.thinkingDelta(ev.delta);
+              this.events.emit({ type: "llm:thinking:delta", delta: ev.delta });
               break;
             case "text_delta":
-              this.ui.textDelta(ev.delta);
+              this.events.emit({ type: "llm:text:delta", delta: ev.delta });
               break;
           }
           break;
         }
         case "tool_execution_start":
-          this.ui.toolStart(event.toolName, event.args);
+          this.events.emit({ type: "tool:start", name: event.toolName, args: event.args });
           break;
         case "tool_execution_update": {
           // Partial tool result: show images immediately before vision/OCR
           const payload = this.getToolPayload(event.partialResult);
           const effectiveIsError = this.getEffectiveToolError(event.partialResult, false);
-          this.ui.toolEnd(event.toolName, payload, effectiveIsError);
+          this.events.emit({ type: "tool:end", name: event.toolName, result: payload, isError: effectiveIsError });
           break;
         }
         case "tool_execution_end": {
           const payload = this.getToolPayload(event.result);
           const effectiveIsError = this.getEffectiveToolError(event.result, event.isError);
-          this.ui.toolEnd(
-            event.toolName,
-            payload,
-            effectiveIsError,
-          );
+          this.events.emit({
+            type: "tool:end",
+            name: event.toolName,
+            result: payload,
+            isError: effectiveIsError,
+          });
           this.checkAndRegisterApp(event.toolName, event.result);
           break;
         }
@@ -1087,23 +1093,22 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
     this.agent.subscribe(async (event) => {
       try {
         if (event.type === "agent_end") {
-          this.ui.setProcessing(false);
+          this.events.emit({ type: "processing:stop" });
           // Session is saved by promptAndSave after retries are resolved.
           // This save is a safety net for non-promptAndSave code paths.
-          this.sessionManager.stopActiveTimer();
           this.sessionManager.trySaveSession(this.agent);
         }
         if (event.type === "agent_start") {
-          this.sessionManager.startActiveTimer();
-          this.ui.startAssistantMessage();
+          this.events.emit({ type: "turn:streaming:start" });
         }
         if (event.type === "turn_end") {
           // Save session before broadcasting so sidebar gets fresh metadata
           this.sessionManager.trySaveSession(this.agent);
-          this.ui.finishAssistantMessage();
-          const msg = event.message as AssistantMessage;
+          const turnEndMsg = event.message as AssistantMessage;
+          this.events.emit({ type: "turn:end", stopReason: turnEndMsg?.stopReason, usage: turnEndMsg?.usage as any });
+          const msg = turnEndMsg;
           if (msg?.stopReason === "length") {
-            this.ui.addInfo("Output truncated (hit max_tokens). Continue from where you left off.");
+            this.events.emit({ type: "ui:info", text: "Output truncated (hit max_tokens). Continue from where you left off." });
           }
           if (msg?.stopReason === "error" && msg?.errorMessage) {
             // Don't display here — promptAndSave handles UI and retry logic.
@@ -1137,7 +1142,7 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
         if (shouldReport) {
           const summary = this.formatProgress(event.params.progress, event.params.total);
           const detail = event.params.message ? ` ${event.params.message}` : "";
-          this.ui.addInfo(`MCP ${event.serverName}: ${summary}${detail}`);
+          this.events.emit({ type: "ui:info", text: `MCP ${event.serverName}: ${summary}${detail}` });
         }
         return;
       }
@@ -1147,28 +1152,28 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
         const text = this.stringifyMcpMessage(event.params.data);
         const label = event.params.logger ? `${event.params.logger}: ` : "";
         if (level === "error") {
-          this.ui.addError(`${prefix}: ${label}${text}`);
+          this.events.emit({ type: "ui:error", text: `${prefix}: ${label}${text}` });
         } else if (level === "warning" || level === "warn") {
-          this.ui.addInfo(`${prefix} warning: ${label}${text}`);
+          this.events.emit({ type: "ui:info", text: `${prefix} warning: ${label}${text}` });
         } else {
-          this.ui.addInfo(`${prefix}: ${label}${text}`);
+          this.events.emit({ type: "ui:info", text: `${prefix}: ${label}${text}` });
         }
         return;
       }
       case "tools_list_changed":
-        this.ui.addInfo(`MCP ${event.serverName}: refreshing tool list...`);
+        this.events.emit({ type: "ui:info", text: `MCP ${event.serverName}: refreshing tool list...` });
         return;
       case "tools_refreshed":
-        this.ui.addInfo(`MCP ${event.serverName}: tool list refreshed (${event.toolCount} tools)`);
+        this.events.emit({ type: "ui:info", text: `MCP ${event.serverName}: tool list refreshed (${event.toolCount} tools)` });
         return;
       case "tools_refresh_failed":
-        this.ui.addError(`MCP ${event.serverName}: tool refresh failed: ${event.error}`);
+        this.events.emit({ type: "ui:error", text: `MCP ${event.serverName}: tool refresh failed: ${event.error}` });
         return;
       case "resources_list_changed":
-        this.ui.addInfo(`MCP ${event.serverName}: resources updated`);
+        this.events.emit({ type: "ui:info", text: `MCP ${event.serverName}: resources updated` });
         return;
       case "cancelled":
-        this.ui.addInfo(`MCP ${event.serverName}: request cancelled` + (event.params.reason ? ` (${event.params.reason})` : ""));
+        this.events.emit({ type: "ui:info", text: `MCP ${event.serverName}: request cancelled` + (event.params.reason ? ` (${event.params.reason})` : "") });
         return;
       default:
         return;

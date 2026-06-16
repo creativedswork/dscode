@@ -1,19 +1,35 @@
-import type { ImageContent } from "@mariozechner/pi-ai";
-import type { MCPManager } from "../mcp/manager.js";
+import type { HarnessAPI } from "../core/harness-api.js";
 import type { PermissionPromptResult } from "../core/types.js";
 import type { UiBackend } from "./backend.js";
 import { TuiApp } from "./tui-app.js";
-import type { HarnessAPI } from "../core/harness-api.js";
 
 /**
  * Thin adapter that wraps TuiApp and exposes the UiBackend interface.
- * All calls delegate directly to the underlying TuiApp.
+ * All notification concerns are handled via HarnessEventBus subscriptions.
  */
 export class TuiBackend implements UiBackend {
   private tui: TuiApp;
 
   constructor(deps: HarnessAPI) {
     this.tui = new TuiApp(deps);
+
+    // ── Event bus subscriptions ──
+    deps.events.on("llm:text:delta", (e) => { this.tui.textDelta(e.delta); });
+    deps.events.on("llm:thinking:delta", (e) => { this.tui.thinkingDelta(e.delta); });
+    deps.events.on("llm:retry", (e) => { this.tui.addRetry({ attempt: e.attempt, maxRetries: e.maxRetries, delayMs: e.delayMs, error: e.error, level: e.level }); });
+    deps.events.on("tool:start", (e) => { this.tui.toolStart(e.name, e.args); });
+    deps.events.on("tool:end", (e) => { this.tui.toolEnd(e.name, e.result, e.isError); });
+    deps.events.on("turn:streaming:start", () => { this.tui.startAssistantMessage(); });
+    deps.events.on("turn:end", () => { this.tui.finishAssistantMessage(); });
+    deps.events.on("message:user", (e) => { this.tui.addUserMessage(e.text); });
+    deps.events.on("ui:info", (e) => { this.tui.addInfo(e.text, e.display); });
+    deps.events.on("ui:error", (e) => { this.tui.addError(e.text); });
+    deps.events.on("ui:warning", (e) => { this.tui.addWarning(e.text); });
+    deps.events.on("ui:image:pending", (e) => { this.tui.addPendingImage(e.image); });
+    deps.events.on("ui:conversation:clear", () => { this.tui.clearConversationView(); });
+    deps.events.on("ui:focus:editor", () => { this.tui.focusEditor(); });
+    deps.events.on("processing:start", () => { this.tui.setProcessing(true); });
+    deps.events.on("processing:stop", () => { this.tui.setProcessing(false); });
   }
 
   // ── Lifecycle ──
@@ -29,51 +45,6 @@ export class TuiBackend implements UiBackend {
     // TuiApp handles its own shutdown via stop()
   }
 
-  // ── Conversation rendering ──
-  addUserMessage(text: string): void {
-    this.tui.addUserMessage(text);
-  }
-
-  startAssistantMessage(): void {
-    this.tui.startAssistantMessage();
-  }
-
-  thinkingDelta(delta: string): void {
-    this.tui.thinkingDelta(delta);
-  }
-
-  textDelta(delta: string): void {
-    this.tui.textDelta(delta);
-  }
-
-  toolStart(name: string, args: unknown): void {
-    this.tui.toolStart(name, args);
-  }
-
-  toolEnd(name: string, result: unknown, isError: boolean): void {
-    this.tui.toolEnd(name, result, isError);
-  }
-
-  finishAssistantMessage(): void {
-    this.tui.finishAssistantMessage();
-  }
-
-  // ── System messages ──
-  addInfo(text: string, display?: "toast" | "panel"): void {
-    this.tui.addInfo(text, display);
-  }
-
-  addError(text: string): void {
-    this.tui.addError(text);
-  }
-
-  addWarning(text: string): void {
-    this.tui.addWarning(text);
-  }
-  addRetry(info: { attempt: number; maxRetries: number; delayMs: number; error: string; level: "stream" | "turn" }): void {
-    this.tui.addRetry(info);
-  }
-
   // ── Permission ──
   getPromptPermission(): (
     toolName: string,
@@ -81,38 +52,5 @@ export class TuiBackend implements UiBackend {
     args: unknown,
   ) => Promise<PermissionPromptResult> {
     return this.tui.getPromptPermission();
-  }
-
-  // ── Image attachments ──
-  addPendingImage(image: ImageContent): void {
-    this.tui.addPendingImage(image);
-  }
-
-  // ── Editor control ──
-  focusEditor(): void {
-    this.tui.focusEditor();
-  }
-
-  clearConversationView(): void {
-    this.tui.clearConversationView();
-  }
-
-  // ── Processing state ──
-  setProcessing(processing: boolean): void {
-    this.tui.setProcessing(processing);
-  }
-
-  // ── MCP ──
-  setMcpManager(mcpManager?: MCPManager): void {
-    this.tui.setMcpManager(mcpManager);
-  }
-
-  openMcpBrowser(): void {
-    this.tui.openMcpBrowser();
-  }
-
-  // ── Config Watch ──
-  onConfigChange(): void {
-    // TUI shares the same config reference — already synced
   }
 }

@@ -33,19 +33,19 @@ export async function runEval(
     if (sessionId) {
       const found = manager.getSessionFilePath(sessionId);
       if (!found) {
-        ui.addError(`Session not found: ${sessionId}`);
+        (ui as any).addError(`Session not found: ${sessionId}`);
         return;
       }
       resolvedId = found.metadata.id;
       sessionData = await manager.loadSessionFile(resolvedId);
       if (!sessionData) {
-        ui.addError(`Failed to load session: ${resolvedId}`);
+        (ui as any).addError(`Failed to load session: ${resolvedId}`);
         return;
       }
     } else {
       const currentId = manager.getCurrentSessionId();
       if (!currentId) {
-        ui.addError("No session to evaluate. Usage: /eval [session_id]");
+        (ui as any).addError("No session to evaluate. Usage: /eval [session_id]");
         return;
       }
       resolvedId = currentId;
@@ -55,17 +55,17 @@ export async function runEval(
         harness.saveSessionNow();
         sessionData = await manager.loadSessionFile(resolvedId);
         if (!sessionData) {
-          ui.addError("Failed to load current session data.");
+          (ui as any).addError("Failed to load current session data.");
           return;
         }
       }
     }
 
     clearEvalLog();
-    ui.addInfo(`正在分析 session ${resolvedId.slice(0, 8)}...`);
+    (ui as any).addInfo(`正在分析 session ${resolvedId.slice(0, 8)}...`);
 
     // onLog writes to stderr so progress is visible during TUI blocking
-    const onLog = (msg: string) => { ui.addInfo(msg); console.error(msg); };
+    const onLog = (msg: string) => { (ui as any).addInfo(msg); console.error(msg); };
 
     // Analyze — path selection based on session size
     const steps = parseSessionToSteps(sessionData);
@@ -94,7 +94,7 @@ export async function runEval(
       ? ` | Root cause: ${result.attribution.mistakeAgent}@Step${result.attribution.mistakeStep}`
       : "";
     const rulesTriggered = result.rules ? result.rules.length : 0;
-    ui.addInfo(
+    (ui as any).addInfo(
       `Dashboard generated: ${outputPath}\n` +
       `[${analysisLabel}] Messages: ${result.metadata.totalMessages} | Tool calls: ${result.stats.toolCalls} | ` +
       `Error rate: ${result.stats.errorRate}${attributionInfo} | Rules: ${rulesTriggered}`,
@@ -104,7 +104,7 @@ export async function runEval(
     if (err instanceof Error && err.stack) {
       logEval("error", "Pipeline", `stack:\n${err.stack}`);
     }
-    ui.addError(`eval: ${err instanceof Error ? err.message : String(err)}`);
+    (ui as any).addError(`eval: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 
