@@ -1,7 +1,4 @@
-## Purpose
-
-Abstraction layer between Harness and UI rendering — both TUI and Web implement this interface.
-## Requirements
+## ADDED Requirements
 
 ### Requirement: UiBackend consumes events via HarnessEventBus
 
@@ -45,3 +42,10 @@ The `TuiBackend` SHALL subscribe to all HarnessEventBus events and render conten
 - **WHEN** TuiBackend receives `{ type: "tool:start", name: "bash", args: {...} }`
 - **THEN** it SHALL display a tool execution indicator in the terminal
 
+## REMOVED Requirements
+
+### Requirement: onConfigChange callback
+
+**Reason**: Config change notifications are now handled via `config:change` event on `HarnessEventBus`. The `onConfigChange` callback on `UiBackend` is replaced by a subscription to `config:change`.
+
+**Migration**: Each backend subscribes to `harness.events.on("config:change", handler)` in its constructor instead of implementing `onConfigChange()` on the interface.

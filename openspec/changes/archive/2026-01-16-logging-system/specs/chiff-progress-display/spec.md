@@ -1,10 +1,4 @@
-# chiff-progress-display Specification
-
-## Purpose
-
-CHIFF 进度展示系统。在终端会话窗口中实时展示三阶段 Agent 的执行进度——Phase 日志、tool call 计数和最近操作描述、进度百分比。
-
-## ADDED Requirements
+## MODIFIED Requirements
 
 ### Requirement: Phase Progress Tracking
 
@@ -30,37 +24,15 @@ Phases tracked:
 - **THEN** the phase event SHALL include `toolCalls: 8` and `durationMs: 3200`
 - **AND** SHALL include a summary (e.g., "识别 3 个 attention zones: Z1, Z2, Z3")
 
+## REMOVED Requirements
 
-### Requirement: Web Progress Rendering
+### Requirement: Terminal Progress Rendering
 
-The system SHALL push progress events to the Web UI via WebSocket when running in web mode.
+**Reason**: ANSI 终端渲染（`process.stdout.write`、`console.log` 进度条和完成框）与 TUI 显示冲突，且 web 模式下无终端可写。进度信息改为通过 `onLog` 回调（推 TUI 面板）和 `Logger("analysis")`（写文件）双通道输出。
 
-The Web UI SHALL render a progress panel that mirrors the terminal display but using HTML/CSS with:
-- Animated progress bar
-- Expandable phase log with per-phase details
-- Auto-scroll to the currently running phase
-- Color-coded status (green done / blue running / gray pending)
+**Migration**: 删除 `ProgressDisplay.render()`、`ProgressDisplay.renderCompletion()` 中的 `process.stdout.write` 和 `console.log` 调用。删除 spinner (`startSpinner`/`stopSpinner`)。进度追踪数据结构保留不变。
 
-#### Scenario: Web progress update
-
-- **WHEN** the system is in web mode and a progress event is emitted
-- **THEN** the event SHALL be sent to the frontend via WebSocket
-- **AND** the frontend SHALL update the progress panel without full page reload
-
-### Requirement: Completion Summary
-
-When all phases complete, the system SHALL display a summary showing:
-- Total duration
-- Total LLM calls (including tool calls across all Passes)
-- Key findings: number of attention zones, root cause agent and step
-
-#### Scenario: Completion summary after successful eval
-
-- **WHEN** all 5 phases complete successfully
-- **THEN** the terminal SHALL print a summary block with the total duration and call count
-- **AND** SHALL print the root cause: "根因: write_file@Step 480 — hash ambiguity in edit"
-- **AND** SHALL then proceed to open the dashboard
-
+## ADDED Requirements
 
 ### Requirement: File-Based Progress Logging
 

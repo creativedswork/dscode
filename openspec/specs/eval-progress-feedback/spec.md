@@ -14,6 +14,8 @@
 - Phase 开始：`"<emoji> Phase N/6: <phase description>..."`
 - Phase 完成：`"✓ Phase N/6 完成"`
 
+`onLog` SHALL NOT 调用 `console.error` 或其他终端输出方法。
+
 Phase 映射：
 - Phase 1/6: 🔍 分解子任务
 - Phase 2/6: 🔗 识别子任务依赖
@@ -28,6 +30,7 @@ Phase 映射：
 - **THEN** 系统 SHALL 在 Phase 1 开始前输出 `"🔍 Phase 1/6: 分解子任务..."`
 - **AND** 在 Phase 1 完成后输出 `"✓ Phase 1/6 完成"`
 - **AND** 对所有 6 个 Phase 重复此模式
+- **AND** `onLog` SHALL NOT 向终端 stderr 输出任何内容
 ### Requirement: Focus Pipeline Phase Progress
 
 `ProgressDisplay.onPhaseStart` SHALL 通过 `onLog` 输出 Phase 开始消息：
@@ -62,39 +65,19 @@ SHALL 对 `onLog` 调用施加节流（默认 500ms 间隔）：距上次调用�
 #### Scenario: Phase boundaries always logged
 
 - **WHEN** `onPhaseStart` 或 `onPhaseDone` 被调用
-- **THEN** 对应的 `onLog` 调用 SHALL NOT 受节流限制
-- **AND** 消息 SHALL 始终输出
-
 ### Requirement: Crash Error Logging
 
-`runEval` 的 catch 块 SHALL 调用 `logEval("error", "Pipeline", ...)` 写入完整错误信息到 `~/.dscode/logs/eval.log`。
+`runEval` 的 catch 块 SHALL 通过 Logger 写入完整错误信息到 `~/.dscode/logs/analysis.log`（使用 `Logger` 实例的 `error("analysis", "Pipeline", ...)`）。
 
-若 `err` 为 `Error` 实例且包含 `stack`，SHALL 额外写入 `logEval("error", "Pipeline", "stack:\n<stack>")`。
+若 `err` 为 `Error` 实例且包含 `stack`，SHALL 额外写入 `logger.error("analysis", "Pipeline", "stack:\n<stack>")`。
+
+SHALL 仍然调用 `ui.addError(...)` 在 TUI 显示错误摘要。
 
 #### Scenario: Pipeline crash logged to file
 
 - **WHEN** `runCausalGraphPipeline` 或 `runFocusPipeline` 抛出异常
-- **THEN** 系统 SHALL 调用 `logEval("error", "Pipeline", "crash: <message>")`
-- **AND** 若 `err.stack` 存在 SHALL 调用 `logEval("error", "Pipeline", "stack:\n<stack>")`
-- **AND** SHALL 仍然调用 `ui.addError(...)` 在 TUI 显示错误摘要
-
-### Requirement: ProgressDisplay Mode Decoupling
-
-`ProgressDisplay` 构造函数 SHALL 接受独立选项：
-
-- `disableTerminal: boolean` — 禁用终端渲染（spinner + `render()`）
-- `onLog: (text: string) => void` — TUI 进度回调
-- `throttleMs: number` — `onPhaseProgress` 中 `onLog` 节流间隔，默认 500
-
-两个选项 SHALL 独立控制，SHALL 可同时启用。
-
-#### Scenario: TUI mode with spinner enabled
-
-- **WHEN** `ProgressDisplay` 以 `{ disableTerminal: false, onLog }` 实例化
-- **THEN** spinner SHALL 启动
-- **AND** `render()` SHALL 输出到终端
-- **AND** `onLog` SHALL 接收阶段边界和节流的工具调用进度
-
+- **THEN** 系统 SHALL 调用 `logger.error("analysis", "Pipeline", "crash: <message>")`
+- **AND** 若 `err.stack` 存在 SHALL 调用 `logger.error("analysis", "Pipeline", "stack:\n<stack>")`
 #### Scenario: Web mode with no terminal
 
 - **WHEN** `ProgressDisplay` 以 `{ disableTerminal: true }` 实例化
