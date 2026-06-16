@@ -69,6 +69,7 @@ export class WebUiBackend implements UiBackend {
   private exitResolve!: () => void;
   private appHostManager?: AppHostManager;
   private mcpManager?: MCPManager;
+  private sessionTimeInterval: ReturnType<typeof setInterval> | null = null;
 
   // Pending permission state
   private permissionResolve: ((result: PermissionPromptResult) => void) | null = null;
@@ -161,6 +162,7 @@ export class WebUiBackend implements UiBackend {
   startAssistantMessage(): void {
     this.currentAssistant = { thinking: "", text: "", tools: [] };
     this.broadcast({ type: "assistant_start" });
+    this.startSessionTimeBroadcast();
   }
 
 
@@ -199,6 +201,8 @@ export class WebUiBackend implements UiBackend {
     this.broadcast({ type: "tool_end", name, result: resultStr, isError, images });
   }
   finishAssistantMessage(): void {
+    this.broadcastSessionTime();
+    this.stopSessionTimeBroadcast();
     this.currentAssistant = null;
     this.broadcast({ type: "assistant_end" });
 
@@ -223,8 +227,37 @@ export class WebUiBackend implements UiBackend {
           totalActiveMs: s.id === currentId2 ? sm2.getTotalActiveMs() : (s.totalActiveMs ?? 0),
           pendingPermission: s.pendingPermission || undefined,
         })),
+
       });
     }  }
+
+  private startSessionTimeBroadcast(): void {
+    if (this.sessionTimeInterval) return;
+    this.sessionTimeInterval = setInterval(() => {
+      const sm = this.harness.sessionManager;
+      if (!sm) return;
+      this.wsServer.broadcast({
+        type: "session_time",
+        totalActiveMs: sm.getTotalActiveMs(),
+      });
+    }, 1000);
+  }
+
+  private broadcastSessionTime(): void {
+    const sm = this.harness.sessionManager;
+    if (!sm) return;
+    this.wsServer.broadcast({
+      type: "session_time",
+      totalActiveMs: sm.getTotalActiveMs(),
+    });
+  }
+
+  private stopSessionTimeBroadcast(): void {
+    if (this.sessionTimeInterval) {
+      clearInterval(this.sessionTimeInterval);
+      this.sessionTimeInterval = null;
+    }
+  }
 
   // ── UiBackend System Messages ──
 

@@ -58,6 +58,8 @@ export function App() {
   const turnStartRef = useRef<number>(0);
   const permissionPromptRef = useRef(permissionPrompt);
   permissionPromptRef.current = permissionPrompt;
+  const currentSessionIdRef = useRef(currentSessionId);
+  currentSessionIdRef.current = currentSessionId;
 
   useEffect(() => {
     const root = document.documentElement;
@@ -113,6 +115,7 @@ export function App() {
         }
         break;
       case "sessions": { setSessions((p) => sessionsEqual(p, event.data) ? p : event.data); setCurrentSessionId(event.currentSessionId ?? null); if (event.currentSessionId) { const cs = event.data.find((s: SessionInfo) => s.id === event.currentSessionId); if (cs?.pendingPermission && !permissionPromptRef.current) { setPermissionPrompt({ toolName: cs.pendingPermission.toolName, preview: cs.pendingPermission.preview, fuzzyPattern: cs.pendingPermission.fuzzyPattern ?? null }); } } break; }
+      case "session_time": { const csid = currentSessionIdRef.current; if (csid) { setSessions((prev) => prev.map((s) => s.id === csid ? { ...s, totalActiveMs: event.totalActiveMs } : s)); } break; }
         break;
       case "mcp_state": setMcpServers(event.servers); break;
       case "mcp_open_browser": setSidebarOpen(true); setSidebarTab("mcp"); break;
@@ -182,7 +185,7 @@ export function App() {
           onSessionAction={handleSessionAction} onMcpAction={handleMcpAction} onMcpServerAction={handleMcpAction}
           onConfigChange={handleConfigChange} isProcessing={processing} onNewSession={handleNewSession} />
         <main className="flex-1 flex flex-col min-w-0">
-          <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} sessionActiveMs={sessionActiveMs} turnStartRef={turnStartRef} permissionPrompt={permissionPrompt} onPermission={handlePermission} />
+          <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} sessionActiveMs={sessionActiveMs} permissionPrompt={permissionPrompt} onPermission={handlePermission} />
           <MessageInput onSend={handleSend} onAbort={handleAbort} onSlashCommand={handleSlashCommand} onCommand={handleCommand}
             processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} />
         </main>

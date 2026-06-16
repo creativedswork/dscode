@@ -178,5 +178,6 @@ export type ServerEvent =
   | { type: "clear_conversation" }
   | { type: "file_list_result"; prefix: string; items: FileListItem[] }
   | { type: "processing"; processing: boolean }
+  | { type: "session_time"; totalActiveMs: number }
   | { type: "mcp_open_browser" }
 

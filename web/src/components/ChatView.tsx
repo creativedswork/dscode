@@ -17,38 +17,18 @@ interface ChatViewProps {
   processing: boolean;
   hasStreaming: boolean;
   sessionActiveMs: number;
-  turnStartRef: React.MutableRefObject<number>;
   permissionPrompt: ({ toolName: string; preview: string; fuzzyPattern?: string | null; fuzzyArgDesc?: string | null; llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[] }) | null;
   onPermission: (decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string, toolNamePattern?: string, fuzzyMode?: number) => void;
 }
-export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, turnStartRef, permissionPrompt, onPermission }: ChatViewProps) {
+export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, permissionPrompt, onPermission }: ChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
-  const [elapsed, setElapsed] = useState(0);
   // sessionTime is driven by backend's getTotalActiveMs() via sessionActiveMs prop.
   // The backend already returns live time when the timer is running, so we must
   // NOT add local wall time on top (that would double-count).
   // session_time events from agent_start/agent_end keep it synced mid-turn.
   const sessionTime = sessionActiveMs;
-
-  // Elapsed timer driven by turnStartRef (set on handleSend / loader:show, reset on loader:hide / error)
-  // Uses requestAnimationFrame to continuously poll the ref value, since ref changes
-  // don't trigger React re-renders and [turnStartRef.current] as a dependency is inert.
-  useEffect(() => {
-    let raf: number;
-    const tick = () => {
-      const start = turnStartRef.current;
-      if (!start) {
-        setElapsed(0);
-      } else {
-        setElapsed(Math.floor((Date.now() - start) / 1000));
-      }
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [turnStartRef]);
 
   // ── Auto-scroll to bottom, gated by user scroll position ──
   useLayoutEffect(() => {
@@ -131,12 +111,12 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
     <div ref={scrollContainerRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto min-h-0 px-4 py-4 space-y-4">
       {messages.map((msg) => (
         <ErrorBoundary key={msg.id} fallback={<FallbackBubble message={msg} />}>
-          <MessageBubble message={msg} elapsed={elapsed} sessionTime={sessionTime} />
+          <MessageBubble message={msg} sessionTime={sessionTime} />
         </ErrorBoundary>
       ))}
 
       {processing && !hasStreaming && !permissionPrompt && (
-        <WaitingBubble elapsed={elapsed} sessionTime={sessionTime} />
+        <WaitingBubble sessionTime={sessionTime} />
       )}
 
       {permissionPrompt && (
@@ -201,7 +181,7 @@ function formatTime(s: number): string {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-function WaitingBubble({ elapsed, sessionTime }: { elapsed: number; sessionTime: number }) {
+function WaitingBubble({ sessionTime }: { sessionTime: number }) {
   return (
     <div className="flex justify-start animate-fade-up">
       <div
@@ -219,7 +199,7 @@ function WaitingBubble({ elapsed, sessionTime }: { elapsed: number; sessionTime:
             <span className="w-2 h-2 rounded-full animate-bounce" style={{ backgroundColor: "var(--color-accent)", animationDelay: "300ms" }} />
           </div>
           <span className="text-sm" style={{ color: "var(--color-text-muted)" }}>Waiting...</span>
-          <span className="text-xs tabular-nums" style={{ color: "var(--color-text-muted)" }}>({formatTime(Math.floor(sessionTime / 1000) + elapsed)})</span>
+          <span className="text-xs tabular-nums" style={{ color: "var(--color-text-muted)" }}>({formatTime(Math.floor(sessionTime / 1000))})</span>
         </div>
       </div>
     </div>
@@ -376,7 +356,7 @@ function InlinePermission({
   );
 }
 
-function MessageBubble({ message, elapsed, sessionTime }: { message: UIMessage; elapsed: number; sessionTime: number }) {
+function MessageBubble({ message, sessionTime }: { message: UIMessage; sessionTime: number }) {
   const isUser = message.role === "user";
   const safeContent = typeof message.content === "string" ? message.content : "";
 
@@ -400,7 +380,7 @@ function MessageBubble({ message, elapsed, sessionTime }: { message: UIMessage; 
         }
       >
         {message.thinking && (
-          <ThinkingBlock thinking={message.thinking} isStreaming={message.isStreaming} elapsed={elapsed} sessionTime={sessionTime} />
+          <ThinkingBlock thinking={message.thinking} isStreaming={message.isStreaming} sessionTime={sessionTime} />
         )}
 
         {message.images && message.images.length > 0 && (
@@ -447,11 +427,11 @@ function MessageBubble({ message, elapsed, sessionTime }: { message: UIMessage; 
   );
 }
 
-function ThinkingBlock({ thinking, isStreaming, elapsed, sessionTime }: { thinking: string; isStreaming?: boolean; elapsed: number; sessionTime: number }) {
+function ThinkingBlock({ thinking, isStreaming, sessionTime }: { thinking: string; isStreaming?: boolean; sessionTime: number }) {
   return (
     <details className="mb-2 group" open={isStreaming}>
       <summary className="text-xs cursor-pointer select-none" style={{ color: "var(--color-text-muted)" }}>
-        {isStreaming ? `Thinking... (${formatTime(Math.floor(sessionTime / 1000) + elapsed)})` : "Thought"}
+        {isStreaming ? `Thinking... (${formatTime(Math.floor(sessionTime / 1000))})` : "Thought"}
       </summary>
       <div
         className="mt-1.5 text-xs italic leading-relaxed pl-3 max-h-60 overflow-y-auto"
