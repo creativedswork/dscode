@@ -95,6 +95,8 @@ The `SessionManager` class SHALL expose a public method `loadSessionFile(session
 ### Requirement: Session load saves current session first
 The `handleSession` → `load` handler in `WebUiBackend` SHALL, before loading the requested session: (1) abort the current agent turn if one is running, (2) save the current session to disk via `harness.saveSessionNow()`, and (3) send an updated session list via `pushSessionList` so the sidebar reflects the saved session. Only after these steps SHALL it call `sessionManager.loadSession()` to replace agent state and send `clear_conversation` + `ready` to the client.
 
+Additionally, if a tool permission prompt was active (`permissionResolve` is non-null), the save step SHALL: roll back the last partial assistant message from the agent's messages before persisting, and store `pendingPermission` information (`{ toolName, preview, fuzzyPattern, permissionArgs }`) in the session metadata.
+
 #### Scenario: Load aborts running turn
 - **WHEN** the client sends `{ type: "session", action: "load", id: "B" }` and the agent is currently processing a turn
 - **THEN** the server calls `harness.abort()` to stop the running turn before loading session B
@@ -108,6 +110,16 @@ The `handleSession` → `load` handler in `WebUiBackend` SHALL, before loading t
 - **THEN** it calls `pushSessionList(client)` so the frontend sidebar displays all sessions including the just-saved one
 
 #### Scenario: Load proceeds after abort and save
+
+#### Scenario: Load saves current session with pending permission
+- **WHEN** a session load is requested while a tool permission prompt is active for tool "bash"
+- **THEN** the WebUiBackend SHALL save the current session with `pendingPermission: { toolName: "bash", preview: "...", fuzzyPattern: "mcp__*", permissionArgs: {...} }` in its metadata
+- **AND** the last partial assistant message (role===assistant with a tool_use content block requesting "bash") SHALL be removed from the saved messages
+
+#### Scenario: Load saves current session without pending permission
+- **WHEN** a session load is requested and no tool permission prompt is active
+- **THEN** the WebUiBackend SHALL save the current session normally without `pendingPermission` in metadata
+- **AND** no messages are rolled back
 - **WHEN** abort and save have both completed
 - **THEN** the server calls `sessionManager.loadSession(id, agent)`, then sends `clear_conversation` and `ready` with the loaded session's conversation history
 

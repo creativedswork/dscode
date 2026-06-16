@@ -60,6 +60,72 @@ The frontend SHALL compute elapsed processing time from the `turnStartRef` ancho
 - **WHEN** the server sends an `error` event
 - **THEN** `turnStartRef.current` is set to 0 and the elapsed timer is reset
 
+### Requirement: Active session click is no-op during processing
+The session list in the sidebar SHALL suppress the `session load` action when the user clicks the currently active session while `isProcessing` is true. The session item SHALL remain visually clickable (normal appearance, no opacity reduction). The click is a no-op — the conversation view remains unchanged. Non-active sessions continue to be visually disabled via the existing `isDisabled` logic.
+
+#### Scenario: Active session click is no-op during processing
+- **WHEN** the agent is processing a request (`isProcessing` is true) and the user clicks the currently active session item in the sidebar
+- **THEN** no `session load` action is triggered; the click is a no-op; the session item appearance is unchanged (normal opacity, clickable cursor)
+
+#### Scenario: Active session click works when idle
+- **WHEN** the agent is idle (`isProcessing` is false) and the user clicks the currently active session item in the sidebar
+- **THEN** the `session load` action fires normally with the session ID
+
+#### Scenario: Inactive session click behavior unchanged
+- **WHEN** the agent is processing and the user clicks an inactive session item
+- **THEN** the existing `isDisabled` logic applies (opacity reduction, pointer-events none, no action triggered)
+
+### Requirement: Session list disables rows during processing
+The session list in the sidebar SHALL visually disable and block interaction with all session rows during processing, except for the active session's row which SHALL remain in normal visual state. The delete button on EVERY session row SHALL be disabled when `processing` is `true`, including the active session row.
+
+#### Scenario: Non-active sessions disabled during processing
+- **WHEN** `processing` is `true` and the current session is "A"
+- **THEN** all session rows except session A have `opacity: 0.4` and `pointer-events: none`
+
+#### Scenario: Active session delete button disabled during processing
+- **WHEN** `processing` is `true` and the user hovers over the active session row
+- **THEN** the delete button on that row is not clickable; clicking it has no effect
+
+#### Scenario: Delete button disabled on non-active sessions during processing
+- **WHEN** `processing` is `true` and the user hovers over a non-active session row
+- **THEN** the delete button on that row is not clickable
+
+#### Scenario: All sessions interactive when idle
+- **WHEN** `processing` is `false`
+- **THEN** all session rows have normal opacity and pointer-events, and delete buttons are functional
+
+### Requirement: Frontend auto-restores permission dialog from session pendingPermission
+The frontend SHALL, upon receiving a `sessions` event, check whether the session matching `currentSessionId` has a `pendingPermission` field. If present, the frontend SHALL automatically render the PermissionDialog component with the stored permission information, regardless of whether a `permission_prompt` event was received.
+
+#### Scenario: PermissionDialog auto-pops on session switch
+- **WHEN** the frontend receives a `sessions` event with `currentSessionId: "A"` and session A has `pendingPermission: { toolName: "bash", preview: "ls -la", fuzzyPattern: null }`
+- **THEN** the frontend SHALL show the PermissionDialog with toolName "bash" and preview "ls -la"
+- **AND** the dialog SHALL have Allow, Always Allow, Save to Settings, Input Idea, and Deny buttons
+
+#### Scenario: PermissionDialog not shown for sessions without pendingPermission
+- **WHEN** the frontend receives a `sessions` event where the current session has no `pendingPermission` field
+- **THEN** no PermissionDialog is shown (unless a `permission_prompt` event is received separately)
+
+#### Scenario: PermissionDialog clears on session switch away
+- **WHEN** the frontend shows a PermissionDialog from a session's `pendingPermission` and the user switches to a different session
+- **THEN** the PermissionDialog is dismissed (via `clear_conversation` event)
+- **AND** when switching back, the dialog re-appears if `pendingPermission` is still present
+
+### Requirement: PermissionDialog handles restored permission allow
+When the user clicks "Allow" on a PermissionDialog restored from `pendingPermission`, the frontend SHALL send a `permission` command with `decision: "allow"` and the stored tool identity. The backend SHALL pre-approve the tool and re-trigger the agent.
+
+#### Scenario: Allow on restored permission
+- **WHEN** user clicks "Allow" on a PermissionDialog restored from `pendingPermission: { toolName: "bash", preview: "ls" }`
+- **THEN** the frontend SHALL send `{ type: "permission", decision: "allow", toolName: "bash" }`
+- **AND** the PermissionDialog closes
+
+#### Scenario: Deny on restored permission
+- **WHEN** user clicks "Deny" on a PermissionDialog restored from `pendingPermission`
+- **THEN** the frontend SHALL send a command to clear the pending permission
+- **AND** the backend SHALL save the session with `pendingPermission` removed
+- **AND** the PermissionDialog closes permanently for this session
+
+
 ## MODIFIED Requirements
 
 ### Requirement: Theme support
@@ -180,20 +246,24 @@ The frontend SHALL provide a text input area at the bottom of the screen with fl
 
 #### Scenario: Slash command text submitted as chat
 - **WHEN** user submits text starting with `/` (e.g., `/help`, `/config key value`, or `/Users/foo/bar.ts`)
-- **THEN** the text is sent as a `chat` command (not `slash` command) via WebSocket, and the server routes it appropriately
+### Requirement: Session list shows running indicator
+The session list in the sidebar SHALL render a rotating spinner icon for the session that is currently active and processing. It SHALL NOT render any other visual indicator (no accent left border, no colored dot) for the active session. The indicator SHALL be driven by `isProcessing` and `currentSessionId` from the `sessions` server event.
 
-### Requirement: IME composition enter key suppression
-The input area SHALL NOT submit a message when the Enter key is pressed during IME (Input Method Editor) composition. The system SHALL track IME composition state via `compositionstart` and `compositionend` events and suppress the Enter submission when a composition is active.
+#### Scenario: Running indicator visible
+- **WHEN** the frontend receives a `sessions` event with `currentSessionId: "A"`, `isProcessing: true`, and session A is in the list
+- **THEN** session A's row in the sidebar renders a `<Spinner>` icon from Phosphor Icons with CSS rotation animation, opacity 0.6, using `var(--color-accent)` color
 
-#### Scenario: Enter confirms IME composition without submitting
-- **WHEN** the user is composing text via an IME (e.g., Chinese pinyin, Japanese, Korean) and presses Enter to confirm the composed text
-- **THEN** the composed text is committed to the textarea but no message is sent
+#### Scenario: Running indicator not visible on idle
+- **WHEN** the frontend receives a `sessions` event with `isProcessing: false`
+- **THEN** no session row shows the spinner icon
 
-#### Scenario: Enter submits when not composing
-- **WHEN** the user presses Enter in the textarea while no IME composition is active and Shift is not held
-- **THEN** the message is submitted normally
+#### Scenario: Running indicator scoped to current session only
+- **WHEN** `currentSessionId` is "A" and `isProcessing` is true
+- **THEN** only session A's row shows the spinner; other session rows (B, C) do not
 
-### Requirement: Image upload
+#### Scenario: No accent border or colored dot on active session
+- **WHEN** any session row is rendered as the active session
+- **THEN** it does NOT render a left-side accent border (`borderLeft: 3px solid`) nor a colored dot indicator; only the `accent-bg` background and the Spinner (when processing) distinguish the active session
 The frontend SHALL support attaching images to messages via paste from clipboard, with flat, warm-toned thumbnail previews.
 
 #### Scenario: Paste image from clipboard
