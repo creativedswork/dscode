@@ -163,6 +163,8 @@ export class WebUiBackend implements UiBackend {
     this.broadcast({ type: "assistant_start" });
   }
 
+
+
   thinkingDelta(delta: string): void {
     if (this.currentAssistant && delta != null) {
       this.currentAssistant.thinking += delta;

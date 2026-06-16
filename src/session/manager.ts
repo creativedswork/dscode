@@ -112,7 +112,6 @@ export class SessionManager {
       };
       this.accumulatedMs = 0;
     }
-    this.activeSince = Date.now();
     this._visionMessages = [];
     return this.current;
   }
@@ -236,7 +235,6 @@ export class SessionManager {
       agent.state.messages = messages as any;
       this.current = session.metadata;
       this.accumulatedMs = session.metadata.totalActiveMs ?? 0;
-      this.activeSince = Date.now();
       this._visionMessages = session.visionMessages ?? [];
       return { success: true };
     } catch (err: any) {
@@ -328,6 +326,22 @@ export class SessionManager {
   getTotalActiveMs(): number {
     if (this.activeSince === null) return this.accumulatedMs;
     return this.accumulatedMs + (Date.now() - this.activeSince);
+  }
+
+  startActiveTimer(): void {
+    if (this.activeSince === null) {
+      this.activeSince = Date.now();
+    }
+  }
+
+  stopActiveTimer(): void {
+    if (this.activeSince !== null) {
+      this.accumulatedMs += Date.now() - this.activeSince;
+      this.activeSince = null;
+      if (this.current) {
+        this.current.totalActiveMs = this.accumulatedMs;
+      }
+    }
   }
 
   getCurrentMetadata(): SessionMetadata | null {

@@ -106,6 +106,60 @@ describe("SessionManager", () => {
     expect(result.error).toBeTruthy();
   });
 
+  it("should track active time only between start/stop calls", async () => {
+    manager.createSession("p1", "m1");
+    // activeSince should be null after createSession (not auto-started)
+    expect(manager.getTotalActiveMs()).toBe(0);
+
+    // Simulate idle time — should not be counted
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Start timer
+    manager.startActiveTimer();
+    await new Promise((r) => setTimeout(r, 50));
+
+    // Timer is running — total should include live part
+    const live = manager.getTotalActiveMs();
+    expect(live).toBeGreaterThan(0);
+
+    // Stop timer
+    manager.stopActiveTimer();
+    const afterStop = manager.getTotalActiveMs();
+
+    // After stop, idle time should not increase total
+    await new Promise((r) => setTimeout(r, 50));
+    expect(manager.getTotalActiveMs()).toBe(afterStop);
+
+    // Restart should accumulate more
+    manager.startActiveTimer();
+    await new Promise((r) => setTimeout(r, 50));
+    manager.stopActiveTimer();
+    expect(manager.getTotalActiveMs()).toBeGreaterThan(afterStop);
+  });
+
+  it("should not start timer if already started", async () => {
+    manager.createSession("p1", "m1");
+    manager.startActiveTimer();
+    await new Promise((r) => setTimeout(r, 10));
+    const first = manager.getTotalActiveMs();
+    // Second start should be a no-op (activeSince already set)
+    manager.startActiveTimer();
+    await new Promise((r) => setTimeout(r, 10));
+    manager.stopActiveTimer();
+    // Should have accumulated from first start, not reset
+    expect(manager.getTotalActiveMs()).toBeGreaterThan(first);
+  });
+
+  it("should not stop timer if already stopped", () => {
+    manager.createSession("p1", "m1");
+    manager.startActiveTimer();
+    manager.stopActiveTimer();
+    const first = manager.getTotalActiveMs();
+    // Second stop should be a no-op
+    manager.stopActiveTimer();
+    expect(manager.getTotalActiveMs()).toBe(first);
+  });
+
   it("should list sessions", () => {
     manager.createSession("p1", "m1");
     const agent = createMockAgent([{ role: "user", content: "hi" }]);

@@ -1090,9 +1090,11 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
           this.ui.setProcessing(false);
           // Session is saved by promptAndSave after retries are resolved.
           // This save is a safety net for non-promptAndSave code paths.
+          this.sessionManager.stopActiveTimer();
           this.sessionManager.trySaveSession(this.agent);
         }
         if (event.type === "agent_start") {
+          this.sessionManager.startActiveTimer();
           this.ui.startAssistantMessage();
         }
         if (event.type === "turn_end") {

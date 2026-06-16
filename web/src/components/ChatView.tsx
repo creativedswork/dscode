@@ -26,18 +26,11 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
   const [elapsed, setElapsed] = useState(0);
-  const [sessionTime, setSessionTime] = useState(sessionActiveMs);
-
-  // Live session timer: ticks from sessionActiveMs baseline
-  useEffect(() => {
-    const baseMs = sessionActiveMs;
-    const baseTs = Date.now();
-    const timer = setInterval(() => {
-      setSessionTime(baseMs + (Date.now() - baseTs));
-    }, 1000);
-    setSessionTime(baseMs);
-    return () => clearInterval(timer);
-  }, [sessionActiveMs]);
+  // sessionTime is driven by backend's getTotalActiveMs() via sessionActiveMs prop.
+  // The backend already returns live time when the timer is running, so we must
+  // NOT add local wall time on top (that would double-count).
+  // session_time events from agent_start/agent_end keep it synced mid-turn.
+  const sessionTime = sessionActiveMs;
 
   // Elapsed timer driven by turnStartRef (set on handleSend / loader:show, reset on loader:hide / error)
   // Uses requestAnimationFrame to continuously poll the ref value, since ref changes
@@ -226,7 +219,7 @@ function WaitingBubble({ elapsed, sessionTime }: { elapsed: number; sessionTime:
             <span className="w-2 h-2 rounded-full animate-bounce" style={{ backgroundColor: "var(--color-accent)", animationDelay: "300ms" }} />
           </div>
           <span className="text-sm" style={{ color: "var(--color-text-muted)" }}>Waiting...</span>
-          <span className="text-xs tabular-nums" style={{ color: "var(--color-text-muted)" }}>({formatTime(Math.floor((sessionTime + elapsed * 1000) / 1000))})</span>
+          <span className="text-xs tabular-nums" style={{ color: "var(--color-text-muted)" }}>({formatTime(Math.floor(sessionTime / 1000) + elapsed)})</span>
         </div>
       </div>
     </div>
@@ -458,7 +451,7 @@ function ThinkingBlock({ thinking, isStreaming, elapsed, sessionTime }: { thinki
   return (
     <details className="mb-2 group" open={isStreaming}>
       <summary className="text-xs cursor-pointer select-none" style={{ color: "var(--color-text-muted)" }}>
-        {isStreaming ? `Thinking... (${formatTime(Math.floor((sessionTime + elapsed * 1000) / 1000))})` : "Thought"}
+        {isStreaming ? `Thinking... (${formatTime(Math.floor(sessionTime / 1000) + elapsed)})` : "Thought"}
       </summary>
       <div
         className="mt-1.5 text-xs italic leading-relaxed pl-3 max-h-60 overflow-y-auto"
