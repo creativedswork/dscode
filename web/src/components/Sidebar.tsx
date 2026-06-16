@@ -225,7 +225,7 @@ function SessionsPanel({
               }}
             >
               <button
-                onClick={() => { if (!isDisabled) onAction("load", s.id); }}
+                onClick={() => { if (isActive && isProcessing) return; if (!isDisabled) onAction("load", s.id); }}
                 className="flex-1 text-left min-w-0"
               >
                 <div className="text-sm truncate flex items-center gap-1.5" style={{ color: "var(--color-text)" }}>
