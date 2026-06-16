@@ -424,12 +424,6 @@ function SettingsPanel({
     }
   }, [config]);
 
-  useEffect(() => {
-    if (config?.vision) {
-      setShowVisionForm(false);
-    }
-  }, [config?.vision]);
-
   if (!config) {
     return (
       <p
@@ -600,7 +594,7 @@ function SettingsPanel({
             )}
           </div>
 
-          {showVisionForm && (
+          {(showVisionForm || config.vision) ? (
             <>
               <div>
                 <label className="text-xs mb-1 block" style={{ color: "var(--color-text-muted)" }}>Provider</label>
@@ -650,7 +644,7 @@ function SettingsPanel({
                 </div>
               </div>
             </>
-          )}
+          ) : null}
 
           {!config.vision && showVisionForm && (
             <button
