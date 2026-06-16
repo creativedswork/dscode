@@ -249,10 +249,7 @@ export class SessionStore {
             if (meta.messageCount === 0 && Array.isArray(raw.messages) && raw.messages.length > 0) {
               meta.messageCount = raw.messages.filter((m: any) => m.role === "user" || m.role === "assistant").length;
             }
-            // Skip sessions that have no messages at all (empty/corrupted)
-            if (Array.isArray(raw.messages) && raw.messages.length > 0) {
-              entries.push(meta);
-            }
+            entries.push(meta);
           }
         } catch {
           // Skip corrupted files during rebuild

@@ -928,18 +928,26 @@ export class WebUiBackend implements UiBackend {
         }
         const sessions = sessionManager.listSessions();
         const matches = sessions.filter((s: any) => s.id.startsWith(cmd.id!));
+        let match: any;
         if (matches.length === 0) {
-          client.send({ type: "error", text: `Session not found: ${cmd.id}` });
-          return;
-        }
-        if (matches.length > 1) {
+          // Fallback: check if the requested session is the current active session
+          // (which may be filtered out by listSessions() if messageCount === 0)
+          const currentMeta = sessionManager.getCurrentMetadata();
+          if (currentMeta && currentMeta.id.startsWith(cmd.id!)) {
+            match = currentMeta;
+          } else {
+            client.send({ type: "error", text: `Session not found: ${cmd.id}` });
+            return;
+          }
+        } else if (matches.length > 1) {
           const matchList = matches.map((s: any) =>
             `  ${s.id.slice(0, 8)} "${s.title.slice(0, 60)}"  ${s.modelProvider}/${s.modelId}  ${s.messageCount} msgs`
           ).join("\n");
           client.send({ type: "error", text: `Ambiguous session ID prefix. Matching sessions:\n${matchList}` });
           return;
+        } else {
+          match = matches[0];
         }
-        const match = matches[0];
         // If permissionResolve is active, capture and deny it.
         // If already denied by abort handler, pendingPermission is in metadata.
         // Either way, save with truncation to keep conversation clean.
