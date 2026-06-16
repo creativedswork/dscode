@@ -2,6 +2,7 @@ import type { ImageContent } from "@mariozechner/pi-ai";
 import type { McpServerInfo } from "../ui/shared/types.js";
 import type { AppInstance } from "../mcp/app/types.js";
 import type { ConfigData } from "../ui/shared/types.js";
+import type { Logger } from "../utils/logger.js";
 
 // ── HarnessEvent discriminated union ──
 
@@ -59,7 +60,12 @@ export type EventHandler<E extends HarnessEventType = HarnessEventType> = (
 // ── HarnessEventBus ──
 
 export class HarnessEventBus {
+  private logger: Logger;
   private handlers = new Map<string, Set<EventHandler<any>>>();
+
+  constructor(logger: Logger) {
+    this.logger = logger;
+  }
 
   on<E extends HarnessEventType>(type: E, handler: EventHandler<E>): () => void {
     let set = this.handlers.get(type);
@@ -80,7 +86,7 @@ export class HarnessEventBus {
       try {
         handler(event);
       } catch (err) {
-        console.error(`[HarnessEventBus] handler error for "${event.type}":`, err);
+        this.logger.error("tool", "EventBus", `handler error for "${event.type}": ${String(err)}`);
       }
     }
   }

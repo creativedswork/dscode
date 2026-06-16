@@ -6,13 +6,13 @@ import { join } from "node:path";
 import type { HarnessAPI } from "../core/harness-api.js";
 import type { UiBackend } from "../ui/backend.js";
 import type { SerializedSession } from "../session/types.js";
+import { Logger } from "../utils/logger.js";
 import { computeStats } from "./stats.js";
 import { generateDashboard, openDashboard } from "./dashboard.js";
 import { analyzeWithLLM, runCausalGraphPipeline } from "./llm.js";
 import { loadRuleStore, semanticMerge, saveRuleStore } from "./rules/store.js";
 import { runFocusPipeline, FOCUS_PATH_THRESHOLD } from "./focus/index.js";
 import { parseSessionToSteps } from "./schemas.js";
-import { clearEvalLog, logEval } from "./logger.js";
 
 function evalDir(): string {
   return join(homedir(), ".dscode", "eval");
@@ -24,6 +24,8 @@ export async function runEval(
 ): Promise<void> {
   const { harness, ui } = ctx;
   const manager = harness.sessionManager;
+  const runtimeId = process.env.DSCODE_RUNTIME_ID ?? "unknown";
+  const evalLogger = new Logger({ type: "harness", id: runtimeId });
 
   try {
     // Resolve session ID
@@ -61,11 +63,11 @@ export async function runEval(
       }
     }
 
-    clearEvalLog();
+    evalLogger.clear("analysis");
     (ui as any).addInfo(`正在分析 session ${resolvedId.slice(0, 8)}...`);
 
-    // onLog writes to stderr so progress is visible during TUI blocking
-    const onLog = (msg: string) => { (ui as any).addInfo(msg); console.error(msg); };
+    // onLog pushes to TUI only — no terminal output
+    const onLog = (msg: string) => { (ui as any).addInfo(msg); };
 
     // Analyze — path selection based on session size
     const steps = parseSessionToSteps(sessionData);
@@ -74,14 +76,14 @@ export async function runEval(
       : `Causal Graph (${steps.length} 步 < ${FOCUS_PATH_THRESHOLD})`;
     onLog(`📊 ${pathLabel}`);
     const result = steps.length >= FOCUS_PATH_THRESHOLD
-      ? await runFocusPipeline(sessionData, harness, computeStats(sessionData), onLog)
-      : await runCausalGraphPipeline(sessionData, harness, onLog);
+      ? await runFocusPipeline(sessionData, harness, computeStats(sessionData), onLog, evalLogger)
+      : await runCausalGraphPipeline(sessionData, harness, onLog, evalLogger);
     // Step 8: LLM semantic rule merge (use session's projectPath, not harness cwd)
     const projectPath = sessionData?.metadata?.projectPath ?? harness.config?.projectPath;
     if (projectPath) {
-      const store = loadRuleStore(projectPath);
-      const merged = await semanticMerge(result.rules, store, harness);
-      saveRuleStore(merged);
+      const store = loadRuleStore(projectPath, evalLogger);
+      const merged = await semanticMerge(result.rules, store, harness, evalLogger);
+      saveRuleStore(merged, evalLogger);
     }
     const outputPath = join(evalDir(), `${resolvedId.slice(0, 8)}.html`);
     generateDashboard(result, outputPath);
@@ -100,9 +102,9 @@ export async function runEval(
       `Error rate: ${result.stats.errorRate}${attributionInfo} | Rules: ${rulesTriggered}`,
     );
   } catch (err) {
-    logEval("error", "Pipeline", `crash: ${err instanceof Error ? err.message : String(err)}`);
+    evalLogger.error("analysis", "Pipeline", `crash: ${err instanceof Error ? err.message : String(err)}`);
     if (err instanceof Error && err.stack) {
-      logEval("error", "Pipeline", `stack:\n${err.stack}`);
+      evalLogger.error("analysis", "Pipeline", `stack:\n${err.stack}`);
     }
     (ui as any).addError(`eval: ${err instanceof Error ? err.message : String(err)}`);
   }

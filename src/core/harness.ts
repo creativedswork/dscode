@@ -31,6 +31,7 @@ import { initCheckpointSystem, shutdownCheckpointSystem } from "../checkpoint/in
 import { ConfigWatch } from "./config-watch.js";
 import { recordInvalidation, consumePendingNotices } from "../context/anchor-invalidation.js";
 import { HarnessEventBus } from "./events.js";
+import type { Logger } from "../utils/logger.js";
 
 export class Harness implements HarnessAPI {
   agent!: Agent;
@@ -45,6 +46,7 @@ export class Harness implements HarnessAPI {
   appHostManager?: AppHostManager;
   configStore: ConfigWatch;
   config: HarnessConfig;
+  readonly logger: Logger;
   readonly events: HarnessEventBus;
   imagePipeline: ImagePipeline;
   private ui!: UiBackend;
@@ -57,14 +59,15 @@ export class Harness implements HarnessAPI {
   private turnIndex = 0;
   private visionAbortController: AbortController | null = null;
 
-  constructor(config: HarnessConfig, debug?: boolean) {
+  constructor(config: HarnessConfig, logger: Logger, debug?: boolean) {
+    this.logger = logger;
     this.configStore = new ConfigWatch(config);
     this.debug = debug ?? false;
     this.config = this.configStore.get() as HarnessConfig;
-    this.events = new HarnessEventBus();
-    this.sessionManager = new SessionManager(config.dataDir, config.projectPath);
-    this.sessionManager.bindEvents(this.events);
+    this.events = new HarnessEventBus(logger);
+    this.sessionManager = new SessionManager(config.dataDir, config.projectPath, logger);
     this.contextManager = new ContextManager(config.context);
+    this.sessionManager.bindEvents(this.events);
     this.memoryManager = new MemoryManager(config.dataDir, config.projectPath, config.memory);
     this.driverRegistry = new DriverRegistry();
     this.toolRegistry = new ToolRegistry(this.driverRegistry);
@@ -155,7 +158,7 @@ export class Harness implements HarnessAPI {
           await self.dumpDebugPrompt();
           return self.contextManager.transform(msgs, signal) as Promise<AgentMessage[]>;
         } catch (err) {
-          console.error("[harness] transformContext error:", err);
+          this.logger.error("tool", "TransformContext", String(err));
           // Return original messages to keep the agent loop running
           return msgs as unknown as Promise<AgentMessage[]>;
         }
@@ -182,7 +185,7 @@ export class Harness implements HarnessAPI {
               }
             }
         } catch (err) {
-          console.error("[harness] afterToolCall error:", err);
+          this.logger.error("tool", "AfterToolCall", String(err));
         }
         // If signal is aborted, terminate the agent loop immediately
         if (_signal?.aborted) {
@@ -740,7 +743,7 @@ export class Harness implements HarnessAPI {
       (this.ui as any).setMcpManager?.(this.mcpManager);
       (this.ui as any).pushMcpState?.();
     } catch (err) {
-      console.error("[harness] MCP reload error:", err);
+      this.logger.error("tool", "McpReload", String(err));
       // Non-fatal: continue with updated path even if MCP reload fails
     }
 
@@ -774,14 +777,14 @@ export class Harness implements HarnessAPI {
       try {
         await this.appHostManager.shutdown();
       } catch (err) {
-        console.error("[harness] appHostManager shutdown error:", err);
+        this.logger.error("tool", "AppHostShutdown", String(err));
       }
     }
     if (this.mcpManager) {
       try {
         await this.mcpManager.shutdown();
       } catch (err) {
-        console.error("[harness] mcpManager shutdown error:", err);
+        this.logger.error("tool", "McpShutdown", String(err));
       }
     }
   }
@@ -1116,7 +1119,7 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
         }
       } catch (err) {
         // If the event handler fails, still try to save session
-        console.error("[harness] agent event handler error:", err);
+        this.logger.error("tool", "AgentEvent", String(err));
         this.sessionManager.trySaveSession(this.agent);
       }
     });

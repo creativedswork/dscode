@@ -3,6 +3,7 @@
 // Applies four-tier trimming strategy when budget exceeded.
 
 import type { SessionSkeleton, HotZone, HotZoneStep, ColdZone } from "./types.js";
+import type { Logger } from "../../utils/logger.js";
 
 // ── Constants ──
 
@@ -148,6 +149,7 @@ function applyTier4_MinimumContext(skeleton: SessionSkeleton): SessionSkeleton {
 // ── Main Budget Guard ──
 
 export class PromptBudgetGuard {
+  private logger?: Logger;
   private originalChars: number = 0;
   private trimmedChars: number = 0;
   private tierReached: number = 0;
@@ -215,13 +217,18 @@ export class PromptBudgetGuard {
     return truncated;
   }
 
+  setLogger(logger: Logger): void {
+    this.logger = logger;
+  }
+
   private log(): void {
+    if (!this.logger) return;
     const level = this.tierReached >= 2 ? "warn" : "info";
     const msg = `[BudgetGuard] Tier ${this.tierReached}: trimmed from ${this.originalChars} to ${this.trimmedChars} chars`;
     if (level === "warn") {
-      console.warn(msg);
+      this.logger.warn("analysis", "BudgetGuard", msg);
     } else {
-      console.info(msg);
+      this.logger.info("analysis", "BudgetGuard", msg);
     }
   }
 }

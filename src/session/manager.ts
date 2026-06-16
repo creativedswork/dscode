@@ -7,6 +7,7 @@ import { SessionStore } from "./store.js";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import type { HarnessEventBus } from "../core/events.js";
+import type { Logger } from "../utils/logger.js";
 
 export interface LoadResult {
   success: boolean;
@@ -64,6 +65,7 @@ async function restoreImagesFromCache(msg: any): Promise<void> {
 }
 
 export class SessionManager {
+  private logger: Logger;
   private store: SessionStore;
   private current: SessionMetadata | null = null;
   private projectPath: string;
@@ -71,7 +73,8 @@ export class SessionManager {
   private accumulatedMs = 0;
   private activeSince: number | null = null;
 
-  constructor(dataDir: string, projectPath: string) {
+  constructor(dataDir: string, projectPath: string, logger: Logger) {
+    this.logger = logger;
     this.projectPath = projectPath;
     this.store = new SessionStore(dataDir, projectPath);
   }
@@ -228,7 +231,7 @@ export class SessionManager {
     try {
       this.saveSession(agent, pendingPermission);
     } catch (err) {
-      console.error("[session] trySaveSession failed:", err);
+      this.logger.error("session", "Save", `trySaveSession failed: ${String(err)}`);
     }
   }
 

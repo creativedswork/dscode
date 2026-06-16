@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { Logger } from "../../utils/logger.js";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -27,6 +28,8 @@ import {
 } from "./hash.js";
 import { captureUndoSnapshot } from "./undo-store.js";
 import { validateSyntax, isSyntaxCheckSupported } from "./syntax-validate.js";
+
+const _editLogger = new Logger({ type: "harness", id: process.env.DSCODE_RUNTIME_ID ?? "unknown" });
 
 const editParams = Type.Object({
   path: Type.String({ description: "Absolute path of the file to edit" }),
@@ -179,7 +182,7 @@ export const editTool: AgentTool<typeof editParams> = {
       };
     }
     if (file_path && !path) {
-      console.warn('[edit] file_path is deprecated, use path instead');
+      _editLogger.warn('tool', 'Edit', 'file_path is deprecated, use path instead');
     }
     const resolved = resolve(effectivePath);
 

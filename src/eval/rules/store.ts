@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import type { HarnessRule, RuleStore } from "./types.js";
 import { computeSeverity } from "./types.js";
 import type { HarnessAPI } from "../../core/harness-api.js";
+import type { Logger } from "../../utils/logger.js";
 import { resolveModel } from "../../models/index.js";
 import { completeSimple } from "@mariozechner/pi-ai";
 import { RULE_MERGE_SYSTEM, buildStep8Prompt, extractJSON } from "../prompts.js";
@@ -44,7 +45,7 @@ function stripOldFormat(rules: Record<string, Record<string, unknown>>): Record<
   return result;
 }
 
-export function loadRuleStore(projectPath: string): RuleStore {
+export function loadRuleStore(projectPath: string, logger?: Logger): RuleStore {
   const path = ruleStorePath();
   try {
     if (!existsSync(path)) {
@@ -74,19 +75,19 @@ export function loadRuleStore(projectPath: string): RuleStore {
       updatedAt: parsed.updatedAt ?? Date.now(),
     };
   } catch (err) {
-    console.warn("[harness-rule-store] Failed to load rules.json, starting fresh:", (err as Error).message);
+    if (logger) logger.warn("analysis", "RuleStore", `Failed to load rules.json, starting fresh: ${(err as Error).message}`);
     return createEmptyStore(projectPath);
   }
 }
 
-export function saveRuleStore(store: RuleStore): void {
+export function saveRuleStore(store: RuleStore, logger?: Logger): void {
   const path = ruleStorePath();
   try {
     mkdirSync(dirname(path), { recursive: true });
     store.updatedAt = Date.now();
     writeFileSync(path, JSON.stringify(store, null, 2), "utf8");
   } catch (err) {
-    console.error("[harness-rule-store] Failed to save rules.json:", (err as Error).message);
+    if (logger) logger.error("analysis", "RuleStore", `Failed to save rules.json: ${(err as Error).message}`);
   }
 }
 
@@ -129,6 +130,7 @@ export async function semanticMerge(
   newRules: HarnessRule[],
   existingStore: RuleStore,
   harness: HarnessAPI,
+  logger?: Logger,
 ): Promise<RuleStore> {
   // Short-circuit: no new rules
   if (newRules.length === 0) return existingStore;
@@ -174,7 +176,7 @@ export async function semanticMerge(
           rawOutput = await callMergeLLM(RULE_MERGE_SYSTEM, prompt + "\n\n⚠ Output PURE JSON array only.", harness);
           continue;
         }
-        console.warn("[harness-rule-store] No JSON in merge LLM response, adding all as new");
+        if (logger) logger.warn("analysis", "RuleStore", "No JSON in merge LLM response, adding all as new");
         break;
       }
 
@@ -192,10 +194,10 @@ export async function semanticMerge(
         );
         continue;
       }
-      console.warn("[harness-rule-store] Merge validation failed:", parsed.errors.join("; "));
+      if (logger) logger.warn("analysis", "RuleStore", `Merge validation failed: ${parsed.errors.join("; ")}`);
     }
   } catch (err) {
-    console.warn("[harness-rule-store] Semantic merge LLM call failed, adding all as new:", (err as Error).message);
+    if (logger) logger.warn("analysis", "RuleStore", `Semantic merge LLM call failed, adding all as new: ${(err as Error).message}`);
   }
 
   // Apply merge decisions

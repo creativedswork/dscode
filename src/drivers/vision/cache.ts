@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { Logger } from "../../utils/logger.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -7,6 +8,8 @@ import type { ImageRef } from "./types.js";
 
 const CACHE_SUBDIR = join(homedir(), ".dscode", "data", "images");
 const MAX_HEIGHT = 480;
+
+const _cacheLogger = new Logger({ type: "harness", id: process.env.DSCODE_RUNTIME_ID ?? "unknown" });
 
 let sharpAvailable = true;
 let sharpInstance: typeof import("sharp") | null = null;
@@ -19,7 +22,7 @@ async function getSharp(): Promise<typeof import("sharp") | null> {
     return sharpInstance;
   } catch {
     sharpAvailable = false;
-    console.error("[image-cache] sharp not available, images will be stored uncompressed");
+    _cacheLogger.warn("tool", "ImageCache", "sharp not available, images will be stored uncompressed");
     return null;
   }
 }
@@ -78,7 +81,7 @@ export class ImageCache {
         await pipeline.png().toFile(filepath);
         return { type: "image_ref", hash: filename, mimeType: "image/png" };
       } catch (err) {
-        console.error("[image-cache] sharp processing failed, storing original:", err);
+        _cacheLogger.warn("tool", "ImageCache", `sharp processing failed, storing original: ${String(err)}`);
         // Fall through to fallback
       }
     }

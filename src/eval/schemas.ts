@@ -3,6 +3,7 @@
 // All types map to the dscode session format: thinking → toolCall → toolResult.
 
 import type { SerializedSession } from "../session/types.js";
+import type { Logger } from "../utils/logger.js";
 
 // ── Step 0: Parsed History Steps ──
 
@@ -235,17 +236,18 @@ export function safeJsonParse<T>(
   json: string,
   stepName: string,
   validator: (parsed: unknown) => ValidationResult<T>,
+  logger?: Logger,
 ): T | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(json);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    console.warn(`[${stepName}] JSON parse: ${msg}`);
+    if (logger) logger.warn("analysis", stepName, `JSON parse: ${msg}`);
   }
   const result = validator(parsed);
   if (!result.ok) {
-    console.warn(`[${stepName}] validation: ${result.errors.join("; ")}`);
+    if (logger) logger.warn("analysis", stepName, `validation: ${result.errors.join("; ")}`);
     // Return partial results if available
     if (result.partial !== undefined) return result.partial;
     return null;

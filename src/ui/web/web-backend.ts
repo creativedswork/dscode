@@ -521,7 +521,7 @@ export class WebUiBackend implements UiBackend {
             };
             // Save immediately with truncation so deny/abort messages
             // that follow won't persist to disk.
-            console.log("[abort-handler] saving pendingPermission to metadata, then denying");
+            this.harness.logger.info("session", "WebBackend", "saving pendingPermission to metadata, then denying");
             sm.saveSession(this.harness.agent, meta.pendingPermission);
           }
           this.permissionResolve({ decision: "deny" });
@@ -959,15 +959,15 @@ export class WebUiBackend implements UiBackend {
           const meta = sessionManager.getCurrentMetadata();
           if (meta?.pendingPermission) {
             pendingPermission = meta.pendingPermission;
-            console.log("[web-backend] using pendingPermission from metadata");
+            this.harness.logger.info("session", "WebBackend", "using pendingPermission from metadata");
           }
         }
         this.harness.abort();
         if (pendingPermission) {
-          console.log("[web-backend] saving with pendingPermission:", JSON.stringify(pendingPermission));
+          this.harness.logger.info("session", "WebBackend", `saving with pendingPermission: ${JSON.stringify(pendingPermission)}`);
           sessionManager.saveSession(agent, pendingPermission);
         } else {
-          console.log("[web-backend] saving without pendingPermission");
+          this.harness.logger.info("session", "WebBackend", "saving without pendingPermission");
           this.harness.saveSessionNow();
         }
         const result = await sessionManager.loadSession(match.id, agent);

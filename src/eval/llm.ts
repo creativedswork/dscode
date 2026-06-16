@@ -1,5 +1,5 @@
 // ── CHIFF Causal Graph Pipeline ──
-import { logEval } from "./logger.js";
+import type { Logger } from "../utils/logger.js";
 // 8-step analysis pipeline: 6 LLM steps (CHIFF) + 2 LLM rule steps.
 // LLM failures propagate as errors — no silent degradation.
 
@@ -126,6 +126,7 @@ async function executeStep1(
   steps: HistoryStep[],
   question: string,
   harness: HarnessAPI,
+  logger?: Logger,
 ): Promise<Subtask[]> {
   const summary = buildHistorySummary(
     steps.map((s) => ({
@@ -145,11 +146,11 @@ async function executeStep1(
     const prev = result[i];
     const next = result[i + 1];
     if (prev.stepEnd >= next.stepStart) {
-      console.warn(`[CHIFF Step 1] Fixing overlap: ${prev.id} (${prev.stepStart}-${prev.stepEnd}) overlaps ${next.id} (${next.stepStart}-${next.stepEnd}), truncating ${prev.id}.stepEnd to ${next.stepStart - 1}`);
+      if (logger) logger.warn("analysis", "Step1", `Fixing overlap: ${prev.id} (${prev.stepStart}-${prev.stepEnd}) overlaps ${next.id} (${next.stepStart}-${next.stepEnd}), truncating ${prev.id}.stepEnd to ${next.stepStart - 1}`);
       prev.stepEnd = next.stepStart - 1;
     }
     if (prev.stepEnd + 1 < next.stepStart) {
-      console.warn(`[CHIFF Step 1] Filling gap: gap ${prev.stepEnd + 1}-${next.stepStart - 1} between ${prev.id} and ${next.id}, extending ${prev.id}.stepEnd to ${next.stepStart - 1}`);
+      if (logger) logger.warn("analysis", "Step1", `Filling gap: gap ${prev.stepEnd + 1}-${next.stepStart - 1} between ${prev.id} and ${next.id}, extending ${prev.id}.stepEnd to ${next.stepStart - 1}`);
       prev.stepEnd = next.stepStart - 1;
     }
   }
@@ -208,6 +209,7 @@ async function executeStep3(
   subtasks: Subtask[],
   steps: HistoryStep[],
   harness: HarnessAPI,
+  logger?: Logger,
 ): Promise<{ agents: AgentNode[]; dataFlows: StepDataFlow[] }> {
   // Agent nodes: deterministic, no LLM
   const agents = buildAgentNodes(steps, subtasks);
@@ -221,17 +223,17 @@ async function executeStep3(
       const prompt = buildStep3SingleSubtaskPrompt(subtask, steps, subtasks);
       const flows = await callAndValidate(harness, prompt, validateStepDataFlows, 4096, `Step 3 / ${subtask.id}`);
       allFlows.push(...flows);
-      logEval("info", "Step3", `Subtask ${subtask.id}: ${flows.length} data flows extracted`);
+      if (logger) logger.info("analysis", "Step3", `Subtask ${subtask.id}: ${flows.length} data flows extracted`);
     } catch (err) {
-      logEval("warn", "Step3", `Subtask ${subtask.id}: ${err instanceof Error ? err.message : String(err)}`);
+      if (logger) logger.warn("analysis", "Step3", `Subtask ${subtask.id}: ${err instanceof Error ? err.message : String(err)}`);
       failedSubtasks++;
     }
   }
 
   if (failedSubtasks > 0) {
-    logEval("warn", "Step3", `${failedSubtasks}/${subtasks.length} subtasks failed to produce data flows`);
+    if (logger) logger.warn("analysis", "Step3", `${failedSubtasks}/${subtasks.length} subtasks failed to produce data flows`);
   }
-  logEval("info", "Step3", `Subtask summary: ${allFlows.length} total data flows from ${subtasks.length - failedSubtasks}/${subtasks.length} subtasks`);
+  if (logger) logger.info("analysis", "Step3", `Subtask summary: ${allFlows.length} total data flows from ${subtasks.length - failedSubtasks}/${subtasks.length} subtasks`);
   return { agents, dataFlows: allFlows };
 }
 
@@ -407,6 +409,7 @@ export async function runCausalGraphPipeline(
   data: SerializedSession,
   harness: HarnessAPI,
   onLog?: (msg: string) => void,
+  logger?: Logger,
 ): Promise<EvalResult> {
   // Compute pure stats (no inference, no rules)
   const sessionStats = computeStats(data);
@@ -423,7 +426,7 @@ export async function runCausalGraphPipeline(
 
   // Step 1: Subtask decomposition
   onLog?.("🔍 Phase 1/6: 分解子任务...");
-  const subtasks = await executeStep1(steps, question, harness);
+  const subtasks = await executeStep1(steps, question, harness, logger);
   onLog?.("✓ Phase 1/6 完成  [██░░░░░░░░░░░░░░] 17%");
   graphStore.addSubtasks(subtasks);
 
@@ -435,7 +438,7 @@ export async function runCausalGraphPipeline(
 
   // Step 3: Agent nodes + step data flows
   onLog?.("🤖 Phase 3/6: 提取 Agent 节点...");
-  const { agents, dataFlows } = await executeStep3(subtasks, steps, harness);
+  const { agents, dataFlows } = await executeStep3(subtasks, steps, harness, logger);
   onLog?.("✓ Phase 3/6 完成  [██████░░░░░░░░░░] 50%");
   graphStore.addAgentNodes(agents);
   graphStore.addStepDataFlows(dataFlows);
@@ -463,7 +466,7 @@ export async function runCausalGraphPipeline(
   onLog?.("✓ Phase 6/6 完成  [████████████████] 100%");
 
   // Step 7: LLM autonomous rule attribution (with recoveryArcs)
-  const rules = await attributeWithLLM(data, steps, sessionStats.stats, sessionStats.metadata, graphStore, attribution, harness, sessionStats.metadata.sessionId, Date.now());
+  const rules = await attributeWithLLM(data, steps, sessionStats.stats, sessionStats.metadata, graphStore, attribution, harness, sessionStats.metadata.sessionId, Date.now(), logger);
   return mergePipelineResults(sessionStats, attribution, candidateSet, graphStore, rules);
 }
 
@@ -474,6 +477,7 @@ export async function analyzeWithLLM(
   data: SerializedSession,
   harness: HarnessAPI,
   onLog?: (msg: string) => void,
+  logger?: Logger,
 ): Promise<EvalResult> {
-  return runCausalGraphPipeline(data, harness, onLog);
+  return runCausalGraphPipeline(data, harness, onLog, logger);
 }

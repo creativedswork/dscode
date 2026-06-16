@@ -12,6 +12,7 @@ import type { HarnessConfig } from "./types.js";
 import type { ConfigWatch } from "./config-watch.js";
 import type { ImagePipeline } from "../drivers/vision/pipeline.js";
 import type { HarnessEventBus } from "./events.js";
+import type { Logger } from "../utils/logger.js";
 
 /**
  * Public API surface of Harness, consumed by UI backends and slash commands.
@@ -30,6 +31,7 @@ export interface HarnessAPI {
   readonly config: HarnessConfig;
   readonly configStore: ConfigWatch;
   readonly events: HarnessEventBus;
+  readonly logger: Logger;
   readonly imagePipeline: ImagePipeline;
 
   promptWithImages(text: string, images: ImageContent[]): Promise<void>;

@@ -1,9 +1,22 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomBytes } from "node:crypto";
 
 import { loadConfig, PROVIDER_ENV_VARS } from "./config.js";
 import { Harness } from "./harness.js";
+import { Logger } from "../utils/logger.js";
+
+// ── Runtime ID ──
+
+function generateRuntimeId(): string {
+  return "rt_" + randomBytes(4).toString("hex");
+}
+
+const runtimeId = generateRuntimeId();
+process.env.DSCODE_RUNTIME_ID = runtimeId;
+
+const harnessLogger = new Logger({ type: "harness", id: runtimeId });
 
 // ── Crash-resilience: attempt to save session on fatal events ──
 
@@ -20,13 +33,13 @@ function emergencySaveSession(): void {
 }
 
 process.on("unhandledRejection", (reason) => {
-  console.error("[unhandledRejection]", reason);
+  harnessLogger.error("lifecycle", "UnhandledRejection", String(reason));
   emergencySaveSession();
 });
 
 process.on("uncaughtException", (err) => {
   const msg = err instanceof Error ? err.message : String(err);
-  console.error("\n  \u26a0 " + msg + "\n");
+  harnessLogger.error("lifecycle", "UncaughtException", msg);
   emergencySaveSession();
   // Give I/O a brief moment to flush, then exit
   setTimeout(() => {
@@ -40,18 +53,18 @@ let sigintCount = 0;
 process.on("SIGINT", () => {
   sigintCount++;
   if (sigintCount === 1) {
-    console.log("\nShutting down... (press Ctrl+C again to force quit)");
+    harnessLogger.info("lifecycle", "SIGINT", "Shutting down... (press Ctrl+C again to force quit)");
     emergencySaveSession();
     // Let the normal shutdown flow handle the rest
   } else {
-    console.log("\nForce quitting...");
+    harnessLogger.info("lifecycle", "SIGINT", "Force quitting...");
     emergencySaveSession();
     process.exit(0);
   }
 });
 
 process.on("SIGTERM", () => {
-  console.log("\nReceived SIGTERM, shutting down...");
+  harnessLogger.info("lifecycle", "SIGTERM", "Received SIGTERM, shutting down...");
   emergencySaveSession();
   process.exit(0);
 });
@@ -91,7 +104,6 @@ function parseArgs(): { web: boolean; webPort: number; debug: boolean; cwd?: str
     } else if (args[i] === "--web-port" && i + 1 < args.length) {
       webPort = parseInt(args[++i], 10);
       if (isNaN(webPort) || webPort < 1 || webPort > 65535) {
-        console.error(`Invalid port: ${args[i]}. Using default 3000.`);
         webPort = 3000;
       }
     } else if (args[i] === "--cwd" && i + 1 < args.length) {
@@ -119,7 +131,7 @@ async function main(): Promise<void> {
     }
   }
 
-  const harness = new Harness(config, debug);
+  const harness = new Harness(config, harnessLogger, debug);
   harnessRef = harness;
   await harness.initialize();
 
@@ -144,7 +156,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  console.error(err);
+  harnessLogger.error("lifecycle", "FatalStartup", err instanceof Error ? err.message : String(err));
   emergencySaveSession();
   process.exit(1);
 });
