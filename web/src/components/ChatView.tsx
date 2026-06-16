@@ -16,15 +16,28 @@ interface ChatViewProps {
   messages: UIMessage[];
   processing: boolean;
   hasStreaming: boolean;
+  sessionActiveMs: number;
   turnStartRef: React.MutableRefObject<number>;
   permissionPrompt: ({ toolName: string; preview: string; fuzzyPattern?: string | null; fuzzyArgDesc?: string | null; llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[] }) | null;
   onPermission: (decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string, toolNamePattern?: string, fuzzyMode?: number) => void;
 }
-export function ChatView({ messages, processing, hasStreaming, turnStartRef, permissionPrompt, onPermission }: ChatViewProps) {
+export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, turnStartRef, permissionPrompt, onPermission }: ChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
   const [elapsed, setElapsed] = useState(0);
+  const [sessionTime, setSessionTime] = useState(sessionActiveMs);
+
+  // Live session timer: ticks from sessionActiveMs baseline
+  useEffect(() => {
+    const baseMs = sessionActiveMs;
+    const baseTs = Date.now();
+    const timer = setInterval(() => {
+      setSessionTime(baseMs + (Date.now() - baseTs));
+    }, 1000);
+    setSessionTime(baseMs);
+    return () => clearInterval(timer);
+  }, [sessionActiveMs]);
 
   // Elapsed timer driven by turnStartRef (set on handleSend / loader:show, reset on loader:hide / error)
   // Uses requestAnimationFrame to continuously poll the ref value, since ref changes
@@ -125,12 +138,12 @@ export function ChatView({ messages, processing, hasStreaming, turnStartRef, per
     <div ref={scrollContainerRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto min-h-0 px-4 py-4 space-y-4">
       {messages.map((msg) => (
         <ErrorBoundary key={msg.id} fallback={<FallbackBubble message={msg} />}>
-          <MessageBubble message={msg} elapsed={elapsed} />
+          <MessageBubble message={msg} elapsed={elapsed} sessionTime={sessionTime} />
         </ErrorBoundary>
       ))}
 
       {processing && !hasStreaming && !permissionPrompt && (
-        <WaitingBubble elapsed={elapsed} />
+        <WaitingBubble elapsed={elapsed} sessionTime={sessionTime} />
       )}
 
       {permissionPrompt && (
@@ -195,7 +208,7 @@ function formatTime(s: number): string {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
-function WaitingBubble({ elapsed }: { elapsed: number }) {
+function WaitingBubble({ elapsed, sessionTime }: { elapsed: number; sessionTime: number }) {
   return (
     <div className="flex justify-start animate-fade-up">
       <div
@@ -213,7 +226,7 @@ function WaitingBubble({ elapsed }: { elapsed: number }) {
             <span className="w-2 h-2 rounded-full animate-bounce" style={{ backgroundColor: "var(--color-accent)", animationDelay: "300ms" }} />
           </div>
           <span className="text-sm" style={{ color: "var(--color-text-muted)" }}>Waiting...</span>
-          <span className="text-xs tabular-nums" style={{ color: "var(--color-text-muted)" }}>({formatTime(elapsed)})</span>
+          <span className="text-xs tabular-nums" style={{ color: "var(--color-text-muted)" }}>({formatTime(Math.floor((sessionTime + elapsed * 1000) / 1000))})</span>
         </div>
       </div>
     </div>
@@ -370,7 +383,7 @@ function InlinePermission({
   );
 }
 
-function MessageBubble({ message, elapsed }: { message: UIMessage; elapsed: number }) {
+function MessageBubble({ message, elapsed, sessionTime }: { message: UIMessage; elapsed: number; sessionTime: number }) {
   const isUser = message.role === "user";
   const safeContent = typeof message.content === "string" ? message.content : "";
 
@@ -394,7 +407,7 @@ function MessageBubble({ message, elapsed }: { message: UIMessage; elapsed: numb
         }
       >
         {message.thinking && (
-          <ThinkingBlock thinking={message.thinking} isStreaming={message.isStreaming} elapsed={elapsed} />
+          <ThinkingBlock thinking={message.thinking} isStreaming={message.isStreaming} elapsed={elapsed} sessionTime={sessionTime} />
         )}
 
         {message.images && message.images.length > 0 && (
@@ -441,11 +454,11 @@ function MessageBubble({ message, elapsed }: { message: UIMessage; elapsed: numb
   );
 }
 
-function ThinkingBlock({ thinking, isStreaming, elapsed }: { thinking: string; isStreaming?: boolean; elapsed: number }) {
+function ThinkingBlock({ thinking, isStreaming, elapsed, sessionTime }: { thinking: string; isStreaming?: boolean; elapsed: number; sessionTime: number }) {
   return (
     <details className="mb-2 group" open={isStreaming}>
       <summary className="text-xs cursor-pointer select-none" style={{ color: "var(--color-text-muted)" }}>
-        {isStreaming ? `Thinking... (${formatTime(elapsed)})` : "Thought"}
+        {isStreaming ? `Thinking... (${formatTime(Math.floor((sessionTime + elapsed * 1000) / 1000))})` : "Thought"}
       </summary>
       <div
         className="mt-1.5 text-xs italic leading-relaxed pl-3 max-h-60 overflow-y-auto"

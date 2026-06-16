@@ -67,6 +67,8 @@ export class SessionManager {
   private current: SessionMetadata | null = null;
   private projectPath: string;
   private _visionMessages: VisionMessage[] = [];
+  private accumulatedMs = 0;
+  private activeSince: number | null = null;
 
   constructor(dataDir: string, projectPath: string) {
     this.projectPath = projectPath;
@@ -90,7 +92,9 @@ export class SessionManager {
         updatedAt: Date.now(),
         modelProvider: provider,
         modelId,
+        totalActiveMs: 0,
       };
+      this.accumulatedMs = 0;
     } else {
       this.current = {
         id: ulid(),
@@ -104,8 +108,11 @@ export class SessionManager {
         preview: "",
         hasImages: false,
         imageCount: 0,
+        totalActiveMs: 0,
       };
+      this.accumulatedMs = 0;
     }
+    this.activeSince = Date.now();
     this._visionMessages = [];
     return this.current;
   }
@@ -135,6 +142,14 @@ export class SessionManager {
     // Preserve pendingPermission in metadata only — don't touch messages.
     this.current.updatedAt = Date.now();
     this.current.messageCount = messages.filter((m: any) => m.role === "user" || m.role === "assistant").length;
+
+    // Accumulate active time since last save
+    if (this.activeSince !== null) {
+      this.accumulatedMs += Date.now() - this.activeSince;
+      this.activeSince = Date.now();
+    }
+    this.current.totalActiveMs = this.accumulatedMs;
+
     if (pendingPermission !== undefined) {
       this.current.pendingPermission = pendingPermission;
     }
@@ -220,6 +235,8 @@ export class SessionManager {
 
       agent.state.messages = messages as any;
       this.current = session.metadata;
+      this.accumulatedMs = session.metadata.totalActiveMs ?? 0;
+      this.activeSince = Date.now();
       this._visionMessages = session.visionMessages ?? [];
       return { success: true };
     } catch (err: any) {
@@ -305,6 +322,12 @@ export class SessionManager {
 
   async loadSessionFile(sessionId: string): Promise<SerializedSession | null> {
     return this.store.loadSessionFile(sessionId);
+  }
+
+  /** Total active time in milliseconds (accumulated across switches). */
+  getTotalActiveMs(): number {
+    if (this.activeSince === null) return this.accumulatedMs;
+    return this.accumulatedMs + (Date.now() - this.activeSince);
   }
 
   getCurrentMetadata(): SessionMetadata | null {

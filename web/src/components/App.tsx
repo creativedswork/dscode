@@ -154,6 +154,8 @@ export function App() {
 
   const hasStreaming = messages.some((m) => m.isStreaming);
 
+  const sessionActiveMs = sessions.find((s) => s.id === currentSessionId)?.totalActiveMs ?? 0;
+
   return (
     <div className="h-screen flex flex-col" style={{ backgroundColor: "var(--color-bg)" }}>
       <header className="flex items-center justify-between px-4 py-2 shrink-0" style={{ backgroundColor: "var(--color-surface)", borderBottom: "1px solid var(--color-border)" }}>
@@ -180,7 +182,7 @@ export function App() {
           onSessionAction={handleSessionAction} onMcpAction={handleMcpAction} onMcpServerAction={handleMcpAction}
           onConfigChange={handleConfigChange} isProcessing={processing} onNewSession={handleNewSession} />
         <main className="flex-1 flex flex-col min-w-0">
-          <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} turnStartRef={turnStartRef} permissionPrompt={permissionPrompt} onPermission={handlePermission} />
+          <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} sessionActiveMs={sessionActiveMs} turnStartRef={turnStartRef} permissionPrompt={permissionPrompt} onPermission={handlePermission} />
           <MessageInput onSend={handleSend} onAbort={handleAbort} onSlashCommand={handleSlashCommand} onCommand={handleCommand}
             processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} />
         </main>

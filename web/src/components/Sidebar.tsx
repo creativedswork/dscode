@@ -159,6 +159,16 @@ export function Sidebar({
   );
 }
 
+function formatDuration(ms: number): string {
+  if (ms < 1000) return "<1s";
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  return `${h}h ${m}m`;
+}
+
 function SessionsPanel({
   sessions,
   currentSessionId,
@@ -222,7 +232,7 @@ function SessionsPanel({
                   {s.title}
                 </div>
                 <div className="text-xs" style={{ color: "var(--color-text-muted)" }}>
-                  {new Date(s.updatedAt).toLocaleDateString()} &middot; {s.messageCount} msgs
+                  {formatDuration(s.totalActiveMs)} &middot; {s.messageCount} msgs
                 </div>
               </button>
               {isActive && isProcessing && (

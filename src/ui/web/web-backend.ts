@@ -218,6 +218,7 @@ export class WebUiBackend implements UiBackend {
           id: s.id, title: s.title, updatedAt: s.updatedAt, createdAt: s.createdAt,
           messageCount: s.messageCount, modelProvider: s.modelProvider, modelId: s.modelId,
           projectPath: s.projectPath || "", preview: s.preview || "",
+          totalActiveMs: s.id === currentId2 ? sm2.getTotalActiveMs() : (s.totalActiveMs ?? 0),
           pendingPermission: s.pendingPermission || undefined,
         })),
       });
@@ -627,6 +628,7 @@ export class WebUiBackend implements UiBackend {
         modelId: s.modelId,
         projectPath: s.projectPath || "",
         preview: s.preview || "",
+        totalActiveMs: s.id === currentId ? sessionManager.getTotalActiveMs() : (s.totalActiveMs ?? 0),
         pendingPermission: s.pendingPermission || undefined,
       })),
     });
@@ -742,6 +744,7 @@ export class WebUiBackend implements UiBackend {
                   modelId: s.modelId,
                   projectPath: s.projectPath || "",
                   preview: s.preview || "",
+                  totalActiveMs: s.totalActiveMs ?? 0,
                 })),
               });
             }
@@ -780,6 +783,7 @@ export class WebUiBackend implements UiBackend {
           modelId: s.modelId,
           projectPath: s.projectPath || "",
           preview: s.preview || "",
+          totalActiveMs: s.totalActiveMs ?? 0,
         }));
         client.send({ type: "sessions", data });
         break;
@@ -805,6 +809,7 @@ export class WebUiBackend implements UiBackend {
             modelId: s.modelId,
             projectPath: s.projectPath || "",
             preview: s.preview || "",
+            totalActiveMs: s.totalActiveMs ?? 0,
           })),
         });
         break;
@@ -927,6 +932,7 @@ export class WebUiBackend implements UiBackend {
             modelId: s.modelId,
             projectPath: s.projectPath || "",
             preview: s.preview || "",
+            totalActiveMs: s.totalActiveMs ?? 0,
           })),
         });
         break;

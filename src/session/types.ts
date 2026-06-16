@@ -45,6 +45,7 @@ export interface SessionMetadata {
   preview: string;
   hasImages: boolean;
   imageCount: number;
+  totalActiveMs: number;
 }
 
 export interface SerializedSession {
