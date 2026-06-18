@@ -49,10 +49,16 @@ function extractToolsFromContent(blocks: any[]): { name: string; args: string; r
 
 function extractToolResultText(blocks: any[]): string {
   if (!Array.isArray(blocks)) return "";
-  return blocks
+  const raw = blocks
     .filter((b: any) => b && b.type === "text")
     .map((b: any) => b.text)
     .join("\n");
+  // Truncate long tool results (e.g. write_file anchor previews) to keep
+  // the web UI responsive and prevent enormous result blocks from dominating
+  // the chat view. The first line (summary) is preserved; the rest is capped.
+  const MAX_RESULT = 600;
+  if (raw.length <= MAX_RESULT) return raw;
+  return raw.slice(0, MAX_RESULT) + `\n… (${raw.length - MAX_RESULT} more chars)`;
 }
 
 // ── Main ──

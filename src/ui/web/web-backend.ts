@@ -153,6 +153,7 @@ export class WebUiBackend implements UiBackend {
     h.events.on("mcp:browser:open", () => { this.pushMcpState(); this.broadcast({ type: "mcp_open_browser" }); });
     h.events.on("session:saved", () => { this.pushSessionListToAll(); });
     h.events.on("session:created", () => { this.pushSessionListToAll(); });
+    h.events.on("session:deleted", () => { this.pushSessionListToAll(); });
   }
 
   setAppHostManager(manager: AppHostManager): void {
@@ -1028,15 +1029,21 @@ export class WebUiBackend implements UiBackend {
           client.send({ type: "error", text: "Session ID required." });
           return;
         }
+        const wasCurrent = sessionManager.getCurrentSessionId?.() === cmd.id;
         const result = sessionManager.deleteSession(cmd.id);
         if (!result.success) {
           client.send({ type: "error", text: `Failed to delete session: ${result.error}` });
           return;
         }
+        if (wasCurrent) {
+          client.send({ type: "clear_conversation" });
+        }
         client.send({ type: "info", display: "toast", text: "Session deleted." });
         const sessions = sessionManager.listSessions();
+        const currentId = sessionManager.getCurrentSessionId?.() ?? undefined;
         client.send({
           type: "sessions",
+          currentSessionId: currentId,
           data: sessions.slice(0, 50).map((s: any) => ({
             id: s.id,
             title: s.title,

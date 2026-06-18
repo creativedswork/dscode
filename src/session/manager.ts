@@ -278,6 +278,7 @@ export class SessionManager {
   deleteSession(id: string): LoadResult {
     try {
       this.store.delete(id);
+      if (id === this.current?.id) this.current = null;
       this.events?.emit({ type: "session:deleted", id });
       return { success: true };
     } catch (err: any) {
