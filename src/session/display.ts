@@ -1,5 +1,6 @@
 import type { DisplayMessage, ImageRef, VisionMessage } from "./types.js";
 import { ImageCache } from "../utils/image-cache.js";
+import { formatToolResultForUI } from "../ui/shared/tool-result-formatter.js";
 
 // ── Helpers ──
 
@@ -47,18 +48,13 @@ function extractToolsFromContent(blocks: any[]): { name: string; args: string; r
   return tools.length > 0 ? tools : undefined;
 }
 
-function extractToolResultText(blocks: any[]): string {
+function extractToolResultText(blocks: any[], toolName: string): string {
   if (!Array.isArray(blocks)) return "";
   const raw = blocks
     .filter((b: any) => b && b.type === "text")
     .map((b: any) => b.text)
     .join("\n");
-  // Truncate long tool results (e.g. write_file anchor previews) to keep
-  // the web UI responsive and prevent enormous result blocks from dominating
-  // the chat view. The first line (summary) is preserved; the rest is capped.
-  const MAX_RESULT = 600;
-  if (raw.length <= MAX_RESULT) return raw;
-  return raw.slice(0, MAX_RESULT) + `\n… (${raw.length - MAX_RESULT} more chars)`;
+  return formatToolResultForUI(toolName, raw);
 }
 
 // ── Main ──
@@ -89,8 +85,8 @@ export function rebuildDisplayMessages(
 
   // Pass 1: sequential scan — extract tool calls, match results, collect output indices
   const output = new Set<number>(); // message indices to emit
-  const pendingResults = new Map<number, Map<string, { result: string; isError: boolean }>>();
-  // pendingResults: assistantMsgIndex → (toolCallId → { result, isError })
+  const pendingResults = new Map<number, Map<string, { result: string; isError: boolean; toolName: string }>>();
+  // pendingResults: assistantMsgIndex → (toolCallId → { result, isError, toolName })
 
   let lastAssistantIdx = -1;
   let lastAssistantToolIds: Map<string, number> | null = null; // toolCallId → tool entry index
@@ -134,7 +130,11 @@ export function rebuildDisplayMessages(
       const toolCallId: string | undefined = m.toolCallId;
       if (toolCallId && lastAssistantToolIds.has(toolCallId)) {
         const toolIdx = lastAssistantToolIds.get(toolCallId)!;
-        const resultText = extractToolResultText(m.content);
+        // Look up the tool name from the assistant's parsed tool calls
+        const assistantMsg = messages[lastAssistantIdx];
+        const parsedTools = (assistantMsg as any).__parsedTools as { id: string; name: string; args: string }[] | undefined;
+        const toolName = parsedTools?.[toolIdx]?.name ?? "unknown";
+        const resultText = extractToolResultText(m.content, toolName);
         const isError = !!m.isError;
 
         let results = pendingResults.get(lastAssistantIdx);
@@ -142,7 +142,7 @@ export function rebuildDisplayMessages(
           results = new Map();
           pendingResults.set(lastAssistantIdx, results);
         }
-        results.set(toolCallId, { result: resultText, isError });
+        results.set(toolCallId, { result: resultText, isError, toolName });
         // Don't emit this ToolResultMessage — it's matched
       } else {
         // Unmatched ToolResultMessage: emit as standalone

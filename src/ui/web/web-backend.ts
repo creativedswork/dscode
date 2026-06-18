@@ -19,6 +19,7 @@ import type { AppInstance } from "../../mcp/app/types.js";
 import { buildMcpServers } from "../mcp-browser.js";
 import { resolveAtFileRefs, listProjectFiles } from "../../utils/at-file-resolver.js";
 import { rebuildDisplayMessages } from "../../session/display.js";
+import { formatToolResultForUI } from "../shared/tool-result-formatter.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
 import type {
   ClientCommand,
@@ -119,7 +120,8 @@ export class WebUiBackend implements UiBackend {
     h.events.on("llm:retry", (e) => { this.broadcast({ type: "retry", info: { attempt: e.attempt, maxRetries: e.maxRetries, delayMs: e.delayMs, error: e.error, level: e.level } }); });
     h.events.on("tool:start", (e) => { this.broadcast({ type: "tool_start", name: e.name, args: e.args }); });
     h.events.on("tool:end", (e) => {
-      const rs = typeof e.result === "string" ? e.result.slice(0, 5000) : JSON.stringify(e.result).slice(0, 5000);
+      const rawResult = typeof e.result === "string" ? e.result : JSON.stringify(e.result);
+      const rs = formatToolResultForUI(e.name, rawResult);
       const imgs = extractImagesFromToolResult(e.result);
       if (this.currentAssistant) {
         this.currentAssistant.tools = this.currentAssistant.tools.filter((t) => t.name !== e.name || t.result !== "");
