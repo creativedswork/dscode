@@ -41,6 +41,26 @@ export interface McpAppInfo {
   resourceUri: string;
 }
 
+// ── Context window ──
+
+export interface ContextWindowData {
+  total: number;
+  used: number;
+  free: number;
+  categories: {
+    system: number;
+    rules: number;
+    user: number;
+    thinking: number;
+    readwrite: number;
+    edit: number;
+    shell: number;
+    skill: number;
+    mcp: number;
+    other: number;
+  };
+}
+
 // ── Config ──
 
 export interface ConfigData {
@@ -112,7 +132,6 @@ export interface UIMessage {
   isStreaming?: boolean;
   images?: (ImageAttachment | ImageRef)[];
 }
-
 // ── Permissions ──
 
 export type PermissionDecision = "allow" | "deny" | "ask";
@@ -161,6 +180,8 @@ export type ServerEvent =
   | { type: "thinking_delta"; delta: string }
   | { type: "text_delta"; delta: string }
   | { type: "tool_start"; name: string; args: unknown }
+  | { type: "context_window"; total: number; used: number; free: number; categories: { system: number; rules: number; user: number; thinking: number; readwrite: number; edit: number; shell: number; skill: number; mcp: number; other: number } }
+
   | { type: "tool_end"; name: string; result: string; isError: boolean; images?: ImageAttachment[] }
   | { type: "assistant_end" }
   | { type: "info"; text: string; display: "toast" | "panel" }

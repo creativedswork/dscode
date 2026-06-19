@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { UIMessage, ServerEvent, ConfigData, SessionInfo, McpServerInfo, ImageAttachment, FileListItem } from "../types";
+import type { UIMessage, ServerEvent, ConfigData, SessionInfo, McpServerInfo, ImageAttachment, FileListItem, ContextWindowData } from "../types";
 import { conversationReducer } from "@dscode/shared/reducer";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { ChatView } from "./ChatView";
@@ -7,6 +7,7 @@ import { MessageInput } from "./MessageInput";
 import { Sidebar } from "./Sidebar";
 import { ToastContainer, useToasts } from "./Toast";
 import { CommandPanel } from "./CommandPanel";
+import { ContextWindowBar } from "./ContextWindowBar";
 import { List, Sun, Moon } from "@phosphor-icons/react";
 
 const SLASH_COMMANDS = [
@@ -53,6 +54,7 @@ export function App() {
   const [fileListItems, setFileListItems] = useState<FileListItem[]>([]);
   const [fileListPrefix, setFileListPrefix] = useState("");
   const [theme, setTheme] = useState<"light" | "dark">(getInitialTheme);
+  const [contextWindow, setContextWindow] = useState<ContextWindowData | null>(null);
   const [commandPanel, setCommandPanel] = useState<string | null>(null);
   const { toasts, addToast, removeToast } = useToasts();
   const turnStartRef = useRef<number>(0);
@@ -120,6 +122,7 @@ export function App() {
       case "mcp_state": setMcpServers(event.servers); break;
       case "mcp_open_browser": setSidebarOpen(true); setSidebarTab("mcp"); break;
       case "model": setModel(event.name); break;
+      case "context_window": setContextWindow(event); break;
       case "config": setConfig(event.data); break;
       case "file_list_result": setFileListItems(event.items); setFileListPrefix(event.prefix); break;
     }
@@ -161,13 +164,16 @@ export function App() {
 
   return (
     <div className="h-screen flex flex-col" style={{ backgroundColor: "var(--color-bg)" }}>
-      <header className="flex items-center justify-between px-4 py-2 shrink-0" style={{ backgroundColor: "var(--color-surface)", borderBottom: "1px solid var(--color-border)" }}>
+      <header className="flex items-center px-4 py-2 shrink-0" style={{ backgroundColor: "var(--color-surface)", borderBottom: "1px solid var(--color-border)" }}>
         <div className="flex items-center gap-3">
           <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 rounded-btn hover:brightness-95 transition-[filter] duration-200 md:hidden" style={{ backgroundColor: "var(--color-surface-hover)" }} aria-label="Toggle sidebar">
             <List size={20} weight="bold" style={{ color: "var(--color-text)" }} />
           </button>
           <h1 className="font-bold text-lg" style={{ color: "var(--color-accent)" }}>DSCode</h1>
           {model && <span className="text-sm hidden sm:inline" style={{ color: "var(--color-text-muted)" }}>{model}</span>}
+        </div>
+        <div className="flex-1 flex justify-center hidden md:flex">
+          <ContextWindowBar data={contextWindow} />
         </div>
         <div className="flex items-center gap-3">
           <button onClick={toggleTheme} className="p-2 rounded-btn hover:brightness-95 transition-[filter] duration-200" style={{ backgroundColor: "var(--color-surface-hover)" }} aria-label="Toggle theme">

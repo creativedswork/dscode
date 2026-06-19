@@ -88,6 +88,11 @@ export class WebUiBackend implements UiBackend {
     tools: ToolCallEntry[];
   } | null = null;
 
+  // Context window broadcast throttling
+  private contextWindowThrottleTimer: ReturnType<typeof setTimeout> | null = null;
+  private contextWindowThrottlePending: boolean = false;
+  private isAssistantTurn: boolean = false;
+
   constructor(options: WebUiOptions) {
     this.port = options.port;
     this.harness = options.harness;
@@ -128,16 +133,19 @@ export class WebUiBackend implements UiBackend {
         this.currentAssistant.tools.push({ name: e.name, args: "", result: rs, isError: e.isError, images: imgs });
       }
       this.broadcast({ type: "tool_end", name: e.name, result: rs, isError: e.isError, images: imgs });
-    });
+      this.broadcastContextWindow(false);    });
     h.events.on("turn:streaming:start", () => {
       this.currentAssistant = { thinking: "", text: "", tools: [] };
       this.broadcast({ type: "assistant_start" });
       this.startSessionTimeBroadcast();
-    });
+      this.isAssistantTurn = true;    });
     h.events.on("turn:end", () => {
       this.broadcastSessionTime();
+      const toolsForBroadcast = this.currentAssistant?.tools ?? [];
       this.currentAssistant = null;
       this.broadcast({ type: "assistant_end" });
+      this.isAssistantTurn = false;
+      this.broadcastContextWindow(true, toolsForBroadcast);
       this.pushSessionListToAll();
     });
     h.events.on("turn:abort", () => { this.stopSessionTimeBroadcast(); this.broadcast({ type: "loader", state: "hide" }); });
@@ -149,7 +157,7 @@ export class WebUiBackend implements UiBackend {
     h.events.on("ui:error", (e) => { this.broadcast({ type: "error", text: e.text }); });
     h.events.on("ui:warning", (e) => { this.broadcast({ type: "warning", text: e.text }); });
     h.events.on("ui:image:pending", (e) => { this.pendingImages.push(e.image); });
-    h.events.on("ui:conversation:clear", () => { this.currentAssistant = null; this.pendingImages = []; this.broadcast({ type: "clear_conversation" }); });
+    h.events.on("ui:conversation:clear", () => { this.currentAssistant = null; this.pendingImages = []; this.broadcast({ type: "clear_conversation" }); this.broadcastContextWindow(true); });
     h.events.on("config:change", (e) => { this.broadcast({ type: "config", data: e.data }); });
     h.events.on("mcp:state", (e) => { this.broadcast({ type: "mcp_state", servers: e.servers }); });
     h.events.on("mcp:browser:open", () => { this.pushMcpState(); this.broadcast({ type: "mcp_open_browser" }); });
@@ -248,12 +256,15 @@ export class WebUiBackend implements UiBackend {
       });
     }
     this.broadcast({ type: "tool_end", name, result: resultStr, isError, images });
+    this.broadcastContextWindow(false);
   }
   finishAssistantMessage(): void {
     this.broadcastSessionTime();
     this.stopSessionTimeBroadcast();
+    const toolsForBroadcast2 = this.currentAssistant?.tools ?? [];
     this.currentAssistant = null;
     this.broadcast({ type: "assistant_end" });
+    this.broadcastContextWindow(true, toolsForBroadcast2);
 
     const sm2 = this.harness.sessionManager;
     if (sm2) {
@@ -376,9 +387,11 @@ export class WebUiBackend implements UiBackend {
   }
 
   clearConversationView(): void {
+    const toolsForBroadcast3 = this.currentAssistant?.tools ?? [];
     this.currentAssistant = null;
     this.pendingImages = [];
     this.broadcast({ type: "clear_conversation" });
+    this.broadcastContextWindow(true, toolsForBroadcast3);
   }
 
   // ── UiBackend Processing ──
@@ -435,7 +448,7 @@ export class WebUiBackend implements UiBackend {
       config: configData,
       messages,
     });
-
+    this.broadcastContextWindow(true);
     if (this.mcpManager) {
       this.pushMcpState();
     }
@@ -1155,6 +1168,51 @@ export class WebUiBackend implements UiBackend {
     const vms = this.harness.sessionManager?.visionMessages ?? [];
     return rebuildDisplayMessages(messages, vms) as any;
   }
+
+
+  private getSkillToolNames(): Set<string> {
+    const names = new Set<string>();
+    const sm = this.harness.skillManager;
+    if (sm) {
+      for (const name of sm.listAllSkillNames()) {
+        names.add(name);
+      }
+    }
+    return names;
+  }
+
+  private broadcastContextWindow(bypassThrottle: boolean, toolsOverride?: { name: string; result: string }[]): void {
+    const cm = this.harness.contextManager;
+    const cw = cm.getContextWindow();
+    if (cw <= 0) return;
+
+    if (!bypassThrottle) {
+      if (this.contextWindowThrottleTimer) {
+        this.contextWindowThrottlePending = true;
+        return;
+      }
+      this.contextWindowThrottleTimer = setTimeout(() => {
+        this.contextWindowThrottleTimer = null;
+        if (this.contextWindowThrottlePending) {
+          this.contextWindowThrottlePending = false;
+          this.broadcastContextWindow(true, toolsOverride);
+        }
+      }, 500);
+    }
+
+    const messages = this.harness.agent.state.messages as unknown[];
+    const tools = toolsOverride ?? this.currentAssistant?.tools ?? [];
+    const breakdown = cm.getCategoryBreakdown(messages, tools, this.getSkillToolNames());
+
+    this.broadcast({
+      type: "context_window",
+      total: breakdown.total,
+      used: breakdown.used,
+      free: breakdown.free,
+      categories: breakdown.categories,
+    });
+  }
+
 
   private broadcast(event: ServerEvent): void {
     this.wsServer.broadcast(event);

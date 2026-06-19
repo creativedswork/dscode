@@ -12,6 +12,7 @@ export type {
   ConversationMessage,
   McpAppInfo,
   ToolCallEntry,
+  ContextWindowData,
   ServerEvent,
   FileListItem,
   UIMessage,

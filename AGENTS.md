@@ -15,7 +15,7 @@
 
 ## Web 前端
 
-修改 Web UI 前必读 `openspec/specs/web-frontend/spec.md`，禁止引入第三方设计体系。
+修改 Web UI 前必读 `openspec/specs/web-frontend/spec.md` 和 taste-skill，禁止引入第三方设计体系。
 
 ## 运行
 
