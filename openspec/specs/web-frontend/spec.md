@@ -144,7 +144,7 @@ The frontend SHALL support warm light and warm dark themes using warm stone/taup
 - **THEN** backgrounds use warm deep gray-browns (≈ `#1e1c19`), surfaces are warm dark gray (≈ `#282622`), borders are warm dark (≈ `#3a3732`), and text is warm off-white (≈ `#e8e4dd`)
 
 ### Requirement: Conversation view
-The frontend SHALL display a scrollable conversation area showing user messages, assistant responses with streaming text, thinking blocks with elapsed time indicators, and tool call results, all using the warm flat design system styling. Message state management SHALL use the shared `conversationReducer` from `@dscode/shared/reducer` instead of inline event handling logic. The elapsed time display SHALL be derived from `turnStartRef` (set by `handleSend` or `loader { state: "show" }`) rather than the `processing` state flag. When an assistant message has no text content, the content area SHALL render nothing instead of a "(no content)" placeholder. The conversation scroll container SHALL use `min-height: 0` (Tailwind `min-h-0`) to allow proper flexbox constraint and prevent overflow clipping of large content. Auto-scroll to the bottom SHALL only occur when the user's scroll position is at or near the bottom of the container (within 64px threshold). When the user has manually scrolled away from the bottom, auto-scroll SHALL be suppressed until the user scrolls back to the bottom.
+The frontend SHALL display a scrollable conversation area showing user messages, assistant responses with streaming text, thinking blocks with elapsed time indicators, and tool call results, all using the warm flat design system styling. Message state management SHALL use the shared `conversationReducer` from `@dscode/shared/reducer` instead of inline event handling logic. The elapsed time display SHALL be derived from `turnStartRef` (set by `handleSend` or `loader { state: "show" }`) rather than the `processing` state flag. When an assistant message has no text content, the content area SHALL render nothing instead of a "(no content)" placeholder. The conversation scroll container SHALL use `min-height: 0` (Tailwind `min-h-0`) to allow proper flexbox constraint and prevent overflow clipping of large content. Auto-scroll to the bottom SHALL only occur when the user's scroll position is at or near the bottom of the container (within 64px threshold). When the user has manually scrolled away from the bottom, auto-scroll SHALL be suppressed until the user scrolls back to the bottom. The header SHALL use a three-zone flexbox layout: left zone (sidebar toggle + DSCode branding + model name), center zone (ContextWindowBar), right zone (theme toggle + connection status). The center zone SHALL grow to fill available space. On viewports narrower than 768px, the ContextWindowBar SHALL be hidden and the two-zone layout preserved.
 
 #### Scenario: User message display
 - **WHEN** user submits a message
@@ -197,6 +197,19 @@ The frontend SHALL display a scrollable conversation area showing user messages,
 #### Scenario: Auto-scroll re-engages on return to bottom
 - **WHEN** the user manually scrolls back to within 64px of the container bottom
 - **THEN** subsequent state changes resume auto-scrolling to the bottom
+
+#### Scenario: Header renders three zones
+- **WHEN** the WebUI is loaded on a viewport >= 768px wide and context window data is available
+- **THEN** the header SHALL show: left zone (sidebar toggle + DSCode branding + model name), center zone (ContextWindowBar), right zone (theme toggle + connection status)
+
+#### Scenario: Center zone is centered
+- **WHEN** the header renders with all three zones
+- **THEN** the center zone SHALL use `flex: 1` and `justify-content: center` so the ContextWindowBar is horizontally centered regardless of left/right content widths
+
+#### Scenario: ContextWindowBar hidden on mobile
+- **WHEN** the viewport width is less than 768px
+- **THEN** the ContextWindowBar SHALL not be rendered
+- **AND** the existing two-zone (left/right) layout SHALL be preserved
 
 ### Requirement: Message types imported from shared module
 The frontend SHALL import `UIMessage`, `ToolCallEntry`, `ImageAttachment`, `ConversationMessage`, and `ToolCallEntry` types from the shared module (`@dscode/shared/types`) rather than defining them in `web/src/types/index.ts`.
