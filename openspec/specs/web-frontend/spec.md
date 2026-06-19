@@ -161,9 +161,21 @@ The frontend SHALL display a scrollable conversation area showing user messages,
 #### Scenario: Tool call display
 - **WHEN** the server sends `tool_start` and `tool_end` events
 - **THEN** each tool call appears as an inline flat card with `border-radius: 8px`, `1px solid` warm border, tool name in monospace with amber accent, and muted pastel success/error indicators
+- **AND** the tool result text SHALL be rendered through the shared `<Markdown>` component, supporting code blocks with syntax hints, tables, links, and inline code formatting
+
+#### Scenario: Tool result rendered as Markdown
+- **WHEN** a tool call card displays its result text
+- **THEN** the result body SHALL use the `<Markdown>` component instead of plain text
+- **AND** code fences within the result SHALL render as styled code blocks with monospace font
+
+#### Scenario: Tool result rendered as Markdown
+- **WHEN** a tool call card displays its result text
+- **THEN** the result body SHALL use the `<Markdown>` component instead of plain text
+- **AND** code fences within the result SHALL render as styled code blocks with monospace font
 
 #### Scenario: Empty assistant content renders nothing
-- **WHEN** an assistant message has no text content (empty string), with or without thinking and tools
+- **THEN** the ChatView scroll container remains constrained to the viewport and the user can scroll to the bottom of the conversation to see all content, including the message input and the tail of the assistant bubble
+- **AND** the tool result body SHALL retain `max-h-40 overflow-y-auto` as a scroll-defense container
 - **THEN** the message bubble content area renders nothing; no "(no content)" placeholder is displayed
 
 #### Scenario: Large tool call result does not break scrolling
