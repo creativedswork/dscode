@@ -53,7 +53,7 @@ function formatTokenCount(n: number): string {
   if (n >= 1_000) {
     return (n / 1_000).toFixed(1) + "k";
   }
-  return (n / 1_000).toFixed(1) + "k";
+  return n.toString();
 }
 
 export function ContextWindowBar({ data }: ContextWindowBarProps) {

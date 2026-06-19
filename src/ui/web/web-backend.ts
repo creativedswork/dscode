@@ -1036,6 +1036,7 @@ export class WebUiBackend implements UiBackend {
           config: this.buildConfigData(),
           messages,
         });
+        this.broadcastContextWindow(true);
         this.pushSessionList(client);
         break;
       }
