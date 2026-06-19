@@ -1,5 +1,6 @@
 import { useState, useMemo } from "react";
 import type { ToolCallEntry } from "../types";
+import { Markdown } from "./Markdown";
 
 interface ToolCardProps {
   tool: ToolCallEntry;
@@ -113,11 +114,11 @@ export function ToolCard({ tool }: ToolCardProps) {
 
       {hasResult && !hasMcpApp && (
         <div
-          className="mt-1.5 font-mono break-all whitespace-pre-wrap max-h-40 overflow-y-auto"
+          className="mt-1.5 max-h-40 overflow-y-auto"
           style={{ color: isError ? "var(--color-error-text)" : "var(--color-text)" }}
         >
           <span style={{ color: "var(--color-text-muted)" }}>&rarr; </span>
-          {displayText}
+          <Markdown className="text-xs">{displayText}</Markdown>
         </div>
       )}
 

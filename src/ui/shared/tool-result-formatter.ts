@@ -42,11 +42,50 @@ function extractWriteSummary(text: string): string {
 }
 
 /**
+ * Detect whether a string is valid JSON.
+ * Uses a lightweight heuristic (starts with `{` or `[`) followed by JSON.parse.
+ */
+function isJSON(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
+  try {
+    JSON.parse(trimmed);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Pretty-print a JSON string with 2-space indentation.
+ */
+function prettyPrintJSON(text: string): string {
+  return JSON.stringify(JSON.parse(text.trim()), null, 2);
+}
+
+/**
+ * Wrap text in a markdown code fence, optionally with a language tag.
+ */
+function formatCodeBlock(text: string, lang?: string): string {
+  const fence = lang ? "```" + lang : "```";
+  return `${fence}\n${text}\n\`\`\``;
+}
+
+/**
+ * Truncate text to DEFAULT_MAX_CHARS with a hint if truncated.
+ */
+function truncate(text: string): string {
+  if (text.length <= DEFAULT_MAX_CHARS) return text;
+  return text.slice(0, DEFAULT_MAX_CHARS) + `\n… (${text.length - DEFAULT_MAX_CHARS} more chars)`;
+}
+
+/**
  * Format a raw tool result string for display in the web UI.
  *
  * Tool-aware: `write_file` / `overwrite_file` get a compact summary with
- * anchor previews folded. All other tools fall back to a safe character
- * limit with a truncation hint.
+ * anchor previews folded. `bash`, `grep`, `glob`, `read_file` results are
+ * wrapped in Markdown code fences. JSON content is detected and pretty-printed.
+ * All other tools fall back to a safe character limit with a truncation hint.
  *
  * @param toolName  The name of the tool that produced the result.
  * @param rawText   The result text (already coerced to string).
@@ -59,8 +98,22 @@ export function formatToolResultForUI(toolName: string, rawText: string): string
     case "write_file":
     case "overwrite_file":
       return extractWriteSummary(rawText);
-    default:
-      if (rawText.length <= DEFAULT_MAX_CHARS) return rawText;
-      return rawText.slice(0, DEFAULT_MAX_CHARS) + `\n… (${rawText.length - DEFAULT_MAX_CHARS} more chars)`;
+    case "bash":
+      return formatCodeBlock(truncate(rawText), "sh");
+    case "grep":
+    case "glob": {
+      if (isJSON(rawText)) {
+        return formatCodeBlock(truncate(prettyPrintJSON(rawText)), "json");
+      }
+      return formatCodeBlock(truncate(rawText));
+    }
+    case "read_file":
+      return formatCodeBlock(truncate(rawText));
+    default: {
+      if (isJSON(rawText)) {
+        return formatCodeBlock(truncate(prettyPrintJSON(rawText)), "json");
+      }
+      return truncate(rawText);
+    }
   }
 }
