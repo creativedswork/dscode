@@ -90,6 +90,7 @@ export interface SessionInfo {
   preview: string;
   messageCount: number;
   totalActiveMs: number;
+  contentHash: string;
   pendingPermission?: { toolName: string; preview: string; fuzzyPattern?: string | null };
 }
 

@@ -288,6 +288,7 @@ export class WebUiBackend implements UiBackend {
           messageCount: s.messageCount, modelProvider: s.modelProvider, modelId: s.modelId,
           projectPath: s.projectPath || "", preview: s.preview || "",
           totalActiveMs: s.id === currentId2 ? sm2.getTotalActiveMs() : (s.totalActiveMs ?? 0),
+          contentHash: s.contentHash ?? "",
           pendingPermission: s.pendingPermission || undefined,
         })),
 
@@ -734,6 +735,7 @@ export class WebUiBackend implements UiBackend {
         projectPath: s.projectPath || "",
         preview: s.preview || "",
         totalActiveMs: s.id === currentId ? sessionManager.getTotalActiveMs() : (s.totalActiveMs ?? 0),
+        contentHash: s.contentHash ?? "",
         pendingPermission: s.pendingPermission || undefined,
       })),
     });
@@ -759,6 +761,7 @@ export class WebUiBackend implements UiBackend {
         messageCount: s.messageCount, modelProvider: s.modelProvider, modelId: s.modelId,
         projectPath: s.projectPath || "", preview: s.preview || "",
         totalActiveMs: s.id === currentId ? sm.getTotalActiveMs() : (s.totalActiveMs ?? 0),
+        contentHash: s.contentHash ?? "",
         pendingPermission: s.pendingPermission || undefined,
       })),
     });
@@ -875,6 +878,7 @@ export class WebUiBackend implements UiBackend {
                   projectPath: s.projectPath || "",
                   preview: s.preview || "",
                   totalActiveMs: s.totalActiveMs ?? 0,
+                  contentHash: s.contentHash ?? "",
                 })),
               });
             }
@@ -914,6 +918,7 @@ export class WebUiBackend implements UiBackend {
           projectPath: s.projectPath || "",
           preview: s.preview || "",
           totalActiveMs: s.totalActiveMs ?? 0,
+          contentHash: s.contentHash ?? "",
         }));
         client.send({ type: "sessions", data });
         break;
@@ -940,6 +945,7 @@ export class WebUiBackend implements UiBackend {
             projectPath: s.projectPath || "",
             preview: s.preview || "",
             totalActiveMs: s.totalActiveMs ?? 0,
+            contentHash: s.contentHash ?? "",
           })),
         });
         break;
@@ -1078,6 +1084,7 @@ export class WebUiBackend implements UiBackend {
             projectPath: s.projectPath || "",
             preview: s.preview || "",
             totalActiveMs: s.totalActiveMs ?? 0,
+            contentHash: s.contentHash ?? "",
           })),
         });
         break;

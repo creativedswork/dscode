@@ -11,7 +11,7 @@ The App Header SHALL render a View Mode dropdown selector in the right zone, pos
 #### Scenario: Switch to Dashboard mode
 - **WHEN** the user selects "Dashboard" from the View Mode dropdown
 - **THEN** the main content area renders `ArtifactContainer` instead of `ChatView`
-- **AND** the frontend sends `{ "type": "artifact", "action": "generate", "context": "session_dashboard" }`
+- **AND** the frontend checks the dashboard cache for the current session; if a valid cache entry exists (contentHash matches), it renders the cached HTML instantly; otherwise it sends `{ "type": "artifact", "action": "generate", "context": "session_dashboard" }`
 
 #### Scenario: Switch back to Chat mode
 - **WHEN** the user selects "Chat" from the View Mode dropdown while in Dashboard mode
@@ -55,3 +55,22 @@ When `viewMode` is `"dashboard"`, the MessageInput SHALL operate in pure-instruc
 #### Scenario: Slash commands hidden in dashboard mode
 - **WHEN** `viewMode` is `"dashboard"`
 - **THEN** the slash command panel and autocomplete are not shown
+
+### Requirement: Session switch resets view mode to chat
+When the current session changes to a different session ID while `viewMode` is `"dashboard"`, the frontend SHALL reset `viewMode` to `"chat"`.
+
+#### Scenario: Dashboard mode reset on session switch
+- **WHEN** `currentSessionId` changes to a new value
+- **AND** `viewMode` is `"dashboard"`
+- **THEN** `viewMode` is set to `"chat"`
+- **AND** the main content area renders `ChatView` with the new session's messages
+
+#### Scenario: Session switch from chat stays in chat
+- **WHEN** `currentSessionId` changes to a new value
+- **AND** `viewMode` is `"chat"`
+- **THEN** `viewMode` remains `"chat"`
+
+#### Scenario: First session assignment does not trigger mode switch
+- **WHEN** the app first receives a sessions event and `currentSessionId` transitions from `null` to a value
+- **AND** `viewMode` is `"dashboard"` (unlikely, but defensive)
+- **THEN** `viewMode` SHALL NOT be reset to `"chat"` (no spurious switch on first load)

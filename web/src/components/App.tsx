@@ -32,7 +32,8 @@ function sessionsEqual(a: SessionInfo[], b: SessionInfo[]): boolean {
   return a.every((s, i) =>
     s.id === b[i].id &&
     s.updatedAt === b[i].updatedAt &&
-    s.messageCount === b[i].messageCount
+    s.messageCount === b[i].messageCount &&
+    s.contentHash === b[i].contentHash
   );
 }
 
@@ -41,6 +42,22 @@ function getInitialTheme(): "light" | "dark" {
   if (saved === "dark" || saved === "light") return saved;
   return "light";
 }
+
+function loadDashCache(): Record<string, { contentHash: string; html: string }> {
+  try {
+    const raw = localStorage.getItem("dscode-dash-cache");
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore corrupt cache */ }
+  return {};
+}
+
+function saveDashCache(cache: Record<string, { contentHash: string; html: string }>): void {
+  try {
+    localStorage.setItem("dscode-dash-cache", JSON.stringify(cache));
+  } catch { /* ignore storage errors */ }
+}
+
+const MAX_DASH_CACHE = 20;
 
 export function App() {
   const [messages, setMessages] = useState<UIMessage[]>([]);
@@ -67,12 +84,25 @@ export function App() {
   permissionPromptRef.current = permissionPrompt;
   const currentSessionIdRef = useRef(currentSessionId);
   currentSessionIdRef.current = currentSessionId;
+  const prevSessionIdRef = useRef<string | null>(null);
+  const dashCacheRef = useRef<Record<string, { contentHash: string; html: string }>>(loadDashCache());
+  const artifactHtmlRef = useRef(artifactHtml);
+  artifactHtmlRef.current = artifactHtml;
 
   useEffect(() => {
     const root = document.documentElement;
     theme === "dark" ? root.classList.add("dark") : root.classList.remove("dark");
     localStorage.setItem("dscode-theme", theme);
   }, [theme]);
+
+  // Session switch in Dashboard mode resets to Chat
+  useEffect(() => {
+    const prev = prevSessionIdRef.current;
+    prevSessionIdRef.current = currentSessionId;
+    if (prev !== null && prev !== currentSessionId && viewMode === "dashboard") {
+      setViewMode("chat");
+    }
+  }, [currentSessionId, viewMode]);
 
   const toggleTheme = useCallback(() => setTheme((p) => (p === "light" ? "dark" : "light")), []);
 
@@ -137,11 +167,26 @@ export function App() {
       case "artifact_delta":
         setArtifactHtml((prev) => prev + event.delta);
         break;
-      case "artifact_end":
+      case "artifact_end": {
         setArtifactLoading(false);
+        const csid = currentSessionIdRef.current;
+        if (csid) {
+          const session = sessions.find((s) => s.id === csid);
+          if (session) {
+            const cache = dashCacheRef.current;
+            const entries = Object.keys(cache);
+            if (entries.length >= MAX_DASH_CACHE && !cache[csid]) {
+              // Evict oldest entry
+              delete cache[entries[0]];
+            }
+            cache[csid] = { contentHash: session.contentHash, html: artifactHtmlRef.current };
+            saveDashCache(cache);
+          }
+        }
         break;
+      }
     }
-  }, [addToast]);
+  }, [addToast, sessions]);
 
   const { connected, send } = useWebSocket(handleEvent);
 
@@ -179,9 +224,21 @@ export function App() {
   const handleViewModeChange = useCallback((mode: "chat" | "dashboard") => {
     setViewMode(mode);
     if (mode === "dashboard") {
+      const csid = currentSessionIdRef.current;
+      if (csid) {
+        const cached = dashCacheRef.current[csid];
+        const sessionHash = sessions.find((s) => s.id === csid)?.contentHash;
+        if (cached && sessionHash !== undefined && sessionHash !== "" && cached.contentHash === sessionHash) {
+          setArtifactHtml(cached.html);
+          setArtifactLoading(false);
+          return;
+        }
+      }
+      setArtifactHtml("");
+      setArtifactLoading(true);
       send({ type: "artifact", action: "generate", context: "session_dashboard" });
     }
-  }, [send]);
+  }, [send, sessions]);
 
   useEffect(() => { if (connected) { handleSessionAction("list"); handleMcpAction("list"); } }, [connected, handleSessionAction, handleMcpAction]);
 
@@ -219,7 +276,7 @@ export function App() {
           onSessionAction={handleSessionAction} onMcpAction={handleMcpAction} onMcpServerAction={handleMcpAction}
           onConfigChange={handleConfigChange} isProcessing={processing} onNewSession={handleNewSession} />
         <main className="flex-1 flex flex-col min-w-0">
-          <div key={viewMode} className="flex-1 flex flex-col min-h-0">
+          <div className="flex-1 flex flex-col min-h-0">
           {viewMode === "dashboard" ? (
             <ArtifactContainer html={artifactHtml} loading={artifactLoading} />
           ) : (
