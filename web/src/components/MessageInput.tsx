@@ -11,6 +11,7 @@ interface MessageInputProps {
   slashCommands: { name: string; description: string }[];
   fileListItems: FileListItem[];
   fileListPrefix: string;
+  viewMode?: "chat" | "dashboard";
 }
 
 function fileToImageAttachment(file: File): Promise<ImageAttachment> {
@@ -42,6 +43,7 @@ export function MessageInput({
   slashCommands,
   fileListItems,
   fileListPrefix,
+  viewMode,
 }: MessageInputProps) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<ImageAttachment[]>([]);
@@ -376,7 +378,7 @@ export function MessageInput({
       }}
     >
       {/* Slash command popover */}
-      {showSlashMenu && filteredCommands.length > 0 && (
+      {showSlashMenu && filteredCommands.length > 0 && viewMode !== "dashboard" && (
         <div
           className="absolute bottom-full left-4 mb-1 w-72 overflow-hidden z-50"
           style={popoverStyle}
@@ -529,6 +531,8 @@ export function MessageInput({
           placeholder={
             processing
               ? "Processing... (Esc to stop)"
+              : viewMode === "dashboard"
+              ? "Describe how to modify the dashboard..."
               : "Type a message... (@file, Tab for multi-file, Enter to send)"
           }
           disabled={processing}

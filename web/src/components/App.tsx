@@ -8,6 +8,8 @@ import { Sidebar } from "./Sidebar";
 import { ToastContainer, useToasts } from "./Toast";
 import { CommandPanel } from "./CommandPanel";
 import { ContextWindowBar } from "./ContextWindowBar";
+import { ViewModeSwitcher } from "./ViewModeSwitcher";
+import { ArtifactContainer } from "./ArtifactContainer";
 import { List, Sun, Moon } from "@phosphor-icons/react";
 
 const SLASH_COMMANDS = [
@@ -56,6 +58,9 @@ export function App() {
   const [theme, setTheme] = useState<"light" | "dark">(getInitialTheme);
   const [contextWindow, setContextWindow] = useState<ContextWindowData | null>(null);
   const [commandPanel, setCommandPanel] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"chat" | "dashboard">("chat");
+  const [artifactHtml, setArtifactHtml] = useState("");
+  const [artifactLoading, setArtifactLoading] = useState(false);
   const { toasts, addToast, removeToast } = useToasts();
   const turnStartRef = useRef<number>(0);
   const permissionPromptRef = useRef(permissionPrompt);
@@ -125,6 +130,16 @@ export function App() {
       case "context_window": setContextWindow(event); break;
       case "config": setConfig(event.data); break;
       case "file_list_result": setFileListItems(event.items); setFileListPrefix(event.prefix); break;
+      case "artifact_start":
+        setArtifactHtml("");
+        setArtifactLoading(true);
+        break;
+      case "artifact_delta":
+        setArtifactHtml((prev) => prev + event.delta);
+        break;
+      case "artifact_end":
+        setArtifactLoading(false);
+        break;
     }
   }, [addToast]);
 
@@ -134,8 +149,13 @@ export function App() {
     if (!text.trim() && (!images || images.length === 0)) return;
     turnStartRef.current = Date.now();
     setProcessing(true);
-    send({ type: "chat", text, images: images?.length ? images : undefined });
-  }, [send]);
+    if (viewMode === "dashboard") {
+      send({ type: "artifact", action: "update", instruction: text });
+    } else {
+      send({ type: "chat", text, images: images?.length ? images : undefined });
+    }
+  }, [send, viewMode]);
+
   const handlePermission = useCallback((decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string, toolNamePattern?: string, fuzzyMode?: number) => {
     send({
       type: explainText ? "permission_response" : "permission",
@@ -155,6 +175,13 @@ export function App() {
   const handleSessionAction = useCallback((action: "list" | "save" | "load" | "delete", id?: string) => send({ type: "session", action, id }), [send]);
   const handleMcpAction = useCallback((action: "list" | "refresh" | "connect" | "disconnect", serverName?: string) => send({ type: "mcp", action, serverName } as any), [send]);
   const handleNewSession = useCallback(() => send({ type: "slash", command: "/reset" }), [send]);
+
+  const handleViewModeChange = useCallback((mode: "chat" | "dashboard") => {
+    setViewMode(mode);
+    if (mode === "dashboard") {
+      send({ type: "artifact", action: "generate", context: "session_dashboard" });
+    }
+  }, [send]);
 
   useEffect(() => { if (connected) { handleSessionAction("list"); handleMcpAction("list"); } }, [connected, handleSessionAction, handleMcpAction]);
 
@@ -176,6 +203,7 @@ export function App() {
           <ContextWindowBar data={contextWindow} />
         </div>
         <div className="flex items-center gap-3">
+          <ViewModeSwitcher viewMode={viewMode} onChange={handleViewModeChange} />
           <button onClick={toggleTheme} className="p-2 rounded-btn hover:brightness-95 transition-[filter] duration-200" style={{ backgroundColor: "var(--color-surface-hover)" }} aria-label="Toggle theme">
             {theme === "light" ? <Moon size={18} weight="bold" style={{ color: "var(--color-text)" }} /> : <Sun size={18} weight="bold" style={{ color: "var(--color-text)" }} />}
           </button>
@@ -191,9 +219,15 @@ export function App() {
           onSessionAction={handleSessionAction} onMcpAction={handleMcpAction} onMcpServerAction={handleMcpAction}
           onConfigChange={handleConfigChange} isProcessing={processing} onNewSession={handleNewSession} />
         <main className="flex-1 flex flex-col min-w-0">
-          <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} sessionActiveMs={sessionActiveMs} permissionPrompt={permissionPrompt} onPermission={handlePermission} />
+          <div key={viewMode} className="flex-1 flex flex-col min-h-0">
+          {viewMode === "dashboard" ? (
+            <ArtifactContainer html={artifactHtml} loading={artifactLoading} />
+          ) : (
+            <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} sessionActiveMs={sessionActiveMs} permissionPrompt={permissionPrompt} onPermission={handlePermission} />
+          )}
           <MessageInput onSend={handleSend} onAbort={handleAbort} onSlashCommand={handleSlashCommand} onCommand={handleCommand}
-            processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} />
+            processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} viewMode={viewMode} />
+          </div>
         </main>
       </div>
       <ToastContainer toasts={toasts} onRemove={removeToast} />

@@ -171,7 +171,8 @@ export type ClientCommand =
   | { type: "session"; action: "list" | "save" | "load" | "delete"; id?: string }
   | { type: "mcp"; action: "list" | "refresh" | "connect" | "disconnect"; serverName?: string }
   | { type: "file_list"; prefix: string }
-  | { type: "mcp_app"; action: "rpc"; appId: string; message: object };
+  | { type: "mcp_app"; action: "rpc"; appId: string; message: object }
+  | { type: "artifact"; action: "generate" | "update"; context?: string; instruction?: string };
 
 export type ServerEvent =
   | { type: "ready"; model: string; config: ConfigData; messages: ConversationMessage[] }
@@ -200,5 +201,8 @@ export type ServerEvent =
   | { type: "file_list_result"; prefix: string; items: FileListItem[] }
   | { type: "processing"; processing: boolean }
   | { type: "session_time"; totalActiveMs: number }
+  | { type: "artifact_start" }
+  | { type: "artifact_delta"; delta: string }
+  | { type: "artifact_end" }
   | { type: "mcp_open_browser" }
 

@@ -4,6 +4,8 @@ import { readFileSync, existsSync } from "node:fs";
 import { join, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ImageContent } from "@mariozechner/pi-ai";
+import type { Api, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
+import { streamSimple } from "@mariozechner/pi-ai";
 import { getAllProviders, getAllModels, getVisionModels, getVisionProviders, resolveModel } from "../../models/index.js";
 import type { UiBackend } from "../backend.js";
 import type { HarnessConfig, PermissionPromptResult } from "../../core/types.js";
@@ -91,6 +93,7 @@ export class WebUiBackend implements UiBackend {
   // Context window broadcast throttling
   private contextWindowThrottleTimer: ReturnType<typeof setTimeout> | null = null;
   private contextWindowThrottlePending: boolean = false;
+  private lastArtifactHtml: string = "";
   private isAssistantTurn: boolean = false;
 
   constructor(options: WebUiOptions) {
@@ -656,6 +659,10 @@ export class WebUiBackend implements UiBackend {
       case "file_list": {
         const items = listProjectFiles(this.config.projectPath, cmd.prefix);
         client.send({ type: "file_list_result" as any, prefix: cmd.prefix, items });
+        break;
+      }
+      case "artifact": {
+        await this.handleArtifact(client, cmd as ClientCommand & { type: "artifact"; action: "generate" | "update"; context?: string; instruction?: string });
         break;
       }
       case "mcp": {
@@ -1309,5 +1316,255 @@ export class WebUiBackend implements UiBackend {
       res.writeHead(404);
       res.end("Not Found");
     }
+  }
+
+  private async handleArtifact(
+    client: WebSocketClient,
+    cmd: ClientCommand & { type: "artifact"; action: "generate" | "update"; context?: string; instruction?: string },
+  ): Promise<void> {
+    try {
+      // 2.4: Load .dscode/html_output_skill if exists
+      let styleConstraints = "";
+      try {
+        const skillPath = join(this.config.projectPath, ".dscode", "html_output_skill");
+        if (existsSync(skillPath)) {
+          styleConstraints = readFileSync(skillPath, "utf-8");
+        }
+      } catch {
+        // graceful fallback
+      }
+
+      // Build system prompt
+      const systemPrompt = `You are an expert HTML dashboard designer. Generate a single, self-contained HTML file.
+
+CRITICAL RULES:
+- Output ONLY valid HTML starting with <!DOCTYPE html>
+- All CSS MUST be inlined in <style> tags within <head>
+- NO external resources (fonts, images, scripts, CDN links)
+- Use system-ui, -apple-system, sans-serif for labels and monospace for data values
+- Use emoji icons for visual markers
+- Use CSS conic-gradient or inline SVG for chart-like elements
+- Make it visually rich and data-dense
+- Use semantic colors: green for healthy/success, amber for warning/moderate, red for critical/error
+- Set explicit background (white #fff or warm light #fafaf9) and dark text (#222) on body — never leave background transparent
+- Self-contained, single HTML document
+
+${styleConstraints ? `\nARTIFACT STYLE RULES (from .dscode/html_output_skill):\n${styleConstraints}\n` : ""}
+
+Respond ONLY with the raw HTML starting with <!DOCTYPE html>. DO NOT wrap the output in markdown code fences (no \`\`\`html). DO NOT add any explanatory text before or after the HTML. Just output the HTML directly.`;
+
+      // Build session summary for the prompt
+      let sessionSummary = "";
+      if (cmd.context === "session_dashboard" || cmd.action === "generate") {
+        sessionSummary = this.buildSessionSummary();
+      }
+
+      // Build user prompt
+      let userPrompt: string;
+      if (cmd.action === "generate") {
+        userPrompt = `Create a rich visual dashboard for this coding session. Use the data below to build a comprehensive, beautiful dashboard:
+
+${sessionSummary}
+
+Make it visually stunning with emojis, progress bars, color-coded metrics, and CSS charts.`;
+      } else {
+        // update action
+        const existingHtml = this.lastArtifactHtml || "";
+        userPrompt = `Here is the current dashboard HTML:
+
+${existingHtml.slice(0, 5000)}
+
+User instruction: ${cmd.instruction || "update the dashboard"}
+
+Modify the HTML to fulfill the user's request. Output the complete modified HTML.`;
+      }
+
+      // Launch independent LLM call
+      const model = resolveModel(this.config.provider, this.config.modelId);
+
+      client.send({ type: "artifact_start" });
+
+      let fullHtml = "";
+      const stream = streamSimple(model as any, {
+        systemPrompt,
+        messages: [{ role: "user", content: userPrompt, timestamp: Date.now() }],
+      }, {
+        apiKey: this.config.apiKey,
+        maxTokens: this.config.maxTokens,
+        timeoutMs: 120_000,
+        maxRetries: 1,
+      });
+
+      for await (const event of stream) {
+        if (event.type === "text_delta") {
+          fullHtml += event.delta;
+          client.send({ type: "artifact_delta", delta: event.delta });
+        } else if (event.type === "error") {
+          client.send({ type: "error", text: `Artifact generation error: ${(event as any).errorMessage || "Unknown error"}` });
+        }
+      }
+
+      // Strip markdown code fences that LLMs sometimes emit despite instructions
+      fullHtml = this.stripArtifactFences(fullHtml);
+      this.lastArtifactHtml = fullHtml;
+      client.send({ type: "artifact_end" });
+    } catch (err) {
+      client.send({ type: "artifact_end" });
+      client.send({
+        type: "error",
+        text: `Artifact generation failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  }
+
+
+  private stripArtifactFences(html: string): string {
+    let result = html.trim();
+    // Strip leading ```html or ``` fences
+    const fencePattern = /^```(?:html)?\s*\n/;
+    result = result.replace(fencePattern, "");
+    // Strip trailing ```
+    const endFence = /\n```\s*$/;
+    result = result.replace(endFence, "");
+    // If the result doesn't look like HTML, return the original (don't strip inappropriately)
+    if (!result.trimStart().startsWith("<")) {
+      return html;
+    }
+    return result;
+  }
+  private buildSessionSummary(): string {
+    const sm = this.harness.sessionManager;
+    const agent = this.harness.agent;
+    const cm = this.harness.contextManager;
+
+    // Use ContextManager to get category breakdown
+    const messages = agent.state.messages as unknown[];
+    const tools = this.currentAssistant?.tools ?? [];
+    const breakdown = cm.getCategoryBreakdown(messages, tools, this.getSkillToolNames());
+
+    const totalTokens = breakdown.total;
+    const usedTokens = breakdown.used;
+    const freeTokens = breakdown.free;
+    const usagePercent = totalTokens > 0 ? Math.round((usedTokens / totalTokens) * 100) : 0;
+    const categories = breakdown.categories;
+
+    // Tool statistics from agent messages
+    const toolStats = new Map<string, { calls: number; errors: number }>();
+    for (const msg of messages) {
+      const m = msg as any;
+      if (m.role === "assistant" && Array.isArray(m.content)) {
+        for (const block of m.content) {
+          if (block.type === "tool_use") {
+            const name = block.name || "unknown";
+            const existing = toolStats.get(name) || { calls: 0, errors: 0 };
+            existing.calls++;
+            toolStats.set(name, existing);
+          }
+        }
+      }
+      if (m.role === "user" && Array.isArray(m.content)) {
+        for (const block of m.content) {
+          if (block.type === "tool_result" && block.is_error) {
+            const prevIdx = messages.indexOf(msg) - 1;
+            if (prevIdx >= 0) {
+              const prevMsg = messages[prevIdx] as any;
+              if (prevMsg.role === "assistant" && Array.isArray(prevMsg.content)) {
+                for (const prevBlock of prevMsg.content) {
+                  if (prevBlock.type === "tool_use" && prevBlock.id === block.tool_use_id) {
+                    const name = prevBlock.name || "unknown";
+                    const existing = toolStats.get(name) || { calls: 0, errors: 0 };
+                    existing.errors++;
+                    toolStats.set(name, existing);
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    const toolEntries = Array.from(toolStats.entries())
+      .map(([name, stats]) => ({
+        name,
+        callCount: stats.calls,
+        errorCount: stats.errors,
+        successCount: stats.calls - stats.errors,
+        successRate: stats.calls > 0 ? Math.round(((stats.calls - stats.errors) / stats.calls) * 100) : 100,
+      }))
+      .sort((a, b) => b.callCount - a.callCount);
+
+    const totalToolCalls = toolEntries.reduce((sum, t) => sum + t.callCount, 0);
+    const totalToolErrors = toolEntries.reduce((sum, t) => sum + t.errorCount, 0);
+
+    // Timing
+    const sessionActiveMs = sm?.getTotalActiveMs?.() ?? 0;
+    const turnCount = (messages as any[]).filter((m: any) => m.role === "user").length;
+    const avgTurnMs = turnCount > 0 ? Math.round(sessionActiveMs / turnCount) : 0;
+
+    // Context pressure score
+    const pressureScore = totalTokens > 0 ? Math.round((usedTokens / totalTokens) * 100) : 0;
+    let pressureLabel = "low";
+    if (pressureScore > 95) pressureLabel = "critical";
+    else if (pressureScore > 80) pressureLabel = "high";
+    else if (pressureScore > 50) pressureLabel = "moderate";
+
+    // Top tools (top 3)
+    const topTools = toolEntries.slice(0, 3).map((t) => ({
+      name: t.name,
+      successRate: t.successRate,
+      warning: t.errorCount > 0 && (t.errorCount / t.callCount) > 0.2 ? "⚠️" : "",
+    }));
+
+    function formatMs(ms: number): string {
+      if (ms < 1000) return `${ms}ms`;
+      const sec = Math.floor(ms / 1000);
+      if (sec < 60) return `${sec}s`;
+      const min = Math.floor(sec / 60);
+      const remainSec = sec % 60;
+      if (min < 60) return `${min}m ${remainSec}s`;
+      const hrs = Math.floor(min / 60);
+      const remainMin = min % 60;
+      return `${hrs}h ${remainMin}m`;
+    }
+
+    return JSON.stringify({
+      tokenUsage: {
+        total: totalTokens,
+        used: usedTokens,
+        free: freeTokens,
+        usagePercent,
+        categories: {
+          system: categories.system ?? null,
+          rules: categories.rules ?? null,
+          user: categories.user ?? null,
+          thinking: categories.thinking ?? null,
+          readwrite: categories.readwrite ?? null,
+          edit: categories.edit ?? null,
+          shell: categories.shell ?? null,
+          skill: categories.skill ?? null,
+          mcp: categories.mcp ?? null,
+          other: categories.other ?? null,
+        },
+      },
+      toolStatistics: {
+        tools: toolEntries,
+        totalToolsCalled: totalToolCalls,
+        totalErrors: totalToolErrors,
+      },
+      timing: {
+        sessionActiveMs,
+        sessionActiveFormatted: formatMs(sessionActiveMs),
+        turnCount,
+        avgTurnMs,
+        avgTurnFormatted: formatMs(avgTurnMs),
+      },
+      contextHealth: {
+        pressureScore,
+        pressureLabel,
+      },
+      topTools,
+    }, null, 2)
   }
 }
