@@ -31,6 +31,8 @@ export interface Letter {
   scaleX: number; // @deprecated inert — no render effect
   scaleY: number; // @deprecated inert — no render effect
   deformTimer: number; // @deprecated inert — no render effect
+  spawnTime: number;
+  spawnGraceMs: number;
 }
 
 export interface ImpactRing {

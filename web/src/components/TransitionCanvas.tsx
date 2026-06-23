@@ -193,18 +193,24 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     }
     document.addEventListener("keydown", onKeyDown);
 
+  let lastTargetEl: HTMLElement | undefined;
+
     // ── Spawn & particle helpers ──
 
     function spawnLetter(): void {
       if (s.letters.filter((l) => l.alive).length >= MAX_LETTERS) return;
       const idx = s.letters.length;
       const char = shuffledLetters[idx % shuffledLetters.length];
-
-      // Each letter independently picks a random target from the global unstruck set
-      const allTargets = getCollidableElements();
+      // Each letter independently picks a target from the active layer only
+      const allTargets = getActiveLayerColliders();
       let targetEl: HTMLElement | undefined;
       if (allTargets.length > 0) {
-        targetEl = allTargets[randInt(0, allTargets.length - 1)];
+        if (allTargets.length > 1 && lastTargetEl) {
+          const candidates = allTargets.filter((t) => t !== lastTargetEl);
+          targetEl = candidates[randInt(0, candidates.length - 1)];
+        } else {
+          targetEl = allTargets[randInt(0, allTargets.length - 1)];
+        }
       }
 
       // Random horizontal spread across the full width so letters fan out
@@ -224,14 +230,14 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       }
 
       // Randomised fall depth so letters don't drop in lockstep
-      const spawnY = -(rand(140, 260));
+      const spawnY = -(rand(60, 140));
 
       s.letters.push({
         char,
         x: letterX,
         y: spawnY,
         vx,
-        vy: rand(3, 6),
+        vy: rand(5, 9),
         rotation: rand(-0.15, 0.15),
         rotationSpeed: rand(-0.03, 0.03),
         size: rand(28, 48),
@@ -245,8 +251,11 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         scaleX: 1,
         scaleY: 1,
         deformTimer: 0,
+        spawnTime: Date.now(),
+        spawnGraceMs: rand(200, 350),
       });
       s.letterGlowDecay.set(char + idx, 0);
+      if (targetEl) lastTargetEl = targetEl;
     }
 
     function spawnParticles(el: HTMLElement): void {
@@ -295,7 +304,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     }
 
     function findNearestUnstruck(letter: Letter): HTMLElement | null {
-      const targets = getCollidableElements();
+      const targets = getActiveLayerColliders();
       if (targets.length === 0) return null;
       const canvasRect = canvas!.getBoundingClientRect();
       let best: HTMLElement | null = null;
@@ -509,6 +518,30 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       return result;
     }
 
+    function getActiveLayerColliders(): HTMLElement[] {
+      const all = document.querySelectorAll<HTMLElement>("[data-collider]");
+      const result: HTMLElement[] = [];
+      let foundFirst = false;
+      let firstParent: HTMLElement | null = null;
+
+      for (const el of all) {
+        if (s.struckElements.has(el)) {
+          if (foundFirst) break; // gap = end of layer
+          continue;
+        }
+        if (!foundFirst) {
+          foundFirst = true;
+          firstParent = el.parentElement;
+          result.push(el);
+        } else if (el.parentElement === firstParent) {
+          result.push(el); // same parent, same layer
+        } else {
+          break; // different parent = different layer
+        }
+      }
+      return result;
+    }
+
     // ── Homing: letter actively steers toward its target ──
     function steerTowardTarget(l: Letter): void {
       if (!l.homingEnabled || !l.targetEl) return;
@@ -525,16 +558,23 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       const tCy = tRect.top - canvasRect.top + tRect.height / 2;
       const tTop = tRect.top - canvasRect.top;
 
+      // Free-drift grace period: horizontal-only steering for first 200-350ms
+      if (Date.now() - l.spawnTime < l.spawnGraceMs) {
+        const steerX = (tCx - l.x) * 0.04;
+        l.vx += steerX;
+        return;
+      }
+
       // Horizontal homing
-      const steerX = (tCx - l.x) * 0.035;
+      const steerX = (tCx - l.x) * 0.04;
       l.vx += steerX;
 
       // Vertical homing — pull letter toward target centre
-      const steerY = (tCy - l.y) * 0.018;
+      const steerY = (tCy - l.y) * 0.006;
       l.vy += steerY;
 
       // Approach braking: slow down BEFORE reaching the target
-      const approachZone = 80;
+      const approachZone = 40;
       const distToTarget = l.y - tTop;
       if (distToTarget > -approachZone && distToTarget < 0) {
         const brakeFactor = 0.92 + 0.08 * ((-distToTarget) / approachZone);
@@ -542,8 +582,13 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         l.vx *= 0.96;
       }
 
+      // Vertical braking: only slow down when well past the target
+      if (l.y > tTop + tRect.height + 20) {
+        l.vy *= 0.97;
+      }
+
       // Clamp speed so letters don't overshoot wildly
-      const maxSpeed = 7;
+      const maxSpeed = 8;
       const speed = Math.sqrt(l.vx * l.vx + l.vy * l.vy);
       if (speed > maxSpeed) {
         const scale = maxSpeed / speed;
@@ -556,13 +601,14 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     function letterOverlapsElement(l: Letter, el: HTMLElement): boolean {
       const rect = el.getBoundingClientRect();
       const canvasRect = canvas!.getBoundingClientRect();
-      const erx = rect.left - canvasRect.left;
-      const ery = rect.top - canvasRect.top;
-      const erw = rect.width;
-      const erh = rect.height;
+      const margin = 12;
+      const erx = rect.left - canvasRect.left - margin;
+      const ery = rect.top - canvasRect.top - margin;
+      const erw = rect.width + margin * 2;
+      const erh = rect.height + margin * 2;
 
       // Letter visual bounding box — centred on (l.x, l.y)
-      const halfSize = l.size * 0.45;
+      const halfSize = l.size * 0.55;
       const ll = l.x - halfSize;
       const lr = l.x + halfSize;
       const lt = l.y - halfSize;
@@ -571,7 +617,6 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       // AABB overlap
       return !(lr < erx || ll > erx + erw || lb < ery || lt > ery + erh);
     }
-
     function updateCascade(dt: number, dtFactor: number): void {
       s.phaseTime += dt;
       s.letterTimer += dt;
@@ -579,18 +624,12 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       const aliveCount = s.letters.filter((l) => l.alive).length;
 
       if (aliveCount === 0 && s.letters.length > 0 && getCollidableElements().length > 0) {
-        if (s.respawnTimer <= 0) s.respawnTimer = RESPAWN_COOLDOWN_MS;
-      }
-      if (s.respawnTimer > 0) {
-        s.respawnTimer -= dt;
-        if (s.respawnTimer <= 0) {
-          s.letters = [];
-          s.letterTimer = 0;
-        }
+        s.letters = [];
+        s.letterTimer = 0;
       }
 
       const canSpawn = s.letters.filter((l) => l.alive).length < MAX_LETTERS;
-      if (canSpawn && s.respawnTimer <= 0) {
+      if (canSpawn) {
         const spawnDelay = s.letters.length === 0 ? 200 : rand(400, 800);
         if (s.letterTimer >= spawnDelay) {
           s.letterTimer = 0;
@@ -659,33 +698,35 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
               });
               if (childHit) {
                 strikeTarget = childHit;
-              } else {
-                shouldStrike = false;
               }
+              // else: shouldStrike stays true → strike the message-card itself
             }
           }
           if (shouldStrike) {
-            // ── Element flash ──
+            // Step 1: Flash + displacement (background change is instant with transition:none)
             strikeTarget.style.transition = "none";
             strikeTarget.style.backgroundColor = "rgba(255,255,255,0.85)";
             strikeTarget.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
+
+            // Step 2: Run per-type destruction WHILE element is still visible
+            destroyByType(strikeTarget, l);
+
+            // Step 3: Schedule opacity fade-out after destruction animation plays
             requestAnimationFrame(() => {
-              strikeTarget.style.transition = "background-color 60ms ease-out, box-shadow 60ms ease-out, opacity 180ms ease-out 60ms";
+              strikeTarget.style.transition =
+                "background-color 60ms ease-out, box-shadow 60ms ease-out, opacity 180ms ease-out 60ms";
               strikeTarget.style.backgroundColor = "";
               strikeTarget.style.boxShadow = "";
               strikeTarget.style.opacity = "0";
             });
 
-            // ── Element displacement ──
+            // Element displacement
             const dx = rand(-8, 8);
             const dy = rand(-4, 2);
             strikeTarget.style.transform = `translate(${dx}px, ${dy}px)`;
             strikeTarget.style.transition += ", transform 120ms ease-out";
 
             s.struckElements.add(strikeTarget);
-
-            // ── Per-type destruction ──
-            destroyByType(strikeTarget, l);
 
             // ── Letter fragment particles ──
             spawnLetterFragments(l);
