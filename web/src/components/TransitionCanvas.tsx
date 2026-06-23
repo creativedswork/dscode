@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { Particle, Letter, ImpactRing } from "../animation/types";
+import type { Particle, Letter, ImpactRing, Shard } from "../animation/types";
 
 interface TransitionCanvasProps {
   artifactReady: boolean;
@@ -15,6 +15,7 @@ interface AnimationState {
   letters: Letter[];
   particles: Particle[];
   impactRings: ImpactRing[];
+  shards: Shard[];
   shake: number;
   letterTimer: number;
   formedTime: number;
@@ -27,7 +28,6 @@ interface AnimationState {
   struckElements: Set<HTMLElement>;
   letterGlowDecay: Map<string, number>;
   respawnTimer: number;
-  cascadeStuckTimer: number;
 }
 
 interface ThemeColors {
@@ -38,7 +38,6 @@ interface ThemeColors {
 
 const LETTER_POOL = ["d", "s", "c", "o"];
 const MAX_LETTERS = 4;
-const CASCADE_TIMEOUT_MS = 15000;
 const RESPAWN_COOLDOWN_MS = 600;
 const MAX_PARTICLES = 2500;
 const DPR_CAP = 2;
@@ -60,6 +59,10 @@ function hexToRgb(hex: string): [number, number, number] {
     parseInt(h.substring(2, 4), 16),
     parseInt(h.substring(4, 6), 16),
   ];
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return Math.max(lo, Math.min(hi, v));
 }
 
 export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvasProps) {
@@ -158,7 +161,6 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
 
     // ── Initialize state ──
     const shuffledLetters = [...LETTER_POOL].sort(() => Math.random() - 0.5);
-    const columnWidth = W / 4;
 
     const s: AnimationState = {
       phase: "cascade",
@@ -167,6 +169,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       letters: [],
       particles: [],
       impactRings: [],
+      shards: [],
       shake: 0,
       letterTimer: 0,
       formedTime: 0,
@@ -179,69 +182,43 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       struckElements: new Set(),
       letterGlowDecay: new Map(),
       respawnTimer: 0,
-      cascadeStuckTimer: 0,
     };
     stateRef.current = s;
+
+    // ── ESC key handler ──
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape" && s.phase === "cascade" && !s.gatherStarted) {
+        startGather();
+      }
+    }
+    document.addEventListener("keydown", onKeyDown);
 
     // ── Spawn & particle helpers ──
 
     function spawnLetter(): void {
       if (s.letters.filter((l) => l.alive).length >= MAX_LETTERS) return;
-      const idx = s.letters.length; // Use spawn order
+      const idx = s.letters.length;
       const char = shuffledLetters[idx % shuffledLetters.length];
       const column = idx % 4;
+      const columnWidth = W / 4;
       const colX = column * columnWidth + columnWidth / 2;
 
-      // Target unstruck colliders with expanding column search for higher hit probability
+      // DOM-position-ordered targeting: only topmost unstruck layer
       let letterX: number;
-      const unstruck = getCollidableElements();
-      const canvasRect = canvas!.getBoundingClientRect();
+      let targetEl: HTMLElement | undefined;
+      const layerTargets = getActiveLayerColliders();
 
-      function candidatesInCol(col: number): HTMLElement[] {
-        const cLeft = col * columnWidth;
-        const cRight = (col + 1) * columnWidth;
-        return unstruck.filter((el) => {
-          const rect = el.getBoundingClientRect();
-          const rx = rect.left - canvasRect.left;
-          return rx + rect.width > cLeft && rx < cRight;
-        });
-      }
-
-      // Expand search outward from assigned column
-      let candidates: HTMLElement[] = [];
-      for (let d = 0; d < 4; d++) {
-        const colLeft2 = ((column - d) % 4 + 4) % 4;
-        const colRight2 = (column + d) % 4;
-        if (d === 0) {
-          candidates = candidatesInCol(column);
-        } else {
-          candidates = [...candidatesInCol(colLeft2), ...candidatesInCol(colRight2)];
-        }
-        if (candidates.length > 0) break;
-      }
-
-      if (candidates.length > 0) {
-        // Priority ranking: text-line/code-line (1) > tool-card (2) > message-card (3) > other (4)
-        function colliderPriority(el: HTMLElement): number {
-          const type = el.getAttribute("data-collider");
-          if (type === "text-line" || type === "code-line") return 1;
-          if (type === "tool-card") return 2;
-          if (type === "message-card") return 3;
-          return 4;
-        }
-        const byPrio: HTMLElement[][] = [[], [], [], [], []];
-        for (const c of candidates) {
-          byPrio[colliderPriority(c)].push(c);
-        }
-        let pickFrom: HTMLElement[] | null = null;
-        for (let prio = 1; prio <= 4; prio++) {
-          if (byPrio[prio].length > 0) { pickFrom = byPrio[prio]; break; }
-        }
-        const target = pickFrom![randInt(0, pickFrom!.length - 1)];
+      if (layerTargets.length > 0) {
+        // Random pick within the active layer for visual variety
+        // Round-robin: distribute letters across layer targets to avoid clumping
+        const target = layerTargets[idx % layerTargets.length];
         const rect = target.getBoundingClientRect();
+        const canvasRect = canvas!.getBoundingClientRect();
         const rx = rect.left - canvasRect.left;
-        letterX = rand(rx, rx + rect.width);
+        targetEl = target;
+        letterX = rx + rect.width / 2;
       } else {
+        targetEl = undefined;
         letterX = colX + rand(-columnWidth * 0.4, columnWidth * 0.4);
       }
 
@@ -249,7 +226,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         char,
         x: letterX,
         y: rand(-120, -20),
-        vx: rand(-0.8, 0.8),
+        vx: targetEl ? 0 : rand(-0.8, 0.8),
         vy: rand(3, 6),
         rotation: rand(-0.15, 0.15),
         rotationSpeed: rand(-0.03, 0.03),
@@ -259,6 +236,11 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         hitCount: 0,
         alive: true,
         column,
+        targetEl,
+        homingEnabled: !!targetEl,
+        scaleX: 1,
+        scaleY: 1,
+        deformTimer: 0,
       });
       s.letterGlowDecay.set(char + idx, 0);
     }
@@ -291,12 +273,209 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       }
     }
 
+    function spawnLetterFragments(l: Letter): void {
+      const count = randInt(6, 12);
+      for (let i = 0; i < count; i++) {
+        const angle = rand(0, Math.PI * 2);
+        const speed = rand(2, 6);
+        s.particles.push({
+          x: l.x,
+          y: l.y,
+          vx: Math.cos(angle) * speed + l.vx * 0.3,
+          vy: Math.sin(angle) * speed + l.vy * 0.3,
+          size: rand(1, 3),
+          color: l.color,
+          phase: "fall",
+        });
+      }
+    }
+
+    function findNearestUnstruck(letter: Letter): HTMLElement | null {
+      const targets = getActiveLayerColliders();
+      if (targets.length === 0) return null;
+      const canvasRect = canvas!.getBoundingClientRect();
+      let best: HTMLElement | null = null;
+      let bestDist = Infinity;
+      for (const el of targets) {
+        const rect = el.getBoundingClientRect();
+        const cx = rect.left - canvasRect.left + rect.width / 2;
+        const cy = rect.top - canvasRect.top + rect.height / 2;
+        const dx = cx - letter.x;
+        const dy = cy - letter.y;
+        const dist = dx * dx + dy * dy;
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = el;
+        }
+      }
+      return best;
+    }
+
+    // ── Per-type destruction effects ──
+
+    function destroyTextLine(el: HTMLElement, letter: Letter): void {
+      const text = el.textContent || "";
+      if (text.length > 80) {
+        spawnParticles(el);
+        return;
+      }
+      const chars = [...text];
+      el.innerHTML = "";
+      const style = document.createElement("style");
+      const styleId = `char-scatter-${Date.now()}`;
+      style.id = styleId;
+      style.textContent = `
+        @keyframes charScatter {
+          0% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
+          100% { opacity: 0; transform: translate(var(--sx), var(--sy)) rotate(var(--sr)); }
+        }
+      `;
+      document.head.appendChild(style);
+      chars.forEach((ch) => {
+        const span = document.createElement("span");
+        span.textContent = ch === " " ? "\u00A0" : ch;
+        span.style.display = "inline-block";
+        span.style.setProperty("--sx", `${rand(-60, 60)}px`);
+        span.style.setProperty("--sy", `${rand(-80, 20)}px`);
+        span.style.setProperty("--sr", `${rand(-180, 180)}deg`);
+        span.style.animation = "charScatter 400ms ease-out forwards";
+        el.appendChild(span);
+      });
+      setTimeout(() => {
+        el.style.opacity = "0";
+        if (document.getElementById(styleId)) {
+          document.getElementById(styleId)!.remove();
+        }
+      }, 450);
+    }
+
+    function destroyCodeLine(el: HTMLElement, _letter: Letter): void {
+      const originalText = el.textContent || "";
+      const chars = [...originalText];
+
+      function corrupt(ratio: number, jitter: number): void {
+        const result = chars.map((ch, i) => {
+          if (ch === " " || ch === "\n") return ch;
+          if (Math.random() < ratio) return "▓";
+          return ch;
+        });
+        el.textContent = result.join("");
+        if (jitter > 0) {
+          el.style.transform = `translateX(${rand(-jitter, jitter)}px)`;
+        }
+      }
+
+      corrupt(0.3, 0);
+      setTimeout(() => corrupt(0.6, 8), 40);
+      setTimeout(() => {
+        corrupt(1.0, 4);
+        el.style.transition = "opacity 200ms ease-out";
+        el.style.opacity = "0";
+      }, 80);
+    }
+
+    function destroyToolCard(el: HTMLElement, letter: Letter): void {
+      const canvasRect = canvas!.getBoundingClientRect();
+      const rect = el.getBoundingClientRect();
+      const rx = rect.left - canvasRect.left;
+      const ry = rect.top - canvasRect.top;
+      const impactX = letter.x;
+      const impactY = letter.y;
+
+      el.style.clipPath = `circle(100% at ${impactX - rx}px ${impactY - ry}px)`;
+      el.style.transition = "clip-path 350ms ease-in, opacity 200ms ease-out 250ms";
+      requestAnimationFrame(() => {
+        el.style.clipPath = `circle(0% at ${impactX - rx}px ${impactY - ry}px)`;
+        el.style.opacity = "0";
+      });
+
+      const burstCount = randInt(40, 70);
+      for (let i = 0; i < burstCount; i++) {
+        const angle = rand(0, Math.PI * 2);
+        const speed = rand(3, 10);
+        s.particles.push({
+          x: impactX,
+          y: impactY,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          size: rand(1.5, 4),
+          color: rand(0, 1) > 0.5 ? colors.accent : warmPurple,
+          phase: "fall",
+        });
+      }
+    }
+
+    function destroyMessageCard(el: HTMLElement, letter: Letter): void {
+      el.style.transition = "opacity 100ms ease-out";
+      el.style.opacity = "0.2";
+      el.style.backgroundColor = "transparent";
+
+      el.style.transition = "none";
+      el.style.backgroundColor = "rgba(255,255,255,0.5)";
+      requestAnimationFrame(() => {
+        el.style.transition = "background-color 80ms ease-out, opacity 100ms ease-out";
+        el.style.backgroundColor = "transparent";
+        el.style.opacity = "0.2";
+      });
+
+      const canvasRect = canvas!.getBoundingClientRect();
+      const rect = el.getBoundingClientRect();
+      const rx = rect.left - canvasRect.left;
+      const ry = rect.top - canvasRect.top;
+      const rw = rect.width;
+      const rh = rect.height;
+      const shardCount = randInt(4, 6);
+      for (let i = 0; i < shardCount; i++) {
+        const cx = rx + rand(rw * 0.2, rw * 0.8);
+        const cy = ry + rand(rh * 0.2, rh * 0.8);
+        const pts = [];
+        const ptCount = randInt(3, 5);
+        for (let j = 0; j < ptCount; j++) {
+          const angle = (j / ptCount) * Math.PI * 2 + rand(-0.3, 0.3);
+          const r = rand(8, 25);
+          pts.push({ x: Math.cos(angle) * r, y: Math.sin(angle) * r });
+        }
+        s.shards.push({
+          x: cx,
+          y: cy,
+          vx: rand(-3, 3),
+          vy: rand(-4, 1),
+          rotation: rand(0, Math.PI * 2),
+          rotationSpeed: rand(-0.05, 0.05),
+          size: rand(1, 3),
+          color: colors.textMuted,
+          life: 500,
+          points: pts,
+        });
+      }
+    }
+
+    function destroyByType(el: HTMLElement, letter: Letter): void {
+      const type = el.getAttribute("data-collider");
+      switch (type) {
+        case "text-line":
+          destroyTextLine(el, letter);
+          break;
+        case "code-line":
+          destroyCodeLine(el, letter);
+          break;
+        case "tool-card":
+          destroyToolCard(el, letter);
+          break;
+        case "message-card":
+          destroyMessageCard(el, letter);
+          break;
+        default:
+          spawnParticles(el);
+          break;
+      }
+    }
+
     function startGather(): void {
       if (s.gatherStarted) return;
       s.gatherStarted = true;
       s.phase = "gather";
       s.phaseTime = 0;
-      // Letters fly up and exit (do NOT convert to particles)
       for (const l of s.letters) {
         if (!l.alive) continue;
         l.vy = rand(-12, -8);
@@ -326,27 +505,49 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       return result;
     }
 
+    function getActiveLayerColliders(): HTMLElement[] {
+      const all = document.querySelectorAll<HTMLElement>("[data-collider]");
+      const allUnstruck: HTMLElement[] = [];
+      all.forEach((el) => {
+        if (!s.struckElements.has(el)) {
+          allUnstruck.push(el);
+        }
+      });
+      if (allUnstruck.length === 0) return [];
+
+      // Penetrate message-cards to their unstruck children;
+      // standalone message-cards (no children) are targeted directly.
+      let first = allUnstruck[0];
+      while (first.getAttribute("data-collider") === "message-card") {
+        const children = first.querySelectorAll<HTMLElement>("[data-collider]");
+        const unstruckChildren: HTMLElement[] = [];
+        children.forEach((c) => { if (!s.struckElements.has(c)) unstruckChildren.push(c); });
+        if (unstruckChildren.length > 0) {
+          return unstruckChildren;
+        }
+        break;
+      }
+      const parent = first.parentElement;
+      return allUnstruck.filter((el) => el.parentElement === parent);
+    }
+
     function updateCascade(dt: number, dtFactor: number): void {
       s.phaseTime += dt;
       s.letterTimer += dt;
 
-      // Spawn letters at staggered intervals (with re-spawn when all letters die)
       const aliveCount = s.letters.filter((l) => l.alive).length;
 
-      // When all letters die but unstruck elements remain, start respawn cooldown
-      if (aliveCount === 0 && s.letters.length > 0 && getCollidableElements().length > 0) {
+      if (aliveCount === 0 && s.letters.length > 0 && getActiveLayerColliders().length > 0) {
         if (s.respawnTimer <= 0) s.respawnTimer = RESPAWN_COOLDOWN_MS;
       }
       if (s.respawnTimer > 0) {
         s.respawnTimer -= dt;
         if (s.respawnTimer <= 0) {
-          // Clear dead letters to enable fresh spawns
           s.letters = [];
           s.letterTimer = 0;
         }
       }
 
-      // Spawn new letters while under max alive count
       const canSpawn = s.letters.filter((l) => l.alive).length < MAX_LETTERS;
       if (canSpawn && s.respawnTimer <= 0) {
         const spawnDelay = s.letters.length === 0 ? 200 : rand(400, 800);
@@ -360,7 +561,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       for (const l of s.letters) {
         if (!l.alive) continue;
         l.vy += 0.25 * dtFactor;
-        if (l.vy > 8) l.vy = 8; // terminal velocity
+        if (l.vy > 8) l.vy = 8;
         l.x += l.vx;
         l.y += l.vy;
         l.rotation += l.rotationSpeed;
@@ -368,6 +569,26 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         if (l.x < 20) { l.x = 20; l.vx = Math.abs(l.vx); }
         if (l.x > W - 20) { l.x = W - 20; l.vx = -Math.abs(l.vx); }
         if (l.y > H + 120) { l.alive = false; continue; }
+
+        // ── Strengthened homing steering ──
+        if (l.homingEnabled && l.targetEl) {
+          if (s.struckElements.has(l.targetEl)) {
+            l.targetEl = findNearestUnstruck(l) ?? undefined;
+            if (!l.targetEl) { l.alive = false; continue; }
+          }
+          const tRect = l.targetEl.getBoundingClientRect();
+          const canvasRect = canvas!.getBoundingClientRect();
+          const tCx = tRect.left - canvasRect.left + tRect.width / 2;
+          const steeringFdx = (tCx - l.x) * 0.04;
+          l.vx += steeringFdx;
+
+
+          // Vertical braking: slow down when past target bottom to widen collision window
+          const tBottom = tRect.bottom - canvasRect.top;
+          if (l.y > tBottom) {
+            l.vy *= 0.95;
+          }
+        }
 
         // Decay glow
         const glowKey = l.char + s.letters.indexOf(l);
@@ -389,7 +610,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
           const ry = rect.top - canvasRect.top;
           const rw = rect.width;
           const rh = rect.height;
-          const margin = 6;
+          const margin = 12;
           if (
             l.x > rx - margin &&
             l.x < rx + rw + margin &&
@@ -398,9 +619,13 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
           ) {
             // Collision!
             l.hitCount++;
-            l.vy = -Math.abs(l.vy) * 0.3 - 1.5;
-            l.vx += rand(-1.5, 1.5);
-            l.y = ry - 8; // Reposition 8px above element
+
+            // ── Physics: energy-dependent restitution ──
+            const impactSpeed = Math.abs(l.vy);
+            const restitution = clamp(0.35 + rand(-0.08, 0.08) + impactSpeed * 0.008, 0.25, 0.6);
+            l.vy = -(impactSpeed * restitution);
+            l.vx = l.vx * 0.6 + rand(-2.5, 2.5);
+
             const glowKey = l.char + s.letters.indexOf(l);
             s.letterGlowDecay.set(glowKey, 20);
             l.glow = 20;
@@ -411,7 +636,6 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
             if (el.getAttribute("data-collider") === "message-card") {
               const children = el.querySelectorAll<HTMLElement>("[data-collider]");
               if (children.length > 0) {
-                // Card has children — only children can be struck
                 let childHit: HTMLElement | null = null;
                 children.forEach((child) => {
                   const cr = child.getBoundingClientRect();
@@ -434,26 +658,41 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
                   shouldStrike = false;
                 }
               }
-              // else: no children → card can be struck as a whole (existing behavior)
             }
             if (shouldStrike) {
-            // Strike the target
-            strikeTarget.style.transition = "opacity 150ms ease-out";
-            strikeTarget.style.opacity = "0";
-            s.struckElements.add(strikeTarget);
-            spawnParticles(strikeTarget);
+              // ── Element flash ──
+              strikeTarget.style.transition = "none";
+              strikeTarget.style.backgroundColor = "rgba(255,255,255,0.85)";
+              strikeTarget.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
+              requestAnimationFrame(() => {
+                strikeTarget.style.transition = "background-color 60ms ease-out, box-shadow 60ms ease-out, opacity 180ms ease-out 60ms";
+                strikeTarget.style.backgroundColor = "";
+                strikeTarget.style.boxShadow = "";
+                strikeTarget.style.opacity = "0";
+              });
+
+              // ── Element displacement ──
+              const dx = rand(-8, 8);
+              const dy = rand(-4, 2);
+              strikeTarget.style.transform = `translate(${dx}px, ${dy}px)`;
+              strikeTarget.style.transition += ", transform 120ms ease-out";
+
+              s.struckElements.add(strikeTarget);
+
+              // ── Per-type destruction ──
+              destroyByType(strikeTarget, l);
+
+              // ── Letter fragment particles ──
+              spawnLetterFragments(l);
             }
-            s.shake = Math.max(s.shake, 5);
-            s.cascadeStuckTimer = 0; // Reset stuck timer on hit
-            break;
+            // ── Shake scaling with impact speed ──
+            s.shake = Math.max(s.shake, Math.min(impactSpeed * 1.5, 10));
+            if (shouldStrike) break;
           }
         }
       }
 
-      // Track cascade stuck state (no collisions happening)
-      s.cascadeStuckTimer += dt;
-
-      // Update particles during cascade phase (gravity, friction, floor bounce)
+      // Update particles during cascade phase
       for (const p of s.particles) {
         if (p.phase !== "fall") continue;
         p.vy += 0.28 * dtFactor;
@@ -463,36 +702,27 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         if (p.y > H - 4) { p.y = H - 4; p.vy *= -0.3; p.vx *= 0.75; }
       }
 
-      // Check transition to gather: all struck OR safety timeout
+      // Update shards
+      for (const sh of s.shards) {
+        sh.x += sh.vx;
+        sh.y += sh.vy;
+        sh.vy += 0.15 * dtFactor;
+        sh.rotation += sh.rotationSpeed;
+        sh.life -= dt;
+      }
+      s.shards = s.shards.filter((sh) => sh.life > 0);
+
+      // Transition to gather: only natural completion (all struck)
       if (!s.gatherStarted) {
         const remaining = document.querySelectorAll<HTMLElement>("[data-collider]");
         let allStruck = true;
-        let unstruckCount = 0;
         remaining.forEach((el) => {
-          if (!s.struckElements.has(el)) { allStruck = false; unstruckCount++; }
+          if (!s.struckElements.has(el)) { allStruck = false; }
         });
         const totalHits = s.letters.reduce((sum, l) => sum + l.hitCount, 0);
         const minRequired = Math.min(3, Math.max(1, Math.floor(remaining.length / 2)));
 
-        // Condition 1: all struck with minimum hits (natural completion)
-        const naturalComplete = allStruck && totalHits >= minRequired;
-
-        // Condition 2: safety timeout — cascade ran too long or is stuck
-        const timedOut = s.phaseTime > CASCADE_TIMEOUT_MS;
-        const stuck = (unstruckCount > 0 && s.cascadeStuckTimer > 5000 && s.letters.filter((l) => l.alive).length === 0 && s.respawnTimer > 0);
-
-        if (naturalComplete || timedOut || stuck) {
-          // Force-strike any remaining unstruck elements on timeout
-          if (!naturalComplete && (timedOut || stuck)) {
-            remaining.forEach((el) => {
-              if (!s.struckElements.has(el)) {
-                el.style.transition = "opacity 150ms ease-out";
-                el.style.opacity = "0";
-                s.struckElements.add(el);
-                spawnParticles(el);
-              }
-            });
-          }
+        if (allStruck && totalHits >= minRequired) {
           startGather();
         }
       }
@@ -501,7 +731,6 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     function updateGather(dt: number, dtFactor: number): void {
       s.phaseTime += dt;
 
-      // Remove letters (fly off)
       for (const l of s.letters) {
         if (!l.alive) continue;
         l.y += l.vy;
@@ -509,7 +738,6 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         if (l.y < -200) l.alive = false;
       }
 
-      // Spawn filler particles
       if (s.particles.length < s.targetPoints.length && s.particles.length < MAX_PARTICLES) {
         const needed = Math.min(s.targetPoints.length - s.particles.length, 50);
         for (let i = 0; i < needed && s.particlesAssigned < s.targetPoints.length; i++) {
@@ -529,7 +757,6 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         }
       }
 
-      // Update particles
       for (const p of s.particles) {
         if (p.phase === "fall") {
           p.vy += 0.28 * dtFactor;
@@ -569,11 +796,18 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         }
       }
 
-      // Update rings
+      for (const sh of s.shards) {
+        sh.x += sh.vx;
+        sh.y += sh.vy;
+        sh.vy += 0.12 * dtFactor;
+        sh.rotation += sh.rotationSpeed;
+        sh.life -= dt;
+      }
+      s.shards = s.shards.filter((sh) => sh.life > 0);
+
       for (const ring of s.impactRings) { ring.r += 2.2; ring.life -= 0.045; }
       s.impactRings = s.impactRings.filter((r) => r.life > 0);
 
-      // Transition to formed
       if (
         s.particles.length > 0 &&
         s.particles.every((p) => p.phase === "formed") &&
@@ -593,12 +827,20 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       for (const p of s.particles) {
         if (p.flash !== undefined) p.flash *= 0.92;
       }
-      // After 600ms settle AND dashboard ready, call onComplete exactly once
+
+      for (const sh of s.shards) {
+        sh.x += sh.vx;
+        sh.y += sh.vy;
+        sh.vy += 0.1 * dtFactor;
+        sh.rotation += sh.rotationSpeed;
+        sh.life -= dt;
+      }
+      s.shards = s.shards.filter((sh) => sh.life > 0);
+
       if (s.formedTime > 600 && artifactReadyRef.current && !onCompleteCalledRef.current) {
         onCompleteCalledRef.current = true;
         onCompleteRef.current();
       }
-      // Safety timeout: after 5s, show dashboard with loading spinner
       if (s.formedTime > 5000 && !onCompleteCalledRef.current) {
         onCompleteCalledRef.current = true;
         onCompleteRef.current();
@@ -650,6 +892,31 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       }
     }
 
+    function drawShards(): void {
+      for (const sh of s.shards) {
+        ctx.save();
+        ctx.translate(sh.x, sh.y);
+        ctx.rotate(sh.rotation);
+        ctx.globalAlpha = Math.max(0, sh.life / 500);
+        ctx.beginPath();
+        if (sh.points.length > 0) {
+          ctx.moveTo(sh.points[0].x, sh.points[0].y);
+          for (let i = 1; i < sh.points.length; i++) {
+            ctx.lineTo(sh.points[i].x, sh.points[i].y);
+          }
+          ctx.closePath();
+        } else {
+          ctx.arc(0, 0, sh.size * 3, 0, Math.PI * 2);
+        }
+        ctx.fillStyle = sh.color;
+        ctx.fill();
+        ctx.strokeStyle = sh.color;
+        ctx.lineWidth = 0.5;
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+
     function drawFormedGlow(now: number): void {
       if (s.phase !== "formed") return;
       const cx = W / 2;
@@ -689,9 +956,8 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     function frame(now: number): void {
       const dt = Math.min(now - lastTime, 33);
       lastTime = now;
-      const dtFactor = dt / 16.667; // Normalize to ~60fps
+      const dtFactor = dt / 16.667;
 
-      // Clear canvas completely (transparent overlay)
       ctx.clearRect(0, 0, W, H);
 
       ctx.save();
@@ -717,6 +983,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       drawLetters();
       drawParticles();
       drawRings();
+      drawShards();
 
       ctx.restore();
       drawHUD();
@@ -728,6 +995,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
 
     return () => {
       cancelAnimationFrame(rafId);
+      document.removeEventListener("keydown", onKeyDown);
       document.body.style.cursor = prevCursor;
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps

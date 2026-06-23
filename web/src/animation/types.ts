@@ -26,6 +26,11 @@ export interface Letter {
   hitCount: number;
   alive: boolean;
   column?: number;
+  targetEl?: HTMLElement;
+  homingEnabled: boolean;
+  scaleX: number; // @deprecated inert — no render effect
+  scaleY: number; // @deprecated inert — no render effect
+  deformTimer: number; // @deprecated inert — no render effect
 }
 
 export interface ImpactRing {
@@ -33,4 +38,17 @@ export interface ImpactRing {
   y: number;
   r: number;
   life: number;
+}
+
+export interface Shard {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  rotation: number;
+  rotationSpeed: number;
+  size: number;
+  color: string;
+  life: number;
+  points: { x: number; y: number }[];
 }
