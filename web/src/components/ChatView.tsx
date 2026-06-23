@@ -56,7 +56,8 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
   if (messages.length === 0 && !permissionPrompt) {
     return (
       <div className="flex-1 flex items-center justify-center p-8">
-        <div
+      <div
+        data-collider="message-card"
           className="text-center max-w-md p-8"
           style={{
             borderRadius: "12px",
@@ -158,6 +159,7 @@ function FallbackBubble({ message }: { message: UIMessage }) {
   return (
     <div className="flex justify-start">
       <div
+        data-collider="message-card"
         className="max-w-[85%] px-4 py-3"
         style={{
           borderRadius: "12px",
@@ -364,6 +366,7 @@ function MessageBubble({ message, sessionTime }: { message: UIMessage; sessionTi
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} animate-fade-up`}>
       <div
+        data-collider="message-card"
         className="max-w-[85%] md:max-w-[75%] px-4 py-3"
         style={
           isUser
