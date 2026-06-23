@@ -221,7 +221,23 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       }
 
       if (candidates.length > 0) {
-        const target = candidates[randInt(0, candidates.length - 1)];
+        // Priority ranking: text-line/code-line (1) > tool-card (2) > message-card (3) > other (4)
+        function colliderPriority(el: HTMLElement): number {
+          const type = el.getAttribute("data-collider");
+          if (type === "text-line" || type === "code-line") return 1;
+          if (type === "tool-card") return 2;
+          if (type === "message-card") return 3;
+          return 4;
+        }
+        const byPrio: HTMLElement[][] = [[], [], [], [], []];
+        for (const c of candidates) {
+          byPrio[colliderPriority(c)].push(c);
+        }
+        let pickFrom: HTMLElement[] | null = null;
+        for (let prio = 1; prio <= 4; prio++) {
+          if (byPrio[prio].length > 0) { pickFrom = byPrio[prio]; break; }
+        }
+        const target = pickFrom![randInt(0, pickFrom!.length - 1)];
         const rect = target.getBoundingClientRect();
         const rx = rect.left - canvasRect.left;
         letterX = rand(rx, rx + rect.width);
@@ -294,10 +310,6 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         s.particles[i].ty = s.targetPoints[i].y;
         s.particles[i].gatherDelay = rand(20, 80);
         s.particlesAssigned++;
-      }
-      // Set all particle colors to text color for unified wordmark
-      for (const p of s.particles) {
-        p.color = colors.text;
       }
     }
 
@@ -393,22 +405,42 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
             s.letterGlowDecay.set(glowKey, 20);
             l.glow = 20;
 
-            // Strike the element
-            el.style.transition = "opacity 150ms ease-out";
-            el.style.opacity = "0";
-            s.struckElements.add(el);
-            spawnParticles(el);
-            // If striking a message card, also strike all child colliders
+            // Determine what to strike — prefer specific child of message-card
+            let strikeTarget: HTMLElement = el;
+            let shouldStrike = true;
             if (el.getAttribute("data-collider") === "message-card") {
               const children = el.querySelectorAll<HTMLElement>("[data-collider]");
+              let childHit: HTMLElement | null = null;
+              let anyChildOverlaps = false;
               children.forEach((child) => {
-                if (!s.struckElements.has(child)) {
-                  child.style.transition = "opacity 150ms ease-out";
-                  child.style.opacity = "0";
-                  s.struckElements.add(child);
-                  spawnParticles(child);
+                const cr = child.getBoundingClientRect();
+                const crx = cr.left - canvasRect.left;
+                const cry = cr.top - canvasRect.top;
+                if (
+                  l.x > crx &&
+                  l.x < crx + cr.width &&
+                  l.y > cry &&
+                  l.y < cry + cr.height
+                ) {
+                  anyChildOverlaps = true;
+                  if (!s.struckElements.has(child)) {
+                    childHit = child;
+                  }
                 }
               });
+              if (childHit) {
+                strikeTarget = childHit;
+              } else if (anyChildOverlaps) {
+                shouldStrike = false;
+              }
+            }
+
+            if (shouldStrike) {
+            // Strike the target
+            strikeTarget.style.transition = "opacity 150ms ease-out";
+            strikeTarget.style.opacity = "0";
+            s.struckElements.add(strikeTarget);
+            spawnParticles(strikeTarget);
             }
             s.shake = Math.max(s.shake, 5);
             s.cascadeStuckTimer = 0; // Reset stuck timer on hit
@@ -508,7 +540,6 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
             p.gatherDelay -= dt;
             if (p.gatherDelay <= 0) {
               p.phase = "gather";
-              p.color = colors.text;
             }
           }
         } else if (p.phase === "gather") {
@@ -521,7 +552,6 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
             p.y = p.ty;
             p.phase = "formed";
             p.flash = 1;
-            p.color = colors.text;
             s.impactRings.push({ x: p.x, y: p.y, r: 2, life: 1 });
             s.shake = Math.min(s.shake + 2.5, 8);
           } else {
@@ -564,6 +594,11 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       }
       // After 600ms settle AND dashboard ready, call onComplete exactly once
       if (s.formedTime > 600 && artifactReadyRef.current && !onCompleteCalledRef.current) {
+        onCompleteCalledRef.current = true;
+        onCompleteRef.current();
+      }
+      // Safety timeout: after 5s, show dashboard with loading spinner
+      if (s.formedTime > 5000 && !onCompleteCalledRef.current) {
         onCompleteCalledRef.current = true;
         onCompleteRef.current();
       }
