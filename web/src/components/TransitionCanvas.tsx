@@ -410,31 +410,32 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
             let shouldStrike = true;
             if (el.getAttribute("data-collider") === "message-card") {
               const children = el.querySelectorAll<HTMLElement>("[data-collider]");
-              let childHit: HTMLElement | null = null;
-              let anyChildOverlaps = false;
-              children.forEach((child) => {
-                const cr = child.getBoundingClientRect();
-                const crx = cr.left - canvasRect.left;
-                const cry = cr.top - canvasRect.top;
-                if (
-                  l.x > crx &&
-                  l.x < crx + cr.width &&
-                  l.y > cry &&
-                  l.y < cry + cr.height
-                ) {
-                  anyChildOverlaps = true;
-                  if (!s.struckElements.has(child)) {
-                    childHit = child;
+              if (children.length > 0) {
+                // Card has children — only children can be struck
+                let childHit: HTMLElement | null = null;
+                children.forEach((child) => {
+                  const cr = child.getBoundingClientRect();
+                  const crx = cr.left - canvasRect.left;
+                  const cry = cr.top - canvasRect.top;
+                  if (
+                    l.x > crx &&
+                    l.x < crx + cr.width &&
+                    l.y > cry &&
+                    l.y < cry + cr.height
+                  ) {
+                    if (!s.struckElements.has(child)) {
+                      childHit = child;
+                    }
                   }
+                });
+                if (childHit) {
+                  strikeTarget = childHit;
+                } else {
+                  shouldStrike = false;
                 }
-              });
-              if (childHit) {
-                strikeTarget = childHit;
-              } else if (anyChildOverlaps) {
-                shouldStrike = false;
               }
+              // else: no children → card can be struck as a whole (existing behavior)
             }
-
             if (shouldStrike) {
             // Strike the target
             strikeTarget.style.transition = "opacity 150ms ease-out";
