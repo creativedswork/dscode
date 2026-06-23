@@ -199,34 +199,38 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       if (s.letters.filter((l) => l.alive).length >= MAX_LETTERS) return;
       const idx = s.letters.length;
       const char = shuffledLetters[idx % shuffledLetters.length];
-      const column = idx % 4;
-      const columnWidth = W / 4;
-      const colX = column * columnWidth + columnWidth / 2;
 
-      // DOM-position-ordered targeting: only topmost unstruck layer
-      let letterX: number;
+      // Each letter independently picks a random target from the global unstruck set
+      const allTargets = getCollidableElements();
       let targetEl: HTMLElement | undefined;
-      const layerTargets = getActiveLayerColliders();
-
-      if (layerTargets.length > 0) {
-        // Random pick within the active layer for visual variety
-        // Round-robin: distribute letters across layer targets to avoid clumping
-        const target = layerTargets[idx % layerTargets.length];
-        const rect = target.getBoundingClientRect();
-        const canvasRect = canvas!.getBoundingClientRect();
-        const rx = rect.left - canvasRect.left;
-        targetEl = target;
-        letterX = rx + rect.width / 2;
-      } else {
-        targetEl = undefined;
-        letterX = colX + rand(-columnWidth * 0.4, columnWidth * 0.4);
+      if (allTargets.length > 0) {
+        targetEl = allTargets[randInt(0, allTargets.length - 1)];
       }
+
+      // Random horizontal spread across the full width so letters fan out
+      const margin = 80;
+      const letterX = rand(margin, W - margin);
+
+      // Initial horizontal velocity: steer toward target if we have one,
+      // otherwise gentle random drift
+      let vx: number;
+      if (targetEl) {
+        const rect = targetEl.getBoundingClientRect();
+        const canvasRect = canvas!.getBoundingClientRect();
+        const tCx = rect.left - canvasRect.left + rect.width / 2;
+        vx = (tCx - letterX) * 0.025 + rand(-0.8, 0.8);
+      } else {
+        vx = rand(-1.5, 1.5);
+      }
+
+      // Randomised fall depth so letters don't drop in lockstep
+      const spawnY = -(rand(140, 260));
 
       s.letters.push({
         char,
         x: letterX,
-        y: rand(-120, -20),
-        vx: targetEl ? 0 : rand(-0.8, 0.8),
+        y: spawnY,
+        vx,
         vy: rand(3, 6),
         rotation: rand(-0.15, 0.15),
         rotationSpeed: rand(-0.03, 0.03),
@@ -235,7 +239,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         glow: 0,
         hitCount: 0,
         alive: true,
-        column,
+        column: 0,
         targetEl,
         homingEnabled: !!targetEl,
         scaleX: 1,
@@ -291,7 +295,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     }
 
     function findNearestUnstruck(letter: Letter): HTMLElement | null {
-      const targets = getActiveLayerColliders();
+      const targets = getCollidableElements();
       if (targets.length === 0) return null;
       const canvasRect = canvas!.getBoundingClientRect();
       let best: HTMLElement | null = null;
@@ -505,30 +509,67 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       return result;
     }
 
-    function getActiveLayerColliders(): HTMLElement[] {
-      const all = document.querySelectorAll<HTMLElement>("[data-collider]");
-      const allUnstruck: HTMLElement[] = [];
-      all.forEach((el) => {
-        if (!s.struckElements.has(el)) {
-          allUnstruck.push(el);
-        }
-      });
-      if (allUnstruck.length === 0) return [];
+    // ── Homing: letter actively steers toward its target ──
+    function steerTowardTarget(l: Letter): void {
+      if (!l.homingEnabled || !l.targetEl) return;
 
-      // Penetrate message-cards to their unstruck children;
-      // standalone message-cards (no children) are targeted directly.
-      let first = allUnstruck[0];
-      while (first.getAttribute("data-collider") === "message-card") {
-        const children = first.querySelectorAll<HTMLElement>("[data-collider]");
-        const unstruckChildren: HTMLElement[] = [];
-        children.forEach((c) => { if (!s.struckElements.has(c)) unstruckChildren.push(c); });
-        if (unstruckChildren.length > 0) {
-          return unstruckChildren;
-        }
-        break;
+      // If target was already struck, find a new one
+      if (s.struckElements.has(l.targetEl)) {
+        l.targetEl = findNearestUnstruck(l) ?? undefined;
+        if (!l.targetEl) { l.alive = false; return; }
       }
-      const parent = first.parentElement;
-      return allUnstruck.filter((el) => el.parentElement === parent);
+
+      const tRect = l.targetEl.getBoundingClientRect();
+      const canvasRect = canvas!.getBoundingClientRect();
+      const tCx = tRect.left - canvasRect.left + tRect.width / 2;
+      const tCy = tRect.top - canvasRect.top + tRect.height / 2;
+      const tTop = tRect.top - canvasRect.top;
+
+      // Horizontal homing
+      const steerX = (tCx - l.x) * 0.035;
+      l.vx += steerX;
+
+      // Vertical homing — pull letter toward target centre
+      const steerY = (tCy - l.y) * 0.018;
+      l.vy += steerY;
+
+      // Approach braking: slow down BEFORE reaching the target
+      const approachZone = 80;
+      const distToTarget = l.y - tTop;
+      if (distToTarget > -approachZone && distToTarget < 0) {
+        const brakeFactor = 0.92 + 0.08 * ((-distToTarget) / approachZone);
+        l.vy *= brakeFactor;
+        l.vx *= 0.96;
+      }
+
+      // Clamp speed so letters don't overshoot wildly
+      const maxSpeed = 7;
+      const speed = Math.sqrt(l.vx * l.vx + l.vy * l.vy);
+      if (speed > maxSpeed) {
+        const scale = maxSpeed / speed;
+        l.vx *= scale;
+        l.vy *= scale;
+      }
+    }
+
+    // ── Letter-to-element bounding-box overlap test ──
+    function letterOverlapsElement(l: Letter, el: HTMLElement): boolean {
+      const rect = el.getBoundingClientRect();
+      const canvasRect = canvas!.getBoundingClientRect();
+      const erx = rect.left - canvasRect.left;
+      const ery = rect.top - canvasRect.top;
+      const erw = rect.width;
+      const erh = rect.height;
+
+      // Letter visual bounding box — centred on (l.x, l.y)
+      const halfSize = l.size * 0.45;
+      const ll = l.x - halfSize;
+      const lr = l.x + halfSize;
+      const lt = l.y - halfSize;
+      const lb = l.y + halfSize;
+
+      // AABB overlap
+      return !(lr < erx || ll > erx + erw || lb < ery || lt > ery + erh);
     }
 
     function updateCascade(dt: number, dtFactor: number): void {
@@ -537,7 +578,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
 
       const aliveCount = s.letters.filter((l) => l.alive).length;
 
-      if (aliveCount === 0 && s.letters.length > 0 && getActiveLayerColliders().length > 0) {
+      if (aliveCount === 0 && s.letters.length > 0 && getCollidableElements().length > 0) {
         if (s.respawnTimer <= 0) s.respawnTimer = RESPAWN_COOLDOWN_MS;
       }
       if (s.respawnTimer > 0) {
@@ -570,25 +611,8 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         if (l.x > W - 20) { l.x = W - 20; l.vx = -Math.abs(l.vx); }
         if (l.y > H + 120) { l.alive = false; continue; }
 
-        // ── Strengthened homing steering ──
-        if (l.homingEnabled && l.targetEl) {
-          if (s.struckElements.has(l.targetEl)) {
-            l.targetEl = findNearestUnstruck(l) ?? undefined;
-            if (!l.targetEl) { l.alive = false; continue; }
-          }
-          const tRect = l.targetEl.getBoundingClientRect();
-          const canvasRect = canvas!.getBoundingClientRect();
-          const tCx = tRect.left - canvasRect.left + tRect.width / 2;
-          const steeringFdx = (tCx - l.x) * 0.04;
-          l.vx += steeringFdx;
-
-
-          // Vertical braking: slow down when past target bottom to widen collision window
-          const tBottom = tRect.bottom - canvasRect.top;
-          if (l.y > tBottom) {
-            l.vy *= 0.95;
-          }
-        }
+        // ── Active homing: letter seeks its target with self-awareness ──
+        steerTowardTarget(l);
 
         // Decay glow
         const glowKey = l.char + s.letters.indexOf(l);
@@ -601,94 +625,74 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
           l.glow = 0;
         }
 
-        // Collision detection
+        // Collision detection — AABB letter bbox vs element bbox
         const unstruck = getCollidableElements();
         for (const el of unstruck) {
-          const rect = el.getBoundingClientRect();
-          const canvasRect = canvas!.getBoundingClientRect();
-          const rx = rect.left - canvasRect.left;
-          const ry = rect.top - canvasRect.top;
-          const rw = rect.width;
-          const rh = rect.height;
-          const margin = 12;
-          if (
-            l.x > rx - margin &&
-            l.x < rx + rw + margin &&
-            l.y > ry - margin &&
-            l.y < ry + rh + margin
-          ) {
-            // Collision!
-            l.hitCount++;
+          if (!letterOverlapsElement(l, el)) continue;
 
-            // ── Physics: energy-dependent restitution ──
-            const impactSpeed = Math.abs(l.vy);
-            const restitution = clamp(0.35 + rand(-0.08, 0.08) + impactSpeed * 0.008, 0.25, 0.6);
-            l.vy = -(impactSpeed * restitution);
-            l.vx = l.vx * 0.6 + rand(-2.5, 2.5);
+          // Collision!
+          l.hitCount++;
 
-            const glowKey = l.char + s.letters.indexOf(l);
-            s.letterGlowDecay.set(glowKey, 20);
-            l.glow = 20;
+          // ── Physics: energy-dependent restitution ──
+          const impactSpeed = Math.abs(l.vy);
+          const restitution = clamp(0.35 + rand(-0.08, 0.08) + impactSpeed * 0.008, 0.25, 0.6);
+          l.vy = -(impactSpeed * restitution);
+          l.vx = l.vx * 0.6 + rand(-2.5, 2.5);
 
-            // Determine what to strike — prefer specific child of message-card
-            let strikeTarget: HTMLElement = el;
-            let shouldStrike = true;
-            if (el.getAttribute("data-collider") === "message-card") {
-              const children = el.querySelectorAll<HTMLElement>("[data-collider]");
-              if (children.length > 0) {
-                let childHit: HTMLElement | null = null;
-                children.forEach((child) => {
-                  const cr = child.getBoundingClientRect();
-                  const crx = cr.left - canvasRect.left;
-                  const cry = cr.top - canvasRect.top;
-                  if (
-                    l.x > crx &&
-                    l.x < crx + cr.width &&
-                    l.y > cry &&
-                    l.y < cry + cr.height
-                  ) {
-                    if (!s.struckElements.has(child)) {
-                      childHit = child;
-                    }
+          const glowKey = l.char + s.letters.indexOf(l);
+          s.letterGlowDecay.set(glowKey, 20);
+          l.glow = 20;
+
+          // Determine what to strike — prefer specific child of message-card
+          let strikeTarget: HTMLElement = el;
+          let shouldStrike = true;
+          if (el.getAttribute("data-collider") === "message-card") {
+            const children = el.querySelectorAll<HTMLElement>("[data-collider]");
+            if (children.length > 0) {
+              let childHit: HTMLElement | null = null;
+              children.forEach((child) => {
+                if (letterOverlapsElement(l, child)) {
+                  if (!s.struckElements.has(child)) {
+                    childHit = child;
                   }
-                });
-                if (childHit) {
-                  strikeTarget = childHit;
-                } else {
-                  shouldStrike = false;
                 }
+              });
+              if (childHit) {
+                strikeTarget = childHit;
+              } else {
+                shouldStrike = false;
               }
             }
-            if (shouldStrike) {
-              // ── Element flash ──
-              strikeTarget.style.transition = "none";
-              strikeTarget.style.backgroundColor = "rgba(255,255,255,0.85)";
-              strikeTarget.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
-              requestAnimationFrame(() => {
-                strikeTarget.style.transition = "background-color 60ms ease-out, box-shadow 60ms ease-out, opacity 180ms ease-out 60ms";
-                strikeTarget.style.backgroundColor = "";
-                strikeTarget.style.boxShadow = "";
-                strikeTarget.style.opacity = "0";
-              });
-
-              // ── Element displacement ──
-              const dx = rand(-8, 8);
-              const dy = rand(-4, 2);
-              strikeTarget.style.transform = `translate(${dx}px, ${dy}px)`;
-              strikeTarget.style.transition += ", transform 120ms ease-out";
-
-              s.struckElements.add(strikeTarget);
-
-              // ── Per-type destruction ──
-              destroyByType(strikeTarget, l);
-
-              // ── Letter fragment particles ──
-              spawnLetterFragments(l);
-            }
-            // ── Shake scaling with impact speed ──
-            s.shake = Math.max(s.shake, Math.min(impactSpeed * 1.5, 10));
-            if (shouldStrike) break;
           }
+          if (shouldStrike) {
+            // ── Element flash ──
+            strikeTarget.style.transition = "none";
+            strikeTarget.style.backgroundColor = "rgba(255,255,255,0.85)";
+            strikeTarget.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
+            requestAnimationFrame(() => {
+              strikeTarget.style.transition = "background-color 60ms ease-out, box-shadow 60ms ease-out, opacity 180ms ease-out 60ms";
+              strikeTarget.style.backgroundColor = "";
+              strikeTarget.style.boxShadow = "";
+              strikeTarget.style.opacity = "0";
+            });
+
+            // ── Element displacement ──
+            const dx = rand(-8, 8);
+            const dy = rand(-4, 2);
+            strikeTarget.style.transform = `translate(${dx}px, ${dy}px)`;
+            strikeTarget.style.transition += ", transform 120ms ease-out";
+
+            s.struckElements.add(strikeTarget);
+
+            // ── Per-type destruction ──
+            destroyByType(strikeTarget, l);
+
+            // ── Letter fragment particles ──
+            spawnLetterFragments(l);
+          }
+          // ── Shake scaling with impact speed ──
+          s.shake = Math.max(s.shake, Math.min(impactSpeed * 1.5, 10));
+          if (shouldStrike) break;
         }
       }
 
