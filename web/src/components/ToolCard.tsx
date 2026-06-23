@@ -67,6 +67,7 @@ export function ToolCard({ tool }: ToolCardProps) {
 
   return (
     <div
+      data-collider="tool-card"
       className="text-xs p-2.5 min-w-0"
       style={{
         borderRadius: "8px",

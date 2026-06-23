@@ -10,6 +10,7 @@ import { CommandPanel } from "./CommandPanel";
 import { ContextWindowBar } from "./ContextWindowBar";
 import { ViewModeSwitcher } from "./ViewModeSwitcher";
 import { ArtifactContainer } from "./ArtifactContainer";
+import { TransitionCanvas } from "./TransitionCanvas";
 import { List, Sun, Moon } from "@phosphor-icons/react";
 
 const SLASH_COMMANDS = [
@@ -78,6 +79,7 @@ export function App() {
   const [viewMode, setViewMode] = useState<"chat" | "dashboard">("chat");
   const [artifactHtml, setArtifactHtml] = useState("");
   const [artifactLoading, setArtifactLoading] = useState(false);
+  const [transitionPhase, setTransitionPhase] = useState<"idle" | "animating">("idle");
   const { toasts, addToast, removeToast } = useToasts();
   const turnStartRef = useRef<number>(0);
   const permissionPromptRef = useRef(permissionPrompt);
@@ -88,6 +90,7 @@ export function App() {
   const dashCacheRef = useRef<Record<string, { contentHash: string; html: string }>>(loadDashCache());
   const artifactHtmlRef = useRef(artifactHtml);
   artifactHtmlRef.current = artifactHtml;
+  const chatContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -222,23 +225,41 @@ export function App() {
   const handleNewSession = useCallback(() => send({ type: "slash", command: "/reset" }), [send]);
 
   const handleViewModeChange = useCallback((mode: "chat" | "dashboard") => {
-    setViewMode(mode);
-    if (mode === "dashboard") {
-      const csid = currentSessionIdRef.current;
-      if (csid) {
-        const cached = dashCacheRef.current[csid];
-        const sessionHash = sessions.find((s) => s.id === csid)?.contentHash;
-        if (cached && sessionHash !== undefined && sessionHash !== "" && cached.contentHash === sessionHash) {
-          setArtifactHtml(cached.html);
-          setArtifactLoading(false);
-          return;
-        }
+    if (mode === "chat") {
+      setViewMode("chat");
+      return;
+    }
+    // mode === "dashboard"
+    const csid = currentSessionIdRef.current;
+    if (csid) {
+      const cached = dashCacheRef.current[csid];
+      const sessionHash = sessions.find((s) => s.id === csid)?.contentHash;
+      if (cached && sessionHash !== undefined && sessionHash !== "" && cached.contentHash === sessionHash) {
+        setArtifactHtml(cached.html);
+        setArtifactLoading(false);
+        setViewMode("dashboard");
+        return;
       }
+    }
+    // Check reduced motion
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setViewMode("dashboard");
       setArtifactHtml("");
       setArtifactLoading(true);
       send({ type: "artifact", action: "generate", context: "session_dashboard" });
+      return;
     }
+    // Start cascade transition
+    setArtifactHtml("");
+    setArtifactLoading(true);
+    send({ type: "artifact", action: "generate", context: "session_dashboard" });
+    setTransitionPhase("animating");
   }, [send, sessions]);
+
+  const handleTransitionComplete = useCallback(() => {
+    setTransitionPhase("idle");
+    setViewMode("dashboard");
+  }, []);
 
   useEffect(() => { if (connected) { handleSessionAction("list"); handleMcpAction("list"); } }, [connected, handleSessionAction, handleMcpAction]);
 
@@ -276,11 +297,14 @@ export function App() {
           onSessionAction={handleSessionAction} onMcpAction={handleMcpAction} onMcpServerAction={handleMcpAction}
           onConfigChange={handleConfigChange} isProcessing={processing} onNewSession={handleNewSession} />
         <main className="flex-1 flex flex-col min-w-0">
-          <div className="flex-1 flex flex-col min-h-0">
-          {viewMode === "dashboard" ? (
+          <div className="flex-1 flex flex-col min-h-0" style={{ position: "relative" }}>
+          {transitionPhase === "animating" && (
+            <TransitionCanvas artifactReady={!artifactLoading && artifactHtml !== ""} onComplete={handleTransitionComplete} />
+          )}
+          {viewMode === "dashboard" && transitionPhase === "idle" ? (
             <ArtifactContainer html={artifactHtml} loading={artifactLoading} />
           ) : (
-            <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} sessionActiveMs={sessionActiveMs} permissionPrompt={permissionPrompt} onPermission={handlePermission} />
+            <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} sessionActiveMs={sessionActiveMs} permissionPrompt={permissionPrompt} onPermission={handlePermission} containerRef={chatContainerRef} />
           )}
           <MessageInput onSend={handleSend} onAbort={handleAbort} onSlashCommand={handleSlashCommand} onCommand={handleCommand}
             processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} viewMode={viewMode} />
