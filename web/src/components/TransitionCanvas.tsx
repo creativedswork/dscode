@@ -73,16 +73,18 @@ const SQUASH_MS = 80;
 const STRETCH_MS = 60;
 const DWELL_MS = 300;
 const CLUSTER_SIZE = 22;
-const CLUSTER_WIDTH = 28; // approximate width for X-variance constraint
+const CLUSTER_WIDTH = 70; // approximate width for X-variance constraint (6 letters, 16px spacing)
 const DROP_SPEED = 4;
 const SAFETY_TIMEOUT_MS = 8000;
 
-// ── Cluster offsets (2×2) ──
+// ── Cluster offsets (1×6 single row) ──
 const CLUSTER_OFFSETS = [
-  { char: "d", ox: -10, oy: -8 },
-  { char: "s", ox: +4,  oy: -8 },
-  { char: "c", ox: -8,  oy: +6 },
-  { char: "o", ox: +6,  oy: +6 },
+  { char: "d", ox: -40, oy: 0 },
+  { char: "s", ox: -24, oy: 0 },
+  { char: "c", ox: -8,  oy: 0 },
+  { char: "o", ox: +8,  oy: 0 },
+  { char: "d", ox: +24, oy: 0 },
+  { char: "e", ox: +40, oy: 0 },
 ];
 
 // ── Module-level helpers ──
@@ -163,6 +165,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       s: warmPurple,
       c: "#eab308",
       o: colors.text,
+      e: "#14b8a6",
     };
 
     // ── Size canvas (deferred to first rAF to avoid 0×0 race) ──
@@ -986,12 +989,12 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       let originX = c.x;
       if (c.rowIndex >= 0 && c.rowIndex < s.rows.length) {
         const row = s.rows[c.rowIndex];
-        const dFootX = c.x + CLUSTER_OFFSETS[0].ox;
-        const cFootX = c.x + CLUSTER_OFFSETS[2].ox;
+        const dFootX = c.x + CLUSTER_OFFSETS[0].ox;  // first "d" (leftmost)
+        const eFootX = c.x + CLUSTER_OFFSETS[5].ox;  // "e" (rightmost)
         const dInBounds = dFootX >= row.left && dFootX <= row.left + row.width;
-        const cInBounds = cFootX >= row.left && cFootX <= row.left + row.width;
-        if (dInBounds && cInBounds) {
-          originX = (dFootX + cFootX) / 2;
+        const eInBounds = eFootX >= row.left && eFootX <= row.left + row.width;
+        if (dInBounds && eInBounds) {
+          originX = (dFootX + eFootX) / 2;
         } else {
           originX = dFootX;
         }
