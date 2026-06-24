@@ -14,8 +14,24 @@ interface CascadeRow {
   left: number;
   width: number;
   height: number;
-  landingX: number;
   struck: boolean;
+}
+
+interface CascadeLetter {
+  char: "D" | "S" | "C" | "O";
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  size: number;
+  gravity: number;
+  color: string;
+  lockedElement: HTMLElement | null;
+  alive: boolean;
+  exitPhase: "falling" | "exiting" | "gone";
+  exitTimer: number;
+  glowDecay: number;
+  stuckTimer: number;
 }
 
 interface AnimationState {
@@ -32,24 +48,12 @@ interface AnimationState {
   gatherStarted: boolean;
   W: number;
   H: number;
-  // ── Hop-step physics ──
-  groupX: number;
-  groupY: number;
-  clusterScale: number;
-  // ── Hop arc state ──
-  hopStartY: number;
-  hopEndY: number;
-  hopStartX: number;
-  hopEndX: number;
-  hopProgress: number;
-  hopDuration: number;
-  impactPhase: "none" | "squash" | "stretch" | "dwell";
-  impactTimer: number;
-  // ── Row cascade ──
+  // ── Independent letter cascade ──
+  letters: CascadeLetter[];
   rows: CascadeRow[];
-  currentRowIndex: number;
-  // ── Per-letter glow for cluster ──
-  letterGlowDecay: Map<string, number>;
+  spawnTimer: number;
+  nextSpawnIndex: number;
+  // ── Color map ──
   letterColorMap: Record<string, string>;
 }
 
@@ -62,16 +66,23 @@ interface ThemeColors {
 const MAX_PARTICLES = 2500;
 const DPR_CAP = 2;
 
-// ── Cluster rendering offsets (base, scaled by clusterScale) ──
-const CLUSTER_OFFSETS = [
-  { char: "d", ox: -55, oy: 0 },
-  { char: "s", ox: -33, oy: 0 },
-  { char: "c", ox: -11, oy: 0 },
-  { char: "o", ox: +11, oy: 0 },
-  { char: "d", ox: +33, oy: 0 },
-  { char: "e", ox: +55, oy: 0 },
-];
-const BASE_FONT_SIZE = 48;
+// ── Spawn constants ──
+const SPAWN_SEQUENCE: Array<"D" | "S" | "C" | "O"> = ["D", "S", "C", "O"];
+const SPAWN_DELAY_MIN = 400;
+const SPAWN_DELAY_MAX = 800;
+const INITIAL_SPAWN_DELAY = 200;
+const LETTER_SIZE_MIN = 48;
+const LETTER_SIZE_MAX = 64;
+const GRAVITY_BASE = 0.25;
+const GRAVITY_VARIANCE = 0.15;
+const TERMINAL_VELOCITY = 8;
+const BOUNCE_RESTITUTION = 0.25;
+const EXIT_VELOCITY = -6;
+const EXIT_FADE_MS = 500;
+const STUCK_TIMEOUT_MS = 2000;
+const LOCK_RELEASE_MS = 450;
+const IMPACT_GLOW_MAX = 20;
+const IMPACT_GLOW_DECAY = 0.92;
 
 // ── Module-level helpers ──
 
@@ -147,11 +158,10 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     })();
     const warmPurple = `hsl(${(accentHue + 55) % 360}, 55%, 52%)`;
     const letterColorMap: Record<string, string> = {
-      d: colors.accent,
-      e: warmPurple,
-      s: warmPurple,
-      c: "#eab308",
-      o: colors.text,
+      D: colors.accent,
+      S: warmPurple,
+      C: "#eab308",
+      O: colors.text,
     };
 
     // ── Size canvas (deferred to first rAF to avoid 0×0 race) ──
@@ -215,28 +225,12 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
           left: rect.left - canvasRect.left,
           width: rect.width,
           height: rect.height,
-          landingX: 0, // placeholder, filled after sort
           struck: false,
         });
       });
 
       // Sort by visual Y position for correct top-to-bottom cascade
       rows.sort((a, b) => a.top - b.top);
-      // Assign randomized landingX per row with consecutive uniqueness
-      let prevLandingX = -9999;
-      for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        let landingX = row.left + rand(row.width * 0.15, row.width * 0.85);
-        landingX = clamp(landingX, row.left + 4, row.left + row.width - 4);
-        // Consecutive uniqueness: if too close to previous row's X, re-roll
-        const clusterWidth = 110; // approximate base cluster width in px
-        for (let attempt = 0; attempt < 5 && Math.abs(landingX - prevLandingX) < clusterWidth * 0.3; attempt++) {
-          landingX = row.left + rand(row.width * 0.15, row.width * 0.85);
-          landingX = clamp(landingX, row.left + 4, row.left + row.width - 4);
-        }
-        row.landingX = landingX;
-        prevLandingX = landingX;
-      }
       return rows;
     }
 
@@ -255,20 +249,10 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       gatherStarted: false,
       W,
       H,
-      groupX: 0,
-      groupY: 0,
-      clusterScale: 1,
-      hopStartY: 0,
-      hopEndY: 0,
-      hopStartX: 0,
-      hopEndX: 0,
-      hopProgress: 0,
-      hopDuration: 200,
-      impactPhase: "none",
-      impactTimer: 0,
+      letters: [],
       rows: [],
-      currentRowIndex: 0,
-      letterGlowDecay: new Map(),
+      spawnTimer: INITIAL_SPAWN_DELAY,
+      nextSpawnIndex: 0,
       letterColorMap,
     };
     stateRef.current = s;
@@ -577,29 +561,121 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       }
     }
 
-    // ── Hop physics constants ──
-    const HOP_G = 0.002; // gravity for parabolic arcs (px/ms²)
-    const DWELL_MS = 300; // pause on each struck row (ms)
-    const MIN_HOP_MS = 350; // minimum hop duration floor (ms)
+    // ── Letter spawning ──
 
-    function launchHop(fromY: number, toY: number, fromX: number, toX: number): void {
-      s.hopStartY = fromY;
-      s.hopEndY = toY;
-      s.hopStartX = fromX;
-      s.hopEndX = toX;
-      s.hopProgress = 0;
-      const distance = Math.abs(toY - fromY);
-      if (fromY > toY) {
-        // Upward hop
-        s.hopDuration = Math.sqrt(2 * distance / HOP_G);
-      } else {
-        // Downward hop: parabola peaks at 1.5× the gap above start
-        const peakHeight = distance * 1.5;
-        const vy0 = Math.sqrt(2 * HOP_G * peakHeight);
-        const disc = vy0 * vy0 - 2 * HOP_G * distance;
-        s.hopDuration = disc > 0 ? (vy0 + Math.sqrt(disc)) / HOP_G : Math.sqrt(2 * distance / HOP_G);
-        s.hopDuration = Math.max(s.hopDuration, MIN_HOP_MS);
+    function trySpawnLetter(): void {
+      if (s.nextSpawnIndex >= SPAWN_SEQUENCE.length) return;
+
+      const char = SPAWN_SEQUENCE[s.nextSpawnIndex];
+      const size = randInt(LETTER_SIZE_MIN, LETTER_SIZE_MAX);
+      const gravity = GRAVITY_BASE + GRAVITY_BASE * rand(-GRAVITY_VARIANCE, GRAVITY_VARIANCE);
+
+      const letter: CascadeLetter = {
+        char,
+        x: rand(80, W - 80),
+        y: -(rand(60, 140)),
+        vx: rand(-1, 1),
+        vy: 2,
+        size,
+        gravity,
+        color: letterColorMap[char] ?? colors.text,
+        lockedElement: null,
+        alive: true,
+        exitPhase: "falling",
+        exitTimer: 0,
+        glowDecay: 0,
+        stuckTimer: 0,
+      };
+
+      s.letters.push(letter);
+      s.nextSpawnIndex++;
+    }
+
+    // ── Physics ──
+
+    function letterAABB(letter: CascadeLetter): { left: number; top: number; right: number; bottom: number } {
+      // Approximate bounding box from font size: char width ≈ 0.6 * fontSize, height ≈ 0.75 * fontSize
+      const halfW = letter.size * 0.3;
+      const halfH = letter.size * 0.375;
+      return {
+        left: letter.x - halfW,
+        top: letter.y - halfH,
+        right: letter.x + halfW,
+        bottom: letter.y + halfH,
+      };
+    }
+
+    function elementAABB(row: CascadeRow): { left: number; top: number; right: number; bottom: number } {
+      return {
+        left: row.left,
+        top: row.top,
+        right: row.left + row.width,
+        bottom: row.top + row.height,
+      };
+    }
+
+    function aabbOverlap(
+      a: { left: number; top: number; right: number; bottom: number },
+      b: { left: number; top: number; right: number; bottom: number },
+    ): boolean {
+      return a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom;
+    }
+
+    function updateLetterPhysics(letter: CascadeLetter, dtFactor: number): void {
+      letter.vy += letter.gravity * dtFactor;
+      if (letter.vy > TERMINAL_VELOCITY) letter.vy = TERMINAL_VELOCITY;
+      letter.x += letter.vx;
+      letter.y += letter.vy;
+      letter.vx *= 0.995;
+    }
+
+    // ── Collision detection ──
+
+    // Per-frame lock tracking to enforce exclusive locking
+    const frameLockedElements = new Set<HTMLElement>();
+
+    function findCollisionTarget(
+      letter: CascadeLetter,
+      rows: CascadeRow[],
+    ): CascadeRow | null {
+      const letterBox = letterAABB(letter);
+      let bestRow: CascadeRow | null = null;
+      let bestDist = Infinity;
+
+      for (const row of rows) {
+        if (row.struck) continue;
+        if (frameLockedElements.has(row.el)) continue;
+
+        const rowBox = elementAABB(row);
+        if (!aabbOverlap(letterBox, rowBox)) continue;
+
+        // Closest-center-wins: compute distance from letter center to element center
+        const rowCx = row.left + row.width / 2;
+        const rowCy = row.top + row.height / 2;
+        const dx = letter.x - rowCx;
+        const dy = letter.y - rowCy;
+        const dist = dx * dx + dy * dy;
+
+        if (dist < bestDist) {
+          bestDist = dist;
+          bestRow = row;
+        }
       }
+
+      return bestRow;
+    }
+
+    function shouldLetterExit(letter: CascadeLetter, rows: CascadeRow[]): boolean {
+      // Scan for any unlocked unstruck element within canvas visible area
+      for (const row of rows) {
+        if (row.struck) continue;
+        if (frameLockedElements.has(row.el)) continue;
+        // Check if element is within reasonable range (canvas bounds + margin)
+        if (row.top < H + 100 && row.top + row.height > -100) {
+          return false;
+        }
+      }
+      return true;
     }
 
     // ── Phase updates ──
@@ -607,102 +683,124 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     function updateCascade(dt: number, dtFactor: number): void {
       s.phaseTime += dt;
 
-      // ── Impact state machine ──
-      if (s.impactPhase !== "none") {
-        s.impactTimer -= dt;
-        if (s.impactTimer <= 0) {
-          if (s.impactPhase === "squash" || s.impactPhase === "stretch") {
-            // Transition to dwell phase — pause on the row
-            s.impactPhase = "dwell";
-            s.impactTimer = DWELL_MS;
-          } else if (s.impactPhase === "dwell") {
-            // Dwell complete — launch to next row
-            s.impactPhase = "none";
-            s.impactTimer = 0;
-            if (s.currentRowIndex < s.rows.length) {
-              const nextRow = s.rows[s.currentRowIndex];
-              launchHop(s.groupY, nextRow.top, s.groupX, nextRow.landingX);
-            }
-          }
+      // ── Spawn letters at staggered intervals ──
+      s.spawnTimer -= dt;
+      while (s.spawnTimer <= 0 && s.nextSpawnIndex < SPAWN_SEQUENCE.length) {
+        trySpawnLetter();
+        s.spawnTimer += randInt(SPAWN_DELAY_MIN, SPAWN_DELAY_MAX);
+      }
+
+      // Clear per-frame lock tracking
+      frameLockedElements.clear();
+
+      // ── Update each letter ──
+      for (const letter of s.letters) {
+        if (!letter.alive) continue;
+
+        // Decay impact glow
+        if (letter.glowDecay > 0.1) {
+          letter.glowDecay *= IMPACT_GLOW_DECAY;
+        } else if (letter.glowDecay > 0) {
+          letter.glowDecay = 0;
         }
-      } else if (s.hopProgress < 1) {
-        // ── Hop in progress ──
-        s.hopProgress += dt / s.hopDuration;
-        if (s.hopProgress >= 1) {
-          s.hopProgress = 1;
-          // Snap to exact landing position
-          s.groupX = s.hopEndX;
-          s.groupY = s.hopEndY;
 
-          // ── Trigger impact on current row ──
-          if (s.currentRowIndex < s.rows.length) {
-            const targetRow = s.rows[s.currentRowIndex];
+        // Handle locked state (destruction animation playing)
+        if (letter.lockedElement !== null) {
+          // Physics paused while locked — lock release handled by setTimeout
+          continue;
+        }
 
-            // Impact effects
-            const fragColor = letterColorMap[
-              CLUSTER_OFFSETS[randInt(0, CLUSTER_OFFSETS.length - 1)].char
-            ] ?? colors.accent;
-
-            targetRow.el.style.transition = "none";
-            targetRow.el.style.backgroundColor = "rgba(255,255,255,0.85)";
-            targetRow.el.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
-
-            destroyByType(targetRow.el, s.groupX, s.groupY);
-
-            requestAnimationFrame(() => {
-              targetRow.el.style.transition =
-                "background-color 60ms ease-out, box-shadow 60ms ease-out, opacity 180ms ease-out 60ms";
-              targetRow.el.style.backgroundColor = "";
-              targetRow.el.style.boxShadow = "";
-              targetRow.el.style.opacity = "0";
-            });
-
-            const dx = rand(-8, 8);
-            const dy = rand(-4, 2);
-            targetRow.el.style.transform = `translate(${dx}px, ${dy}px)`;
-            targetRow.el.style.transition += ", transform 120ms ease-out";
-
-            targetRow.struck = true;
-
-            spawnImpactFragments(s.groupX, s.groupY, 0, -4, fragColor);
-
-            for (const offset of CLUSTER_OFFSETS) {
-              s.letterGlowDecay.set(offset.char, 20);
-            }
-
-            s.shake = Math.max(s.shake, 8);
-
-            // Enter impact squash phase
-            s.impactPhase = "squash";
-            s.impactTimer = 140;
-            s.currentRowIndex++;
+        // Handle exit phase
+        if (letter.exitPhase === "exiting") {
+          letter.y += letter.vy * dtFactor;
+          letter.exitTimer -= dt;
+          if (letter.exitTimer <= 0) {
+            letter.exitPhase = "gone";
+            letter.alive = false;
           }
+          continue;
+        }
+
+        // ── Physics update ──
+        updateLetterPhysics(letter, dtFactor);
+
+        // ── Collision detection ──
+        const target = findCollisionTarget(letter, s.rows);
+        if (target) {
+          // Lock and strike
+          letter.lockedElement = target.el;
+          target.struck = true;
+          frameLockedElements.add(target.el);
+
+          // Bounce
+          letter.vy = -(Math.abs(letter.vy) * BOUNCE_RESTITUTION) - 1.5;
+          letter.vx += rand(-2, 2);
+
+          // Push above element to prevent re-collision same frame
+          letter.y = target.top - 4;
+
+          // Impact effects
+          const flashColor = letter.color;
+          target.el.style.transition = "none";
+          target.el.style.backgroundColor = "rgba(255,255,255,0.85)";
+          target.el.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
+
+          destroyByType(target.el, letter.x, letter.y);
+
+          requestAnimationFrame(() => {
+            target.el.style.transition =
+              "background-color 60ms ease-out, box-shadow 60ms ease-out, opacity 180ms ease-out 60ms";
+            target.el.style.backgroundColor = "";
+            target.el.style.boxShadow = "";
+            target.el.style.opacity = "0";
+          });
+
+          const dx = rand(-8, 8);
+          const dy = rand(-4, 2);
+          target.el.style.transform = `translate(${dx}px, ${dy}px)`;
+          target.el.style.transition += ", transform 120ms ease-out";
+
+          spawnImpactFragments(letter.x, letter.y, letter.vx, letter.vy, flashColor);
+
+          letter.glowDecay = IMPACT_GLOW_MAX;
+          letter.stuckTimer = 0;
+
+          s.shake = Math.max(s.shake, 8);
+
+          // Schedule lock release after destruction animation
+          const lockedEl = target.el;
+          setTimeout(() => {
+            letter.lockedElement = null;
+          }, LOCK_RELEASE_MS);
         } else {
-          // ── Compute position along parabola ──
-          const t = s.hopProgress * s.hopDuration;
-          const distance = s.hopEndY - s.hopStartY;
-          const peakHeight = Math.abs(distance) * 1.5;
-          const vy0 = s.hopStartY > s.hopEndY
-            ? 0 // initial descent: start at peak, fall
-            : Math.sqrt(2 * HOP_G * peakHeight);
-          s.groupY = s.hopStartY + vy0 * t - 0.5 * HOP_G * t * t;
-          s.groupX = s.hopStartX + (s.hopEndX - s.hopStartX) * easeOutQuad(s.hopProgress);
+          // No target found — increment stuck timer
+          letter.stuckTimer += dt;
+
+          // Drift: add small random horizontal velocity to help find targets
+          if (letter.stuckTimer > 500) {
+            letter.vx += rand(-0.5, 0.5);
+          }
+        }
+
+        // ── Exit check ──
+        if (shouldLetterExit(letter, s.rows)) {
+          letter.exitPhase = "exiting";
+          letter.vy = EXIT_VELOCITY;
+          letter.exitTimer = EXIT_FADE_MS;
+        } else if (letter.stuckTimer > STUCK_TIMEOUT_MS) {
+          // Force exit if stuck too long
+          letter.exitPhase = "exiting";
+          letter.vy = EXIT_VELOCITY;
+          letter.exitTimer = EXIT_FADE_MS;
         }
       }
 
-      // ── Decay letter glow ──
-      for (const entry of s.letterGlowDecay) {
-        const key = entry[0];
-        const currentGlow = entry[1];
-        if (currentGlow > 0.1) {
-          s.letterGlowDecay.set(key, currentGlow * 0.92);
-        } else if (currentGlow > 0) {
-          s.letterGlowDecay.set(key, 0);
-        }
-      }
+      // ── Transition to gather ──
+      const allLettersExited = s.letters.length === SPAWN_SEQUENCE.length &&
+        s.letters.every((l) => !l.alive);
+      const allRowsStruck = s.rows.length > 0 && s.rows.every((r) => r.struck);
 
-      // ── Transition to gather when all rows consumed ──
-      if (!s.gatherStarted && s.currentRowIndex >= s.rows.length && s.rows.length > 0 && s.impactPhase === "none") {
+      if (!s.gatherStarted && allLettersExited && allRowsStruck) {
         startGather();
       }
       // Fallback: if no rows found, transition after 2s
@@ -859,52 +957,29 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     function drawLetters(): void {
       if (s.phase !== "cascade") return;
 
-      // Compute squash-stretch scales
-      let sx = 1, sy = 1;
-      if (s.impactPhase === "squash") {
-        const t = 140 - s.impactTimer;
-        sx = lerp(1, 1.3, t / 80);
-        sy = lerp(1, 0.6, t / 80);
-      } else if (s.impactPhase === "stretch") {
-        const t = 140 - s.impactTimer;
-        const tStretch = t - 80;
-        sx = lerp(1.3, 0.85, tStretch / 60);
-        sy = lerp(0.6, 1.2, tStretch / 60);
-      }
+      for (const letter of s.letters) {
+        if (!letter.alive && letter.exitPhase === "gone") continue;
 
-
-      // Breathing animation during dwell phase
-      let breathingScale = 1;
-      if (s.impactPhase === "dwell") {
-        const dwellProgress = DWELL_MS - s.impactTimer;
-        breathingScale = 1 + 0.02 * Math.sin(dwellProgress * 2 * Math.PI / 600);
-      }
-
-      const sc = s.clusterScale;
-      const fontSize = BASE_FONT_SIZE * sc;
-      ctx.save();
-      ctx.translate(s.groupX, s.groupY);
-      // Apply squash-stretch transform around cluster center
-      ctx.scale(sx * breathingScale, sy * breathingScale);
-
-      for (const offset of CLUSTER_OFFSETS) {
-        const x = offset.ox * sc;
-        const y = offset.oy * sc;
-        const color = letterColorMap[offset.char] ?? colors.text;
-        const glow = s.letterGlowDecay.get(offset.char) ?? 0;
         ctx.save();
-        if (glow > 0) {
-          ctx.shadowColor = color;
-          ctx.shadowBlur = glow;
+
+        // Exit fade
+        if (letter.exitPhase === "exiting") {
+          ctx.globalAlpha = Math.max(0, letter.exitTimer / EXIT_FADE_MS);
         }
-        ctx.font = `700 ${fontSize}px "Geist", sans-serif`;
+
+        // Impact glow
+        if (letter.glowDecay > 0.1) {
+          ctx.shadowColor = letter.color;
+          ctx.shadowBlur = letter.glowDecay;
+        }
+
+        ctx.font = `700 ${letter.size}px "Geist", sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillStyle = color;
-        ctx.fillText(offset.char, x, y);
+        ctx.fillStyle = letter.color;
+        ctx.fillText(letter.char, letter.x, letter.y);
         ctx.restore();
       }
-      ctx.restore();
     }
 
     function drawParticles(): void {
@@ -998,6 +1073,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
 
     // ── Main loop ──
     let lastTime = performance.now();
+
     function firstFrame(now: number): void {
       W = container.clientWidth;
       H = container.clientHeight;
@@ -1015,33 +1091,9 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
 
       // ── Initialize cascade ──
       s.rows = buildRowList();
-      s.currentRowIndex = 0;
-      console.log("[dscode] rows:", s.rows.length, "first:", s.rows[0]?.el?.textContent?.slice(0, 50), "H:", H, "W:", W);
-      // Start body aligned with first row so cascade begins on-target.
-      // If no rows (empty chat), center horizontally.
-      if (s.rows.length > 0) {
-        s.groupX = s.rows[0].landingX;
-      } else {
-        s.groupX = W / 2;
-      }
-      s.groupY = -(rand(60, 140));
-
-      // ── Compute cluster scale from smallest row height ──
-      if (s.rows.length > 0) {
-        let smallestRowHeight = Infinity;
-        for (const row of s.rows) {
-          if (row.height < smallestRowHeight) smallestRowHeight = row.height;
-        }
-        const clusterHeight = Math.min(48, smallestRowHeight - 4);
-        s.clusterScale = clusterHeight / BASE_FONT_SIZE;
-      } else {
-        s.clusterScale = 48 / BASE_FONT_SIZE;
-      }
-
-      // ── Initial descent: hop from above-screen onto first row ──
-      if (s.rows.length > 0) {
-        launchHop(s.groupY, s.rows[0].top, s.groupX, s.rows[0].landingX);
-      }
+      s.nextSpawnIndex = 0;
+      s.spawnTimer = INITIAL_SPAWN_DELAY;
+      console.log("[dscode] rows:", s.rows.length, "H:", H, "W:", W);
 
       lastTime = performance.now();
       rafId = requestAnimationFrame(frame);
