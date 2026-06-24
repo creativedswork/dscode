@@ -219,6 +219,12 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         // Visibility filter: exclude rows not intersecting canvas
         if (top >= H || bottom <= 0) return;
 
+        // Skip empty text/code lines — invisible colliders waste letters on blank space
+        const colliderType = el.getAttribute("data-collider");
+        if ((colliderType === "text-line" || colliderType === "code-line") && !el.textContent?.trim()) {
+          return;
+        }
+
         rows.push({
           el,
           top,
@@ -752,7 +758,9 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
               "background-color 60ms ease-out, box-shadow 60ms ease-out, opacity 180ms ease-out 60ms";
             target.el.style.backgroundColor = "";
             target.el.style.boxShadow = "";
-            target.el.style.opacity = "0";
+            if (target.el.getAttribute("data-collider") !== "message-card") {
+              target.el.style.opacity = "0";
+            }
           });
 
           const dx = rand(-8, 8);
