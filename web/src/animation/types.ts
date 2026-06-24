@@ -13,11 +13,6 @@ export interface Particle {
   life?: number;
 }
 
-export interface Letter {
-  char: string;
-  color: string;
-  glow: number;
-}
 
 export interface ImpactRing {
   x: number;

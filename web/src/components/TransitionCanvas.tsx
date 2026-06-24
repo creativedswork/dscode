@@ -14,24 +14,24 @@ interface CascadeRow {
   left: number;
   width: number;
   height: number;
+  landingX: number;
   struck: boolean;
 }
 
-interface CascadeLetter {
-  char: "D" | "S" | "C" | "O";
+type HopState = "drop" | "squash" | "stretch" | "dwell" | "hopping";
+
+interface ClusterState {
   x: number;
   y: number;
-  vx: number;
-  vy: number;
-  size: number;
-  gravity: number;
-  color: string;
-  lockedElement: HTMLElement | null;
-  alive: boolean;
-  exitPhase: "falling" | "exiting" | "gone";
-  exitTimer: number;
-  glowDecay: number;
-  targetRowIndex: number;
+  hopState: HopState;
+  hopTimer: number;
+  rowIndex: number;
+  hopStartX: number;
+  hopStartY: number;
+  hopEndX: number;
+  hopEndY: number;
+  hopDuration: number;
+  hopProgress: number;
 }
 
 interface AnimationState {
@@ -48,11 +48,12 @@ interface AnimationState {
   gatherStarted: boolean;
   W: number;
   H: number;
-  // ── Independent letter cascade ──
-  letters: CascadeLetter[];
+  // ── Hop-step cluster ──
+  cluster: ClusterState;
   rows: CascadeRow[];
-  spawnTimer: number;
-  nextSpawnIndex: number;
+  scaleX: number;
+  scaleY: number;
+  breathPhase: number;
   // ── Color map ──
   letterColorMap: Record<string, string>;
 }
@@ -66,22 +67,23 @@ interface ThemeColors {
 const MAX_PARTICLES = 2500;
 const DPR_CAP = 2;
 
-// ── Spawn constants ──
-const SPAWN_SEQUENCE: Array<"D" | "S" | "C" | "O"> = ["D", "S", "C", "O"];
-const SPAWN_DELAY_MIN = 400;
-const SPAWN_DELAY_MAX = 800;
-const INITIAL_SPAWN_DELAY = 200;
-const LETTER_SIZE_MIN = 48;
-const LETTER_SIZE_MAX = 64;
-const GRAVITY_BASE = 0.25;
-const GRAVITY_VARIANCE = 0.15;
-const TERMINAL_VELOCITY = 8;
-const BOUNCE_RESTITUTION = 0.25;
-const EXIT_VELOCITY = -6;
-const EXIT_FADE_MS = 500;
-const LOCK_RELEASE_MS = 450;
-const IMPACT_GLOW_MAX = 20;
-const IMPACT_GLOW_DECAY = 0.92;
+// ── Hop-step constants ──
+const HOP_G = 0.002;
+const SQUASH_MS = 80;
+const STRETCH_MS = 60;
+const DWELL_MS = 300;
+const CLUSTER_SIZE = 22;
+const CLUSTER_WIDTH = 28; // approximate width for X-variance constraint
+const DROP_SPEED = 4;
+const SAFETY_TIMEOUT_MS = 8000;
+
+// ── Cluster offsets (2×2) ──
+const CLUSTER_OFFSETS = [
+  { char: "d", ox: -10, oy: -8 },
+  { char: "s", ox: +4,  oy: -8 },
+  { char: "c", ox: -8,  oy: +6 },
+  { char: "o", ox: +6,  oy: +6 },
+];
 
 // ── Module-level helpers ──
 
@@ -109,7 +111,6 @@ function clamp(v: number, lo: number, hi: number): number {
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
 }
-
 
 function easeOutQuad(t: number): number {
   return 1 - (1 - t) * (1 - t);
@@ -157,10 +158,10 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     })();
     const warmPurple = `hsl(${(accentHue + 55) % 360}, 55%, 52%)`;
     const letterColorMap: Record<string, string> = {
-      D: colors.accent,
-      S: warmPurple,
-      C: "#eab308",
-      O: colors.text,
+      d: colors.accent,
+      s: warmPurple,
+      c: "#eab308",
+      o: colors.text,
     };
 
     // ── Size canvas (deferred to first rAF to avoid 0×0 race) ──
@@ -220,13 +221,13 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
 
     // ── Row list builder ──
     function buildRowList(): CascadeRow[] {
-      const all = document.querySelectorAll<HTMLElement>("[data-collider]");
+      const all = container.querySelectorAll<HTMLElement>("[data-collider]");
       const canvasRect = canvas!.getBoundingClientRect();
       const rows: CascadeRow[] = [];
 
       all.forEach((el) => {
-        // ── Nesting exclusion: skip elements that contain child [data-collider] (keep leaves only) ──
         if (el.querySelector("[data-collider]")) return;
+        // ── Nesting exclusion: skip elements that contain child [data-collider] (keep leaves only) ──
 
         // ── Universal empty filter: skip empty/whitespace-only colliders ──
         if (!el.textContent?.trim()) return;
@@ -257,18 +258,33 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
           width = Math.min(rect.width, measuredWidth);
         }
 
+        // ── Random landing X ──
+        const left = rect.left - canvasRect.left;
+        const landingX = left + rand(width * 0.15, width * 0.85);
+
         rows.push({
           el,
           top,
-          left: rect.left - canvasRect.left,
+          left,
           width,
           height: rect.height,
+          landingX,
           struck: false,
         });
       });
 
       // Sort by visual Y position for correct top-to-bottom cascade
       rows.sort((a, b) => a.top - b.top);
+
+      // ── Enforce consecutive-row X variation ──
+      for (let i = 1; i < rows.length; i++) {
+        let attempts = 0;
+        while (Math.abs(rows[i].landingX - rows[i - 1].landingX) < CLUSTER_WIDTH * 0.3 && attempts < 5) {
+          rows[i].landingX = rows[i].left + rand(rows[i].width * 0.15, rows[i].width * 0.85);
+          attempts++;
+        }
+      }
+
       return rows;
     }
 
@@ -287,10 +303,23 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       gatherStarted: false,
       W,
       H,
-      letters: [],
+      cluster: {
+        x: 0,
+        y: 0,
+        hopState: "drop",
+        hopTimer: 0,
+        rowIndex: -1,
+        hopStartX: 0,
+        hopStartY: 0,
+        hopEndX: 0,
+        hopEndY: 0,
+        hopDuration: 0,
+        hopProgress: 0,
+      },
       rows: [],
-      spawnTimer: INITIAL_SPAWN_DELAY,
-      nextSpawnIndex: 0,
+      scaleX: 1,
+      scaleY: 1,
+      breathPhase: 0,
       letterColorMap,
     };
     stateRef.current = s;
@@ -334,7 +363,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       }
     }
 
-    function spawnImpactFragments(x: number, y: number, vx: number, vy: number, color: string): void {
+    function spawnImpactFragments(x: number, y: number, color: string): void {
       const count = randInt(6, 12);
       for (let i = 0; i < count; i++) {
         const angle = rand(0, Math.PI * 2);
@@ -342,8 +371,8 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         s.particles.push({
           x,
           y,
-          vx: Math.cos(angle) * speed + vx * 0.3,
-          vy: Math.sin(angle) * speed + vy * 0.3,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed - rand(1, 3),
           size: rand(1, 3),
           color,
           phase: "fall",
@@ -599,198 +628,176 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       }
     }
 
-    // ── Letter spawning ──
+    // ── Hop helpers ──
 
-    function trySpawnLetter(): void {
-      if (s.nextSpawnIndex >= SPAWN_SEQUENCE.length) return;
+    function launchHop(): void {
+      const c = s.cluster;
+      const currentRow = s.rows[c.rowIndex];
+      const nextIndex = c.rowIndex + 1;
 
-      // Pick a random unstruck row from the filtered list
-      const unstruckRows = s.rows.filter((r) => !r.struck);
-      if (unstruckRows.length === 0) {
-        // No targets left — exit immediately
-        const char = SPAWN_SEQUENCE[s.nextSpawnIndex];
-        const letter: CascadeLetter = {
-          char,
-          x: rand(80, W - 80),
-          y: -(rand(60, 140)),
-          vx: 0,
-          vy: EXIT_VELOCITY,
-          size: randInt(LETTER_SIZE_MIN, LETTER_SIZE_MAX),
-          gravity: 0,
-          color: letterColorMap[char] ?? colors.text,
-          lockedElement: null,
-          alive: true,
-          exitPhase: "exiting",
-          exitTimer: EXIT_FADE_MS,
-          glowDecay: 0,
-          targetRowIndex: -1,
-        };
-        s.letters.push(letter);
-        s.nextSpawnIndex++;
+      if (nextIndex >= s.rows.length) {
+        // No more rows — start gather
+        startGather();
         return;
       }
 
-      const targetRow = unstruckRows[0]; // top-to-bottom: always the first unstruck row
-      const targetIndex = s.rows.indexOf(targetRow);
+      const nextRow = s.rows[nextIndex];
+      c.hopStartX = currentRow.landingX;
+      c.hopStartY = currentRow.top;
+      c.hopEndX = nextRow.landingX;
+      c.hopEndY = nextRow.top;
 
-      const char = SPAWN_SEQUENCE[s.nextSpawnIndex];
-      const letter: CascadeLetter = {
-        char,
-        x: targetRow.left + targetRow.width / 2,
-        y: -(rand(60, 140)),
-        vx: 0,
-        vy: 2,
-        size: randInt(LETTER_SIZE_MIN, LETTER_SIZE_MAX),
-        gravity: GRAVITY_BASE + GRAVITY_BASE * rand(-GRAVITY_VARIANCE, GRAVITY_VARIANCE),
-        color: letterColorMap[char] ?? colors.text,
-        lockedElement: null,
-        alive: true,
-        exitPhase: "falling",
-        exitTimer: 0,
-        glowDecay: 0,
-        targetRowIndex: targetIndex,
-      };
-
-      s.letters.push(letter);
-      s.nextSpawnIndex++;
+      const gap = Math.abs(c.hopEndY - c.hopStartY);
+      c.hopDuration = Math.max(350, Math.sqrt(2 * gap / HOP_G));
+      c.hopProgress = 0;
+      c.hopState = "hopping";
     }
 
-    // ── Physics ──
+    function strikeRow(): void {
+      const c = s.cluster;
+      if (c.rowIndex < 0 || c.rowIndex >= s.rows.length) return;
+      const row = s.rows[c.rowIndex];
+      if (row.struck) return;
 
-    function updateLetterPhysics(letter: CascadeLetter, dtFactor: number): void {
-      letter.vy += letter.gravity * dtFactor;
-      if (letter.vy > TERMINAL_VELOCITY) letter.vy = TERMINAL_VELOCITY;
-      letter.x += letter.vx;
-      letter.y += letter.vy;
-      letter.vx *= 0.995;
+      row.struck = true;
+
+      // Impact effects
+      const impactX = row.landingX;
+      const impactY = row.top;
+      const flashColor = s.letterColorMap["d"] ?? colors.accent;
+
+      row.el.style.transition = "none";
+      row.el.style.backgroundColor = "rgba(255,255,255,0.85)";
+      row.el.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
+
+      destroyByType(row.el, impactX, impactY);
+
+      requestAnimationFrame(() => {
+        row.el.style.transition =
+          "background-color 60ms ease-out, box-shadow 60ms ease-out, opacity 180ms ease-out 60ms";
+        row.el.style.backgroundColor = "";
+        row.el.style.boxShadow = "";
+        if (row.el.getAttribute("data-collider") !== "message-card") {
+          row.el.style.opacity = "0";
+        }
+      });
+
+      const dx = rand(-8, 8);
+      const dy = rand(-4, 2);
+      row.el.style.transform = `translate(${dx}px, ${dy}px)`;
+      row.el.style.transition += ", transform 120ms ease-out";
+
+      spawnImpactFragments(impactX, impactY, flashColor);
+      s.shake = Math.max(s.shake, 8);
     }
 
     // ── Phase updates ──
 
     function updateCascade(dt: number, dtFactor: number): void {
       s.phaseTime += dt;
+      const c = s.cluster;
 
-      // ── Spawn letters at staggered intervals ──
-      s.spawnTimer -= dt;
-      while (s.spawnTimer <= 0 && s.nextSpawnIndex < SPAWN_SEQUENCE.length) {
-        trySpawnLetter();
-        s.spawnTimer += randInt(SPAWN_DELAY_MIN, SPAWN_DELAY_MAX);
+      // If no rows, transition after 2s
+      if (s.rows.length === 0 && s.phaseTime > 2000 && !s.gatherStarted) {
+        startGather();
+        return;
       }
 
-      const SAFETY_TIMEOUT = 5000;
-
-      // ── Update each letter ──
-      for (const letter of s.letters) {
-        if (!letter.alive) continue;
-
-        // Decay impact glow
-        if (letter.glowDecay > 0.1) {
-          letter.glowDecay *= IMPACT_GLOW_DECAY;
-        } else if (letter.glowDecay > 0) {
-          letter.glowDecay = 0;
-        }
-
-        // Handle locked state (destruction animation playing)
-        if (letter.lockedElement !== null) {
-          continue;
-        }
-
-        // Handle exit phase
-        if (letter.exitPhase === "exiting") {
-          letter.y += letter.vy * dtFactor;
-          letter.exitTimer -= dt;
-          if (letter.exitTimer <= 0) {
-            letter.exitPhase = "gone";
-            letter.alive = false;
+      switch (c.hopState) {
+        case "drop": {
+          // Descend from above-screen to first row
+          if (s.rows.length > 0 && c.rowIndex === -1) {
+            c.rowIndex = 0;
+            c.x = s.rows[0].landingX;
           }
-          continue;
-        }
 
-        // ── Physics update ──
-        updateLetterPhysics(letter, dtFactor);
+          const targetY = s.rows.length > 0 ? s.rows[0].top : H / 2;
+          c.y += DROP_SPEED * dtFactor;
 
-        // ── Scan collision: first unstruck row that overlaps in X and Y ──
-        let struckRow: CascadeRow | null = null;
-        for (const row of s.rows) {
-          if (row.struck) continue;
-          // Y overlap: letter bottom has crossed row top
-          if (letter.y < row.top) continue;
-          // X overlap: letter center is within row horizontal extent (+ margin)
-          const xMargin = 20;
-          if (letter.x < row.left - xMargin || letter.x > row.left + row.width + xMargin) continue;
-          struckRow = row;
+          if (c.y >= targetY) {
+            c.y = targetY;
+            c.hopState = "squash";
+            c.hopTimer = SQUASH_MS;
+            strikeRow();
+          }
           break;
         }
 
-        if (struckRow) {
-          // Lock and strike
-          letter.lockedElement = struckRow.el;
-          struckRow.struck = true;
+        case "squash": {
+          c.hopTimer -= dt;
+          const t = clamp(1 - c.hopTimer / SQUASH_MS, 0, 1);
+          s.scaleY = lerp(1.0, 0.6, t);
+          s.scaleX = lerp(1.0, 1.3, t);
 
-          // Bounce
-          letter.vy = -(Math.abs(letter.vy) * BOUNCE_RESTITUTION) - 1.5;
-          letter.vx = 0;
-
-          // Push above element to prevent re-collision same frame
-          letter.y = struckRow.top - 4;
-
-          // Impact effects
-          const flashColor = letter.color;
-          struckRow.el.style.transition = "none";
-          struckRow.el.style.backgroundColor = "rgba(255,255,255,0.85)";
-          struckRow.el.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
-
-          destroyByType(struckRow.el, letter.x, letter.y);
-
-          requestAnimationFrame(() => {
-            struckRow.el.style.transition =
-              "background-color 60ms ease-out, box-shadow 60ms ease-out, opacity 180ms ease-out 60ms";
-            struckRow.el.style.backgroundColor = "";
-            struckRow.el.style.boxShadow = "";
-            if (struckRow.el.getAttribute("data-collider") !== "message-card") {
-              struckRow.el.style.opacity = "0";
-            }
-          });
-
-          const dx = rand(-8, 8);
-          const dy = rand(-4, 2);
-          struckRow.el.style.transform = `translate(${dx}px, ${dy}px)`;
-          struckRow.el.style.transition += ", transform 120ms ease-out";
-
-          spawnImpactFragments(letter.x, letter.y, letter.vx, letter.vy, flashColor);
-
-          letter.glowDecay = IMPACT_GLOW_MAX;
-
-          s.shake = Math.max(s.shake, 8);
-
-          // Schedule lock release after destruction animation
-          setTimeout(() => {
-            letter.lockedElement = null;
-          }, LOCK_RELEASE_MS);
-        }
-
-        // ── Exit check: all rows struck OR safety timeout ──
-        const allRowsDone = s.rows.length > 0 && s.rows.every((r) => r.struck);
-        if (allRowsDone || (s.phaseTime > SAFETY_TIMEOUT)) {
-          if (letter.exitPhase === "falling" && !letter.lockedElement) {
-            letter.exitPhase = "exiting";
-            letter.vy = EXIT_VELOCITY;
-            letter.exitTimer = EXIT_FADE_MS;
+          if (c.hopTimer <= 0) {
+            c.hopState = "stretch";
+            c.hopTimer = STRETCH_MS;
           }
+          break;
         }
-      }
 
-      // ── Transition to gather ──
-      const allLettersExited = s.letters.length === SPAWN_SEQUENCE.length &&
-        s.letters.every((l) => !l.alive);
-      const allRowsStruck = s.rows.length > 0 && s.rows.every((r) => r.struck);
+        case "stretch": {
+          c.hopTimer -= dt;
+          const t = clamp(1 - c.hopTimer / STRETCH_MS, 0, 1);
+          s.scaleY = lerp(0.6, 1.2, t);
+          s.scaleX = lerp(1.3, 0.85, t);
 
-      if (!s.gatherStarted && allLettersExited && allRowsStruck) {
-        startGather();
-      }
-      // Fallback: if no rows found, transition after 2s
-      if (!s.gatherStarted && s.rows.length === 0 && s.phaseTime > 2000) {
-        startGather();
+          if (c.hopTimer <= 0) {
+            s.scaleY = 1;
+            s.scaleX = 1;
+            c.hopState = "dwell";
+            c.hopTimer = DWELL_MS;
+          }
+          break;
+        }
+
+        case "dwell": {
+          c.hopTimer -= dt;
+          s.breathPhase += dt * (Math.PI * 2 / 600); // 600ms breathing cycle
+          const breathScale = 1.0 + Math.sin(s.breathPhase) * 0.02;
+          s.scaleX = breathScale;
+          s.scaleY = breathScale;
+
+          if (c.hopTimer <= 0) {
+            s.scaleX = 1;
+            s.scaleY = 1;
+            launchHop();
+          }
+          break;
+        }
+
+        case "hopping": {
+          c.hopProgress += dt / c.hopDuration;
+          const t = clamp(c.hopProgress, 0, 1);
+          const et = easeOutQuad(t);
+
+          // Parabolic arc
+          const peakHeight = Math.max(40, Math.abs(c.hopEndY - c.hopStartY) * 1.5);
+          const vy0 = Math.sqrt(2 * HOP_G * peakHeight);
+          const arcY = c.hopStartY - (vy0 * t * c.hopDuration / 1000 - 0.5 * HOP_G * Math.pow(t * c.hopDuration / 1000, 2));
+
+          c.y = arcY;
+          c.x = lerp(c.hopStartX, c.hopEndX, et);
+
+          if (t >= 1.0) {
+            c.y = c.hopEndY;
+            c.x = c.hopEndX;
+            c.hopProgress = 0;
+
+            // Advance to next row
+            const newIndex = c.rowIndex + 1;
+            if (newIndex >= s.rows.length) {
+              // All rows visited — start gather
+              startGather();
+              return;
+            }
+            c.rowIndex = newIndex;
+            c.hopState = "squash";
+            c.hopTimer = SQUASH_MS;
+            strikeRow();
+          }
+          break;
+        }
       }
 
       // Update cascade particles (life + off-screen removal, no floor bounce)
@@ -939,32 +946,49 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
 
     // ── Drawing ──
 
-    function drawLetters(): void {
+    function drawCluster(): void {
       if (s.phase !== "cascade") return;
+      if (s.cluster.hopState === "drop" && s.rows.length === 0) return;
 
-      for (const letter of s.letters) {
-        if (!letter.alive && letter.exitPhase === "gone") continue;
+      const c = s.cluster;
+      const scaleX = s.scaleX;
+      const scaleY = s.scaleY;
 
-        ctx.save();
-
-        // Exit fade
-        if (letter.exitPhase === "exiting") {
-          ctx.globalAlpha = Math.max(0, letter.exitTimer / EXIT_FADE_MS);
+      // Determine contact foot for transform origin
+      let originX = c.x;
+      if (c.rowIndex >= 0 && c.rowIndex < s.rows.length) {
+        const row = s.rows[c.rowIndex];
+        const dFootX = c.x + CLUSTER_OFFSETS[0].ox;
+        const cFootX = c.x + CLUSTER_OFFSETS[2].ox;
+        const dInBounds = dFootX >= row.left && dFootX <= row.left + row.width;
+        const cInBounds = cFootX >= row.left && cFootX <= row.left + row.width;
+        if (dInBounds && cInBounds) {
+          originX = (dFootX + cFootX) / 2;
+        } else {
+          originX = dFootX;
         }
+      }
 
-        // Impact glow
-        if (letter.glowDecay > 0.1) {
-          ctx.shadowColor = letter.color;
-          ctx.shadowBlur = letter.glowDecay;
-        }
+      ctx.save();
+      ctx.translate(originX, c.y);
+      ctx.scale(scaleX, scaleY);
+      ctx.translate(-originX, -c.y);
 
-        ctx.font = `700 ${letter.size}px "Geist", sans-serif`;
+      for (const offset of CLUSTER_OFFSETS) {
+        const char = offset.char;
+        const jx = rand(-2, 2);
+        const jy = rand(-2, 2);
+        const lx = c.x + offset.ox + jx;
+        const ly = c.y + offset.oy + jy;
+
+        ctx.font = `700 ${CLUSTER_SIZE}px "Geist", sans-serif`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
-        ctx.fillStyle = letter.color;
-        ctx.fillText(letter.char, letter.x, letter.y);
-        ctx.restore();
+        ctx.fillStyle = letterColorMap[char] ?? colors.text;
+        ctx.fillText(char, lx, ly);
       }
+
+      ctx.restore();
     }
 
     function drawParticles(): void {
@@ -1076,8 +1100,13 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
 
       // ── Initialize cascade ──
       s.rows = buildRowList();
-      s.nextSpawnIndex = 0;
-      s.spawnTimer = INITIAL_SPAWN_DELAY;
+
+      // Init cluster
+      s.cluster.x = W / 2;
+      s.cluster.y = -(rand(60, 140));
+      s.cluster.hopState = "drop";
+      s.cluster.rowIndex = -1;
+
       console.log("[dscode] rows:", s.rows.length, "H:", H, "W:", W);
 
       lastTime = performance.now();
@@ -1100,7 +1129,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         s.shake *= 0.88;
       }
       drawFormedGlow(now);
-      drawLetters();
+      drawCluster();
       drawParticles();
       drawRings();
       drawShards();
