@@ -68,7 +68,6 @@ const MAX_PARTICLES = 2500;
 const DPR_CAP = 2;
 
 // ── Hop-step constants ──
-const HOP_G = 0.002;
 const SQUASH_MS = 80;
 const STRETCH_MS = 60;
 const DWELL_MS = 300;
@@ -662,8 +661,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       c.hopEndY = nextRow.top;
 
       const gap = Math.abs(c.hopEndY - c.hopStartY);
-      c.hopDuration = Math.max(350, Math.sqrt(2 * gap / HOP_G));
-      c.hopProgress = 0;
+      c.hopDuration = Math.max(350, Math.min(800, Math.sqrt(gap) * 25));
       c.hopState = "hopping";
     }
 
@@ -802,12 +800,10 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
           const t = clamp(c.hopProgress, 0, 1);
           const et = easeOutQuad(t);
 
-          // Parabolic arc
-          const peakHeight = Math.max(40, Math.abs(c.hopEndY - c.hopStartY) * 1.5);
-          const vy0 = Math.sqrt(2 * HOP_G * peakHeight);
-          const arcY = c.hopStartY - (vy0 * t * c.hopDuration / 1000 - 0.5 * HOP_G * Math.pow(t * c.hopDuration / 1000, 2));
-
-          c.y = arcY;
+          // Sine arc — properly traverses from start to end
+          const gap = Math.abs(c.hopEndY - c.hopStartY);
+          const peakHeight = Math.max(40, gap * 0.55);
+          c.y = lerp(c.hopStartY, c.hopEndY, t) - peakHeight * Math.sin(t * Math.PI);
           c.x = lerp(c.hopStartX, c.hopEndX, et);
 
           if (t >= 1.0) {
