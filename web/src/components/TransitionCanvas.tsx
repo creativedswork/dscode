@@ -187,14 +187,6 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       const rows: CascadeRow[] = [];
 
       all.forEach((el) => {
-        // Exclude nested colliders: skip if any ancestor also has [data-collider]
-        let parent = el.parentElement;
-        let nested = false;
-        while (parent) {
-          if (parent.hasAttribute("data-collider")) { nested = true; break; }
-          parent = parent.parentElement;
-        }
-        if (nested) return;
 
         const rect = el.getBoundingClientRect();
         const top = rect.top - canvasRect.top;
@@ -398,16 +390,13 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     }
 
     function destroyMessageCard(el: HTMLElement): void {
-      el.style.transition = "opacity 100ms ease-out";
-      el.style.opacity = "0.2";
-      el.style.backgroundColor = "transparent";
-
+      // Lightweight — gentle bg flash + shards. Don't change opacity
+      // so child colliders stay visible for individual striking.
       el.style.transition = "none";
       el.style.backgroundColor = "rgba(255,255,255,0.5)";
       requestAnimationFrame(() => {
-        el.style.transition = "background-color 80ms ease-out, opacity 100ms ease-out";
+        el.style.transition = "background-color 80ms ease-out";
         el.style.backgroundColor = "transparent";
-        el.style.opacity = "0.2";
       });
 
       const canvasRect = canvas!.getBoundingClientRect();
@@ -442,6 +431,75 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       }
     }
 
+    function destroyToolHeader(el: HTMLElement): void {
+      const text = el.textContent || "";
+      const chars = [...text];
+      el.innerHTML = "";
+      const styleId = `th-scatter-${Date.now()}`;
+      const style = document.createElement("style");
+      style.id = styleId;
+      style.textContent = `
+        @keyframes thScatter {
+          0% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
+          100% { opacity: 0; transform: translate(var(--sx), var(--sy)) rotate(var(--sr)); }
+        }
+      `;
+      document.head.appendChild(style);
+      chars.forEach((ch) => {
+        const span = document.createElement("span");
+        span.textContent = ch === " " ? "\u00A0" : ch;
+        span.style.display = "inline-block";
+        span.style.setProperty("--sx", `${rand(-50, 50)}px`);
+        span.style.setProperty("--sy", `${rand(-60, 10)}px`);
+        span.style.setProperty("--sr", `${rand(-180, 180)}deg`);
+        span.style.animation = "thScatter 350ms ease-out forwards";
+        el.appendChild(span);
+      });
+      setTimeout(() => {
+        el.style.opacity = "0";
+        if (document.getElementById(styleId)) {
+          document.getElementById(styleId)!.remove();
+        }
+      }, 380);
+    }
+
+    function destroyToolResultLine(el: HTMLElement): void {
+      // Similar to destroyTextLine but with more subtle scatter (tool results are secondary)
+      const text = el.textContent || "";
+      if (text.length > 100) {
+        spawnParticles(el);
+        return;
+      }
+      const chars = [...text];
+      el.innerHTML = "";
+      const styleId = `trl-scatter-${Date.now()}`;
+      const style = document.createElement("style");
+      style.id = styleId;
+      style.textContent = `
+        @keyframes trlScatter {
+          0% { opacity: 1; transform: translate(0, 0) rotate(0deg); }
+          100% { opacity: 0; transform: translate(var(--sx), var(--sy)) rotate(var(--sr)); }
+        }
+      `;
+      document.head.appendChild(style);
+      chars.forEach((ch) => {
+        const span = document.createElement("span");
+        span.textContent = ch === " " ? "\u00A0" : ch;
+        span.style.display = "inline-block";
+        span.style.setProperty("--sx", `${rand(-40, 40)}px`);
+        span.style.setProperty("--sy", `${rand(-60, 10)}px`);
+        span.style.setProperty("--sr", `${rand(-120, 120)}deg`);
+        span.style.animation = "trlScatter 300ms ease-out forwards";
+        el.appendChild(span);
+      });
+      setTimeout(() => {
+        el.style.opacity = "0";
+        if (document.getElementById(styleId)) {
+          document.getElementById(styleId)!.remove();
+        }
+      }, 330);
+    }
+
     function destroyByType(el: HTMLElement, impactX: number, impactY: number): void {
       const type = el.getAttribute("data-collider");
       switch (type) {
@@ -450,6 +508,12 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
           break;
         case "code-line":
           destroyCodeLine(el);
+          break;
+        case "tool-header":
+          destroyToolHeader(el);
+          break;
+        case "tool-result-line":
+          destroyToolResultLine(el);
           break;
         case "tool-card":
           destroyToolCard(el, impactX, impactY);
@@ -484,7 +548,8 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     function updateCascade(dt: number, dtFactor: number): void {
       s.phaseTime += dt;
 
-      // ── Drift horizontally toward current row's landingX ──
+      // ── Drift horizontally toward current row's landingX — proportional
+      // steering so the body reaches narrow rows before falling past them.
       if (s.currentRowIndex < s.rows.length) {
         const currentRow = s.rows[s.currentRowIndex];
         const dx = currentRow.landingX - s.groupX;
@@ -492,7 +557,9 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
           s.groupX = currentRow.landingX;
           s.groupVX = 0;
         } else {
-          s.groupVX = Math.sign(dx) * 3;
+          // Proportional: faster when far, min 6 px/frame so narrow rows aren't missed
+          const speed = Math.min(6 + Math.abs(dx) * 0.1, 16);
+          s.groupVX = Math.sign(dx) * speed;
         }
       }
 
@@ -535,7 +602,6 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         }
       }
 
-      let struckRow: CascadeRow | null = null;
 
       // ── Y-threshold collision with current row ──
       if (s.currentRowIndex < s.rows.length) {
@@ -583,41 +649,12 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
             s.letterGlowDecay.set(offset.char, 20);
           }
 
-          struckRow = currentRow;
 
           // ── Shake ──
           s.shake = Math.max(s.shake, Math.min(impactSpeed * 1.5, 10));
 
           // ── Advance to next row ──
           s.currentRowIndex++;
-        }
-      }
-
-      // ── Handle message-card children of the STRUCK row ──
-      if (struckRow && struckRow.el.getAttribute("data-collider") === "message-card") {
-        const children = struckRow.el.querySelectorAll<HTMLElement>("[data-collider]");
-        const canvasRect = canvas!.getBoundingClientRect();
-        for (const child of children) {
-          const childRect = child.getBoundingClientRect();
-          const childTop = childRect.top - canvasRect.top;
-          if (s.groupY + CLUSTER_RADIUS >= childTop) {
-            // Strike this child too
-            child.style.transition = "none";
-            child.style.backgroundColor = "rgba(255,255,255,0.85)";
-            child.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
-            destroyByType(child, s.groupX, s.groupY);
-            requestAnimationFrame(() => {
-              child.style.transition =
-                "background-color 60ms ease-out, box-shadow 60ms ease-out, opacity 180ms ease-out 60ms";
-              child.style.backgroundColor = "";
-              child.style.boxShadow = "";
-              child.style.opacity = "0";
-            });
-            const cdx = rand(-4, 4);
-            const cdy = rand(-2, 2);
-            child.style.transform = `translate(${cdx}px, ${cdy}px)`;
-            child.style.transition += ", transform 120ms ease-out";
-          }
         }
       }
 
@@ -899,6 +936,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       W = container.clientWidth;
       H = container.clientHeight;
       if (W === 0 || H === 0) {
+        rafId = requestAnimationFrame(firstFrame);
         return;
       }
       canvas!.width = W * dpr;
@@ -912,7 +950,14 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       // ── Initialize cascade ──
       s.rows = buildRowList();
       s.currentRowIndex = 0;
-      s.groupX = rand(80, W - 80);
+      console.log("[dscode] rows:", s.rows.length, "first:", s.rows[0]?.el?.textContent?.slice(0, 50), "H:", H, "W:", W);
+      // Start body aligned with first row so cascade begins on-target.
+      // If no rows (empty chat), center horizontally.
+      if (s.rows.length > 0) {
+        s.groupX = s.rows[0].landingX;
+      } else {
+        s.groupX = W / 2;
+      }
       s.groupY = -(rand(60, 140));
       s.groupVX = 0;
       s.groupVY = rand(5, 9);
