@@ -43,7 +43,7 @@ interface AnimationState {
   shards: Shard[];
   shake: number;
   formedTime: number;
-  targetPoints: { x: number; y: number }[];
+  targetPoints: { x: number; y: number; letter: string }[];
   particlesAssigned: number;
   gatherStarted: boolean;
   W: number;
@@ -158,15 +158,14 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       if (max === g) return ((b - r) / d + 2) * 60;
       return ((r - g) / d + 4) * 60;
     })();
-    const warmPurple = `hsl(${(accentHue + 55) % 360}, 55%, 52%)`;
+    const warmAccent2 = `hsl(${(accentHue + 20) % 360}, 45%, 52%)`;
     const letterColorMap: Record<string, string> = {
       d: colors.accent,
-      s: warmPurple,
-      c: "#eab308",
-      o: colors.text,
-      e: "#14b8a6",
+      s: warmAccent2,
+      c: warmAccent2,
+      o: colors.textMuted,
+      e: colors.text,
     };
-
     // ── Size canvas (deferred to first rAF to avoid 0×0 race) ──
     let W = 0, H = 0;
     const container = canvas.parentElement!;
@@ -201,7 +200,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       return null;
     }
 
-    function renderTargets(): { x: number; y: number }[] {
+    function renderTargets(): { x: number; y: number; letter: string }[] {
       const fontSize = Math.min(320, W * 0.18, H * 0.5);
       offscreen.width = W * dpr;
       offscreen.height = H * dpr;
@@ -213,14 +212,29 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       offCtx.fillStyle = "#ffffff";
       offCtx.fillText("DSCode", W / 2, H / 2);
 
+      // Compute per-letter X boundaries for assigning colors
+      const fullText = "DSCode";
+      const fullWidth = offCtx.measureText(fullText).width;
+      const startX = W / 2 - fullWidth / 2;
+      const letterBounds: { letter: string; left: number; right: number }[] = [];
+      let cursor = startX;
+      for (let li = 0; li < fullText.length; li++) {
+        const w = offCtx.measureText(fullText[li]).width;
+        letterBounds.push({ letter: fullText[li], left: cursor, right: cursor + w });
+        cursor += w;
+      }
+
       const imageData = offCtx.getImageData(0, 0, Math.floor(W * dpr), Math.floor(H * dpr));
-      const points: { x: number; y: number }[] = [];
+      const points: { x: number; y: number; letter: string }[] = [];
       const step = 6;
       for (let py = 0; py < H; py += step) {
         for (let px = 0; px < W; px += step) {
           const idx = (Math.floor(py * dpr) * Math.floor(W * dpr) + Math.floor(px * dpr)) * 4;
           if (idx + 3 < imageData.data.length && imageData.data[idx + 3] > 128) {
-            points.push({ x: px, y: py });
+            // Determine which letter this pixel belongs to by X coordinate
+            const b = letterBounds.find((lb) => px >= lb.left && px < lb.right);
+            const letter = b ? b.letter : fullText[Math.min(Math.floor((px - startX) / (fullWidth / fullText.length)), fullText.length - 1)];
+            points.push({ x: px, y: py, letter });
           }
         }
       }
@@ -369,7 +383,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         const py = ry + rand(0, rh);
         const angle = Math.atan2(py - (ry + rh / 2), px - (rx + rw / 2));
         const speed = rand(2, 8);
-        const warmColors = [colors.accent, "#eab308", warmPurple, colors.text];
+        const warmColors = [colors.accent, warmAccent2, colors.text];
         const particleColor = warmColors[randInt(0, warmColors.length - 1)];
         s.particles.push({
           x: px,
@@ -488,7 +502,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
           vx: Math.cos(angle) * speed,
           vy: Math.sin(angle) * speed,
           size: rand(1.5, 4),
-          color: rand(0, 1) > 0.5 ? colors.accent : warmPurple,
+          color: rand(0, 1) > 0.5 ? colors.accent : warmAccent2,
           phase: "fall",
           life: randInt(2000, 3500),
         });
@@ -877,7 +891,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
             vx: rand(-2, 2),
             vy: rand(-8, -3),
             size: rand(2, 4),
-            color: colors.text,
+            color: s.letterColorMap[t.letter] ?? colors.text,
             phase: "fall",
             tx: t.x,
             ty: t.y,

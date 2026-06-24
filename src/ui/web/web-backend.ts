@@ -1341,6 +1341,30 @@ export class WebUiBackend implements UiBackend {
         // graceful fallback
       }
 
+      // Build DESIGN SYSTEM COLORS block
+      const designColors = `DESIGN SYSTEM COLORS (MUST use these exact hex values for EVERY color in your HTML):
+- Background:  #f8f7f5
+- Surface:     #f3f2ef
+- Border:      #e6e4e0
+- Text:        #2d2a26
+- Muted Text:  #8a8580
+- Accent:      #ca8a04 (warm amber/gold — use for highlights, progress bars, headings)
+- Success:     #347539 text on #edf4ed background
+- Error:       #9f2f2d text on #fdebec background
+- Warning:     #956400 text on #fbf3db background
+- User Bubble: #ca8a04 background, #ffffff text`;
+
+      // Build default style constraints (used when .dscode/html_output_skill absent)
+      const defaultStyleConstraints = `CRITICAL STYLE RULES:
+- Use the exact hex colors from DESIGN SYSTEM COLORS above — do NOT substitute with other greens, reds, or blues
+- Flat design: 1px solid var(--border) borders, no box-shadow, no gradients
+- Border-radius: 8px for cards/panels, 6px for buttons, 12px for large containers
+- Typography: system-ui, -apple-system, sans-serif for labels; monospace for data values
+- Emoji for visual markers, CSS conic-gradient or inline SVG for chart-like elements
+- Background MUST be #f8f7f5, never white (#fff) or transparent
+- Text MUST be #2d2a26, never pure black (#000) or cold gray
+- The accent color MUST be #ca8a04 (warm amber), never blue`;
+
       // Build system prompt
       const systemPrompt = `You are an expert HTML dashboard designer. Generate a single, self-contained HTML file.
 
@@ -1352,11 +1376,11 @@ CRITICAL RULES:
 - Use emoji icons for visual markers
 - Use CSS conic-gradient or inline SVG for chart-like elements
 - Make it visually rich and data-dense
-- Use semantic colors: green for healthy/success, amber for warning/moderate, red for critical/error
-- Set explicit background (white #fff or warm light #fafaf9) and dark text (#222) on body — never leave background transparent
 - Self-contained, single HTML document
 
-${styleConstraints ? `\nARTIFACT STYLE RULES (from .dscode/html_output_skill):\n${styleConstraints}\n` : ""}
+${designColors}
+
+${styleConstraints ? `ARTIFACT STYLE RULES (from .dscode/html_output_skill):\n${styleConstraints}\n` : defaultStyleConstraints}
 
 Respond ONLY with the raw HTML starting with <!DOCTYPE html>. DO NOT wrap the output in markdown code fences (no \`\`\`html). DO NOT add any explanatory text before or after the HTML. Just output the HTML directly.`;
 

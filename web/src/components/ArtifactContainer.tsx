@@ -59,7 +59,7 @@ export function ArtifactContainer({ html, loading }: ArtifactContainerProps) {
         srcDoc={cleanedHtml}
         sandbox="allow-same-origin"
         className="flex-1 w-full border-0"
-        style={{ backgroundColor: "#ffffff", minHeight: "100%" }}
+        style={{ backgroundColor: "var(--color-bg)", minHeight: "100%" }}
         title="Dashboard Artifact"
       />
       {/* Debug: show raw HTML size */}
