@@ -31,7 +31,7 @@ interface CascadeLetter {
   exitPhase: "falling" | "exiting" | "gone";
   exitTimer: number;
   glowDecay: number;
-  stuckTimer: number;
+  targetRowIndex: number;
 }
 
 interface AnimationState {
@@ -79,7 +79,6 @@ const TERMINAL_VELOCITY = 8;
 const BOUNCE_RESTITUTION = 0.25;
 const EXIT_VELOCITY = -6;
 const EXIT_FADE_MS = 500;
-const STUCK_TIMEOUT_MS = 2000;
 const LOCK_RELEASE_MS = 450;
 const IMPACT_GLOW_MAX = 20;
 const IMPACT_GLOW_DECAY = 0.92;
@@ -173,6 +172,21 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     const offscreen = document.createElement("canvas");
     const offCtx = offscreen.getContext("2d")!;
 
+    // ── Offscreen canvas for text measurement ──
+    const measureCanvas = document.createElement("canvas");
+    const measureCtx = measureCanvas.getContext("2d")!;
+
+    // ── Scroll ancestor helper ──
+    function findScrollAncestor(el: HTMLElement): HTMLElement | null {
+      let p = el.parentElement;
+      while (p && p !== document.body) {
+        const overflowY = getComputedStyle(p).overflowY;
+        if (overflowY === "auto" || overflowY === "scroll") return p;
+        p = p.parentElement;
+      }
+      return null;
+    }
+
     function renderTargets(): { x: number; y: number }[] {
       const fontSize = Math.min(320, W * 0.18, H * 0.5);
       offscreen.width = W * dpr;
@@ -211,6 +225,11 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       const rows: CascadeRow[] = [];
 
       all.forEach((el) => {
+        // ── Nesting exclusion: skip elements that contain child [data-collider] (keep leaves only) ──
+        if (el.querySelector("[data-collider]")) return;
+
+        // ── Universal empty filter: skip empty/whitespace-only colliders ──
+        if (!el.textContent?.trim()) return;
 
         const rect = el.getBoundingClientRect();
         const top = rect.top - canvasRect.top;
@@ -219,17 +238,30 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         // Visibility filter: exclude rows not intersecting canvas
         if (top >= H || bottom <= 0) return;
 
-        // Skip empty text/code lines — invisible colliders waste letters on blank space
+        // ── Scroll-clip visibility: exclude rows entirely outside their scroll ancestor ──
+        const scrollAncestor = findScrollAncestor(el);
+        if (scrollAncestor) {
+          const saRect = scrollAncestor.getBoundingClientRect();
+          if (rect.bottom <= saRect.top || rect.top >= saRect.bottom) return;
+        }
+
         const colliderType = el.getAttribute("data-collider");
-        if ((colliderType === "text-line" || colliderType === "code-line") && !el.textContent?.trim()) {
-          return;
+        let width = rect.width;
+
+        // ── Content-tight width for text-like colliders ──
+        if (colliderType === "text-line" || colliderType === "code-line" || colliderType === "tool-result-line") {
+          const text = el.textContent || "";
+          const computedStyle = getComputedStyle(el);
+          measureCtx.font = `${computedStyle.fontWeight || "400"} ${computedStyle.fontSize} "${computedStyle.fontFamily.split(",")[0].replace(/"/g, "")}", sans-serif`;
+          const measuredWidth = measureCtx.measureText(text).width + 4; // 4px padding
+          width = Math.min(rect.width, measuredWidth);
         }
 
         rows.push({
           el,
           top,
           left: rect.left - canvasRect.left,
-          width: rect.width,
+          width,
           height: rect.height,
           struck: false,
         });
@@ -572,25 +604,51 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     function trySpawnLetter(): void {
       if (s.nextSpawnIndex >= SPAWN_SEQUENCE.length) return;
 
-      const char = SPAWN_SEQUENCE[s.nextSpawnIndex];
-      const size = randInt(LETTER_SIZE_MIN, LETTER_SIZE_MAX);
-      const gravity = GRAVITY_BASE + GRAVITY_BASE * rand(-GRAVITY_VARIANCE, GRAVITY_VARIANCE);
+      // Pick a random unstruck row from the filtered list
+      const unstruckRows = s.rows.filter((r) => !r.struck);
+      if (unstruckRows.length === 0) {
+        // No targets left — exit immediately
+        const char = SPAWN_SEQUENCE[s.nextSpawnIndex];
+        const letter: CascadeLetter = {
+          char,
+          x: rand(80, W - 80),
+          y: -(rand(60, 140)),
+          vx: 0,
+          vy: EXIT_VELOCITY,
+          size: randInt(LETTER_SIZE_MIN, LETTER_SIZE_MAX),
+          gravity: 0,
+          color: letterColorMap[char] ?? colors.text,
+          lockedElement: null,
+          alive: true,
+          exitPhase: "exiting",
+          exitTimer: EXIT_FADE_MS,
+          glowDecay: 0,
+          targetRowIndex: -1,
+        };
+        s.letters.push(letter);
+        s.nextSpawnIndex++;
+        return;
+      }
 
+      const targetRow = unstruckRows[0]; // top-to-bottom: always the first unstruck row
+      const targetIndex = s.rows.indexOf(targetRow);
+
+      const char = SPAWN_SEQUENCE[s.nextSpawnIndex];
       const letter: CascadeLetter = {
         char,
-        x: rand(80, W - 80),
+        x: targetRow.left + targetRow.width / 2,
         y: -(rand(60, 140)),
-        vx: rand(-1, 1),
+        vx: 0,
         vy: 2,
-        size,
-        gravity,
+        size: randInt(LETTER_SIZE_MIN, LETTER_SIZE_MAX),
+        gravity: GRAVITY_BASE + GRAVITY_BASE * rand(-GRAVITY_VARIANCE, GRAVITY_VARIANCE),
         color: letterColorMap[char] ?? colors.text,
         lockedElement: null,
         alive: true,
         exitPhase: "falling",
         exitTimer: 0,
         glowDecay: 0,
-        stuckTimer: 0,
+        targetRowIndex: targetIndex,
       };
 
       s.letters.push(letter);
@@ -599,89 +657,12 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
 
     // ── Physics ──
 
-    function letterAABB(letter: CascadeLetter): { left: number; top: number; right: number; bottom: number } {
-      // Approximate bounding box from font size: char width ≈ 0.6 * fontSize, height ≈ 0.75 * fontSize
-      const halfW = letter.size * 0.3;
-      const halfH = letter.size * 0.375;
-      return {
-        left: letter.x - halfW,
-        top: letter.y - halfH,
-        right: letter.x + halfW,
-        bottom: letter.y + halfH,
-      };
-    }
-
-    function elementAABB(row: CascadeRow): { left: number; top: number; right: number; bottom: number } {
-      return {
-        left: row.left,
-        top: row.top,
-        right: row.left + row.width,
-        bottom: row.top + row.height,
-      };
-    }
-
-    function aabbOverlap(
-      a: { left: number; top: number; right: number; bottom: number },
-      b: { left: number; top: number; right: number; bottom: number },
-    ): boolean {
-      return a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom;
-    }
-
     function updateLetterPhysics(letter: CascadeLetter, dtFactor: number): void {
       letter.vy += letter.gravity * dtFactor;
       if (letter.vy > TERMINAL_VELOCITY) letter.vy = TERMINAL_VELOCITY;
       letter.x += letter.vx;
       letter.y += letter.vy;
       letter.vx *= 0.995;
-    }
-
-    // ── Collision detection ──
-
-    // Per-frame lock tracking to enforce exclusive locking
-    const frameLockedElements = new Set<HTMLElement>();
-
-    function findCollisionTarget(
-      letter: CascadeLetter,
-      rows: CascadeRow[],
-    ): CascadeRow | null {
-      const letterBox = letterAABB(letter);
-      let bestRow: CascadeRow | null = null;
-      let bestDist = Infinity;
-
-      for (const row of rows) {
-        if (row.struck) continue;
-        if (frameLockedElements.has(row.el)) continue;
-
-        const rowBox = elementAABB(row);
-        if (!aabbOverlap(letterBox, rowBox)) continue;
-
-        // Closest-center-wins: compute distance from letter center to element center
-        const rowCx = row.left + row.width / 2;
-        const rowCy = row.top + row.height / 2;
-        const dx = letter.x - rowCx;
-        const dy = letter.y - rowCy;
-        const dist = dx * dx + dy * dy;
-
-        if (dist < bestDist) {
-          bestDist = dist;
-          bestRow = row;
-        }
-      }
-
-      return bestRow;
-    }
-
-    function shouldLetterExit(letter: CascadeLetter, rows: CascadeRow[]): boolean {
-      // Scan for any unlocked unstruck element within canvas visible area
-      for (const row of rows) {
-        if (row.struck) continue;
-        if (frameLockedElements.has(row.el)) continue;
-        // Check if element is within reasonable range (canvas bounds + margin)
-        if (row.top < H + 100 && row.top + row.height > -100) {
-          return false;
-        }
-      }
-      return true;
     }
 
     // ── Phase updates ──
@@ -696,8 +677,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         s.spawnTimer += randInt(SPAWN_DELAY_MIN, SPAWN_DELAY_MAX);
       }
 
-      // Clear per-frame lock tracking
-      frameLockedElements.clear();
+      const SAFETY_TIMEOUT = 5000;
 
       // ── Update each letter ──
       for (const letter of s.letters) {
@@ -712,7 +692,6 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
 
         // Handle locked state (destruction animation playing)
         if (letter.lockedElement !== null) {
-          // Physics paused while locked — lock release handled by setTimeout
           continue;
         }
 
@@ -730,76 +709,74 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         // ── Physics update ──
         updateLetterPhysics(letter, dtFactor);
 
-        // ── Collision detection ──
-        const target = findCollisionTarget(letter, s.rows);
-        if (target) {
+        // ── Scan collision: first unstruck row that overlaps in X and Y ──
+        let struckRow: CascadeRow | null = null;
+        for (const row of s.rows) {
+          if (row.struck) continue;
+          // Y overlap: letter bottom has crossed row top
+          if (letter.y < row.top) continue;
+          // X overlap: letter center is within row horizontal extent (+ margin)
+          const xMargin = 20;
+          if (letter.x < row.left - xMargin || letter.x > row.left + row.width + xMargin) continue;
+          struckRow = row;
+          break;
+        }
+
+        if (struckRow) {
           // Lock and strike
-          letter.lockedElement = target.el;
-          target.struck = true;
-          frameLockedElements.add(target.el);
+          letter.lockedElement = struckRow.el;
+          struckRow.struck = true;
 
           // Bounce
           letter.vy = -(Math.abs(letter.vy) * BOUNCE_RESTITUTION) - 1.5;
-          letter.vx += rand(-2, 2);
+          letter.vx = 0;
 
           // Push above element to prevent re-collision same frame
-          letter.y = target.top - 4;
+          letter.y = struckRow.top - 4;
 
           // Impact effects
           const flashColor = letter.color;
-          target.el.style.transition = "none";
-          target.el.style.backgroundColor = "rgba(255,255,255,0.85)";
-          target.el.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
+          struckRow.el.style.transition = "none";
+          struckRow.el.style.backgroundColor = "rgba(255,255,255,0.85)";
+          struckRow.el.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
 
-          destroyByType(target.el, letter.x, letter.y);
+          destroyByType(struckRow.el, letter.x, letter.y);
 
           requestAnimationFrame(() => {
-            target.el.style.transition =
+            struckRow.el.style.transition =
               "background-color 60ms ease-out, box-shadow 60ms ease-out, opacity 180ms ease-out 60ms";
-            target.el.style.backgroundColor = "";
-            target.el.style.boxShadow = "";
-            if (target.el.getAttribute("data-collider") !== "message-card") {
-              target.el.style.opacity = "0";
+            struckRow.el.style.backgroundColor = "";
+            struckRow.el.style.boxShadow = "";
+            if (struckRow.el.getAttribute("data-collider") !== "message-card") {
+              struckRow.el.style.opacity = "0";
             }
           });
 
           const dx = rand(-8, 8);
           const dy = rand(-4, 2);
-          target.el.style.transform = `translate(${dx}px, ${dy}px)`;
-          target.el.style.transition += ", transform 120ms ease-out";
+          struckRow.el.style.transform = `translate(${dx}px, ${dy}px)`;
+          struckRow.el.style.transition += ", transform 120ms ease-out";
 
           spawnImpactFragments(letter.x, letter.y, letter.vx, letter.vy, flashColor);
 
           letter.glowDecay = IMPACT_GLOW_MAX;
-          letter.stuckTimer = 0;
 
           s.shake = Math.max(s.shake, 8);
 
           // Schedule lock release after destruction animation
-          const lockedEl = target.el;
           setTimeout(() => {
             letter.lockedElement = null;
           }, LOCK_RELEASE_MS);
-        } else {
-          // No target found — increment stuck timer
-          letter.stuckTimer += dt;
-
-          // Drift: add small random horizontal velocity to help find targets
-          if (letter.stuckTimer > 500) {
-            letter.vx += rand(-0.5, 0.5);
-          }
         }
 
-        // ── Exit check ──
-        if (shouldLetterExit(letter, s.rows)) {
-          letter.exitPhase = "exiting";
-          letter.vy = EXIT_VELOCITY;
-          letter.exitTimer = EXIT_FADE_MS;
-        } else if (letter.stuckTimer > STUCK_TIMEOUT_MS) {
-          // Force exit if stuck too long
-          letter.exitPhase = "exiting";
-          letter.vy = EXIT_VELOCITY;
-          letter.exitTimer = EXIT_FADE_MS;
+        // ── Exit check: all rows struck OR safety timeout ──
+        const allRowsDone = s.rows.length > 0 && s.rows.every((r) => r.struck);
+        if (allRowsDone || (s.phaseTime > SAFETY_TIMEOUT)) {
+          if (letter.exitPhase === "falling" && !letter.lockedElement) {
+            letter.exitPhase = "exiting";
+            letter.vy = EXIT_VELOCITY;
+            letter.exitTimer = EXIT_FADE_MS;
+          }
         }
       }
 
