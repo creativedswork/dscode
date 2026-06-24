@@ -237,6 +237,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       const all = container.querySelectorAll<HTMLElement>("[data-collider]");
       const canvasRect = canvas!.getBoundingClientRect();
       const rows: CascadeRow[] = [];
+      const clusterHalf = Math.abs(CLUSTER_OFFSETS[0].ox); // 40px
 
       all.forEach((el) => {
         if (el.querySelector("[data-collider]")) return;
@@ -273,7 +274,14 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
 
         // ── Random landing X ──
         const left = rect.left - canvasRect.left;
-        const landingX = left + rand(width * 0.15, width * 0.85);
+        let landingX: number;
+        if (width >= CLUSTER_WIDTH) {
+          const lo = left + clusterHalf;
+          const hi = left + width - clusterHalf;
+          landingX = lo + rand(0, hi - lo);
+        } else {
+          landingX = left + width / 2;
+        }
 
         rows.push({
           el,
@@ -293,7 +301,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       for (let i = 1; i < rows.length; i++) {
         let attempts = 0;
         while (Math.abs(rows[i].landingX - rows[i - 1].landingX) < CLUSTER_WIDTH * 0.3 && attempts < 5) {
-          rows[i].landingX = rows[i].left + rand(rows[i].width * 0.15, rows[i].width * 0.85);
+          rows[i].landingX = (rows[i].width >= CLUSTER_WIDTH) ? rows[i].left + clusterHalf + rand(0, rows[i].width - CLUSTER_WIDTH) : rows[i].left + rows[i].width / 2;
           attempts++;
         }
       }
@@ -673,10 +681,9 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
 
       row.struck = true;
 
-      // Impact effects
+      // Impact effects — distributed across all six letters
       const impactX = row.landingX;
-      const impactY = row.top;
-      const flashColor = s.letterColorMap["d"] ?? colors.accent;
+      const impactY = row.top + row.height * 0.35;
 
       row.el.style.transition = "none";
       row.el.style.backgroundColor = "rgba(255,255,255,0.85)";
@@ -699,8 +706,12 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       row.el.style.transform = `translate(${dx}px, ${dy}px)`;
       row.el.style.transition += ", transform 120ms ease-out";
 
-      spawnImpactFragments(impactX, impactY, flashColor);
-      s.shake = Math.max(s.shake, 8);
+      for (const offset of CLUSTER_OFFSETS) {
+        const lx = c.x + offset.ox;
+        const ly = c.y + offset.oy + (CLUSTER_SIZE / 2);
+        const color = s.letterColorMap[offset.char] ?? colors.accent;
+        spawnImpactFragments(lx, ly, color);
+      }
 
       // ── Cleanup parent container if all children struck ──
       const parentCard = row.el.closest<HTMLElement>(
