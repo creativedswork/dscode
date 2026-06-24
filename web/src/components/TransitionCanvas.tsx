@@ -709,14 +709,10 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         const siblings = parentCard.querySelectorAll<HTMLElement>("[data-collider]");
         const allStruck = [...siblings].every((child) => {
           const childRow = s.rows.find((r) => r.el === child);
-          return childRow?.struck === true;
+          return !childRow || childRow.struck === true;
         });
         if (allStruck) {
           spawnParticles(parentCard);
-          parentCard.style.transition = "opacity 200ms ease-out";
-          parentCard.style.opacity = "0";
-        }
-        if (allStruck) {
           parentCard.style.transition = "opacity 200ms ease-out";
           parentCard.style.opacity = "0";
         }
