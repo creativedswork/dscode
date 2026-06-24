@@ -176,24 +176,40 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       return points.slice(0, MAX_PARTICLES);
     }
 
-    // ── Row list builder ──
+    // ── Row list builder (scoped to chat view container) ──
     function buildRowList(): CascadeRow[] {
-      const all = document.querySelectorAll<HTMLElement>("[data-collider]");
+      const container = document.querySelector<HTMLElement>("[data-chat]")
+        ?? document.querySelector<HTMLElement>(".chat-view-container");
+      if (!container) return [];
+
+      const all = container.querySelectorAll<HTMLElement>("[data-collider]");
       const canvasRect = canvas!.getBoundingClientRect();
       const rows: CascadeRow[] = [];
+
       all.forEach((el) => {
+        // Exclude nested colliders: skip if any ancestor (up to container) also has [data-collider]
+        let parent = el.parentElement;
+        let nested = false;
+        while (parent && parent !== container) {
+          if (parent.hasAttribute("data-collider")) { nested = true; break; }
+          parent = parent.parentElement;
+        }
+        if (nested) return;
+
         const rect = el.getBoundingClientRect();
         const top = rect.top - canvasRect.top;
-        const left = rect.left - canvasRect.left;
-        const width = rect.width;
-        const height = rect.height;
+        const bottom = top + rect.height;
+
+        // Visibility filter: exclude rows not intersecting canvas
+        if (top >= H || bottom <= 0) return;
+
         rows.push({
           el,
           top,
-          left,
-          width,
-          height,
-          landingX: left + rand(width * 0.15, width * 0.85),
+          left: rect.left - canvasRect.left,
+          width: rect.width,
+          height: rect.height,
+          landingX: rect.left - canvasRect.left + rand(rect.width * 0.15, rect.width * 0.85),
           struck: false,
         });
       });
@@ -262,6 +278,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
           size: rand(1.5, 4),
           color: particleColor,
           phase: "fall",
+          life: randInt(1500, 3000),
         });
       }
     }
@@ -279,6 +296,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
           size: rand(1, 3),
           color,
           phase: "fall",
+          life: randInt(800, 1800),
         });
       }
     }
@@ -371,6 +389,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
           size: rand(1.5, 4),
           color: rand(0, 1) > 0.5 ? colors.accent : warmPurple,
           phase: "fall",
+          life: randInt(2000, 3500),
         });
       }
     }
@@ -476,7 +495,20 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
 
       // ── Gravity ──
       s.groupVY += 0.25 * dtFactor;
-      if (s.groupVY > 8) s.groupVY = 8;
+      // Adaptive vy cap based on distance to next row
+      if (s.currentRowIndex < s.rows.length) {
+        const currentRow = s.rows[s.currentRowIndex];
+        const distToNext = currentRow.top - (s.groupY + CLUSTER_RADIUS);
+        let speedCap = 8;
+        if (distToNext > 120) {
+          speedCap = 16;
+        } else if (distToNext > 60) {
+          speedCap = 12;
+        }
+        if (s.groupVY > speedCap) s.groupVY = speedCap;
+      } else if (s.groupVY > 8) {
+        s.groupVY = 8;
+      }
 
       // ── Apply velocity ──
       s.groupX += s.groupVX;
@@ -594,15 +626,20 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         startGather();
       }
 
-      // Update particles during cascade phase
+      // Update cascade particles (life + off-screen removal, no floor bounce)
+      const toRemove: Particle[] = [];
       for (const p of s.particles) {
         if (p.phase !== "fall") continue;
         p.vy += 0.28 * dtFactor;
         p.x += p.vx;
         p.y += p.vy;
         p.vx *= 0.995;
-        if (p.y > H - 4) { p.y = H - 4; p.vy *= -0.3; p.vx *= 0.75; }
+        if (p.life !== undefined) p.life -= dt;
+        if (p.y > H + 10 || (p.life !== undefined && p.life <= 0)) {
+          toRemove.push(p);
+        }
       }
+      if (toRemove.length > 0) s.particles = s.particles.filter(p => !toRemove.includes(p));
 
       // Update shards
       for (const sh of s.shards) {

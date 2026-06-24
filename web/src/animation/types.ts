@@ -10,6 +10,7 @@ export interface Particle {
   ty?: number;
   gatherDelay?: number;
   flash?: number;
+  life?: number;
 }
 
 export interface Letter {
