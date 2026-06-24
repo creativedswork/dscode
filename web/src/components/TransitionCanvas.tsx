@@ -639,6 +639,24 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       }
     }
 
+
+      // ── Final sweep: clean up any remaining parent containers ──
+      const parents = container.querySelectorAll<HTMLElement>(
+        '[data-collider="tool-card"], [data-collider="message-card"]'
+      );
+      parents.forEach((pc) => {
+        if (pc.style.opacity === "0") return;
+        const children = pc.querySelectorAll<HTMLElement>("[data-collider]");
+        const allDone = [...children].every((child) => {
+          const cr = s.rows.find((r) => r.el === child);
+          return !cr || cr.struck;
+        });
+        if (allDone) {
+          spawnParticles(pc);
+          pc.style.transition = "opacity 200ms ease-out";
+          pc.style.opacity = "0";
+        }
+      });
     // ── Hop helpers ──
 
     function launchHop(): void {
