@@ -138,6 +138,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     const prevCursor = document.body.style.cursor;
     document.body.style.cursor = "none";
 
+
     // ── Read CSS custom properties ──
     const styles = getComputedStyle(document.documentElement);
     const accentHex = styles.getPropertyValue("--color-accent").trim() || "#ca8a04";
@@ -168,6 +169,16 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     let W = 0, H = 0;
     const container = canvas.parentElement!;
     const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
+
+    // ── Lock scroll during animation ──
+    const scrollContainer = (() => { let p = container.parentElement; while (p) { const oy = getComputedStyle(p).overflowY; if (oy === "auto" || oy === "scroll") return p; p = p.parentElement; } return null; })();
+    let prevScrollTop = 0;
+    let prevOverflow = "";
+    if (scrollContainer) {
+      prevScrollTop = scrollContainer.scrollTop;
+      prevOverflow = scrollContainer.style.overflow;
+      scrollContainer.style.overflow = "hidden";
+    }
 
     // ── Offscreen canvas for DSCode wordmark ──
     const offscreen = document.createElement("canvas");
@@ -689,6 +700,27 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
 
       spawnImpactFragments(impactX, impactY, flashColor);
       s.shake = Math.max(s.shake, 8);
+
+      // ── Cleanup parent container if all children struck ──
+      const parentCard = row.el.closest<HTMLElement>(
+        '[data-collider="tool-card"], [data-collider="message-card"]'
+      );
+      if (parentCard) {
+        const siblings = parentCard.querySelectorAll<HTMLElement>("[data-collider]");
+        const allStruck = [...siblings].every((child) => {
+          const childRow = s.rows.find((r) => r.el === child);
+          return childRow?.struck === true;
+        });
+        if (allStruck) {
+          spawnParticles(parentCard);
+          parentCard.style.transition = "opacity 200ms ease-out";
+          parentCard.style.opacity = "0";
+        }
+        if (allStruck) {
+          parentCard.style.transition = "opacity 200ms ease-out";
+          parentCard.style.opacity = "0";
+        }
+      }
     }
 
     // ── Phase updates ──
@@ -1156,6 +1188,10 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       cancelAnimationFrame(rafId);
       document.removeEventListener("keydown", onKeyDown);
       document.body.style.cursor = prevCursor;
+      if (scrollContainer) {
+        scrollContainer.style.overflow = prevOverflow;
+        scrollContainer.scrollTop = prevScrollTop;
+      }
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
