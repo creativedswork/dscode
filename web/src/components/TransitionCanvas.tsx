@@ -32,13 +32,19 @@ interface AnimationState {
   gatherStarted: boolean;
   W: number;
   H: number;
-  // ── Impact body physics ──
+  // ── Hop-step physics ──
   groupX: number;
   groupY: number;
-  groupVX: number;
-  groupVY: number;
-  groupRotation: number;
-  groupRotationSpeed: number;
+  clusterScale: number;
+  // ── Hop arc state ──
+  hopStartY: number;
+  hopEndY: number;
+  hopStartX: number;
+  hopEndX: number;
+  hopProgress: number;
+  hopDuration: number;
+  impactPhase: "none" | "squash" | "stretch";
+  impactTimer: number;
   // ── Row cascade ──
   rows: CascadeRow[];
   currentRowIndex: number;
@@ -56,7 +62,7 @@ interface ThemeColors {
 const MAX_PARTICLES = 2500;
 const DPR_CAP = 2;
 
-// ── Cluster rendering offsets ──
+// ── Cluster rendering offsets (base, scaled by clusterScale) ──
 const CLUSTER_OFFSETS = [
   { char: "d", ox: -55, oy: 0 },
   { char: "s", ox: -33, oy: 0 },
@@ -65,8 +71,7 @@ const CLUSTER_OFFSETS = [
   { char: "d", ox: +33, oy: 0 },
   { char: "e", ox: +55, oy: 0 },
 ];
-const CLUSTER_RADIUS = 30;
-const H_MARGIN = 20;
+const BASE_FONT_SIZE = 48;
 
 // ── Module-level helpers ──
 
@@ -89,6 +94,10 @@ function hexToRgb(hex: string): [number, number, number] {
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
 }
 
 export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvasProps) {
@@ -201,13 +210,28 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
           left: rect.left - canvasRect.left,
           width: rect.width,
           height: rect.height,
-          landingX: rect.left - canvasRect.left + rand(rect.width * 0.15, rect.width * 0.85),
+          landingX: 0, // placeholder, filled after sort
           struck: false,
         });
       });
 
       // Sort by visual Y position for correct top-to-bottom cascade
       rows.sort((a, b) => a.top - b.top);
+      // Assign randomized landingX per row with consecutive uniqueness
+      let prevLandingX = -9999;
+      for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        let landingX = row.left + rand(row.width * 0.15, row.width * 0.85);
+        landingX = clamp(landingX, row.left + 4, row.left + row.width - 4);
+        // Consecutive uniqueness: if too close to previous row's X, re-roll
+        const clusterWidth = 110; // approximate base cluster width in px
+        for (let attempt = 0; attempt < 5 && Math.abs(landingX - prevLandingX) < clusterWidth * 0.3; attempt++) {
+          landingX = row.left + rand(row.width * 0.15, row.width * 0.85);
+          landingX = clamp(landingX, row.left + 4, row.left + row.width - 4);
+        }
+        row.landingX = landingX;
+        prevLandingX = landingX;
+      }
       return rows;
     }
 
@@ -228,10 +252,15 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       H,
       groupX: 0,
       groupY: 0,
-      groupVX: 0,
-      groupVY: 0,
-      groupRotation: 0,
-      groupRotationSpeed: 0,
+      clusterScale: 1,
+      hopStartY: 0,
+      hopEndY: 0,
+      hopStartX: 0,
+      hopEndX: 0,
+      hopProgress: 0,
+      hopDuration: 200,
+      impactPhase: "none",
+      impactTimer: 0,
       rows: [],
       currentRowIndex: 0,
       letterGlowDecay: new Map(),
@@ -543,53 +572,109 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       }
     }
 
+    // ── Hop physics constants ──
+    const HOP_G = 0.004; // gravity for parabolic arcs (px/ms²)
+
+    function launchHop(fromY: number, toY: number, fromX: number, toX: number): void {
+      s.hopStartY = fromY;
+      s.hopEndY = toY;
+      s.hopStartX = fromX;
+      s.hopEndX = toX;
+      s.hopProgress = 0;
+      const distance = Math.abs(toY - fromY);
+      if (fromY > toY) {
+        // Upward hop
+        s.hopDuration = Math.sqrt(2 * distance / HOP_G);
+      } else {
+        // Downward hop: parabola peaks at 1.2× the gap above start
+        const peakHeight = distance * 1.2;
+        const vy0 = Math.sqrt(2 * HOP_G * peakHeight);
+        const disc = vy0 * vy0 - 2 * HOP_G * distance;
+        s.hopDuration = disc > 0 ? (vy0 + Math.sqrt(disc)) / HOP_G : Math.sqrt(2 * distance / HOP_G);
+      }
+    }
+
     // ── Phase updates ──
 
     function updateCascade(dt: number, dtFactor: number): void {
       s.phaseTime += dt;
 
-      // ── Drift horizontally toward current row's landingX — proportional
-      // steering so the body reaches narrow rows before falling past them.
-      if (s.currentRowIndex < s.rows.length) {
-        const currentRow = s.rows[s.currentRowIndex];
-        const dx = currentRow.landingX - s.groupX;
-        if (Math.abs(dx) <= 3) {
-          s.groupX = currentRow.landingX;
-          s.groupVX = 0;
+      // ── Impact state machine ──
+      if (s.impactPhase !== "none") {
+        s.impactTimer -= dt;
+        if (s.impactTimer <= 0) {
+          // Impact complete — launch to next row
+          s.impactPhase = "none";
+          s.impactTimer = 0;
+          if (s.currentRowIndex < s.rows.length) {
+            const nextRow = s.rows[s.currentRowIndex];
+            launchHop(s.groupY, nextRow.top, s.groupX, nextRow.landingX);
+          }
+        }
+      } else if (s.hopProgress < 1) {
+        // ── Hop in progress ──
+        s.hopProgress += dt / s.hopDuration;
+        if (s.hopProgress >= 1) {
+          s.hopProgress = 1;
+          // Snap to exact landing position
+          s.groupX = s.hopEndX;
+          s.groupY = s.hopEndY;
+
+          // ── Trigger impact on current row ──
+          if (s.currentRowIndex < s.rows.length) {
+            const targetRow = s.rows[s.currentRowIndex];
+
+            // Impact effects
+            const fragColor = letterColorMap[
+              CLUSTER_OFFSETS[randInt(0, CLUSTER_OFFSETS.length - 1)].char
+            ] ?? colors.accent;
+
+            targetRow.el.style.transition = "none";
+            targetRow.el.style.backgroundColor = "rgba(255,255,255,0.85)";
+            targetRow.el.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
+
+            destroyByType(targetRow.el, s.groupX, s.groupY);
+
+            requestAnimationFrame(() => {
+              targetRow.el.style.transition =
+                "background-color 60ms ease-out, box-shadow 60ms ease-out, opacity 180ms ease-out 60ms";
+              targetRow.el.style.backgroundColor = "";
+              targetRow.el.style.boxShadow = "";
+              targetRow.el.style.opacity = "0";
+            });
+
+            const dx = rand(-8, 8);
+            const dy = rand(-4, 2);
+            targetRow.el.style.transform = `translate(${dx}px, ${dy}px)`;
+            targetRow.el.style.transition += ", transform 120ms ease-out";
+
+            targetRow.struck = true;
+
+            spawnImpactFragments(s.groupX, s.groupY, 0, -4, fragColor);
+
+            for (const offset of CLUSTER_OFFSETS) {
+              s.letterGlowDecay.set(offset.char, 20);
+            }
+
+            s.shake = Math.max(s.shake, 8);
+
+            // Enter impact squash phase
+            s.impactPhase = "squash";
+            s.impactTimer = 140;
+            s.currentRowIndex++;
+          }
         } else {
-          // Proportional: faster when far, min 6 px/frame so narrow rows aren't missed
-          const speed = Math.min(6 + Math.abs(dx) * 0.1, 16);
-          s.groupVX = Math.sign(dx) * speed;
+          // ── Compute position along parabola ──
+          const t = s.hopProgress * s.hopDuration;
+          const distance = s.hopEndY - s.hopStartY;
+          const peakHeight = Math.abs(distance) * 1.2;
+          const vy0 = s.hopStartY > s.hopEndY
+            ? 0 // initial descent: start at peak, fall
+            : Math.sqrt(2 * HOP_G * peakHeight);
+          s.groupY = s.hopStartY + vy0 * t - 0.5 * HOP_G * t * t;
+          s.groupX = lerp(s.hopStartX, s.hopEndX, s.hopProgress);
         }
       }
-
-      // ── Gravity ──
-      s.groupVY += 0.25 * dtFactor;
-      // Adaptive vy cap based on distance to next row
-      if (s.currentRowIndex < s.rows.length) {
-        const currentRow = s.rows[s.currentRowIndex];
-        const distToNext = currentRow.top - (s.groupY + CLUSTER_RADIUS);
-        let speedCap = 8;
-        if (distToNext > 120) {
-          speedCap = 16;
-        } else if (distToNext > 60) {
-          speedCap = 12;
-        }
-        if (s.groupVY > speedCap) s.groupVY = speedCap;
-      } else if (s.groupVY > 8) {
-        s.groupVY = 8;
-      }
-
-      // ── Apply velocity ──
-      s.groupX += s.groupVX;
-      s.groupY += s.groupVY;
-
-      // ── Rotation ──
-      s.groupRotation += s.groupRotationSpeed;
-
-      // ── Wall bounds ──
-      if (s.groupX < 20) { s.groupX = 20; s.groupVX = Math.abs(s.groupVX); }
-      if (s.groupX > W - 20) { s.groupX = W - 20; s.groupVX = -Math.abs(s.groupVX); }
 
       // ── Decay letter glow ──
       for (const entry of s.letterGlowDecay) {
@@ -599,62 +684,6 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
           s.letterGlowDecay.set(key, currentGlow * 0.92);
         } else if (currentGlow > 0) {
           s.letterGlowDecay.set(key, 0);
-        }
-      }
-
-
-      // ── Y-threshold collision with current row ──
-      if (s.currentRowIndex < s.rows.length) {
-        const currentRow = s.rows[s.currentRowIndex];
-        if (s.groupY + CLUSTER_RADIUS >= currentRow.top && !currentRow.struck && s.groupX >= currentRow.left - H_MARGIN && s.groupX <= currentRow.left + currentRow.width + H_MARGIN) {
-          // Impact!
-          const impactSpeed = Math.abs(s.groupVY);
-          const fragColor = letterColorMap[
-            CLUSTER_OFFSETS[randInt(0, CLUSTER_OFFSETS.length - 1)].char
-          ] ?? colors.accent;
-
-          // Flash + displacement
-          currentRow.el.style.transition = "none";
-          currentRow.el.style.backgroundColor = "rgba(255,255,255,0.85)";
-          currentRow.el.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
-
-          // Run per-type destruction
-          destroyByType(currentRow.el, s.groupX, s.groupY);
-
-          // Schedule opacity fade-out
-          requestAnimationFrame(() => {
-            currentRow.el.style.transition =
-              "background-color 60ms ease-out, box-shadow 60ms ease-out, opacity 180ms ease-out 60ms";
-            currentRow.el.style.backgroundColor = "";
-            currentRow.el.style.boxShadow = "";
-            currentRow.el.style.opacity = "0";
-          });
-
-          // Element displacement
-          const dx = rand(-8, 8);
-          const dy = rand(-4, 2);
-          currentRow.el.style.transform = `translate(${dx}px, ${dy}px)`;
-          currentRow.el.style.transition += ", transform 120ms ease-out";
-
-          currentRow.struck = true;
-
-          // ── Bounce ──
-          s.groupVY = -(impactSpeed * 0.25);
-
-          // ── Impact fragments ──
-          spawnImpactFragments(s.groupX, s.groupY, s.groupVX, s.groupVY, fragColor);
-
-          // ── Glow all cluster letters on impact ──
-          for (const offset of CLUSTER_OFFSETS) {
-            s.letterGlowDecay.set(offset.char, 20);
-          }
-
-
-          // ── Shake ──
-          s.shake = Math.max(s.shake, Math.min(impactSpeed * 1.5, 10));
-
-          // ── Advance to next row ──
-          s.currentRowIndex++;
         }
       }
 
@@ -815,16 +844,31 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
 
     function drawLetters(): void {
       if (s.phase !== "cascade") return;
+
+      // Compute squash-stretch scales
+      let sx = 1, sy = 1;
+      if (s.impactPhase === "squash") {
+        const t = 140 - s.impactTimer;
+        sx = lerp(1, 1.3, t / 80);
+        sy = lerp(1, 0.6, t / 80);
+      } else if (s.impactPhase === "stretch") {
+        const t = 140 - s.impactTimer;
+        const tStretch = t - 80;
+        sx = lerp(1.3, 0.85, tStretch / 60);
+        sy = lerp(0.6, 1.2, tStretch / 60);
+      }
+
+      const sc = s.clusterScale;
+      const fontSize = BASE_FONT_SIZE * sc;
       ctx.save();
       ctx.translate(s.groupX, s.groupY);
-      ctx.rotate(s.groupRotation);
+      // Apply squash-stretch transform around cluster center
+      ctx.scale(sx, sy);
+
       for (const offset of CLUSTER_OFFSETS) {
-        const jx = rand(-3, 3);
-        const jy = rand(-3, 3);
-        const x = offset.ox + jx;
-        const y = offset.oy + jy;
+        const x = offset.ox * sc;
+        const y = offset.oy * sc;
         const color = letterColorMap[offset.char] ?? colors.text;
-        const fontSize = 48 + rand(-2, 2);
         const glow = s.letterGlowDecay.get(offset.char) ?? 0;
         ctx.save();
         if (glow > 0) {
@@ -959,10 +1003,23 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         s.groupX = W / 2;
       }
       s.groupY = -(rand(60, 140));
-      s.groupVX = 0;
-      s.groupVY = rand(5, 9);
-      s.groupRotation = rand(-0.3, 0.3);
-      s.groupRotationSpeed = rand(-0.02, 0.02);
+
+      // ── Compute cluster scale from smallest row height ──
+      if (s.rows.length > 0) {
+        let smallestRowHeight = Infinity;
+        for (const row of s.rows) {
+          if (row.height < smallestRowHeight) smallestRowHeight = row.height;
+        }
+        const clusterHeight = Math.min(48, smallestRowHeight - 4);
+        s.clusterScale = clusterHeight / BASE_FONT_SIZE;
+      } else {
+        s.clusterScale = 48 / BASE_FONT_SIZE;
+      }
+
+      // ── Initial descent: hop from above-screen onto first row ──
+      if (s.rows.length > 0) {
+        launchHop(s.groupY, s.rows[0].top, s.groupX, s.rows[0].landingX);
+      }
 
       lastTime = performance.now();
       rafId = requestAnimationFrame(frame);
