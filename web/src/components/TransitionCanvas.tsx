@@ -43,7 +43,7 @@ interface AnimationState {
   hopEndX: number;
   hopProgress: number;
   hopDuration: number;
-  impactPhase: "none" | "squash" | "stretch";
+  impactPhase: "none" | "squash" | "stretch" | "dwell";
   impactTimer: number;
   // ── Row cascade ──
   rows: CascadeRow[];
@@ -98,6 +98,11 @@ function clamp(v: number, lo: number, hi: number): number {
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
+}
+
+
+function easeOutQuad(t: number): number {
+  return 1 - (1 - t) * (1 - t);
 }
 
 export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvasProps) {
@@ -573,7 +578,9 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     }
 
     // ── Hop physics constants ──
-    const HOP_G = 0.004; // gravity for parabolic arcs (px/ms²)
+    const HOP_G = 0.002; // gravity for parabolic arcs (px/ms²)
+    const DWELL_MS = 300; // pause on each struck row (ms)
+    const MIN_HOP_MS = 350; // minimum hop duration floor (ms)
 
     function launchHop(fromY: number, toY: number, fromX: number, toX: number): void {
       s.hopStartY = fromY;
@@ -586,11 +593,12 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         // Upward hop
         s.hopDuration = Math.sqrt(2 * distance / HOP_G);
       } else {
-        // Downward hop: parabola peaks at 1.2× the gap above start
-        const peakHeight = distance * 1.2;
+        // Downward hop: parabola peaks at 1.5× the gap above start
+        const peakHeight = distance * 1.5;
         const vy0 = Math.sqrt(2 * HOP_G * peakHeight);
         const disc = vy0 * vy0 - 2 * HOP_G * distance;
         s.hopDuration = disc > 0 ? (vy0 + Math.sqrt(disc)) / HOP_G : Math.sqrt(2 * distance / HOP_G);
+        s.hopDuration = Math.max(s.hopDuration, MIN_HOP_MS);
       }
     }
 
@@ -603,12 +611,18 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       if (s.impactPhase !== "none") {
         s.impactTimer -= dt;
         if (s.impactTimer <= 0) {
-          // Impact complete — launch to next row
-          s.impactPhase = "none";
-          s.impactTimer = 0;
-          if (s.currentRowIndex < s.rows.length) {
-            const nextRow = s.rows[s.currentRowIndex];
-            launchHop(s.groupY, nextRow.top, s.groupX, nextRow.landingX);
+          if (s.impactPhase === "squash" || s.impactPhase === "stretch") {
+            // Transition to dwell phase — pause on the row
+            s.impactPhase = "dwell";
+            s.impactTimer = DWELL_MS;
+          } else if (s.impactPhase === "dwell") {
+            // Dwell complete — launch to next row
+            s.impactPhase = "none";
+            s.impactTimer = 0;
+            if (s.currentRowIndex < s.rows.length) {
+              const nextRow = s.rows[s.currentRowIndex];
+              launchHop(s.groupY, nextRow.top, s.groupX, nextRow.landingX);
+            }
           }
         }
       } else if (s.hopProgress < 1) {
@@ -667,12 +681,12 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
           // ── Compute position along parabola ──
           const t = s.hopProgress * s.hopDuration;
           const distance = s.hopEndY - s.hopStartY;
-          const peakHeight = Math.abs(distance) * 1.2;
+          const peakHeight = Math.abs(distance) * 1.5;
           const vy0 = s.hopStartY > s.hopEndY
             ? 0 // initial descent: start at peak, fall
             : Math.sqrt(2 * HOP_G * peakHeight);
           s.groupY = s.hopStartY + vy0 * t - 0.5 * HOP_G * t * t;
-          s.groupX = lerp(s.hopStartX, s.hopEndX, s.hopProgress);
+          s.groupX = s.hopStartX + (s.hopEndX - s.hopStartX) * easeOutQuad(s.hopProgress);
         }
       }
 
@@ -688,7 +702,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       }
 
       // ── Transition to gather when all rows consumed ──
-      if (!s.gatherStarted && s.currentRowIndex >= s.rows.length && s.rows.length > 0) {
+      if (!s.gatherStarted && s.currentRowIndex >= s.rows.length && s.rows.length > 0 && s.impactPhase === "none") {
         startGather();
       }
       // Fallback: if no rows found, transition after 2s
@@ -858,12 +872,20 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         sy = lerp(0.6, 1.2, tStretch / 60);
       }
 
+
+      // Breathing animation during dwell phase
+      let breathingScale = 1;
+      if (s.impactPhase === "dwell") {
+        const dwellProgress = DWELL_MS - s.impactTimer;
+        breathingScale = 1 + 0.02 * Math.sin(dwellProgress * 2 * Math.PI / 600);
+      }
+
       const sc = s.clusterScale;
       const fontSize = BASE_FONT_SIZE * sc;
       ctx.save();
       ctx.translate(s.groupX, s.groupY);
       // Apply squash-stretch transform around cluster center
-      ctx.scale(sx, sy);
+      ctx.scale(sx * breathingScale, sy * breathingScale);
 
       for (const offset of CLUSTER_OFFSETS) {
         const x = offset.ox * sc;
