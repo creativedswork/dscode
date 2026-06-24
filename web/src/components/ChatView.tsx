@@ -20,8 +20,9 @@ interface ChatViewProps {
   permissionPrompt: ({ toolName: string; preview: string; fuzzyPattern?: string | null; fuzzyArgDesc?: string | null; llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[] }) | null;
   onPermission: (decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string, toolNamePattern?: string, fuzzyMode?: number) => void;
   containerRef?: React.RefObject<HTMLDivElement>;
+  scrollLocked?: boolean;
 }
-export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, permissionPrompt, onPermission, containerRef }: ChatViewProps) {
+export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, permissionPrompt, onPermission, containerRef, scrollLocked = false }: ChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
@@ -110,7 +111,7 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
   }
 
   return (
-    <div ref={(el) => { (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = el; if (containerRef) { (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el; } }} onScroll={handleChatScroll} className="flex-1 overflow-y-auto min-h-0 px-4 py-4 space-y-4">
+    <div ref={(el) => { (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = el; if (containerRef) { (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el; } }} onScroll={handleChatScroll} className={"flex-1 overflow-y-auto min-h-0 px-4 py-4 space-y-4" + (scrollLocked ? " overflow-hidden pointer-events-none" : "")}>
       {messages.map((msg) => (
         <ErrorBoundary key={msg.id} fallback={<FallbackBubble message={msg} />}>
           <MessageBubble message={msg} sessionTime={sessionTime} />
