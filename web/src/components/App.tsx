@@ -90,6 +90,8 @@ export function App() {
   const dashCacheRef = useRef<Record<string, { contentHash: string; html: string }>>(loadDashCache());
   const artifactHtmlRef = useRef(artifactHtml);
   artifactHtmlRef.current = artifactHtml;
+  const artifactLoadingRef = useRef(artifactLoading);
+  artifactLoadingRef.current = artifactLoading;
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -255,10 +257,18 @@ export function App() {
     send({ type: "artifact", action: "generate", context: "session_dashboard" });
     setTransitionPhase("animating");
   }, [send, sessions]);
-
   const handleTransitionComplete = useCallback(() => {
-    setTransitionPhase("idle");
-    setViewMode("dashboard");
+    // Poll until artifactLoading is confirmed false before transitioning,
+    // preventing a flash of "Generating dashboard..." in ArtifactContainer.
+    const tryTransition = () => {
+      if (!artifactLoadingRef.current) {
+        setTransitionPhase("idle");
+        setViewMode("dashboard");
+      } else {
+        requestAnimationFrame(tryTransition);
+      }
+    };
+    requestAnimationFrame(tryTransition);
   }, []);
 
   useEffect(() => { if (connected) { handleSessionAction("list"); handleMcpAction("list"); } }, [connected, handleSessionAction, handleMcpAction]);

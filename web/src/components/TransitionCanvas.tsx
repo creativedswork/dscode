@@ -58,12 +58,15 @@ const DPR_CAP = 2;
 
 // ── Cluster rendering offsets ──
 const CLUSTER_OFFSETS = [
-  { char: "d", ox: -14, oy: -10 },
-  { char: "s", ox: +4, oy: -10 },
-  { char: "c", ox: -10, oy: +8 },
-  { char: "o", ox: +8, oy: +8 },
+  { char: "d", ox: -55, oy: 0 },
+  { char: "s", ox: -33, oy: 0 },
+  { char: "c", ox: -11, oy: 0 },
+  { char: "o", ox: +11, oy: 0 },
+  { char: "d", ox: +33, oy: 0 },
+  { char: "e", ox: +55, oy: 0 },
 ];
-const CLUSTER_RADIUS = 24;
+const CLUSTER_RADIUS = 30;
+const H_MARGIN = 20;
 
 // ── Module-level helpers ──
 
@@ -131,6 +134,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     const warmPurple = `hsl(${(accentHue + 55) % 360}, 55%, 52%)`;
     const letterColorMap: Record<string, string> = {
       d: colors.accent,
+      e: warmPurple,
       s: warmPurple,
       c: "#eab308",
       o: colors.text,
@@ -176,21 +180,17 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       return points.slice(0, MAX_PARTICLES);
     }
 
-    // ── Row list builder (scoped to chat view container) ──
+    // ── Row list builder ──
     function buildRowList(): CascadeRow[] {
-      const container = document.querySelector<HTMLElement>("[data-chat]")
-        ?? document.querySelector<HTMLElement>(".chat-view-container");
-      if (!container) return [];
-
-      const all = container.querySelectorAll<HTMLElement>("[data-collider]");
+      const all = document.querySelectorAll<HTMLElement>("[data-collider]");
       const canvasRect = canvas!.getBoundingClientRect();
       const rows: CascadeRow[] = [];
 
       all.forEach((el) => {
-        // Exclude nested colliders: skip if any ancestor (up to container) also has [data-collider]
+        // Exclude nested colliders: skip if any ancestor also has [data-collider]
         let parent = el.parentElement;
         let nested = false;
-        while (parent && parent !== container) {
+        while (parent) {
           if (parent.hasAttribute("data-collider")) { nested = true; break; }
           parent = parent.parentElement;
         }
@@ -213,6 +213,9 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
           struck: false,
         });
       });
+
+      // Sort by visual Y position for correct top-to-bottom cascade
+      rows.sort((a, b) => a.top - b.top);
       return rows;
     }
 
@@ -532,10 +535,12 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         }
       }
 
+      let struckRow: CascadeRow | null = null;
+
       // ── Y-threshold collision with current row ──
       if (s.currentRowIndex < s.rows.length) {
         const currentRow = s.rows[s.currentRowIndex];
-        if (s.groupY + CLUSTER_RADIUS >= currentRow.top && !currentRow.struck) {
+        if (s.groupY + CLUSTER_RADIUS >= currentRow.top && !currentRow.struck && s.groupX >= currentRow.left - H_MARGIN && s.groupX <= currentRow.left + currentRow.width + H_MARGIN) {
           // Impact!
           const impactSpeed = Math.abs(s.groupVY);
           const fragColor = letterColorMap[
@@ -578,6 +583,8 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
             s.letterGlowDecay.set(offset.char, 20);
           }
 
+          struckRow = currentRow;
+
           // ── Shake ──
           s.shake = Math.max(s.shake, Math.min(impactSpeed * 1.5, 10));
 
@@ -586,33 +593,30 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         }
       }
 
-      // ── Handle message-card children (strike nested colliders within message-card) ──
-      if (s.currentRowIndex < s.rows.length) {
-        const currentRow = s.rows[s.currentRowIndex];
-        if (currentRow.el.getAttribute("data-collider") === "message-card") {
-          const children = currentRow.el.querySelectorAll<HTMLElement>("[data-collider]");
-          const canvasRect = canvas!.getBoundingClientRect();
-          for (const child of children) {
-            const childRect = child.getBoundingClientRect();
-            const childTop = childRect.top - canvasRect.top;
-            if (s.groupY + CLUSTER_RADIUS >= childTop) {
-              // Strike this child too
-              child.style.transition = "none";
-              child.style.backgroundColor = "rgba(255,255,255,0.85)";
-              child.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
-              destroyByType(child, s.groupX, s.groupY);
-              requestAnimationFrame(() => {
-                child.style.transition =
-                  "background-color 60ms ease-out, box-shadow 60ms ease-out, opacity 180ms ease-out 60ms";
-                child.style.backgroundColor = "";
-                child.style.boxShadow = "";
-                child.style.opacity = "0";
-              });
-              const cdx = rand(-4, 4);
-              const cdy = rand(-2, 2);
-              child.style.transform = `translate(${cdx}px, ${cdy}px)`;
-              child.style.transition += ", transform 120ms ease-out";
-            }
+      // ── Handle message-card children of the STRUCK row ──
+      if (struckRow && struckRow.el.getAttribute("data-collider") === "message-card") {
+        const children = struckRow.el.querySelectorAll<HTMLElement>("[data-collider]");
+        const canvasRect = canvas!.getBoundingClientRect();
+        for (const child of children) {
+          const childRect = child.getBoundingClientRect();
+          const childTop = childRect.top - canvasRect.top;
+          if (s.groupY + CLUSTER_RADIUS >= childTop) {
+            // Strike this child too
+            child.style.transition = "none";
+            child.style.backgroundColor = "rgba(255,255,255,0.85)";
+            child.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
+            destroyByType(child, s.groupX, s.groupY);
+            requestAnimationFrame(() => {
+              child.style.transition =
+                "background-color 60ms ease-out, box-shadow 60ms ease-out, opacity 180ms ease-out 60ms";
+              child.style.backgroundColor = "";
+              child.style.boxShadow = "";
+              child.style.opacity = "0";
+            });
+            const cdx = rand(-4, 4);
+            const cdy = rand(-2, 2);
+            child.style.transform = `translate(${cdx}px, ${cdy}px)`;
+            child.style.transition += ", transform 120ms ease-out";
           }
         }
       }
@@ -783,8 +787,8 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         const x = offset.ox + jx;
         const y = offset.oy + jy;
         const color = letterColorMap[offset.char] ?? colors.text;
+        const fontSize = 48 + rand(-2, 2);
         const glow = s.letterGlowDecay.get(offset.char) ?? 0;
-        const fontSize = 36 + rand(-2, 2);
         ctx.save();
         if (glow > 0) {
           ctx.shadowColor = color;
@@ -806,8 +810,16 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         if (p.phase === "formed" && (p.flash ?? 0) > 0.3) {
           ctx.globalCompositeOperation = "lighter";
         }
+        let dx = p.x;
+        let dy = p.y;
+        // Water ripple effect while waiting for artifact
+        if (p.phase === "formed" && !artifactReadyRef.current) {
+          const t = s.formedTime;
+          dx += Math.sin(p.y * 0.04 + t * 0.002) * Math.cos(p.x * 0.03 + t * 0.0015) * 2.5;
+          dy += Math.cos(p.x * 0.04 + t * 0.002) * Math.sin(p.y * 0.03 + t * 0.0015) * 2.5;
+        }
         ctx.beginPath();
-        ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
+        ctx.arc(dx, dy, size, 0, Math.PI * 2);
         ctx.fillStyle = p.color;
         ctx.fill();
         ctx.globalCompositeOperation = "source-over";
@@ -926,6 +938,13 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
         ctx.translate(rand(-s.shake, s.shake), rand(-s.shake, s.shake));
         s.shake *= 0.88;
       }
+      drawFormedGlow(now);
+      drawLetters();
+      drawParticles();
+      drawRings();
+      drawShards();
+
+      ctx.restore();
 
       switch (s.phase) {
         case "cascade":
@@ -939,18 +958,10 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
           break;
       }
 
-      drawFormedGlow(now);
-      drawLetters();
-      drawParticles();
-      drawRings();
-      drawShards();
-
-      ctx.restore();
       drawHUD();
       rafId = requestAnimationFrame(frame);
     }
     rafId = requestAnimationFrame(firstFrame);
-
     return () => {
       cancelAnimationFrame(rafId);
       document.removeEventListener("keydown", onKeyDown);
