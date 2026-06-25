@@ -45,7 +45,7 @@ App (状态持有者)
 | 角色 | 文件 | 职责 |
 |------|------|------|
 | `App` (State Machine) | `components/App.tsx` | 持有 `viewMode` / `transitionPhase` / `artifactLoading` 状态，驱动 UI 切换 |
-| `TransitionCanvas` | `components/TransitionCanvas.tsx` | 全屏 Canvas 动画引擎：粒子系统、集群跳跃、DOM 摧毁、渲染循环 |
+| `TransitionCanvas` | `components/TransitionCanvas.tsx` | 全屏 Canvas 动画引擎：粒子系统、集群跳跃、DOM 摧毁、渲染循环。接收 `scrollContainerRef` prop 用于精确锁定 ChatView 滚动容器 |
 | `ArtifactContainer` | `components/ArtifactContainer.tsx` | 在 iframe 中渲染 Dashboard HTML artifact |
 | `ChatView` | `components/ChatView.tsx` | 对话列表，通过 `data-collider` 标记每行的定位信息 |
 | `ViewModeSwitcher` | `components/ViewModeSwitcher.tsx` | 触发模式切换的 UI 控件（下拉选择） |
@@ -71,8 +71,10 @@ App.handleViewModeChange("dashboard")
             ▼
        TransitionCanvas useEffect()
             │
-            ├─ 读取 DOM [data-collider] 元素 → 构建 rows[]
+            ├─ 读取 DOM [data-collider] 元素 → 构建 rows[]（仅可视区域）
+            ├─ hideOffscreenColliders() → 将 viewport 外的 [data-collider] 设为 opacity:0
             ├─ 初始化 cluster（屏幕顶部外）
+            ├─ 锁定 ChatView 滚动容器（ref-based + ancestor fallback）
             ├─ 启动 rAF 循环
             │
             ├─ Phase 1: CASCADE
@@ -172,7 +174,7 @@ t=0          t=~0.8s     t=~3-8s       t=+0.6s
    │  spawnImpactFragments()     │
 ```
 
-### 4.2 Phase 1: CASCADE（级联摧毁）
+1. **初始化**：`firstFrame()` 中依次调用 `buildRowList()` 扫描可视 `[data-collider]` 构建 rows 数组，`hideOffscreenColliders()` 将视口外元素设为 `opacity:0` 防止内容塌陷时浮入
 
 1. **初始化**：`firstFrame()` 中调用 `buildRowList()` 扫描所有 `[data-collider]` 元素构建 rows 数组
 2. **逐行下跳**：cluster 从 `(W/2, -random(60,140))` 开始下落
@@ -363,28 +365,26 @@ ChatView 及相关子组件中的 DOM 元素通过 `data-collider` 属性标记�
 
 ### 9.3 滚动锁定
 
-动画期间：
-- `scrollContainer`（发现最近的可滚动祖先）→ 冻结 overflow
-- `ChatView` 容器 → `scrollLocked` prop → `overflow-hidden pointer-events-none`
+动画期间有两层滚动锁定：
+
+**Layer 1 — CSS class（ChatView）**：`scrollLocked` prop → `overflow-hidden pointer-events-none`，阻止用户交互。
+
+**Layer 2 — Programmatic（TransitionCanvas）**：通过 `scrollContainerRef` prop 接收 ChatView 的滚动容器引用，动画开始时保存 `scrollTop` 并设置 `overflow: hidden`，cleanup 时恢复。若 ref 为 null，fallback 到祖先遍历查找。
+
+```typescript
+// TransitionCanvas — ref 优先 + 祖先遍历 fallback
+const sc = scrollContainerRef?.current ?? findScrollAncestor();
+const scrollContainer = sc;
+if (scrollContainer) {
+  prevScrollTop = scrollContainer.scrollTop;
+  prevOverflow = scrollContainer.style.overflow;
+  scrollContainer.style.overflow = "hidden";
+}
+```
 
 ---
 
 ## 10. 性能与约束
-
-### 10.1 硬约束
-
-| 约束 | 值 | 原因 |
-|------|-----|------|
-| `MAX_PARTICLES` | 2500 | Canvas 2D 每帧 draw 开销，保持 60fps |
-| `DPR_CAP` | 2 | 4K/Retina 屏幕避免 4× 像素量 |
-| dt cap | 33ms | 防止 tab 切换后的大跳跃 |
-| `SAFETY_TIMEOUT_MS` | 8000 | 全局 fallback |
-| gather force timeout | 5000ms | 无粒子时强制 formed |
-| formed timeout | 5000ms | artifact 永不就绪时强制完成 |
-
-### 10.2 优化策略
-
-- **dtFactor** 归一化：`dtFactor = dt / 16.667` 使物理参数不依赖帧率
 - **Offscreen canvas**：光栅化 "DSCode" 文字避免每帧测量
 - **CSS animation**（text-line / code-line / tool-header / tool-result-line）：利用 GPU 合成层，不占用 Canvas fill 开销
 - **粒子过滤**：每帧 filter 移除 out-of-life 粒子，避免数组膨胀
@@ -433,11 +433,17 @@ if (cached && cached.contentHash === sessionHash) {
 
 ### 11.6 行可见性过滤
 
-`buildRowList()` 中：
+`buildRowList()` 中仅收集当前 Canvas viewport 内可见的 `[data-collider]` 叶子元素作为 cluster hop 的目标行：
 - 跳过 `top >= H || bottom <= 0`（完全在 Canvas 外）
 - 跳过父可滚动容器裁剪区域外的行
 
-### 11.7 光标
+**Off-screen 元素处理**：`hideOffscreenColliders()` 在 `buildRowList()` 之后立即运行，对所有 viewport 外的叶子 `[data-collider]` 设置 `opacity: 0; transition: none`。这些元素不在 `rows[]` 中，cluster 不会跳跃到它们。它们作为"安全网"防止内容塌陷时浮入可视区。
+
+### 11.7 Off-screen Ghost 元素
+
+动画期间，可视区内被摧毁的 DOM 元素可能导致上方内容高度减小，使得原本在 viewport 下方的 `[data-collider]` 元素向上浮入可视区。`hideOffscreenColliders()` 在动画启动时立即将这些 off-screen 元素设为透明，确保即使内容塌陷也不会出现"幽灵元素"。
+
+### 11.8 光标
 
 动画期间 `document.body.style.cursor = "none"` 隐藏鼠标，cleanup 时恢复。
 
@@ -475,7 +481,7 @@ if (cached && cached.contentHash === sessionHash) {
 
 当前不存在反向动画。若要实现，可复用 `TransitionCanvas`，将 `rows` 从 dashboard 中获取（需 dashboard 提供 `data-collider`），或使用纯粒子动画实现"爆炸 → 重构为 chat UI"的效果。
 
----
+| `web/src/components/TransitionCanvas.tsx` | ~1249 | 动画引擎主体 |
 
 ## 附录 A: 关键文件清单
 

@@ -309,7 +309,7 @@ export function App() {
         <main className="flex-1 flex flex-col min-w-0">
           <div className="flex-1 flex flex-col min-h-0" style={{ position: "relative" }}>
           {transitionPhase === "animating" && (
-            <TransitionCanvas artifactReady={!artifactLoading && artifactHtml !== ""} onComplete={handleTransitionComplete} />
+            <TransitionCanvas artifactReady={!artifactLoading && artifactHtml !== ""} onComplete={handleTransitionComplete} scrollContainerRef={chatContainerRef} />
           )}
           {viewMode === "dashboard" && transitionPhase === "idle" ? (
             <ArtifactContainer html={artifactHtml} loading={artifactLoading} />

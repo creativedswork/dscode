@@ -4,6 +4,7 @@ import type { Particle, ImpactRing, Shard } from "../animation/types";
 interface TransitionCanvasProps {
   artifactReady: boolean;
   onComplete: () => void;
+  scrollContainerRef?: React.RefObject<HTMLElement>;
 }
 
 type Phase = "cascade" | "gather" | "formed";
@@ -116,8 +117,7 @@ function lerp(a: number, b: number, t: number): number {
 function easeOutQuad(t: number): number {
   return 1 - (1 - t) * (1 - t);
 }
-
-export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvasProps) {
+export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef }: TransitionCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stateRef = useRef<AnimationState | null>(null);
   const onCompleteRef = useRef(onComplete);
@@ -172,7 +172,8 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
     const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
 
     // ── Lock scroll during animation ──
-    const scrollContainer = (() => { let p = container.parentElement; while (p) { const oy = getComputedStyle(p).overflowY; if (oy === "auto" || oy === "scroll") return p; p = p.parentElement; } return null; })();
+    const sc = scrollContainerRef?.current ?? (() => { let p = container.parentElement; while (p) { const oy = getComputedStyle(p).overflowY; if (oy === "auto" || oy === "scroll") return p; p = p.parentElement; } return null; })();
+    const scrollContainer = sc;
     let prevScrollTop = 0;
     let prevOverflow = "";
     if (scrollContainer) {
@@ -181,7 +182,6 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       scrollContainer.style.overflow = "hidden";
     }
 
-    // ── Offscreen canvas for DSCode wordmark ──
     const offscreen = document.createElement("canvas");
     const offCtx = offscreen.getContext("2d")!;
 
@@ -321,6 +321,23 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
       }
 
       return rows;
+    }
+
+    // ── Hide off-screen colliders to prevent ghost elements ──
+    function hideOffscreenColliders(): void {
+      const all = container.querySelectorAll<HTMLElement>("[data-collider]");
+      const canvasRect = canvas!.getBoundingClientRect();
+      all.forEach((el) => {
+        if (el.querySelector("[data-collider]")) return;
+        if (!el.textContent?.trim()) return;
+        const rect = el.getBoundingClientRect();
+        const top = rect.top - canvasRect.top;
+        const bottom = top + rect.height;
+        if (top >= H || bottom <= 0) {
+          el.style.opacity = "0";
+          el.style.transition = "none";
+        }
+      });
     }
 
     // ── Initialize state ──
@@ -1152,6 +1169,7 @@ export function TransitionCanvas({ artifactReady, onComplete }: TransitionCanvas
 
       // ── Initialize cascade ──
       s.rows = buildRowList();
+      hideOffscreenColliders();
 
       // Init cluster
       s.cluster.x = W / 2;
