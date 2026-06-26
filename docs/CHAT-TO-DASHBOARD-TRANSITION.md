@@ -9,6 +9,7 @@
    4.2 [布局冻结机制](#42-布局冻结机制)
 5. [粒子系统设计](#5-粒子系统设计)
 6. [Hop-Step 集群系统](#6-hop-step-集群系统)
+   6.4 [Hop Arc 视口约束](#64-hop-arc-视口约束)
 7. [DOM 摧毁效果矩阵](#7-dom-摧毁效果矩阵)
 8. [渲染管线](#8-渲染管线)
 9. [CSS / 主题协同](#9-css--主题协同)
@@ -16,12 +17,6 @@
 11. [边界情况与容错](#11-边界情况与容错)
 12. [扩展指南](#12-扩展指南)
 
-
-### 6.4 Hop Arc 视口约束
-
-Hop 弧线公式：`c.y = lerp(startY, endY, t) - peakHeight × sin(t·π)`，其中 `peakHeight = min(rawPeak, max(0, midY))`，`rawPeak = max(40, gap × 0.55)`，`midY = (startY + endY) / 2`。
-
-**关键约束**：`peakHeight ≤ midY`。当 hop 的起点和终点靠近视口顶部时（如 row `top` ≈ 20~60px），若无约束，硬编码的 40px 最小 peak 会将弧线推至 `c.y < 0`（视口外不可见区域）。约束后确保弧线峰值 `c.y ≥ 0`，cluster 始终在可视范围内。对于视口中部的正常 hop（midY ≫ 40），行为不变。
 
 ---
 
@@ -156,7 +151,7 @@ drop → squash → stretch → dwell → hopping → squash → … → (all ro
 | `squash` | 80ms | scaleY: 1.0→0.6, scaleX: 1.0→1.3，模拟撞击形变 |
 | `stretch` | 60ms | scaleY: 0.6→1.2, scaleX: 1.3→0.85，弹性回弹 |
 | `dwell` | 300ms | 微小呼吸动画（scale 1.0±0.02），等待读感 |
-| `hopping` | 350-800ms（√gap×25） | 正弦弧线跳跃到下一行 |
+| `hopping` | 350-800ms（√gap×25） | 正弦弧线跳跃到下一行；peakHeight 受 `min(rawPeak, midY)` 约束，确保弧线不超出视口顶部 |
 
 ---
 
@@ -314,6 +309,13 @@ const CLUSTER_OFFSETS = [
 ### 6.3 视觉变形
 
 绘制时使用 `ctx.translate(originX, cy) → ctx.scale(sx, sy) → ctx.translate(-originX, -cy)` 实现以碰撞脚点为原点的缩放变形。
+
+
+### 6.4 Hop Arc 视口约束
+
+Hop 弧线公式：`c.y = lerp(startY, endY, t) - peakHeight × sin(t·π)`，其中 `peakHeight = min(rawPeak, max(0, midY))`，`rawPeak = max(40, gap × 0.55)`，`midY = (startY + endY) / 2`。
+
+**关键约束**：`peakHeight ≤ midY`。当 hop 的起点和终点靠近视口顶部时（如 row `top` ≈ 20~60px），若无约束，硬编码的 40px 最小 peak 会将弧线推至 `c.y < 0`（视口外不可见区域）。约束后确保弧线峰值 `c.y ≥ 0`，cluster 始终在可视范围内。对于视口中部的正常 hop（midY ≫ 40），行为不变。
 
 ---
 
