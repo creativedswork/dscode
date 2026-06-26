@@ -720,6 +720,13 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       row.el.style.backgroundColor = "rgba(255,255,255,0.85)";
       row.el.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
 
+      // Lock layout before DOM mutation to prevent cascade drift
+      if (getComputedStyle(row.el).display === "inline") {
+        row.el.style.display = "inline-block";
+      }
+      row.el.style.boxSizing = "border-box";
+      row.el.style.height = row.height + "px";
+
       destroyByType(row.el, impactX, impactY);
 
       requestAnimationFrame(() => {
