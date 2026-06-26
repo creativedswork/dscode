@@ -893,8 +893,11 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
           const et = easeOutQuad(t);
 
           // Sine arc — properly traverses from start to end
+          // Clamp peak height to prevent arc from pushing cluster above viewport
           const gap = Math.abs(c.hopEndY - c.hopStartY);
-          const peakHeight = Math.max(40, gap * 0.55);
+          const rawPeak = Math.max(40, gap * 0.55);
+          const midY = (c.hopStartY + c.hopEndY) / 2;
+          const peakHeight = Math.min(rawPeak, Math.max(0, midY));
           c.y = lerp(c.hopStartY, c.hopEndY, t) - peakHeight * Math.sin(t * Math.PI);
           c.x = lerp(c.hopStartX, c.hopEndX, et);
 

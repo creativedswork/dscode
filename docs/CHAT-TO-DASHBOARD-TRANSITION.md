@@ -16,6 +16,13 @@
 11. [边界情况与容错](#11-边界情况与容错)
 12. [扩展指南](#12-扩展指南)
 
+
+### 6.4 Hop Arc 视口约束
+
+Hop 弧线公式：`c.y = lerp(startY, endY, t) - peakHeight × sin(t·π)`，其中 `peakHeight = min(rawPeak, max(0, midY))`，`rawPeak = max(40, gap × 0.55)`，`midY = (startY + endY) / 2`。
+
+**关键约束**：`peakHeight ≤ midY`。当 hop 的起点和终点靠近视口顶部时（如 row `top` ≈ 20~60px），若无约束，硬编码的 40px 最小 peak 会将弧线推至 `c.y < 0`（视口外不可见区域）。约束后确保弧线峰值 `c.y ≥ 0`，cluster 始终在可视范围内。对于视口中部的正常 hop（midY ≫ 40），行为不变。
+
 ---
 
 ## 1. 概述
