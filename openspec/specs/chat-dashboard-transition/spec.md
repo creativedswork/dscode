@@ -37,7 +37,7 @@ The TransitionCanvas SHALL implement a three-phase animation state machine: casc
 ---
 
 ### Requirement: Hop-step cluster cascade
-The animation SHALL render a six-letter "dscode" cluster that cascades row-by-row through visible `[data-collider]` DOM elements with hop-step game physics including squash/stretch impact deformation, dwell pauses, and viewport-constrained arc hopping.
+The animation SHALL render a six-letter "dscode" cluster that cascades row-by-row through visible `[data-collider]` DOM elements with hop-step game physics including squash/stretch impact deformation, dwell pauses, and viewport-constrained arc hopping. After each strike and recalibration, `rows[]` SHALL be re-sorted by live `top` to maintain correct visual cascade order.
 
 #### Scenario: Cluster initialization
 - **WHEN** cascade phase begins
@@ -69,6 +69,12 @@ The animation SHALL render a six-letter "dscode" cluster that cascades row-by-ro
 - **WHEN** every row in the `rows[]` array has `struck === true`
 - **THEN** the cluster SHALL stop hopping
 - **AND** the animation transitions to gather phase
+
+#### Scenario: Rows re-sorted after recalibration
+- **WHEN** `strikeRow()` completes DOM mutation and recalibrates unstruck row positions
+- **THEN** `s.rows` SHALL be re-sorted by `top` ascending
+- **AND** `c.rowIndex` SHALL be set to the struck row's new index in the sorted array
+- **AND** subsequent `launchHop()` calls SHALL target the visually correct next unstruck row
 
 ---
 
