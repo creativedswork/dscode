@@ -49,3 +49,14 @@ The frontend SHALL limit the dashboard cache to the 20 most recently used sessio
 #### Scenario: Cache eviction on overflow
 - **WHEN** the cache already contains 20 entries and a new session's dashboard is cached
 - **THEN** the oldest entry SHALL be removed before the new entry is added
+
+### Requirement: Cache hit triggers instant view switch
+When a dashboard cache hit occurs on view mode switch, the view mode SHALL switch instantly without triggering the transition animation.
+
+#### Scenario: Cache hit bypasses transition
+- **WHEN** user selects "Dashboard" and a valid cache entry exists for the current session with matching contentHash
+- **THEN** the frontend SHALL set `artifactHtml` to the cached HTML
+- **AND** `viewMode` SHALL be set to `"dashboard"` immediately
+- **AND** `transitionPhase` SHALL remain `"idle"` (no animation plays)
+- **AND** no `artifact generate` command SHALL be sent
+- **AND** the View Mode dropdown SHALL update to show "Dashboard" as selected
