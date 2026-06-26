@@ -338,6 +338,18 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
           el.style.opacity = "0";
           el.style.transition = "none";
         }
+
+        // ── Inner scroll clip: hide rows clipped by overflow-y ancestors ──
+        // Prevents ghost rows from briefly appearing when scrollTop is
+        // restored after a strike inside a scrollable container.
+        const innerSa = findScrollAncestor(el);
+        if (innerSa) {
+          const saRect = innerSa.getBoundingClientRect();
+          if (rect.bottom <= saRect.top || rect.top >= saRect.bottom) {
+            el.style.opacity = "0";
+            el.style.transition = "none";
+          }
+        }
       });
     }
 
@@ -783,7 +795,22 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       const compensateDx = preFreezeLeft - postFreezeLeft;
       console.log("[dscode] strikeRow compensate dy:", compensateDy, "dx:", compensateDx);
 
+      // ── Snapshot inner scroll container position before DOM mutation ──
+      // Inner overflow-y: auto/scroll containers (e.g., ToolCard max-h-40) can
+      // drift their scrollTop when child content is destroyed via innerHTML
+      // replacement, causing hidden content to float up. Snapshot and restore.
+      const innerScrollAncestor = findScrollAncestor(row.el);
+      const innerScrollTop = innerScrollAncestor ? innerScrollAncestor.scrollTop : 0;
+      console.log("[dscode] strikeRow innerScrollTop snapshot:", innerScrollTop, "ancestor:", innerScrollAncestor?.tagName);
+
+
       destroyByType(row.el, impactX, impactY);
+
+      // Restore inner scroll position to prevent cumulative drift
+      if (innerScrollAncestor && innerScrollAncestor.scrollTop !== innerScrollTop) {
+        console.log("[dscode] strikeRow restoring innerScrollTop from", innerScrollAncestor.scrollTop, "to", innerScrollTop);
+        innerScrollAncestor.scrollTop = innerScrollTop;
+      }
 
       requestAnimationFrame(() => {
         row.el.style.transition =
