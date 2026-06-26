@@ -658,6 +658,9 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         case "message-card":
           destroyMessageCard(el);
           break;
+        case "table-cell":
+          destroyTextLine(el);
+          break;
         default:
           spawnParticles(el);
           break;
@@ -711,6 +714,16 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       if (row.struck) return;
 
       row.struck = true;
+      // Snapshot row top before any DOM mutation or layout freeze.
+      // ── Position compensation for inline → inline-block shift ──
+      // Snapshot the element's pre-mutation visual position, then measure
+      // the delta after layout freeze. Apply a compensating transform so
+      // the element stays visually pinned regardless of browser reflow.
+      const preFreezeCanvasRect = canvas!.getBoundingClientRect();
+      const preFreezeRect = row.el.getBoundingClientRect();
+      const preFreezeTop = preFreezeRect.top - preFreezeCanvasRect.top;
+      const preFreezeLeft = preFreezeRect.left - preFreezeCanvasRect.left;
+      console.log("[dscode] strikeRow preFreezeTop:", preFreezeTop, "row.top:", row.top, "c.y:", c.y);
 
       // Impact effects — distributed across all six letters
       const impactX = row.landingX;
@@ -725,6 +738,7 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       const cs = getComputedStyle(row.el);
       if (cs.display === "inline") {
         row.el.style.display = "inline-block";
+        row.el.style.verticalAlign = cs.verticalAlign || "baseline";
       }
       row.el.style.boxSizing = "border-box";
       row.el.style.height = row.height + "px";
@@ -733,6 +747,15 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       row.el.style.paddingTop = cs.paddingTop;
       row.el.style.paddingBottom = cs.paddingBottom;
       row.el.style.lineHeight = cs.lineHeight;
+
+      // Measure position delta caused by layout freeze and compensate
+      const postFreezeCanvasRect = canvas!.getBoundingClientRect();
+      const postFreezeRect = row.el.getBoundingClientRect();
+      const postFreezeTop = postFreezeRect.top - postFreezeCanvasRect.top;
+      const postFreezeLeft = postFreezeRect.left - postFreezeCanvasRect.left;
+      const compensateDy = preFreezeTop - postFreezeTop;
+      const compensateDx = preFreezeLeft - postFreezeLeft;
+      console.log("[dscode] strikeRow compensate dy:", compensateDy, "dx:", compensateDx);
 
       destroyByType(row.el, impactX, impactY);
 
@@ -748,8 +771,10 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
 
       const dx = rand(-8, 8);
       const dy = rand(-4, 2);
-      row.el.style.transform = `translate(${dx}px, ${dy}px)`;
+      // Apply shake + position compensation from layout freeze
+      row.el.style.transform = `translate(${compensateDx + dx}px, ${compensateDy + dy}px)`;
       row.el.style.transition += ", transform 120ms ease-out";
+      console.log("[dscode] strikeRow final transform:", `translate(${compensateDx + dx}px, ${compensateDy + dy}px)`, "compensateDy:", compensateDy);
 
       for (const offset of CLUSTER_OFFSETS) {
         const lx = c.x + offset.ox;
@@ -779,16 +804,17 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       // DOM destruction (innerHTML replacement, scatter spans) can cause
       // subtle layout shifts even with height locking, especially when
       // <span> elements contain block children (invalid nesting triggers
-      // browser block-in-inline splitting). Re-measure every row — including
-      // the struck row — so the cluster stays locked to the actual DOM.
+      // browser block-in-inline splitting). Re-measure unstruck rows — the
+      // struck row uses the pre-freeze snapshot instead.
       {
         const canvasRect = canvas!.getBoundingClientRect();
 
-        // Re-measure the struck row's current position and sync cluster Y
-        const struckRect = row.el.getBoundingClientRect();
-        const newTop = struckRect.top - canvasRect.top;
-        row.top = newTop;
-        c.y = newTop;
+        // Use pre-freeze snapshot for struck row — layout freeze
+        // (inline → inline-block) can shift getBoundingClientRect() in
+        // browsers that split inline boxes around block children.
+        // The CSS transform compensation keeps the element visually pinned.
+        row.top = preFreezeTop;
+        c.y = preFreezeTop;
 
         // Re-measure all remaining unstruck rows
         for (let i = 0; i < s.rows.length; i++) {

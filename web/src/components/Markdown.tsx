@@ -71,6 +71,7 @@ export function Markdown({ children, className = "" }: MarkdownProps) {
           ),
           th: ({ children }) => (
             <th
+              data-collider="table-cell"
               className="px-3 py-1.5 text-left font-medium"
               style={{
                 border: "1px solid var(--color-border)",
@@ -82,6 +83,7 @@ export function Markdown({ children, className = "" }: MarkdownProps) {
           ),
           td: ({ children }) => (
             <td
+              data-collider="table-cell"
               className="px-3 py-1.5"
               style={{ border: "1px solid var(--color-border)" }}
             >
