@@ -1485,7 +1485,7 @@ Modify the HTML to fulfill the user's request. Output the complete modified HTML
       const m = msg as any;
       if (m.role === "assistant" && Array.isArray(m.content)) {
         for (const block of m.content) {
-          if (block.type === "tool_use") {
+          if (block.type === "toolCall") {
             const name = block.name || "unknown";
             const existing = toolStats.get(name) || { calls: 0, errors: 0 };
             existing.calls++;
@@ -1493,25 +1493,13 @@ Modify the HTML to fulfill the user's request. Output the complete modified HTML
           }
         }
       }
-      if (m.role === "user" && Array.isArray(m.content)) {
-        for (const block of m.content) {
-          if (block.type === "tool_result" && block.is_error) {
-            const prevIdx = messages.indexOf(msg) - 1;
-            if (prevIdx >= 0) {
-              const prevMsg = messages[prevIdx] as any;
-              if (prevMsg.role === "assistant" && Array.isArray(prevMsg.content)) {
-                for (const prevBlock of prevMsg.content) {
-                  if (prevBlock.type === "tool_use" && prevBlock.id === block.tool_use_id) {
-                    const name = prevBlock.name || "unknown";
-                    const existing = toolStats.get(name) || { calls: 0, errors: 0 };
-                    existing.errors++;
-                    toolStats.set(name, existing);
-                    break;
-                  }
-                }
-              }
-            }
-          }
+      if (m.role === "toolResult" && m.isError) {
+        const name = m.toolName || "unknown";
+        const existing = toolStats.get(name);
+        if (existing) {
+          existing.errors++;
+        } else {
+          toolStats.set(name, { calls: 0, errors: 1 });
         }
       }
     }
@@ -1530,6 +1518,7 @@ Modify the HTML to fulfill the user's request. Output the complete modified HTML
     const totalToolErrors = toolEntries.reduce((sum, t) => sum + t.errorCount, 0);
 
     // Timing
+
     const sessionActiveMs = sm?.getTotalActiveMs?.() ?? 0;
     const turnCount = (messages as any[]).filter((m: any) => m.role === "user").length;
     const avgTurnMs = turnCount > 0 ? Math.round(sessionActiveMs / turnCount) : 0;
