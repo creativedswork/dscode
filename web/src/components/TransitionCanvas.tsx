@@ -33,6 +33,7 @@ interface ClusterState {
   hopEndY: number;
   hopDuration: number;
   hopProgress: number;
+  nextRowIndex: number;
 }
 
 interface AnimationState {
@@ -367,6 +368,7 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         hopEndY: 0,
         hopDuration: 0,
         hopProgress: 0,
+        nextRowIndex: -1,
       },
       rows: [],
       scaleX: 1,
@@ -687,20 +689,44 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
 
     function launchHop(): void {
       const c = s.cluster;
+      const canvasRect = canvas!.getBoundingClientRect();
       const currentRow = s.rows[c.rowIndex];
-      const nextIndex = c.rowIndex + 1;
 
-      if (nextIndex >= s.rows.length) {
-        // No more rows — start gather
+      // Re-measure live position — DOM shifts from previous strikes
+      // may have moved rows relative to the canvas since buildRowList().
+      const currentRect = currentRow.el.getBoundingClientRect();
+      const liveCurrentTop = currentRect.top - canvasRect.top;
+
+      // Find the next unstruck row, using live positions
+      let nextIndex = c.rowIndex + 1;
+      let nextRow: CascadeRow | null = null;
+      let liveNextTop = 0;
+      while (nextIndex < s.rows.length) {
+        const candidate = s.rows[nextIndex];
+        if (candidate.struck) { nextIndex++; continue; }
+        const candidateRect = candidate.el.getBoundingClientRect();
+        const candidateTop = candidateRect.top - canvasRect.top;
+        // Skip rows shifted above current row, entirely above viewport, or candidate is above canvas
+        if (candidateTop < liveCurrentTop || candidateRect.bottom - canvasRect.top <= 0 || candidateTop < 0) { nextIndex++; continue; }
+        nextRow = candidate;
+        c.nextRowIndex = nextIndex;
+        liveNextTop = candidateTop;
+        break;
+      }
+
+      if (!nextRow) {
         startGather();
         return;
       }
 
-      const nextRow = s.rows[nextIndex];
+      // Update the row's stored position to the live measurement
+      nextRow.top = liveNextTop;
+      currentRow.top = liveCurrentTop;
+
       c.hopStartX = currentRow.landingX;
-      c.hopStartY = currentRow.top;
+      c.hopStartY = liveCurrentTop;
       c.hopEndX = nextRow.landingX;
-      c.hopEndY = nextRow.top;
+      c.hopEndY = liveNextTop;
 
       const gap = Math.abs(c.hopEndY - c.hopStartY);
       c.hopDuration = Math.max(350, Math.min(800, Math.sqrt(gap) * 25));
@@ -809,12 +835,12 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       {
         const canvasRect = canvas!.getBoundingClientRect();
 
-        // Use pre-freeze snapshot for struck row — layout freeze
-        // (inline → inline-block) can shift getBoundingClientRect() in
-        // browsers that split inline boxes around block children.
-        // The CSS transform compensation keeps the element visually pinned.
-        row.top = preFreezeTop;
-        c.y = preFreezeTop;
+        // Use pre-freeze snapshot (adjusted to current canvas position) for struck row.
+        // preFreezeTop was measured before DOM mutation; canvas may have shifted since.
+        const canvasShiftY = preFreezeCanvasRect.top - canvasRect.top;
+        row.top = preFreezeTop + canvasShiftY;
+        c.y = preFreezeTop + canvasShiftY;
+        console.log("[dscode] strikeRow canvasShiftY:", canvasShiftY, "preFreezeTop:", preFreezeTop, "adjustedTop:", preFreezeTop + canvasShiftY);
 
         // Re-measure all remaining unstruck rows
         for (let i = 0; i < s.rows.length; i++) {
@@ -826,6 +852,8 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
           r.width = rect.width;
           r.height = rect.height;
         }
+        s.rows.sort((a, b) => a.top - b.top);
+        c.rowIndex = s.rows.findIndex(r => r === row);
 
         // Update active hop target if cluster is en route to a shifted row
         if (c.hopState === "hopping") {
@@ -932,10 +960,11 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
             c.x = c.hopEndX;
             c.hopProgress = 0;
 
-            // Advance to next row
-            const newIndex = c.rowIndex + 1;
-            if (newIndex >= s.rows.length) {
-              // All rows visited — start gather
+            // Advance to the row that launchHop found (may have skipped rows above viewport)
+            const newIndex = c.nextRowIndex;
+            c.nextRowIndex = -1;
+            if (newIndex < 0 || newIndex >= s.rows.length) {
+              // No valid next row — start gather
               startGather();
               return;
             }
