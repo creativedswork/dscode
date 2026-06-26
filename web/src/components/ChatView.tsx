@@ -254,6 +254,7 @@ function InlinePermission({
     <div className="flex justify-start animate-fade-up">
       <div
         className="max-w-[85%] md:max-w-[75%] px-4 py-3"
+        data-collider="message-card"
         style={{
           borderRadius: "12px",
           border: "1px solid var(--color-border)",
