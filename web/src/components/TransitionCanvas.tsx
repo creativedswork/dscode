@@ -721,11 +721,18 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       row.el.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
 
       // Lock layout before DOM mutation to prevent cascade drift
-      if (getComputedStyle(row.el).display === "inline") {
+      // Freeze all box-model properties: display, height, margins, padding, line-height
+      const cs = getComputedStyle(row.el);
+      if (cs.display === "inline") {
         row.el.style.display = "inline-block";
       }
       row.el.style.boxSizing = "border-box";
       row.el.style.height = row.height + "px";
+      row.el.style.marginTop = cs.marginTop;
+      row.el.style.marginBottom = cs.marginBottom;
+      row.el.style.paddingTop = cs.paddingTop;
+      row.el.style.paddingBottom = cs.paddingBottom;
+      row.el.style.lineHeight = cs.lineHeight;
 
       destroyByType(row.el, impactX, impactY);
 
@@ -765,6 +772,42 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
           spawnParticles(parentCard);
           parentCard.style.transition = "opacity 200ms ease-out";
           parentCard.style.opacity = "0";
+        }
+      }
+
+      // ── Recalibrate all row positions after DOM mutation ──
+      // DOM destruction (innerHTML replacement, scatter spans) can cause
+      // subtle layout shifts even with height locking, especially when
+      // <span> elements contain block children (invalid nesting triggers
+      // browser block-in-inline splitting). Re-measure every row — including
+      // the struck row — so the cluster stays locked to the actual DOM.
+      {
+        const canvasRect = canvas!.getBoundingClientRect();
+
+        // Re-measure the struck row's current position and sync cluster Y
+        const struckRect = row.el.getBoundingClientRect();
+        const newTop = struckRect.top - canvasRect.top;
+        row.top = newTop;
+        c.y = newTop;
+
+        // Re-measure all remaining unstruck rows
+        for (let i = 0; i < s.rows.length; i++) {
+          const r = s.rows[i];
+          if (r.struck) continue;
+          const rect = r.el.getBoundingClientRect();
+          r.top = rect.top - canvasRect.top;
+          r.left = rect.left - canvasRect.left;
+          r.width = rect.width;
+          r.height = rect.height;
+        }
+
+        // Update active hop target if cluster is en route to a shifted row
+        if (c.hopState === "hopping") {
+          const nextIndex = c.rowIndex + 1;
+          if (nextIndex < s.rows.length) {
+            c.hopEndY = s.rows[nextIndex].top;
+            c.hopEndX = s.rows[nextIndex].landingX;
+          }
         }
       }
     }

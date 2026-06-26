@@ -6,6 +6,7 @@
 2. [架构设计](#2-架构设计)
 3. [状态机与流程](#3-状态机与流程)
 4. [动画管线](#4-动画管线)
+   4.2 [布局冻结机制](#42-布局冻结机制)
 5. [粒子系统设计](#5-粒子系统设计)
 6. [Hop-Step 集群系统](#6-hop-step-集群系统)
 7. [DOM 摧毁效果矩阵](#7-dom-摧毁效果矩阵)
@@ -176,11 +177,36 @@ t=0          t=~0.8s     t=~3-8s       t=+0.6s
 
 1. **初始化**：`firstFrame()` 中依次调用 `buildRowList()` 扫描可视 `[data-collider]` 构建 rows 数组，`hideOffscreenColliders()` 将视口外元素设为 `opacity:0` 防止内容塌陷时浮入
 
-1. **初始化**：`firstFrame()` 中调用 `buildRowList()` 扫描所有 `[data-collider]` 元素构建 rows 数组
 2. **逐行下跳**：cluster 从 `(W/2, -random(60,140))` 开始下落
-3. **撞击行时**：调用 `strikeRow()`→`destroyByType(el, impactX, impactY)`
+3. **撞击行时**：`strikeRow()` 先锁定行高（`height` = 快照值 + `box-sizing: border-box`，inline 元素额外设置 `display: inline-block`）以防止 DOM 突变破坏页面布局 → 然后调用 `destroyByType(el, impactX, impactY)` 触发摧毁效果
 4. **行被标记 struck=true**，触发对应摧毁效果
 5. **所有行处理完毕或 ESC 跳过** → `startGather()`
+
+### 4.2 布局冻结机制
+
+Cascade 阶段每行被 cluster 撞击时，`strikeRow()` 在调用 `destroyByType()` **之前**先冻结元素的全部盒模型属性，确保 DOM 摧毁效果（如 `innerHTML` 替换）不会改变元素在文档流中的贡献空间：
+
+- **快照高度锁定**：使用 `buildRowList()` 捕获的 `row.height`（`getBoundingClientRect().height` 快照值），设置 `el.style.height = row.height + "px"`
+- **盒模型修正**：`el.style.boxSizing = "border-box"` 使显式 height 与快照视觉高度一致
+- **Inline 元素兼容**：对 `display: inline` 的元素设置 `display: inline-block`，使其接受 height 锁定（纯 inline 元素忽略 height 属性）
+- **Margin/Padding 冻结**：额外冻结 `marginTop`、`marginBottom`、`paddingTop`、`paddingBottom`、`lineHeight`，防止 DOM 突变导致这些属性隐式变化
+- **不裁剪**：不使用 `overflow: hidden`，保证 scatter 动画的 `transform: translate()` 飞出效果不被裁切
+- **按需锁定**：仅被 cluster 实际撞击的行才锁定，ESC 跳过时未撞击行不受影响
+
+#### 4.2.1 位置重新校准（Position Recalibration）
+
+即使冻结了盒模型属性，DOM 摧毁（尤其是 `destroyTextLine` / `destroyToolHeader` 中的 `innerHTML` 替换）仍可能因以下原因导致所有行（包括已撞击行）位置漂移：
+
+- **非法 HTML 嵌套**：`<span data-collider="text-line">` 内包含 `<Markdown>` 组件，后者渲染为 `<div>`。浏览器对 block-in-inline 嵌套实施 anonymous block-box 拆分，`innerHTML` 替换后拆分结构变化，即使 height 锁定仍可能产生微小布局偏移
+- **Flex/Grid 容器重排**：`destroyToolHeader` 清除 flex 容器内容后追加 inline-block span，flex 上下文丢失可能导致父容器重新分配空间
+- **上游内容塌陷**：已撞击行上方的 DOM 元素（如 message-card padding、thinking block 折叠等）可能因相邻 DOM 突变而产生整体位移
+
+**解决方案**：每次 `strikeRow()` 完成后，立即：
+1. 重新测量**当前撞击行**的 `getBoundingClientRect()`，更新 `row.top` 并同步 cluster 的 `c.y`，确保 cluster 视觉上始终锁定在撞击元素上
+2. 重新测量所有**未撞击行**的 `getBoundingClientRect()`，更新其 `top`/`left`/`width`/`height`
+3. 若 cluster 正在 hop 途中（`hopState === "hopping"`），同步更新 `hopEndY`/`hopEndX` 为目标行的最新位置
+
+此三重机制（盒模型冻结 + 撞击行位置同步 + 未撞击行重校准）确保 cascade 阶段的碰撞位置始终准确，cluster 不会漂移到不可见区域。
 
 ### 4.3 Phase 2: GATHER（粒子汇聚）
 
@@ -296,6 +322,8 @@ const CLUSTER_OFFSETS = [
 | `message-card` | `destroyMessageCard()` | 短暂白色 flash + 4-6 shards（不改变 opacity） | 是（shards） |
 
 **父容器级联清理**：当一个 `tool-card` 或 `message-card` 内所有子 `[data-collider]` 都已 struck，自动 spawnParticles 并 opacity→0。
+
+**布局冻结**：所有摧毁方法在 `strikeRow()` 中被调用之前，元素的高度已被锁定（`height` + `box-sizing: border-box`，详见 §4.2）。这确保 DOM 突变（`innerHTML` 替换等）不会改变元素在文档流中的贡献空间，防止下游行位置漂移。尤其对于 `tool-header`（flex 容器，`innerHTML` 替换为 scatter span 后 flex 上下文丢失、高度变化最大），高度锁定是消除级联布局偏移的关键。
 
 ---
 
@@ -437,11 +465,11 @@ if (cached && cached.contentHash === sessionHash) {
 - 跳过 `top >= H || bottom <= 0`（完全在 Canvas 外）
 - 跳过父可滚动容器裁剪区域外的行
 
-**Off-screen 元素处理**：`hideOffscreenColliders()` 在 `buildRowList()` 之后立即运行，对所有 viewport 外的叶子 `[data-collider]` 设置 `opacity: 0; transition: none`。这些元素不在 `rows[]` 中，cluster 不会跳跃到它们。它们作为"安全网"防止内容塌陷时浮入可视区。
+**Off-screen 元素处理**：`hideOffscreenColliders()` 在 `buildRowList()` 之后立即运行，对所有 viewport 外的叶子 `[data-collider]` 设置 `opacity: 0; transition: none`。这些元素不在 `rows[]` 中，cluster 不会跳跃到它们。自 `cascade-freeze-layout` 引入布局冻结（§4.2）之后，内容塌陷的根因已被消除，此项降级为冗余安全网。
 
 ### 11.7 Off-screen Ghost 元素
 
-动画期间，可视区内被摧毁的 DOM 元素可能导致上方内容高度减小，使得原本在 viewport 下方的 `[data-collider]` 元素向上浮入可视区。`hideOffscreenColliders()` 在动画启动时立即将这些 off-screen 元素设为透明，确保即使内容塌陷也不会出现"幽灵元素"。
+动画期间，可视区内被摧毁的 DOM 元素可能因 `innerHTML` 替换导致高度变化，使得原本在 viewport 下方的 `[data-collider]` 元素向上浮入可视区。**主要防线**：`strikeRow()` 在调用 `destroyByType()` 之前锁定每行高度（§4.2），从根因上消除布局漂移。`hideOffscreenColliders()` 作为冗余安全网在动画启动时隐藏 off-screen 元素。
 
 ### 11.8 光标
 
