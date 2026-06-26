@@ -3,9 +3,10 @@ import { Chat, ChartBar } from "@phosphor-icons/react";
 interface ViewModeSwitcherProps {
   viewMode: "chat" | "dashboard";
   onChange: (mode: "chat" | "dashboard") => void;
+  disabled?: boolean;
 }
 
-export function ViewModeSwitcher({ viewMode, onChange }: ViewModeSwitcherProps) {
+export function ViewModeSwitcher({ viewMode, onChange, disabled }: ViewModeSwitcherProps) {
   const Icon = viewMode === "chat" ? Chat : ChartBar;
 
   return (
@@ -24,7 +25,7 @@ export function ViewModeSwitcher({ viewMode, onChange }: ViewModeSwitcherProps) 
         }}
       >
         <option value="chat">Chat</option>
-        <option value="dashboard">Dashboard</option>
+        <option value="dashboard" disabled={disabled}>Dashboard</option>
       </select>
     </div>
   );

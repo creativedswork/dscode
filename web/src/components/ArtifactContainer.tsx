@@ -27,7 +27,7 @@ export function ArtifactContainer({ html, loading }: ArtifactContainerProps) {
     }
   }, [cleanedHtml]);
 
-  if (loading) {
+  if (loading || !cleanedHtml) {
     return (
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="flex flex-col items-center gap-4">
@@ -41,17 +41,6 @@ export function ArtifactContainer({ html, loading }: ArtifactContainerProps) {
       </div>
     );
   }
-
-  if (!cleanedHtml) {
-    return (
-      <div className="flex-1 flex items-center justify-center p-8">
-        <div className="text-center max-w-md p-8" style={{ borderRadius: "12px", border: "1px solid var(--color-border)", backgroundColor: "var(--color-surface)" }}>
-          <p className="text-sm" style={{ color: "var(--color-text-muted)" }}>Waiting for dashboard generation...</p>
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div className="flex-1 min-h-0 flex flex-col" style={{ backgroundColor: "var(--color-bg)" }}>
       <iframe

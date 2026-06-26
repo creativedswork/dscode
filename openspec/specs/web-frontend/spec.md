@@ -184,6 +184,32 @@ ChatView SHALL expose a ref to its scroll container so TransitionCanvas can prog
 - **AND** TransitionCanvas SHALL use this ref to save/restore scroll position and set `overflow: hidden` during animation
 
 
+### Requirement: Dashboard mode disabled when session has no messages
+The `ViewModeSwitcher` component SHALL disable the "Dashboard" option when the current session has no messages (`messages.length === 0`). The "Chat" option SHALL remain selectable. The disabled option SHALL use the HTML `disabled` attribute on the `<option>` element.
+
+#### Scenario: Dashboard option disabled on empty session
+- **WHEN** the current session has zero messages (`messages.length === 0`)
+- **THEN** the Dashboard `<option>` in the `ViewModeSwitcher` dropdown SHALL have the `disabled` attribute
+- **AND** the Chat `<option>` SHALL remain enabled and selectable
+- **AND** the guard clause in `handleViewModeChange` SHALL return early without switching modes if `messages.length === 0`
+
+#### Scenario: Dashboard automatically reverts to Chat on message clear
+- **WHEN** `viewMode` is `"dashboard"` and `messages` becomes empty (e.g., via `/reset` or session switch)
+- **THEN** the frontend SHALL automatically set `viewMode` back to `"chat"`
+
+#### Scenario: Dashboard option enabled when session has messages
+- **WHEN** the current session has one or more messages (`messages.length > 0`)
+- **THEN** the Dashboard `<option>` SHALL be enabled and selectable
+
+### Requirement: ArtifactContainer single loading state
+The `ArtifactContainer` component SHALL render exactly one loading/empty state: bouncing dots with "Generating dashboard..." text. There SHALL be no separate "Waiting for dashboard generation..." state. When `loading` is true or `cleanedHtml` is empty, the same loading animation SHALL display.
+
+#### Scenario: Loading state shows bouncing animation
+- **WHEN** `ArtifactContainer` receives `loading={true}` or `html=""`
+- **THEN** it SHALL render three bouncing dots with the text "Generating dashboard..."
+- **AND** no "Waiting for dashboard generation..." message SHALL appear
+
+
 ## MODIFIED Requirements
 
 ### Requirement: Theme support
