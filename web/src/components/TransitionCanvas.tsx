@@ -692,10 +692,11 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       const canvasRect = canvas!.getBoundingClientRect();
       const currentRow = s.rows[c.rowIndex];
 
-      // Re-measure live position — DOM shifts from previous strikes
-      // may have moved rows relative to the canvas since buildRowList().
-      const currentRect = currentRow.el.getBoundingClientRect();
-      const liveCurrentTop = currentRect.top - canvasRect.top;
+      // Use stored position from recalibration — the current row has already
+      // been destroyed (DOM mutated by destroyByType), so its live
+      // getBoundingClientRect() is unreliable. Using it as a filter baseline
+      // can cause candidate rows to be incorrectly skipped.
+      const liveCurrentTop = currentRow.top;
 
       // Find the next unstruck row, using live positions
       let nextIndex = c.rowIndex + 1;
@@ -719,9 +720,8 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         return;
       }
 
-      // Update the row's stored position to the live measurement
+      // Update the next row's stored position to the live measurement
       nextRow.top = liveNextTop;
-      currentRow.top = liveCurrentTop;
 
       c.hopStartX = currentRow.landingX;
       c.hopStartY = liveCurrentTop;
