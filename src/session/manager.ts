@@ -5,6 +5,7 @@ import type { ImageRef, SerializedSession, SessionMetadata, VisionMessage } from
 import { ImageCache } from "../utils/image-cache.js";
 import { SessionStore } from "./store.js";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import type { HarnessEventBus } from "../core/events.js";
 import type { Logger } from "../utils/logger.js";
@@ -121,6 +122,7 @@ export class SessionManager {
         preview: "",
         hasImages: false,
         imageCount: 0,
+        contentHash: "",
         totalActiveMs: 0,
       };
       this.accumulatedMs = 0;
@@ -185,6 +187,12 @@ export class SessionManager {
     if (!this.current.preview) {
       this.current.preview = extractFirstUserMessage(messages as unknown[]);
     }
+    // Compute content hash for dashboard cache invalidation
+    const contentHash = createHash("sha256")
+      .update(messages.map((m: any) => `${m.role}:${String(m.content ?? "").slice(0, 200)}`).join("|"))
+      .digest("hex")
+      .slice(0, 12);
+    this.current.contentHash = contentHash;
 
     this.current.projectPath = this.projectPath;
 

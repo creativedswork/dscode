@@ -8,6 +8,9 @@ import { Sidebar } from "./Sidebar";
 import { ToastContainer, useToasts } from "./Toast";
 import { CommandPanel } from "./CommandPanel";
 import { ContextWindowBar } from "./ContextWindowBar";
+import { ViewModeSwitcher } from "./ViewModeSwitcher";
+import { ArtifactContainer } from "./ArtifactContainer";
+import { TransitionCanvas } from "./TransitionCanvas";
 import { List, Sun, Moon } from "@phosphor-icons/react";
 
 const SLASH_COMMANDS = [
@@ -30,7 +33,8 @@ function sessionsEqual(a: SessionInfo[], b: SessionInfo[]): boolean {
   return a.every((s, i) =>
     s.id === b[i].id &&
     s.updatedAt === b[i].updatedAt &&
-    s.messageCount === b[i].messageCount
+    s.messageCount === b[i].messageCount &&
+    s.contentHash === b[i].contentHash
   );
 }
 
@@ -39,6 +43,22 @@ function getInitialTheme(): "light" | "dark" {
   if (saved === "dark" || saved === "light") return saved;
   return "light";
 }
+
+function loadDashCache(): Record<string, { contentHash: string; html: string }> {
+  try {
+    const raw = localStorage.getItem("dscode-dash-cache");
+    if (raw) return JSON.parse(raw);
+  } catch { /* ignore corrupt cache */ }
+  return {};
+}
+
+function saveDashCache(cache: Record<string, { contentHash: string; html: string }>): void {
+  try {
+    localStorage.setItem("dscode-dash-cache", JSON.stringify(cache));
+  } catch { /* ignore storage errors */ }
+}
+
+const MAX_DASH_CACHE = 20;
 
 export function App() {
   const [messages, setMessages] = useState<UIMessage[]>([]);
@@ -56,18 +76,38 @@ export function App() {
   const [theme, setTheme] = useState<"light" | "dark">(getInitialTheme);
   const [contextWindow, setContextWindow] = useState<ContextWindowData | null>(null);
   const [commandPanel, setCommandPanel] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"chat" | "dashboard">("chat");
+  const [artifactHtml, setArtifactHtml] = useState("");
+  const [artifactLoading, setArtifactLoading] = useState(false);
+  const [transitionPhase, setTransitionPhase] = useState<"idle" | "animating">("idle");
   const { toasts, addToast, removeToast } = useToasts();
   const turnStartRef = useRef<number>(0);
   const permissionPromptRef = useRef(permissionPrompt);
   permissionPromptRef.current = permissionPrompt;
   const currentSessionIdRef = useRef(currentSessionId);
   currentSessionIdRef.current = currentSessionId;
+  const prevSessionIdRef = useRef<string | null>(null);
+  const dashCacheRef = useRef<Record<string, { contentHash: string; html: string }>>(loadDashCache());
+  const artifactHtmlRef = useRef(artifactHtml);
+  artifactHtmlRef.current = artifactHtml;
+  const artifactLoadingRef = useRef(artifactLoading);
+  artifactLoadingRef.current = artifactLoading;
+  const chatContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const root = document.documentElement;
     theme === "dark" ? root.classList.add("dark") : root.classList.remove("dark");
     localStorage.setItem("dscode-theme", theme);
   }, [theme]);
+
+  // Session switch in Dashboard mode resets to Chat
+  useEffect(() => {
+    const prev = prevSessionIdRef.current;
+    prevSessionIdRef.current = currentSessionId;
+    if (prev !== null && prev !== currentSessionId && viewMode === "dashboard") {
+      setViewMode("chat");
+    }
+  }, [currentSessionId, viewMode]);
 
   const toggleTheme = useCallback(() => setTheme((p) => (p === "light" ? "dark" : "light")), []);
 
@@ -125,8 +165,33 @@ export function App() {
       case "context_window": setContextWindow(event); break;
       case "config": setConfig(event.data); break;
       case "file_list_result": setFileListItems(event.items); setFileListPrefix(event.prefix); break;
+      case "artifact_start":
+        setArtifactHtml("");
+        setArtifactLoading(true);
+        break;
+      case "artifact_delta":
+        setArtifactHtml((prev) => prev + event.delta);
+        break;
+      case "artifact_end": {
+        setArtifactLoading(false);
+        const csid = currentSessionIdRef.current;
+        if (csid) {
+          const session = sessions.find((s) => s.id === csid);
+          if (session) {
+            const cache = dashCacheRef.current;
+            const entries = Object.keys(cache);
+            if (entries.length >= MAX_DASH_CACHE && !cache[csid]) {
+              // Evict oldest entry
+              delete cache[entries[0]];
+            }
+            cache[csid] = { contentHash: session.contentHash, html: artifactHtmlRef.current };
+            saveDashCache(cache);
+          }
+        }
+        break;
+      }
     }
-  }, [addToast]);
+  }, [addToast, sessions]);
 
   const { connected, send } = useWebSocket(handleEvent);
 
@@ -134,8 +199,13 @@ export function App() {
     if (!text.trim() && (!images || images.length === 0)) return;
     turnStartRef.current = Date.now();
     setProcessing(true);
-    send({ type: "chat", text, images: images?.length ? images : undefined });
-  }, [send]);
+    if (viewMode === "dashboard") {
+      send({ type: "artifact", action: "update", instruction: text });
+    } else {
+      send({ type: "chat", text, images: images?.length ? images : undefined });
+    }
+  }, [send, viewMode]);
+
   const handlePermission = useCallback((decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string, toolNamePattern?: string, fuzzyMode?: number) => {
     send({
       type: explainText ? "permission_response" : "permission",
@@ -155,6 +225,51 @@ export function App() {
   const handleSessionAction = useCallback((action: "list" | "save" | "load" | "delete", id?: string) => send({ type: "session", action, id }), [send]);
   const handleMcpAction = useCallback((action: "list" | "refresh" | "connect" | "disconnect", serverName?: string) => send({ type: "mcp", action, serverName } as any), [send]);
   const handleNewSession = useCallback(() => send({ type: "slash", command: "/reset" }), [send]);
+
+  const handleViewModeChange = useCallback((mode: "chat" | "dashboard") => {
+    if (mode === "chat") {
+      setViewMode("chat");
+      return;
+    }
+    // mode === "dashboard"
+    const csid = currentSessionIdRef.current;
+    if (csid) {
+      const cached = dashCacheRef.current[csid];
+      const sessionHash = sessions.find((s) => s.id === csid)?.contentHash;
+      if (cached && sessionHash !== undefined && sessionHash !== "" && cached.contentHash === sessionHash) {
+        setArtifactHtml(cached.html);
+        setArtifactLoading(false);
+        setViewMode("dashboard");
+        return;
+      }
+    }
+    // Check reduced motion
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      setViewMode("dashboard");
+      setArtifactHtml("");
+      setArtifactLoading(true);
+      send({ type: "artifact", action: "generate", context: "session_dashboard" });
+      return;
+    }
+    // Start cascade transition
+    setArtifactHtml("");
+    setArtifactLoading(true);
+    send({ type: "artifact", action: "generate", context: "session_dashboard" });
+    setTransitionPhase("animating");
+  }, [send, sessions]);
+  const handleTransitionComplete = useCallback(() => {
+    // Poll until artifactLoading is confirmed false before transitioning,
+    // preventing a flash of "Generating dashboard..." in ArtifactContainer.
+    const tryTransition = () => {
+      if (!artifactLoadingRef.current) {
+        setTransitionPhase("idle");
+        setViewMode("dashboard");
+      } else {
+        requestAnimationFrame(tryTransition);
+      }
+    };
+    requestAnimationFrame(tryTransition);
+  }, []);
 
   useEffect(() => { if (connected) { handleSessionAction("list"); handleMcpAction("list"); } }, [connected, handleSessionAction, handleMcpAction]);
 
@@ -176,6 +291,7 @@ export function App() {
           <ContextWindowBar data={contextWindow} />
         </div>
         <div className="flex items-center gap-3">
+          <ViewModeSwitcher viewMode={viewMode} onChange={handleViewModeChange} />
           <button onClick={toggleTheme} className="p-2 rounded-btn hover:brightness-95 transition-[filter] duration-200" style={{ backgroundColor: "var(--color-surface-hover)" }} aria-label="Toggle theme">
             {theme === "light" ? <Moon size={18} weight="bold" style={{ color: "var(--color-text)" }} /> : <Sun size={18} weight="bold" style={{ color: "var(--color-text)" }} />}
           </button>
@@ -191,9 +307,18 @@ export function App() {
           onSessionAction={handleSessionAction} onMcpAction={handleMcpAction} onMcpServerAction={handleMcpAction}
           onConfigChange={handleConfigChange} isProcessing={processing} onNewSession={handleNewSession} />
         <main className="flex-1 flex flex-col min-w-0">
-          <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} sessionActiveMs={sessionActiveMs} permissionPrompt={permissionPrompt} onPermission={handlePermission} />
+          <div className="flex-1 flex flex-col min-h-0" style={{ position: "relative" }}>
+          {transitionPhase === "animating" && (
+            <TransitionCanvas artifactReady={!artifactLoading && artifactHtml !== ""} onComplete={handleTransitionComplete} scrollContainerRef={chatContainerRef} />
+          )}
+          {viewMode === "dashboard" && transitionPhase === "idle" ? (
+            <ArtifactContainer html={artifactHtml} loading={artifactLoading} />
+          ) : (
+            <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} sessionActiveMs={sessionActiveMs} permissionPrompt={permissionPrompt} onPermission={handlePermission} containerRef={chatContainerRef} scrollLocked={transitionPhase === "animating"} />
+          )}
           <MessageInput onSend={handleSend} onAbort={handleAbort} onSlashCommand={handleSlashCommand} onCommand={handleCommand}
-            processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} />
+            processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} viewMode={viewMode} />
+          </div>
         </main>
       </div>
       <ToastContainer toasts={toasts} onRemove={removeToast} />

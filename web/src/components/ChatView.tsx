@@ -19,8 +19,10 @@ interface ChatViewProps {
   sessionActiveMs: number;
   permissionPrompt: ({ toolName: string; preview: string; fuzzyPattern?: string | null; fuzzyArgDesc?: string | null; llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[] }) | null;
   onPermission: (decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string, toolNamePattern?: string, fuzzyMode?: number) => void;
+  containerRef?: React.RefObject<HTMLDivElement>;
+  scrollLocked?: boolean;
 }
-export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, permissionPrompt, onPermission }: ChatViewProps) {
+export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, permissionPrompt, onPermission, containerRef, scrollLocked = false }: ChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
@@ -55,7 +57,8 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
   if (messages.length === 0 && !permissionPrompt) {
     return (
       <div className="flex-1 flex items-center justify-center p-8">
-        <div
+      <div
+        data-collider="message-card"
           className="text-center max-w-md p-8"
           style={{
             borderRadius: "12px",
@@ -108,7 +111,7 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
   }
 
   return (
-    <div ref={scrollContainerRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto min-h-0 px-4 py-4 space-y-4">
+    <div ref={(el) => { (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = el; if (containerRef) { (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el; } }} onScroll={handleChatScroll} className={"flex-1 overflow-y-auto min-h-0 px-4 py-4 space-y-4" + (scrollLocked ? " overflow-hidden pointer-events-none" : "")}>
       {messages.map((msg) => (
         <ErrorBoundary key={msg.id} fallback={<FallbackBubble message={msg} />}>
           <MessageBubble message={msg} sessionTime={sessionTime} />
@@ -157,6 +160,7 @@ function FallbackBubble({ message }: { message: UIMessage }) {
   return (
     <div className="flex justify-start">
       <div
+        data-collider="message-card"
         className="max-w-[85%] px-4 py-3"
         style={{
           borderRadius: "12px",
@@ -363,6 +367,7 @@ function MessageBubble({ message, sessionTime }: { message: UIMessage; sessionTi
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} animate-fade-up`}>
       <div
+        data-collider="message-card"
         className="max-w-[85%] md:max-w-[75%] px-4 py-3"
         style={
           isUser
@@ -407,7 +412,15 @@ function MessageBubble({ message, sessionTime }: { message: UIMessage; sessionTi
 
         <div style={{ color: isUser ? "var(--color-user-bubble-text)" : "var(--color-text)" }}>
           {safeContent || (message.images && message.images.length > 0) ? (
-            <Markdown className="text-sm leading-relaxed">{safeContent}</Markdown>
+            safeContent ? (
+              safeContent.split('\n').map((line, i) => (
+                <span key={i} data-collider="text-line">
+                  {line ? <Markdown className="text-sm leading-relaxed">{line}</Markdown> : <br />}
+                </span>
+              ))
+            ) : (
+              <Markdown className="text-sm leading-relaxed">{safeContent}</Markdown>
+            )
           ) : (
             message.isStreaming && !message.thinking && (!message.images || message.images.length === 0) ? (
               <span className="inline-block w-2 h-4 animate-pulse rounded-sm" style={{ backgroundColor: "var(--color-accent)" }} />

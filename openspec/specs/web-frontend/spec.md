@@ -125,6 +125,64 @@ When the user clicks "Allow" on a PermissionDialog restored from `pendingPermiss
 - **AND** the backend SHALL save the session with `pendingPermission` removed
 - **AND** the PermissionDialog closes permanently for this session
 
+### Requirement: TransitionCanvas transparent overlay
+The frontend SHALL include a `TransitionCanvas` component that renders a full-viewport transparent `<canvas>` overlay (z-index: 50, `background: transparent`, `pointer-events: none`) during the Chat → Dashboard transition. The Canvas SHALL draw only particles, the hop-step letter cluster, impact effects, and HUD labels — ChatView DOM provides all background and unstruck content.
+
+#### Scenario: TransitionCanvas mounts during animation
+- **WHEN** `transitionPhase` is `"animating"`
+- **THEN** TransitionCanvas SHALL render a `<canvas>` element covering the full content area
+- **AND** the Canvas SHALL have `background: transparent` and `pointer-events: none`
+- **AND** ChatView SHALL remain mounted and visible beneath the Canvas
+
+#### Scenario: TransitionCanvas unmounts on complete
+- **WHEN** `transitionPhase` returns to `"idle"`
+- **THEN** TransitionCanvas SHALL unmount
+- **AND** the Canvas element SHALL be removed from the DOM
+
+#### Scenario: Canvas DPR constraint
+- **WHEN** TransitionCanvas initializes its Canvas context
+- **THEN** the device pixel ratio SHALL be capped at `Math.min(window.devicePixelRatio, 2)`
+
+### Requirement: data-collider DOM attributes
+ChatView and its sub-components SHALL mark collidable elements with `data-collider` attributes to enable live DOM-based collision detection during the cascade transition animation.
+
+#### Scenario: text-line marking
+- **WHEN** Markdown.tsx renders a text paragraph
+- **THEN** each visible line SHALL be wrapped in a `<span data-collider="text-line">` element with no additional styling or layout shift
+
+#### Scenario: code-line marking
+- **WHEN** Markdown.tsx renders a code block
+- **THEN** each line SHALL have the attribute `data-collider="code-line"`
+
+#### Scenario: tool-card marking
+- **WHEN** ToolCard.tsx renders a tool call card
+- **THEN** the card container SHALL have the attribute `data-collider="tool-card"`
+- **AND** the tool header SHALL have the attribute `data-collider="tool-header"`
+- **AND** tool result lines SHALL have the attribute `data-collider="tool-result-line"`
+
+#### Scenario: message-card marking
+- **WHEN** ChatView renders a user or assistant message bubble
+- **THEN** the bubble container SHALL have the attribute `data-collider="message-card"`
+
+### Requirement: CSS destruction animation keyframes
+The frontend stylesheet SHALL include CSS `@keyframes` for text-line scatter and code-line corruption animations, triggered during the cascade transition by TransitionCanvas DOM manipulation.
+
+#### Scenario: scatter keyframe available
+- **WHEN** TransitionCanvas creates scatter-animated `<span>` elements inside a struck element
+- **THEN** the scatter animation SHALL be a CSS keyframe that translates characters randomly within ±60px and fades opacity to 0 over 250ms
+
+#### Scenario: code-corrupt keyframe available
+- **WHEN** TransitionCanvas triggers code-line destruction
+- **THEN** the corruption animation SHALL progressively replace characters with block glyphs and fade opacity to 0 over 400ms
+
+### Requirement: Scroll container ref forwarding
+ChatView SHALL expose a ref to its scroll container so TransitionCanvas can programmatically lock scrolling during animation.
+
+#### Scenario: scrollContainerRef exposed
+- **WHEN** `transitionPhase` is `"animating"` and ChatView renders
+- **THEN** ChatView SHALL forward a `scrollContainerRef` (React ref to the scrollable DOM element) to TransitionCanvas
+- **AND** TransitionCanvas SHALL use this ref to save/restore scroll position and set `overflow: hidden` during animation
+
 
 ## MODIFIED Requirements
 
@@ -203,6 +261,12 @@ The frontend SHALL display a scrollable conversation area showing user messages,
 - **THEN** the header SHALL show: left zone (sidebar toggle + DSCode branding + model name), center zone (ContextWindowBar), right zone (theme toggle + connection status)
 
 #### Scenario: Center zone is centered
+
+#### Scenario: ChatView frozen during transition animation
+- **WHEN** `transitionPhase` is `"animating"`
+- **THEN** ChatView SHALL receive `scrollLocked={true}` prop
+- **AND** ChatView SHALL apply `overflow: hidden` and `pointer-events: none` to its scroll container
+- **AND** ChatView SHALL remain mounted and visible beneath the TransitionCanvas overlay
 - **WHEN** the header renders with all three zones
 - **THEN** the center zone SHALL use `flex: 1` and `justify-content: center` so the ContextWindowBar is horizontally centered regardless of left/right content widths
 
@@ -326,3 +390,38 @@ The frontend SHALL store the `currentSessionId` received from each `sessions` ev
 #### Scenario: currentSessionId cleared on null
 - **WHEN** the frontend receives a `sessions` event without a `currentSessionId` field
 - **THEN** `currentSessionId` state is set to `null`
+-e 
+
+---
+
+
+### Requirement: Artifact events handled in App
+The App component SHALL handle `artifact_start`, `artifact_delta`, and `artifact_end` server events, accumulating the delta content and passing it to the `ArtifactContainer` component.
+
+#### Scenario: artifact_start clears content
+- **WHEN** App receives `{ "type": "artifact_start" }`
+- **THEN** the accumulated artifact HTML is set to empty string
+- **AND** `artifactLoading` is set to `true`
+
+#### Scenario: artifact_delta appends content
+- **WHEN** App receives `{ "type": "artifact_delta", "delta": "<div>" }`
+- **THEN** the delta is appended to the accumulated artifact HTML string
+
+#### Scenario: artifact_end finalizes rendering
+- **WHEN** App receives `{ "type": "artifact_end" }`
+- **THEN** `artifactLoading` is set to `false`
+
+### Requirement: ArtifactContainer component
+The frontend SHALL provide an `ArtifactContainer` component that renders an `<iframe>` with `srcdoc` set to the accumulated artifact HTML and `sandbox="allow-same-origin"`.
+
+#### Scenario: ArtifactContainer renders iframe
+- **WHEN** `ArtifactContainer` receives a non-empty `html` prop
+- **THEN** it renders an `<iframe>` with `srcdoc={html}` and `sandbox="allow-same-origin"`
+
+#### Scenario: ArtifactContainer shows loading
+- **WHEN** `ArtifactContainer` receives `loading={true}` and `html` is empty
+- **THEN** it displays a spinner or skeleton placeholder
+
+#### Scenario: ArtifactContainer with no content
+- **WHEN** `ArtifactContainer` receives `loading={false}` and empty `html`
+- **THEN** it displays "Waiting for dashboard generation..." in muted text

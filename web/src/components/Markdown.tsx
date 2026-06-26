@@ -12,19 +12,29 @@ export function Markdown({ children, className = "" }: MarkdownProps) {
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          pre: ({ children }) => (
-            <pre
-              className="p-3 overflow-x-auto text-xs my-2"
-              style={{
-                borderRadius: "8px",
-                backgroundColor: "var(--color-bg)",
-                border: "1px solid var(--color-border)",
-                color: "var(--color-text)",
-              }}
-            >
-              {children}
-            </pre>
-          ),
+          pre: ({ children }) => {
+            // Wrap code block lines with data-collider for cascade animation
+            const codeEl = children as React.ReactElement | undefined;
+            const codeContent = codeEl?.props?.children;
+            const wrappedChildren = typeof codeContent === 'string'
+              ? codeContent.split('\n').map((line: string, i: number) => (
+                  <span key={i} data-collider="code-line">{line}</span>
+                ))
+              : children;
+            return (
+              <pre
+                className="p-3 overflow-x-auto text-xs my-2"
+                style={{
+                  borderRadius: "8px",
+                  backgroundColor: "var(--color-bg)",
+                  border: "1px solid var(--color-border)",
+                  color: "var(--color-text)",
+                }}
+              >
+                {wrappedChildren}
+              </pre>
+            );
+          },
           code: ({ className: codeClass, children, ...props }) => {
             const isInline = !codeClass;
             if (isInline) {

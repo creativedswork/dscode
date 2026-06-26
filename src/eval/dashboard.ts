@@ -34,7 +34,7 @@ function generateRecoveryTimelineHTML(recoveryArcs: RecoveryArc[]): string {
         <span style="background:${COLORS.warn};color:#000;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:600;white-space:nowrap;">🔍 Step ${arc.detectionStep}</span>
         <span style="color:${COLORS.textMuted};font-size:14px;">→</span>
         <span style="background:${effectiveColor};color:#000;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:600;white-space:nowrap;">${effectiveIcon} Step ${arc.correctionStep}</span>
-        <span style="background:rgba(88,166,255,0.15);padding:2px 8px;border-radius:4px;font-size:11px;color:${COLORS.accent};">${detLabel}</span>
+        <span style="background:rgba(212,151,8,0.15);padding:2px 8px;border-radius:4px;font-size:11px;color:${COLORS.accent};">${detLabel}</span>
         <span style="font-size:11px;color:${COLORS.textMuted};">${arc.stepsToRecover} steps</span>
         ${arc.misdiagnosisCount > 0 ? `<span style="background:rgba(210,153,29,0.15);padding:2px 8px;border-radius:4px;font-size:11px;color:${COLORS.warn};">${arc.misdiagnosisCount} 次误判</span>` : ""}
       </div>
@@ -42,7 +42,7 @@ function generateRecoveryTimelineHTML(recoveryArcs: RecoveryArc[]): string {
         <span style="color:${COLORS.danger};">${escapeHtml(arc.errorAgent)}</span>: ${escapeHtml(arc.errorSummary)}
         → <span style="color:${effectiveColor};">${escapeHtml(arc.correctionAgent)}</span>: ${escapeHtml(arc.correctionSummary)}
       </div>
-      <div style="font-size:12px;color:${COLORS.accent};font-style:italic;padding:8px 12px;background:rgba(88,166,255,0.08);border-radius:4px;border-left:3px solid ${COLORS.accent};margin-top:8px;">
+      <div style="font-size:12px;color:${COLORS.accent};font-style:italic;padding:8px 12px;background:rgba(212,151,8,0.08);border-radius:4px;border-left:3px solid ${COLORS.accent};margin-top:8px;">
         💡 根因假说: ${escapeHtml(arc.rootCauseHypothesis)}
       </div>
     </div>`;
@@ -74,15 +74,15 @@ export function escapeHtml(text: string | null | undefined): string {
 // ── Color utilities ──
 
 const COLORS = {
-  ok: "#3fb950",
-  warn: "#d2991d",
-  danger: "#f85149",
-  bg: "#0d1117",
-  card: "#161b22",
-  border: "#30363d",
-  text: "#c9d1d9",
-  textMuted: "#8b949e",
-  accent: "#58a6ff",
+  ok: "#5ca860",
+  warn: "#d4a017",
+  danger: "#e05553",
+  bg: "#1e1c19",
+  card: "#282622",
+  border: "#3a3732",
+  text: "#e8e4dd",
+  textMuted: "#8a8580",
+  accent: "#d49708",
 };
 
 function statusColor(status: "ok" | "warn" | "danger"): string {
@@ -160,7 +160,7 @@ function generateRuleChainHTML(attribution: Attribution, rulesApplied: string[])
   };
 
   const ruleItems = rulesApplied.map((r) => `
-    <div style="padding:8px 12px;margin:4px 0;background:${r === "Rule3" ? "rgba(248,81,73,0.15)" : "rgba(88,166,255,0.1)"};border-left:3px solid ${r === "Rule3" ? COLORS.danger : COLORS.accent};border-radius:4px;">
+    <div style="padding:8px 12px;margin:4px 0;background:${r === "Rule3" ? "rgba(224,85,83,0.15)" : "rgba(212,151,8,0.1)"};border-left:3px solid ${r === "Rule3" ? COLORS.danger : COLORS.accent};border-radius:4px;">
       <strong style="color:${COLORS.accent};font-size:13px;">${escapeHtml(r)}</strong>
       <div style="font-size:12px;color:${COLORS.textMuted};margin-top:2px;">${escapeHtml(ruleDescriptions[r] ?? "")}</div>
     </div>`).join("");
@@ -200,7 +200,7 @@ function generateCascadePathHTML(cascadePath: CascadeEdge[]): string {
       <span style="font-family:monospace;font-size:13px;color:${COLORS.accent};">${escapeHtml(e.fromZoneId)}:${e.fromStepId}</span>
       <span style="color:${COLORS.textMuted};font-size:18px;">→</span>
       <span style="font-family:monospace;font-size:13px;">${escapeHtml(e.toZoneId)}:${e.toStepId}</span>
-      <span style="background:rgba(88,166,255,0.15);padding:2px 8px;border-radius:4px;font-size:11px;color:${COLORS.accent};">${mechanismLabel}</span>
+      <span style="background:rgba(212,151,8,0.15);padding:2px 8px;border-radius:4px;font-size:11px;color:${COLORS.accent};">${mechanismLabel}</span>
       <span style="font-size:11px;color:${COLORS.textMuted};">数据: ${escapeHtml(e.dataItem)}</span>
     </div>`;
   }).join("");
@@ -237,9 +237,9 @@ body {
   max-width: 1200px;
   margin: 0 auto;
 }
-h1 { font-size: 28px; font-weight: 600; margin-bottom: 4px; color: #f0f6fc; }
-h2 { font-size: 20px; font-weight: 600; margin: 32px 0 16px; color: #f0f6fc; border-bottom: 1px solid ${COLORS.border}; padding-bottom: 8px; }
-h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #e6edf3; }
+h1 { font-size: 28px; font-weight: 600; margin-bottom: 4px; color: #e8e4dd; }
+h2 { font-size: 20px; font-weight: 600; margin: 32px 0 16px; color: #e8e4dd; border-bottom: 1px solid ${COLORS.border}; padding-bottom: 8px; }
+h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #e8e4dd; }
 .header { background: ${COLORS.card}; border: 1px solid ${COLORS.border}; border-radius: 8px; padding: 24px; margin-bottom: 24px; }
 .header-meta { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 16px; }
 .meta-item { }
@@ -423,7 +423,7 @@ ${(() => {
   }
 
   return Object.entries(grouped).map(([cat, catRules]) => `
-<h3 style="font-size:15px;font-weight:600;margin:24px 0 12px;color:#e6edf3;">${escapeHtml(catLabels[cat] ?? cat)}</h3>
+<h3 style="font-size:15px;font-weight:600;margin:24px 0 12px;color:#e8e4dd;">${escapeHtml(catLabels[cat] ?? cat)}</h3>
 ${catRules.map((r: any) => {
   const sevLabel = r.severity >= 1 ? 'ERROR' : r.severity >= 0.6 ? 'WARN' : 'INFO';
   const sevColor = r.severity >= 1 ? COLORS.danger : r.severity >= 0.6 ? COLORS.warn : COLORS.accent;
@@ -445,7 +445,7 @@ ${catRules.map((r: any) => {
   ${r.rawDescription ? `
   <details style="margin-bottom:8px;">
     <summary style="font-size:11px;color:${COLORS.accent};cursor:pointer;">📝 详细描述</summary>
-    <p style="font-size:12px;color:${COLORS.textMuted};margin:4px 0;padding:8px;background:rgba(88,166,255,0.05);border-radius:4px;white-space:pre-wrap;">${escapeHtml(r.rawDescription)}</p>
+    <p style="font-size:12px;color:${COLORS.textMuted};margin:4px 0;padding:8px;background:rgba(212,151,8,0.05);border-radius:4px;white-space:pre-wrap;">${escapeHtml(r.rawDescription)}</p>
   </details>` : ""}
   ${r.severity >= 1 ? `<div style="font-size:11px;color:${COLORS.danger};margin-bottom:6px;">⚠ 建议持久化到 Agent 配置 (${escapeHtml(r.targetLayer)})</div>` : ""}
   <div style="background:${COLORS.card};border-radius:4px;padding:10px 12px;">
