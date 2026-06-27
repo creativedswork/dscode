@@ -94,7 +94,7 @@ dscode 专为 DeepSeek V4 Pro 打造 —— 我们首推的数字创作模型。
 <tr>
 <td width="33%" valign="top">
   <strong>🖥 终端 + Web 双界面</strong><br />
-  <sub>完整 TUI：流式输出、thinking、工具调用。现代 React Web 界面，通过 WebSocket 实现功能完全一致。</sub>
+  <sub>完整 TUI：流式输出、thinking、工具调用，逐轮 token 用量与成本统计。现代 React Web 界面，通过 WebSocket 实现功能完全一致。</sub>
 </td>
 <td width="33%" valign="top">
   <strong>🔌 MCP 连接器</strong><br />
@@ -117,6 +117,20 @@ dscode 专为 DeepSeek V4 Pro 打造 —— 我们首推的数字创作模型。
 <td width="33%" valign="top">
   <strong>🔧 内置驱动</strong><br />
   <sub><code>read_file</code>、<code>write_file</code>、<code>edit</code>（hash-anchor）、<code>bash</code>、<code>grep</code>、<code>glob</code>。MCP 工具通过 <code>search_tools</code> 按需发现。</sub>
+</td>
+</tr>
+<tr>
+<td width="33%" valign="top">
+  <strong>🎬 Dashboard 与动效</strong><br />
+  <sub>Chat↔Dashboard 级联过渡动画，物理驱动的 "dscode" 集群动效。会话仪表盘含上下文窗口用量条。</sub>
+</td>
+<td width="33%" valign="top">
+  <strong>📐 Hash-Anchor 编辑</strong><br />
+  <sub>内容寻址的文件编辑，3 级自适应哈希解析、原子批量操作、检查点安全回滚、结构化失效范围。</sub>
+</td>
+<td width="33%" valign="top">
+  <strong>🔁 重试与韧性</strong><br />
+  <sub>指数退避与可配置重试策略。透明处理频率限制、超时和服务端错误，遵循 Retry-After 响应头。</sub>
 </td>
 </tr>
 </table>
