@@ -33,6 +33,7 @@ interface ClusterState {
   hopEndY: number;
   hopDuration: number;
   hopProgress: number;
+  nextRowIndex: number;
 }
 
 interface AnimationState {
@@ -337,6 +338,18 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
           el.style.opacity = "0";
           el.style.transition = "none";
         }
+
+        // ── Inner scroll clip: hide rows clipped by overflow-y ancestors ──
+        // Prevents ghost rows from briefly appearing when scrollTop is
+        // restored after a strike inside a scrollable container.
+        const innerSa = findScrollAncestor(el);
+        if (innerSa) {
+          const saRect = innerSa.getBoundingClientRect();
+          if (rect.bottom <= saRect.top || rect.top >= saRect.bottom) {
+            el.style.opacity = "0";
+            el.style.transition = "none";
+          }
+        }
       });
     }
 
@@ -367,6 +380,7 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         hopEndY: 0,
         hopDuration: 0,
         hopProgress: 0,
+        nextRowIndex: -1,
       },
       rows: [],
       scaleX: 1,
@@ -658,6 +672,9 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         case "message-card":
           destroyMessageCard(el);
           break;
+        case "table-cell":
+          destroyTextLine(el);
+          break;
         default:
           spawnParticles(el);
           break;
@@ -684,20 +701,44 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
 
     function launchHop(): void {
       const c = s.cluster;
+      const canvasRect = canvas!.getBoundingClientRect();
       const currentRow = s.rows[c.rowIndex];
-      const nextIndex = c.rowIndex + 1;
 
-      if (nextIndex >= s.rows.length) {
-        // No more rows — start gather
+      // Use stored position from recalibration — the current row has already
+      // been destroyed (DOM mutated by destroyByType), so its live
+      // getBoundingClientRect() is unreliable. Using it as a filter baseline
+      // can cause candidate rows to be incorrectly skipped.
+      const liveCurrentTop = currentRow.top;
+
+      // Find the next unstruck row, using live positions
+      let nextIndex = c.rowIndex + 1;
+      let nextRow: CascadeRow | null = null;
+      let liveNextTop = 0;
+      while (nextIndex < s.rows.length) {
+        const candidate = s.rows[nextIndex];
+        if (candidate.struck) { nextIndex++; continue; }
+        const candidateRect = candidate.el.getBoundingClientRect();
+        const candidateTop = candidateRect.top - canvasRect.top;
+        // Skip rows shifted above current row, entirely above viewport, or candidate is above canvas
+        if (candidateTop < liveCurrentTop || candidateRect.bottom - canvasRect.top <= 0 || candidateTop < 0) { nextIndex++; continue; }
+        nextRow = candidate;
+        c.nextRowIndex = nextIndex;
+        liveNextTop = candidateTop;
+        break;
+      }
+
+      if (!nextRow) {
         startGather();
         return;
       }
 
-      const nextRow = s.rows[nextIndex];
+      // Update the next row's stored position to the live measurement
+      nextRow.top = liveNextTop;
+
       c.hopStartX = currentRow.landingX;
-      c.hopStartY = currentRow.top;
+      c.hopStartY = liveCurrentTop;
       c.hopEndX = nextRow.landingX;
-      c.hopEndY = nextRow.top;
+      c.hopEndY = liveNextTop;
 
       const gap = Math.abs(c.hopEndY - c.hopStartY);
       c.hopDuration = Math.max(350, Math.min(800, Math.sqrt(gap) * 25));
@@ -711,6 +752,16 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       if (row.struck) return;
 
       row.struck = true;
+      // Snapshot row top before any DOM mutation or layout freeze.
+      // ── Position compensation for inline → inline-block shift ──
+      // Snapshot the element's pre-mutation visual position, then measure
+      // the delta after layout freeze. Apply a compensating transform so
+      // the element stays visually pinned regardless of browser reflow.
+      const preFreezeCanvasRect = canvas!.getBoundingClientRect();
+      const preFreezeRect = row.el.getBoundingClientRect();
+      const preFreezeTop = preFreezeRect.top - preFreezeCanvasRect.top;
+      const preFreezeLeft = preFreezeRect.left - preFreezeCanvasRect.left;
+      console.log("[dscode] strikeRow preFreezeTop:", preFreezeTop, "row.top:", row.top, "c.y:", c.y);
 
       // Impact effects — distributed across all six letters
       const impactX = row.landingX;
@@ -725,6 +776,7 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       const cs = getComputedStyle(row.el);
       if (cs.display === "inline") {
         row.el.style.display = "inline-block";
+        row.el.style.verticalAlign = cs.verticalAlign || "baseline";
       }
       row.el.style.boxSizing = "border-box";
       row.el.style.height = row.height + "px";
@@ -734,7 +786,31 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       row.el.style.paddingBottom = cs.paddingBottom;
       row.el.style.lineHeight = cs.lineHeight;
 
+      // Measure position delta caused by layout freeze and compensate
+      const postFreezeCanvasRect = canvas!.getBoundingClientRect();
+      const postFreezeRect = row.el.getBoundingClientRect();
+      const postFreezeTop = postFreezeRect.top - postFreezeCanvasRect.top;
+      const postFreezeLeft = postFreezeRect.left - postFreezeCanvasRect.left;
+      const compensateDy = preFreezeTop - postFreezeTop;
+      const compensateDx = preFreezeLeft - postFreezeLeft;
+      console.log("[dscode] strikeRow compensate dy:", compensateDy, "dx:", compensateDx);
+
+      // ── Snapshot inner scroll container position before DOM mutation ──
+      // Inner overflow-y: auto/scroll containers (e.g., ToolCard max-h-40) can
+      // drift their scrollTop when child content is destroyed via innerHTML
+      // replacement, causing hidden content to float up. Snapshot and restore.
+      const innerScrollAncestor = findScrollAncestor(row.el);
+      const innerScrollTop = innerScrollAncestor ? innerScrollAncestor.scrollTop : 0;
+      console.log("[dscode] strikeRow innerScrollTop snapshot:", innerScrollTop, "ancestor:", innerScrollAncestor?.tagName);
+
+
       destroyByType(row.el, impactX, impactY);
+
+      // Restore inner scroll position to prevent cumulative drift
+      if (innerScrollAncestor && innerScrollAncestor.scrollTop !== innerScrollTop) {
+        console.log("[dscode] strikeRow restoring innerScrollTop from", innerScrollAncestor.scrollTop, "to", innerScrollTop);
+        innerScrollAncestor.scrollTop = innerScrollTop;
+      }
 
       requestAnimationFrame(() => {
         row.el.style.transition =
@@ -748,8 +824,10 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
 
       const dx = rand(-8, 8);
       const dy = rand(-4, 2);
-      row.el.style.transform = `translate(${dx}px, ${dy}px)`;
+      // Apply shake + position compensation from layout freeze
+      row.el.style.transform = `translate(${compensateDx + dx}px, ${compensateDy + dy}px)`;
       row.el.style.transition += ", transform 120ms ease-out";
+      console.log("[dscode] strikeRow final transform:", `translate(${compensateDx + dx}px, ${compensateDy + dy}px)`, "compensateDy:", compensateDy);
 
       for (const offset of CLUSTER_OFFSETS) {
         const lx = c.x + offset.ox;
@@ -779,16 +857,17 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       // DOM destruction (innerHTML replacement, scatter spans) can cause
       // subtle layout shifts even with height locking, especially when
       // <span> elements contain block children (invalid nesting triggers
-      // browser block-in-inline splitting). Re-measure every row — including
-      // the struck row — so the cluster stays locked to the actual DOM.
+      // browser block-in-inline splitting). Re-measure unstruck rows — the
+      // struck row uses the pre-freeze snapshot instead.
       {
         const canvasRect = canvas!.getBoundingClientRect();
 
-        // Re-measure the struck row's current position and sync cluster Y
-        const struckRect = row.el.getBoundingClientRect();
-        const newTop = struckRect.top - canvasRect.top;
-        row.top = newTop;
-        c.y = newTop;
+        // Use pre-freeze snapshot (adjusted to current canvas position) for struck row.
+        // preFreezeTop was measured before DOM mutation; canvas may have shifted since.
+        const canvasShiftY = preFreezeCanvasRect.top - canvasRect.top;
+        row.top = preFreezeTop + canvasShiftY;
+        c.y = preFreezeTop + canvasShiftY;
+        console.log("[dscode] strikeRow canvasShiftY:", canvasShiftY, "preFreezeTop:", preFreezeTop, "adjustedTop:", preFreezeTop + canvasShiftY);
 
         // Re-measure all remaining unstruck rows
         for (let i = 0; i < s.rows.length; i++) {
@@ -800,6 +879,8 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
           r.width = rect.width;
           r.height = rect.height;
         }
+        s.rows.sort((a, b) => a.top - b.top);
+        c.rowIndex = s.rows.findIndex(r => r === row);
 
         // Update active hop target if cluster is en route to a shifted row
         if (c.hopState === "hopping") {
@@ -906,10 +987,11 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
             c.x = c.hopEndX;
             c.hopProgress = 0;
 
-            // Advance to next row
-            const newIndex = c.rowIndex + 1;
-            if (newIndex >= s.rows.length) {
-              // All rows visited — start gather
+            // Advance to the row that launchHop found (may have skipped rows above viewport)
+            const newIndex = c.nextRowIndex;
+            c.nextRowIndex = -1;
+            if (newIndex < 0 || newIndex >= s.rows.length) {
+              // No valid next row — start gather
               startGather();
               return;
             }

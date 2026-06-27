@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Editor — short descriptor</title>
+  <style>
+    :root {
+      --ivory:    #FAF9F5;
+      --slate:    #141413;
+      --clay:     #D97757;
+      --clay-d:   #B85C3E;
+      --oat:      #E3DACC;
+      --olive:    #788C5D;
+      --gray-150: #F0EEE6;
+      --gray-300: #D1CFC5;
+      --gray-500: #87867F;
+      --gray-700: #3D3D3A;
+      --white:    #FFFFFF;
+      --serif: ui-serif, Georgia, 'Times New Roman', serif;
+      --sans:  system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      --mono:  ui-monospace, 'SF Mono', Menlo, Monaco, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; background: var(--ivory); color: var(--slate);
+      font-family: var(--sans); font-size: 14px; line-height: 1.5;
+    }
+    .wrap { max-width: 1180px; margin: 0 auto; padding: 48px 32px 64px; }
+    .eyebrow {
+      font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--gray-500);
+    }
+    h1 { font-family: var(--serif); font-weight: 500; font-size: 30px; letter-spacing: -0.01em; margin: 6px 0 4px; }
+    .sub { color: var(--gray-500); max-width: 640px; margin-bottom: 22px; }
+
+    /* toolbar */
+    .toolbar {
+      display: flex; gap: 10px; align-items: center;
+      padding: 12px 0 20px; border-bottom: 1px solid var(--gray-300); margin-bottom: 24px;
+    }
+    button {
+      font-family: var(--sans); font-size: 13px; cursor: pointer;
+      border: 1.5px solid var(--gray-300); background: var(--white);
+      color: var(--slate); border-radius: 9px; padding: 8px 14px;
+    }
+    button.primary { background: var(--clay); border-color: var(--clay); color: var(--white); }
+    button.primary:hover { background: var(--clay-d); border-color: var(--clay-d); }
+    button.copied { background: var(--olive); border-color: var(--olive); color: var(--white); }
+
+    /* interactive surface — replace with cards/form/sliders/preview for the task */
+    .surface {
+      background: var(--white); border: 1.5px solid var(--gray-300);
+      border-radius: 12px; padding: 20px;
+    }
+    label.field { display: block; margin-bottom: 14px; }
+    label.field .name {
+      font-family: var(--mono); font-size: 11px; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--gray-500); display: block; margin-bottom: 6px;
+    }
+    input[type=text], textarea {
+      width: 100%; font-family: var(--sans); font-size: 14px;
+      border: 1.5px solid var(--gray-300); border-radius: 8px; padding: 8px 10px; background: var(--ivory);
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">EDITOR</div>
+      <h1>Editor title</h1>
+      <p class="sub">What this editor lets the user do, and how the export feeds back into the workflow.</p>
+    </header>
+
+    <div class="toolbar">
+      <button class="primary" id="copyBtn">Copy as prompt</button>
+      <span id="hint" style="color:var(--gray-500)"></span>
+    </div>
+
+    <div class="surface">
+      <label class="field">
+        <span class="name">Field A</span>
+        <input type="text" id="fieldA" value="">
+      </label>
+      <label class="field">
+        <span class="name">Field B</span>
+        <textarea id="fieldB" rows="4"></textarea>
+      </label>
+      <!-- Replace these inputs with the task-specific surface:
+           draggable cards / sliders + live preview / form with validation / etc. -->
+    </div>
+  </div>
+
+  <script>
+    // ---- clipboard helper (works from file://) ----
+    function writeClipboard(text) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        return navigator.clipboard.writeText(text);
+      }
+      const ta = document.createElement("textarea");
+      ta.value = text; ta.style.position = "fixed"; ta.style.left = "-9999px";
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); } catch (e) {}
+      document.body.removeChild(ta);
+      return Promise.resolve();
+    }
+    function flash(btn, msg) {
+      const orig = btn.textContent;
+      btn.textContent = msg; btn.classList.add("copied");
+      setTimeout(() => { btn.textContent = orig; btn.classList.remove("copied"); }, 1200);
+    }
+
+    // ---- build the export payload from current UI state ----
+    function buildExport() {
+      const a = document.getElementById("fieldA").value;
+      const b = document.getElementById("fieldB").value;
+      // Shape this as a prompt / JSON / markdown / diff — whatever the user pastes back.
+      return `Field A: ${a}\n\nField B:\n${b}\n`;
+    }
+
+    document.getElementById("copyBtn").addEventListener("click", function () {
+      writeClipboard(buildExport()).then(() => flash(this, "Copied ✓"));
+    });
+  </script>
+</body>
+</html>

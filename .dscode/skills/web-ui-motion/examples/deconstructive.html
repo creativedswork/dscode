@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>DSCode · Particle Cascade</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root { --bg:#08090f; --fg:#e8ecf4; --accent:#ff6b35; --accent2:#00d9ff; --accent3:#9b6bff; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { width:100%; height:100%; overflow:hidden; background:var(--bg); font-family:'Space Grotesk',sans-serif; color:var(--fg); }
+  #cv { display:block; position:fixed; inset:0; }
+  .hud {
+    position:fixed; top:24px; left:24px; z-index:10;
+    font-family:'JetBrains Mono',monospace; font-size:11px; color:#5a6378;
+    letter-spacing:.15em; text-transform:uppercase; pointer-events:none;
+  }
+  .hud .dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--accent); margin-right:8px; animation:pulse 1.4s ease-in-out infinite; vertical-align:middle; }
+  @keyframes pulse { 0%,100%{opacity:.3;transform:scale(.8);} 50%{opacity:1;transform:scale(1.2);} }
+  .replay {
+    position:fixed; bottom:32px; left:50%; transform:translateX(-50%); z-index:10;
+    font-family:'JetBrains Mono',monospace; font-size:12px; letter-spacing:.2em; text-transform:uppercase;
+    color:var(--fg); background:transparent; border:1px solid rgba(255,255,255,.2);
+    padding:14px 28px; cursor:pointer; opacity:0; pointer-events:none; transition:all .4s ease;
+    backdrop-filter:blur(8px);
+  }
+  .replay.show { opacity:1; pointer-events:auto; }
+  .replay:hover { background:var(--accent); border-color:var(--accent); color:#000; letter-spacing:.3em; }
+  .corner {
+    position:fixed; width:24px; height:24px; border:1px solid rgba(255,255,255,.15); z-index:5; pointer-events:none;
+  }
+  .corner.tl { top:16px; left:16px; border-right:none; border-bottom:none; }
+  .corner.tr { top:16px; right:16px; border-left:none; border-bottom:none; }
+  .corner.bl { bottom:16px; left:16px; border-right:none; border-top:none; }
+  .corner.br { bottom:16px; right:16px; border-left:none; border-top:none; }
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<div class="corner tl"></div><div class="corner tr"></div><div class="corner bl"></div><div class="corner br"></div>
+<div class="hud"><span class="dot"></span><span id="phaseLabel">SYSTEM BOOT — STANDBY</span></div>
+<button class="replay" id="replayBtn">Replay Sequence</button>
+
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const phaseLabel = document.getElementById('phaseLabel');
+const replayBtn = document.getElementById('replayBtn');
+
+let W, H, dpr;
+let colliders = [];
+let letters = [];
+let particles = [];
+let impactRings = [];
+let state = 'intro';
+let stateTime = 0;
+let shake = 0;
+let lastSpawn = 0;
+let flashAlpha = 0;
+let globalTime = 0;
+
+// ---------- 初始化与布局 ----------
+function resize() {
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  cv.style.width = W + 'px'; cv.style.height = H + 'px';
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  buildUI();
+}
+window.addEventListener('resize', resize);
+
+function makeText(text, cx, cy, font, color, align='center') {
+  ctx.font = font;
+  const m = ctx.measureText(text);
+  const w = m.width;
+  const h = parseInt(font) * 1.05;
+  const x = align === 'center' ? cx - w/2 : (align === 'right' ? cx - w : cx);
+  return { type:'text', text, x, y: cy - h/2, w, h, font, color, align, cx, cy, active:true, born:0 };
+}
+
+function makeCard(x, y, w, h, data, idx) {
+  return { type:'card', x, y, w, h, data, idx, active:true, born:0 };
+}
+
+function makeLine(x1, y1, x2, y2, color, thickness=1) {
+  const x = Math.min(x1, x2), y = Math.min(y1, y2);
+  const w = Math.abs(x2 - x1), h = Math.abs(y2 - y1);
+  return { type:'line', x, y, w: Math.max(w, thickness), h: Math.max(h, thickness), x1, y1, x2, y2, color, thickness, active:true, born:0 };
+}
+
+function buildUI() {
+  colliders = [];
+  const cx = W/2;
+  
+  // 顶部装饰线
+  colliders.push(makeLine(80, 60, W-80, 60, 'rgba(255,255,255,0.12)', 1));
+  colliders.push(makeLine(80, H-60, W-80, H-60, 'rgba(255,255,255,0.08)', 1));
+  
+  // 顶部标签
+  colliders.push(makeText('◆ DSCode Studio', 80, 50, '11px "JetBrains Mono"', '#8a93a8', 'left'));
+  colliders.push(makeText('v.2.4 / particle-cascade', W-80, 50, '11px "JetBrains Mono"', '#5a6378', 'right'));
+  
+  // 主标题
+  const titleSize = Math.min(72, W * 0.075);
+  colliders.push(makeText('DSCODE STUDIO', cx, 130, `700 ${titleSize}px "Space Grotesk"`, '#ffffff'));
+  colliders.push(makeText('Build · Break · Rebuild', cx, 130 + titleSize*0.7, '18px "JetBrains Mono"', '#8a93a8'));
+  
+  // 装饰短线
+  colliders.push(makeLine(cx-30, 100, cx+30, 100, 'var(--accent)', 2));
+  colliders.push(makeLine(cx-200, 130 + titleSize*0.7 + 25, cx+200, 130 + titleSize*0.7 + 25, 'rgba(255,107,53,0.4)', 1));
+  
+  // 卡片
+  const cardW = Math.min(220, W * 0.22);
+  const cardH = 150;
+  const gap = 24;
+  const totalW = cardW*3 + gap*2;
+  const startX = cx - totalW/2;
+  const cardY = 130 + titleSize*0.7 + 70;
+  const cardData = [
+    { title:'REACT', desc:'Component-driven UI', tag:'/01', accent:'#ff6b35' },
+    { title:'CANVAS', desc:'Particle physics', tag:'/02', accent:'#00d9ff' },
+    { title:'MOTION', desc:'Fluid animation', tag:'/03', accent:'#9b6bff' }
+  ];
+  for (let i = 0; i < 3; i++) {
+    colliders.push(makeCard(startX + i*(cardW+gap), cardY, cardW, cardH, cardData[i], i));
+  }
+  
+  // 段落文字
+  const paraY = cardY + cardH + 50;
+  colliders.push(makeText('We craft interfaces that respond, react, and remember.', cx, paraY, '15px "Space Grotesk"', '#7a8398'));
+  colliders.push(makeText('Every pixel has weight. Every motion has purpose.', cx, paraY + 28, '15px "Space Grotesk"', '#5a6378'));
+  
+  // 底部状态条
+  const footY = H - 90;
+  colliders.push(makeLine(W/2 - 200, footY, W/2 + 200, footY, 'rgba(255,255,255,0.08)', 1));
+  colliders.push(makeText('[ SCROLL ]   [ CLICK ]   [ EXPLORE ]', cx, footY + 18, '11px "JetBrains Mono"', '#3d4456'));
+  
+  // 给每个碰撞体设置 born 时间，做入场动画
+  colliders.forEach((c, i) => { c.born = i * 30; });
+}
+
+// ---------- 绘制碰撞体 ----------
+function drawCollider(c, age) {
+  if (!c.active) return;
+  if (age < c.born) return;
+  const localAge = age - c.born;
+  const intro = Math.min(1, localAge / 400);
+  const ease = 1 - Math.pow(1 - intro, 3);
+  
+  ctx.save();
+  ctx.globalAlpha = ease;
+  
+  if (c.type === 'text') {
+    ctx.font = c.font;
+    ctx.fillStyle = c.color;
+    ctx.textAlign = c.align === 'left' ? 'left' : (c.align === 'right' ? 'right' : 'center');
+    ctx.textBaseline = 'middle';
+    const yOffset = (1 - ease) * 8;
+    ctx.fillText(c.text, c.cx, c.cy + yOffset);
+  } else if (c.type === 'card') {
+    const d = c.data;
+    // 边框
+    ctx.strokeStyle = d.accent;
+    ctx.globalAlpha = ease * 0.6;
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(c.x, c.y, c.w, c.h);
+    // 内部细线
+    ctx.globalAlpha = ease * 0.15;
+    ctx.strokeStyle = d.accent;
+    ctx.beginPath();
+    ctx.moveTo(c.x + 8, c.y + 8); ctx.lineTo(c.x + c.w - 8, c.y + 8);
+    ctx.moveTo(c.x + 8, c.y + c.h - 8); ctx.lineTo(c.x + c.w - 8, c.y + c.h - 8);
+    ctx.stroke();
+    
+    ctx.globalAlpha = ease;
+    // 标签
+    ctx.fillStyle = d.accent;
+    ctx.font = '700 11px "JetBrains Mono"';
+    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
+    ctx.fillText(d.tag, c.x + 16, c.y + 16);
+    // 标题
+    ctx.fillStyle = '#ffffff';
+    ctx.font = '700 20px "Space Grotesk"';
+    ctx.fillText(d.title, c.x + 16, c.y + 38);
+    // 描述
+    ctx.fillStyle = '#5a6378';
+    ctx.font = '13px "Space Grotesk"';
+    ctx.fillText(d.desc, c.x + 16, c.y + 68);
+    // 装饰条
+    ctx.fillStyle = d.accent;
+    ctx.fillRect(c.x + 16, c.y + 92, 32, 2);
+    // 右下角图形
+    ctx.strokeStyle = d.accent;
+    ctx.globalAlpha = ease * 0.4;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(c.x + c.w - 28, c.y + c.h - 28, 12, 0, Math.PI*2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(c.x + c.w - 28, c.y + c.h - 28, 6, 0, Math.PI*2);
+    ctx.stroke();
+  } else if (c.type === 'line') {
+    ctx.strokeStyle = c.color;
+    ctx.lineWidth = c.thickness;
+    ctx.globalAlpha = ease * (c.color.includes('0.') ? 1 : 0.6);
+    ctx.beginPath();
+    ctx.moveTo(c.x1, c.y1);
+    ctx.lineTo(c.x1 + (c.x2 - c.x1) * ease, c.y1 + (c.y2 - c.y1) * ease);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ---------- 粒子爆炸 ----------
+function explodeCollider(c) {
+  if (c.type === 'text') {
+    const count = Math.max(20, Math.floor(c.w * c.h / 45));
+    for (let i = 0; i < count; i++) {
+      const px = c.x + Math.random() * c.w;
+      const py = c.y + Math.random() * c.h;
+      particles.push({
+        x: px, y: py,
+        vx: (Math.random() - 0.5) * 5,
+        vy: (Math.random() - 0.5) * 4 - 1.5,
+        size: 1.2 + Math.random() * 1.6,
+        color: c.color === '#ffffff' ? (Math.random() < 0.3 ? '#ff6b35' : '#ffffff') : c.color,
+        phase: 'fall',
+      });
+    }
+  } else if (c.type === 'card') {
+    const perim = (c.w + c.h) * 2;
+    const count = Math.floor(perim / 3);
+    for (let i = 0; i < count; i++) {
+      const t = Math.random() * perim;
+      let px, py;
+      if (t < c.w) { px = c.x + t; py = c.y; }
+      else if (t < c.w + c.h) { px = c.x + c.w; py = c.y + (t - c.w); }
+      else if (t < c.w*2 + c.h) { px = c.x + c.w - (t - c.w - c.h); py = c.y + c.h; }
+      else { px = c.x; py = c.y + c.h - (t - c.w*2 - c.h); }
+      
+      // 内部内容也散落
+      if (Math.random() < 0.5) {
+        px = c.x + Math.random() * c.w;
+        py = c.y + Math.random() * c.h;
+      }
+      
+      const useAccent = Math.random() < 0.4;
+      particles.push({
+        x: px, y: py,
+        vx: (Math.random() - 0.5) * 7,
+        vy: (Math.random() - 0.5) * 5 - 1,
+        size: 1.2 + Math.random() * 1.8,
+        color: useAccent ? c.data.accent : '#ffffff',
+        phase: 'fall',
+      });
+    }
+  } else if (c.type === 'line') {
+    const len = Math.hypot(c.x2 - c.x1, c.y2 - c.y1);
+    const count = Math.floor(len / 3);
+    for (let i = 0; i < count; i++) {
+      const t = Math.random();
+      const px = c.x1 + (c.x2 - c.x1) * t;
+      const py = c.y1 + (c.y2 - c.y1) * t;
+      particles.push({
+        x: px, y: py,
+        vx: (Math.random() - 0.5) * 4,
+        vy: (Math.random() - 0.5) * 3 - 0.5,
+        size: 1.0 + Math.random() * 1.2,
+        color: c.color.includes('255,107,53') ? '#ff6b35' : 
+               (c.color.includes('0.08') || c.color.includes('0.12') ? '#3d4456' : '#8a93a8'),
+        phase: 'fall',
+      });
+    }
+  }
+  
+  flashAlpha = Math.max(flashAlpha, 0.12);
+  shake = Math.max(shake, 5);
+}
+
+// ---------- 字母下落 ----------
+const LETTER_CHARS = ['d','s','c','o','d','e'];
+const LETTER_COLORS = ['#ff6b35', '#00d9ff', '#9b6bff', '#ffffff', '#ff6b35', '#00d9ff'];
+
+function spawnLetter() {
+  const idx = Math.floor(Math.random() * LETTER_CHARS.length);
+  letters.push({
+    char: LETTER_CHARS[idx],
+    x: 60 + Math.random() * (W - 120),
+    y: -40,
+    vx: (Math.random() - 0.5) * 2.5,
+    vy: 1.5 + Math.random() * 2,
+    size: 30 + Math.random() * 22,
+    rot: (Math.random() - 0.5) * 0.4,
+    vrot: (Math.random() - 0.5) * 0.06,
+    color: LETTER_COLORS[idx],
+    alive: true,
+    hitCount: 0,
+    glow: 1,
+  });
+}
+
+function updateLetters(dt) {
+  const f = dt / 16;
+  for (const L of letters) {
+    if (!L.alive) continue;
+    L.vy += 0.35 * f;
+    L.x += L.vx * f;
+    L.y += L.vy * f;
+    L.rot += L.vrot * f;
+    
+    if (L.x < 20) { L.x = 20; L.vx = Math.abs(L.vx) * 0.7; }
+    if (L.x > W - 20) { L.x = W - 20; L.vx = -Math.abs(L.vx) * 0.7; }
+    
+    // 碰撞检测
+    for (const c of colliders) {
+      if (!c.active) continue;
+      const hit = L.x > c.x - 6 && L.x < c.x + c.w + 6 && 
+                  L.y > c.y - 6 && L.y < c.y + c.h + 6;
+      if (hit) {
+        // 判断主要碰撞方向
+        const cy = c.y + c.h / 2;
+        if (L.y < cy) {
+          L.vy = -Math.abs(L.vy) * 0.85 - 2.5;
+          L.y = c.y - 6;
+        } else {
+          L.vy = Math.abs(L.vy) * 0.6;
+          L.y = c.y + c.h + 6;
+        }
+        L.vx += (Math.random() - 0.5) * 3.5;
+        L.vrot += (Math.random() - 0.5) * 0.15;
+        L.hitCount++;
+        L.glow = 1.5;
+        c.active = false;
+        explodeCollider(c);
+        break;
+      }
+    }
+    
+    if (L.y > H + 80) L.alive = false;
+  }
+  letters = letters.filter(L => L.alive);
+}
+
+function drawLetters() {
+  for (const L of letters) {
+    if (!L.alive) continue;
+    ctx.save();
+    ctx.translate(L.x, L.y);
+    ctx.rotate(L.rot);
+    ctx.font = `700 ${L.size}px "Space Grotesk"`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.shadowColor = L.color;
+    ctx.shadowBlur = 18 * L.glow;
+    ctx.fillStyle = L.color;
+    ctx.fillText(L.char, 0, 0);
+    ctx.restore();
+    L.glow = Math.max(1, L.glow * 0.94);
+  }
+}
+
+// ---------- 粒子更新 ----------
+function updateParticles(dt) {
+  const f = dt / 16;
+  for (const p of particles) {
+    if (p.phase === 'fall') {
+      p.vy += 0.28 * f;
+      p.x += p.vx * f;
+      p.y += p.vy * f;
+      p.vx *= 0.995;
+      
+      if (state === 'gather' && p.tx !== undefined) {
+        if (p.gatherDelay > 0) {
+          p.gatherDelay -= f;
+          if (p.y > H - 8) {
+            p.y = H - 8;
+            p.vy *= -0.25;
+            p.vx *= 0.7;
+          }
+        } else {
+          // 启动加速冲向目标
+          p.phase = 'gather';
+          const dx = p.tx - p.x;
+          const dy = p.ty - p.y;
+          const dist = Math.hypot(dx, dy) || 1;
+          p.vx = dx / dist * 6;
+          p.vy = dy / dist * 6;
+        }
+      } else {
+        if (p.y > H - 8) {
+          p.y = H - 8;
+          p.vy *= -0.3;
+          p.vx *= 0.75;
+          if (Math.abs(p.vy) < 0.4) p.vy = 0;
+        }
+      }
+    } else if (p.phase === 'gather') {
+      const dx = p.tx - p.x;
+      const dy = p.ty - p.y;
+      const dist = Math.hypot(dx, dy);
+      
+      if (dist < 4) {
+        p.x = p.tx;
+        p.y = p.ty;
+        p.phase = 'formed';
+        p.flash = 1;
+        p.vx = 0; p.vy = 0;
+        shake = Math.max(shake, 2.5);
+        impactRings.push({ x: p.x, y: p.y, r: 0, life: 1, color: p.color });
+      } else {
+        // 像子弹一样持续加速
+        const force = 0.55 * f;
+        p.vx += (dx / dist) * force;
+        p.vy += (dy / dist) * force;
+        p.vx *= 0.88;
+        p.vy *= 0.88;
+        p.x += p.vx * f;
+        p.y += p.vy * f;
+      }
+    } else if (p.phase === 'formed') {
+      p.flash *= 0.9;
+    }
+  }
+}
+
+function drawParticles() {
+  // 普通粒子
+  for (const p of particles) {
+    if (p.phase === 'formed' && p.flash > 0.02) {
+      ctx.fillStyle = `rgba(255,255,255,${p.flash * 0.8})`;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size * (1 + p.flash * 3), 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = p.color;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  
+  // 撞击环
+  for (let i = impactRings.length - 1; i >= 0; i--) {
+    const r = impactRings[i];
+    r.r += 2.2;
+    r.life -= 0.045;
+    if (r.life <= 0) { impactRings.splice(i, 1); continue; }
+    ctx.strokeStyle = `rgba(255,255,255,${r.life * 0.6})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(r.x, r.y, r.r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+
+// ---------- 聚集形成 DSCode ----------
+function startGather() {
+  // 把字母转换成粒子
+  for (const L of letters) {
+    if (!L.alive) continue;
+    const n = 18;
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      particles.push({
+        x: L.x + Math.cos(a) * L.size * 0.4,
+        y: L.y + Math.sin(a) * L.size * 0.4,
+        vx: L.vx + Math.cos(a) * 2,
+        vy: L.vy + Math.sin(a) * 2,
+        size: 1.5 + Math.random() * 1.5,
+        color: L.color,
+        phase: 'fall',
+      });
+    }
+    L.alive = false;
+  }
+  letters = [];
+  
+  // 渲染 DSCode 到离屏 canvas 提取目标点
+  const off = document.createElement('canvas');
+  off.width = W; off.height = H;
+  const octx = off.getContext('2d');
+  octx.fillStyle = '#fff';
+  const fontSize = Math.min(320, W * 0.18, H * 0.5);
+  octx.font = `700 ${fontSize}px "Space Grotesk"`;
+  octx.textAlign = 'center';
+  octx.textBaseline = 'middle';
+  octx.fillText('DSCode', W/2, H/2);
+  
+  const img = octx.getImageData(0, 0, W, H);
+  const targets = [];
+  const step = 6;
+  for (let y = 0; y < H; y += step) {
+    for (let x = 0; x < W; x += step) {
+      const idx = (y * W + x) * 4 + 3;
+      if (img.data[idx] > 128) targets.push({ x, y });
+    }
+  }
+  
+  // 打乱
+  for (let i = targets.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [targets[i], targets[j]] = [targets[j], targets[i]];
+  }
+  
+  // 分配目标
+  particles.forEach((p, i) => {
+    const t = targets[i % targets.length];
+    p.tx = t.x + (Math.random() - 0.5) * 3;
+    p.ty = t.y + (Math.random() - 0.5) * 3;
+    p.gatherDelay = 20 + Math.random() * 80;
+    p.color = '#ffffff';
+  });
+  
+  // 如果粒子不够，补充
+  while (particles.length < Math.min(targets.length, 2500)) {
+    const t = targets[particles.length % targets.length];
+    particles.push({
+      x: Math.random() * W,
+      y: H + Math.random() * 80,
+      vx: 0, vy: 0,
+      size: 1.3 + Math.random() * 1.2,
+      color: '#ffffff',
+      phase: 'fall',
+      tx: t.x, ty: t.y,
+      gatherDelay: 20 + Math.random() * 80,
+    });
+  }
+}
+
+// ---------- 背景 ----------
+function drawBackground() {
+  // 径向光晕
+  const grad = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.max(W, H) * 0.7);
+  grad.addColorStop(0, 'rgba(60, 30, 80, 0.18)');
+  grad.addColorStop(0.5, 'rgba(20, 15, 40, 0.08)');
+  grad.addColorStop(1, 'rgba(8, 9, 15, 0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+  
+  // 网格
+  ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+  ctx.lineWidth = 1;
+  const grid = 48;
+  const ox = (globalTime * 0.005) % grid;
+  for (let x = -ox; x < W; x += grid) {
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  for (let y = 0; y < H; y += grid) {
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
+  }
+  
+  // 中心十字标记
+  if (state === 'intro' || state === 'falling') {
+    ctx.strokeStyle = 'rgba(255,107,53,0.15)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(W/2 - 12, H/2); ctx.lineTo(W/2 + 12, H/2);
+    ctx.moveTo(W/2, H/2 - 12); ctx.lineTo(W/2, H/2 + 12);
+    ctx.stroke();
+  }
+}
+
+// ---------- 主循环 ----------
+const PHASE_LABELS = {
+  intro: 'SYSTEM BOOT — RENDERING UI',
+  falling: 'CASCADE ACTIVE — DSCODE INCOMING',
+  gather: 'PARTICLE CONVERGENCE — IMPACT IMMINENT',
+  formed: 'FORMATION COMPLETE — DSCODE ONLINE'
+};
+
+function loop(dt) {
+  globalTime += dt;
+  stateTime += dt;
+  
+  // 清屏（带轻微拖尾制造运动感）
+  const trailAlpha = state === 'formed' ? 0.4 : 0.22;
+  ctx.fillStyle = `rgba(8,9,15,${trailAlpha})`;
+  ctx.fillRect(0, 0, W, H);
+  
+  ctx.save();
+  if (shake > 0.1) {
+    ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+    shake *= 0.88;
+  }
+  
+  drawBackground();
+  
+  // 绘制 UI 碰撞体
+  for (const c of colliders) drawCollider(c, globalTime);
+  
+  // 状态机
+  if (state === 'intro') {
+    if (stateTime > 1400) {
+      state = 'falling';
+      stateTime = 0;
+      phaseLabel.textContent = PHASE_LABELS.falling;
+    }
+  } else if (state === 'falling') {
+    lastSpawn += dt;
+    if (lastSpawn > 320 && letters.length < 9) {
+      spawnLetter();
+      lastSpawn = 0;
+    }
+    updateLetters(dt);
+    
+    // 所有 UI 都被分解
+    if (colliders.every(c => !c.active)) {
+      if (stateTime > 2200) {
+        state = 'gather';
+        stateTime = 0;
+        startGather();
+        phaseLabel.textContent = PHASE_LABELS.gather;
+      }
+    } else {
+      // 重置计时，直到全部清除才开始倒计时
+      // 不重置，让自然过渡
+    }
+  } else if (state === 'gather') {
+    updateLetters(dt);
+    if (particles.length > 0 && particles.every(p => p.phase === 'formed')) {
+      state = 'formed';
+      stateTime = 0;
+      phaseLabel.textContent = PHASE_LABELS.formed;
+      replayBtn.classList.add('show');
+    }
+  } else if (state === 'formed') {
+    // 整体呼吸光晕
+    const breath = 0.5 + 0.5 * Math.sin(globalTime * 0.002);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = `rgba(255,107,53,${0.04 + breath * 0.03})`;
+    ctx.fillRect(0, 0, W, H);
+    ctx.restore();
+  }
+  
+  updateParticles(dt);
+  drawParticles();
+  drawLetters();
+  
+  // 全局闪光
+  if (flashAlpha > 0.01) {
+    ctx.fillStyle = `rgba(255,255,255,${flashAlpha})`;
+    ctx.fillRect(0, 0, W, H);
+    flashAlpha *= 0.82;
+  }
+  
+  ctx.restore();
+}
+
+// ---------- 重置 ----------
+function reset() {
+  colliders = [];
+  letters = [];
+  particles = [];
+  impactRings = [];
+  state = 'intro';
+  stateTime = 0;
+  lastSpawn = 0;
+  shake = 0;
+  flashAlpha = 0;
+  replayBtn.classList.remove('show');
+  phaseLabel.textContent = PHASE_LABELS.intro;
+  buildUI();
+}
+
+replayBtn.addEventListener('click', reset);
+
+// ---------- 启动 ----------
+document.fonts.ready.then(() => {
+  resize();
+  let last = performance.now();
+  function frame(t) {
+    const dt = Math.min(33, t - last);
+    last = t;
+    loop(dt);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+});
+</script>
+</body>
+</html>

@@ -13,6 +13,7 @@
   --color-text-muted: #8a8580;
   --color-accent: #ca8a04;
   --color-accent-hover: #a07004;
+  --color-accent-bg: rgba(202, 138, 4, 0.12);
   --color-success: #edf4ed;
   --color-success-text: #347539;
   --color-error: #fdebec;
@@ -55,6 +56,7 @@
   --cw-mcp: #a78bfa;
   --cw-other: #9ca3af;
   --color-accent: #d49708;
+  --color-accent-bg: rgba(212, 151, 8, 0.15);
   --color-accent-hover: #e5a50a;
   --color-success: #1a2e1a;
   --color-success-text: #5ca860;

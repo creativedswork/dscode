@@ -109,6 +109,13 @@ export function App() {
     }
   }, [currentSessionId, viewMode]);
 
+  // Dashboard unavailable when session is empty
+  useEffect(() => {
+    if (messages.length === 0 && viewMode === "dashboard") {
+      setViewMode("chat");
+    }
+  }, [messages, viewMode]);
+
   const toggleTheme = useCallback(() => setTheme((p) => (p === "light" ? "dark" : "light")), []);
 
   const handleEvent = useCallback((event: ServerEvent) => {
@@ -232,6 +239,7 @@ export function App() {
       return;
     }
     // mode === "dashboard"
+    if (messages.length === 0) return;
     const csid = currentSessionIdRef.current;
     if (csid) {
       const cached = dashCacheRef.current[csid];
@@ -256,7 +264,7 @@ export function App() {
     setArtifactLoading(true);
     send({ type: "artifact", action: "generate", context: "session_dashboard" });
     setTransitionPhase("animating");
-  }, [send, sessions]);
+  }, [send, sessions, messages]);
   const handleTransitionComplete = useCallback(() => {
     // Poll until artifactLoading is confirmed false before transitioning,
     // preventing a flash of "Generating dashboard..." in ArtifactContainer.
@@ -291,7 +299,7 @@ export function App() {
           <ContextWindowBar data={contextWindow} />
         </div>
         <div className="flex items-center gap-3">
-          <ViewModeSwitcher viewMode={viewMode} onChange={handleViewModeChange} />
+          <ViewModeSwitcher viewMode={viewMode} onChange={handleViewModeChange} disabled={messages.length === 0} />
           <button onClick={toggleTheme} className="p-2 rounded-btn hover:brightness-95 transition-[filter] duration-200" style={{ backgroundColor: "var(--color-surface-hover)" }} aria-label="Toggle theme">
             {theme === "light" ? <Moon size={18} weight="bold" style={{ color: "var(--color-text)" }} /> : <Sun size={18} weight="bold" style={{ color: "var(--color-text)" }} />}
           </button>
