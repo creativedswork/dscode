@@ -191,6 +191,7 @@ export class ConversationView {
     this.thinkingBuffer = "";
     this.toolEntries = [];
     this.renderedToolCount = 0;
+    this.tui.requestRender(true);
   }
 
   thinkingDelta(delta: string): void {
@@ -603,6 +604,6 @@ export class ConversationView {
       this.liveComponents.push(permText);
     }
 
-    this.tui.requestRender(true);
+    this.tui.requestRender(false);
   }
 }

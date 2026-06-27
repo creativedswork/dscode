@@ -53,6 +53,7 @@ class HybridAutocompleteProvider implements AutocompleteProvider {
   constructor(slashCommands: { name: string; description?: string }[], projectPath: string) {
     this.projectPath = projectPath;
     this.slashProvider = new CombinedAutocompleteProvider(slashCommands, projectPath, null);
+
   }
 
   async getSuggestions(
@@ -108,6 +109,25 @@ class HybridAutocompleteProvider implements AutocompleteProvider {
   }
 }
 
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
+  return String(n);
+}
+
+function formatContextPercent(estimated: number, contextWindow: number): string | null {
+  if (contextWindow <= 0 || !isFinite(estimated) || Number.isNaN(estimated)) return null;
+  const pct = Math.round((estimated / contextWindow) * 100);
+  const text = `▓▓ ${pct}%`;
+  if (pct > 95) return c.red(text);
+  if (pct > 80) return c.yellow(text);
+  return c.dim(text);
+}
+
+function formatCost(total: number): string {
+  if (total >= 0.01) return `$${total.toFixed(4)}`;
+  return `¢${(total * 100).toFixed(2)}`;
+}
 
 export class TuiApp {
   private deps: HarnessAPI;
@@ -842,7 +862,6 @@ export class TuiApp {
     });
   }
 
-
   private handleCtrlC(): void {
     if (this.resolvePermission) {
       this.resolvePermissionChoice({ decision: "deny" });
@@ -896,13 +915,27 @@ export class TuiApp {
     this.conversation.toolEnd(name, result, isError);
   }
 
-  finishAssistantMessage(): void {
+  finishAssistantMessage(usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number; cost: { total: number } }): void {
     this.finalizeIdleSegment();
     this.conversation.finishAssistantMessage();
+    const parts: string[] = [];
     if (this.totalWaitMs >= 1000) {
-      this.conversation.addInfo(
-        c.dim(`⏱ total wait: ${this.formatElapsed(this.totalWaitMs)} (${this.waitSegments.length} segment${this.waitSegments.length > 1 ? "s" : ""})`),
-      );
+      parts.push(`⏱ ${this.formatElapsed(this.totalWaitMs)}`);
+    }
+    if (usage && usage.input > 0 && usage.output > 0) {
+      parts.push(`📊 ${formatTokens(usage.input)}↓ ${formatTokens(usage.output)}↑`);
+    }
+    {
+      const estimatedTokens = this.deps.contextManager.getEstimatedTokens(this.deps.agent.state.messages);
+      const contextWindow = this.deps.contextManager.getContextWindow();
+      const ctxStr = formatContextPercent(estimatedTokens, contextWindow);
+      if (ctxStr) parts.push(ctxStr);
+    }
+    if (usage && usage.cost.total > 0) {
+      parts.push(`💰 ${formatCost(usage.cost.total)}`);
+    }
+    if (parts.length > 0) {
+      this.conversation.addInfo(c.dim(parts.join(" · ")));
     }
   }
 
@@ -1190,7 +1223,6 @@ export class TuiApp {
     this.focusEditor();
     this.tui.requestRender(true);
   }
-
 
   replayMessages(messages: unknown[]): void {
     this.conversation.replayMessages(messages);

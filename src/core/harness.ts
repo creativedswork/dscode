@@ -1108,7 +1108,8 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
           // Save session before broadcasting so sidebar gets fresh metadata
           this.sessionManager.trySaveSession(this.agent);
           const turnEndMsg = event.message as AssistantMessage;
-          this.events.emit({ type: "turn:end", stopReason: turnEndMsg?.stopReason, usage: turnEndMsg?.usage as any });
+          const rawUsage = turnEndMsg?.usage;
+          this.events.emit({ type: "turn:end", stopReason: turnEndMsg?.stopReason, usage: rawUsage ? { input: rawUsage.input, output: rawUsage.output, cacheRead: rawUsage.cacheRead, cacheWrite: rawUsage.cacheWrite, total: rawUsage.totalTokens, cost: { total: rawUsage.cost.total } } : undefined });
           const msg = turnEndMsg;
           if (msg?.stopReason === "length") {
             this.events.emit({ type: "ui:info", text: "Output truncated (hit max_tokens). Continue from where you left off." });

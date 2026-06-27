@@ -20,7 +20,7 @@ export type HarnessEvent =
   // Turn lifecycle
   | { type: "turn:start" }
   | { type: "turn:streaming:start" }
-  | { type: "turn:end"; stopReason?: string; usage?: { inputTokens: number; outputTokens: number } }
+  | { type: "turn:end"; stopReason?: string; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number; cost: { total: number } } }
   | { type: "turn:abort"; reason: "user" | "system" }
   | { type: "turn:error"; error: string; attempt?: number; maxRetries?: number }
 

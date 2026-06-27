@@ -20,7 +20,7 @@ export class TuiBackend implements UiBackend {
     deps.events.on("tool:start", (e) => { this.tui.toolStart(e.name, e.args); });
     deps.events.on("tool:end", (e) => { this.tui.toolEnd(e.name, e.result, e.isError); });
     deps.events.on("turn:streaming:start", () => { this.tui.startAssistantMessage(); });
-    deps.events.on("turn:end", () => { this.tui.finishAssistantMessage(); });
+    deps.events.on("turn:end", (e) => { this.tui.finishAssistantMessage(e.usage); });
     deps.events.on("message:user", (e) => { this.tui.addUserMessage(e.text); });
     deps.events.on("ui:info", (e) => { this.tui.addInfo(e.text, e.display); });
     deps.events.on("ui:error", (e) => { this.tui.addError(e.text); });
