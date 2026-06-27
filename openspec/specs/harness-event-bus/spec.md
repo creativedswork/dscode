@@ -53,6 +53,17 @@ The `HarnessEvent` discriminated union SHALL include all event types in the cata
 - **WHEN** the `HarnessEvent` type is inspected
 - **THEN** no two union members SHALL have the same `type` literal value
 
+#### Scenario: turn:end usage carries full token and cost data
+
+- **WHEN** the `turn:end` event is emitted
+- **THEN** its `usage` field SHALL be of type `{ input: number; output: number; cacheRead: number; cacheWrite: number; total: number; cost: { total: number } } | undefined`
+- **AND** the `usage.input` field SHALL contain input token count
+- **AND** the `usage.output` field SHALL contain output token count
+- **AND** the `usage.cacheRead` field SHALL contain cache read token count
+- **AND** the `usage.cacheWrite` field SHALL contain cache write token count
+- **AND** the `usage.total` field SHALL contain total token count
+- **AND** the `usage.cost.total` field SHALL contain the API cost in USD
+
 ### Requirement: turn:abort carries reason field
 
 The `turn:abort` event SHALL include a `reason` field with value `"user"` or `"system"`. `"user"` indicates the user explicitly triggered abort (e.g., Esc key, abort button). `"system"` indicates a system-initiated abort (e.g., shutdown, timeout, session switch).
