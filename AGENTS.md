@@ -26,3 +26,11 @@ npm run build:web      # 构建前端（npm start 前需先执行）
 npm run typecheck      # 类型检查
 npm test               # 测试
 ```
+
+
+## 配置文件
+
+- `~/.dscode/settings.json` — 用户偏好（权限、skills、retry），可版本管理
+- `<project>/.dscode/settings.json` — 项目偏好，覆盖用户设置
+- `~/.mcp.json` — 用户全局 MCP servers，包含敏感信息不提交
+- `<project>/.mcp.json` — 项目 MCP servers，应加入 `.gitignore`

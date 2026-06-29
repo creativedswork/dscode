@@ -6,7 +6,7 @@ import { streamSimple, Type } from "@mariozechner/pi-ai";
 import type { Api, AssistantMessage, Context, ImageContent, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
 
 import type { HarnessConfig } from "./types.js";
-import { saveUserConfig, loadScopedSettings, projectSettingsPath, userSettingsPath, normalizeTransport, normalizeProtocolVersion } from "./config.js";
+import { saveUserConfig, loadScopedSettings, projectSettingsPath, userSettingsPath, loadMcpServers } from "./config.js";
 import { SessionManager } from "../session/manager.js";
 import { ContextManager } from "../context/manager.js";
 import { MemoryManager } from "../memory/manager.js";
@@ -670,48 +670,8 @@ export class Harness implements HarnessAPI {
     // Reload MCP servers from new project settings
     try {
       const userSettings = loadScopedSettings(userSettingsPath());
-      const newProjectSettings = loadScopedSettings(projectSettingsPath(resolvedPath));
-      const mergedSettings = { ...userSettings, ...newProjectSettings };
-
-      if (this.mcpManager) {
-        await this.mcpManager.shutdown();
-      }
-
-      let mcpServersRaw: unknown[] = [];
-      const mcpConfig = (mergedSettings.mcp as Record<string, unknown>) ?? {};
-      if (Array.isArray(mcpConfig.servers)) {
-        mcpServersRaw.push(...(mcpConfig.servers as unknown[]));
-      }
-      const mcpObj = mergedSettings.mcpServers as Record<string, Record<string, unknown>> | undefined;
-      if (mcpObj && typeof mcpObj === "object" && !Array.isArray(mcpObj)) {
-        for (const [name, cfg] of Object.entries(mcpObj)) {
-          if (cfg && typeof cfg === "object" && !Array.isArray(cfg)) {
-            mcpServersRaw.push({ name, ...cfg });
-          }
-        }
-      }
-
-      const mcpServers: import("../mcp/types.js").MCPServerConfig[] = mcpServersRaw
-        .filter((s: any) => s && typeof s === "object")
-        .map((s: any) => {
-          const hasCommand = typeof s.command === "string" && s.command.length > 0;
-          const hasUrl = typeof s.url === "string" && s.url.length > 0;
-          const transport = normalizeTransport(s.transport ?? s.type, hasCommand, hasUrl);
-          return {
-            name: s.name,
-            description: s.description,
-            transport,
-            command: s.command,
-            args: s.args,
-            url: s.url,
-            env: s.env,
-            headers: s.headers,
-            preferredProtocolVersion: normalizeProtocolVersion(s.preferredProtocolVersion ?? s.protocolVersion),
-            allowLegacySseFallback: s.allowLegacySseFallback !== false,
-            requestTimeoutMs: typeof s.requestTimeoutMs === "number" ? s.requestTimeoutMs : undefined,
-            connectTimeoutMs: typeof s.connectTimeoutMs === "number" ? s.connectTimeoutMs : undefined,
-          };
-        });
+      const projectSettings = loadScopedSettings(projectSettingsPath(resolvedPath));
+      const { servers: mcpServers } = loadMcpServers(userSettings, projectSettings, resolvedPath);
 
       if (mcpServers.length > 0) {
         this.configStore.setMcpServers(mcpServers);
