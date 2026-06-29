@@ -16,7 +16,7 @@ The web server SHALL start on a configurable port when dscode is launched with `
 - **THEN** all WebSocket connections are closed, the HTTP server stops, and the Harness shutdown sequence runs
 
 ### Requirement: Static file serving
-The server SHALL serve the SPA frontend assets (HTML, JS, CSS, images) from the built `dist/web/` directory.
+The server SHALL serve the SPA frontend assets (HTML, JS, CSS, images) from the built `dist/web/` directory, resolved relative to the dscode project root (captured at startup before any `process.chdir`).
 
 #### Scenario: Root path returns index.html
 - **WHEN** browser requests `GET /`
@@ -29,6 +29,12 @@ The server SHALL serve the SPA frontend assets (HTML, JS, CSS, images) from the 
 #### Scenario: SPA fallback
 - **WHEN** browser requests an unknown path like `GET /chat/session-1`
 - **THEN** server responds with `dist/web/index.html` (to support client-side routing)
+
+#### Scenario: Frontend assets resolved from project root, not cwd
+- **WHEN** dscode is started with `--cwd /some/project` and the dscode project root is `/opt/dscode`
+- **THEN** the web server SHALL resolve `dist/web/` from `/opt/dscode/dist/web/`
+- **AND** SHALL NOT attempt to serve frontend assets from `/some/project/dist/web/`
+- **AND** the SPA SHALL load correctly at `http://localhost:3000`
 
 ### Requirement: WebSocket upgrade
 The server SHALL accept WebSocket upgrade requests at `/ws` path and maintain persistent connections for real-time communication.

@@ -6,6 +6,43 @@ interface ToolCardProps {
   tool: ToolCallEntry;
 }
 
+function formatIfJSON(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return text;
+  try {
+    const parsed = JSON.parse(trimmed);
+    const expanded = expandNestedJSON(parsed);
+    return "```json\n" + JSON.stringify(expanded, null, 2) + "\n```";
+  } catch {
+    return text;
+  }
+}
+
+function expandNestedJSON(value: unknown): unknown {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if ((trimmed.startsWith("{") || trimmed.startsWith("[")) && trimmed.length > 2) {
+      try {
+        return expandNestedJSON(JSON.parse(trimmed));
+      } catch {
+        return value;
+      }
+    }
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map(expandNestedJSON);
+  }
+  if (value !== null && typeof value === "object") {
+    const result: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      result[k] = expandNestedJSON(v);
+    }
+    return result;
+  }
+  return value;
+}
+
 interface ParsedImage {
   data: string;
   mimeType: string;
@@ -62,7 +99,7 @@ export function ToolCard({ tool }: ToolCardProps) {
     }
     if (!hasResult || hasMcpApp) return tool.result;
     const parsed = extractImages(tool.result);
-    return parsed.cleanedText;
+    return formatIfJSON(parsed.cleanedText);
   }, [tool.images, tool.result, hasResult, hasMcpApp]);
 
   return (

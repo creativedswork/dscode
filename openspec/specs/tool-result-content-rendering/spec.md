@@ -45,3 +45,17 @@
 #### Scenario: Unknown tool with non-JSON result
 - **WHEN** an unrecognized tool produces a result that is not JSON
 - **THEN** the function SHALL preserve the existing 600-char truncation behavior without code fence wrapping
+
+### Requirement: ToolCard single Markdown block rendering
+The ToolCard component SHALL render the entire formatted tool result as a single `<Markdown>` block rather than splitting by newlines into individual per-line `<Markdown>` components. This ensures that multi-line markdown constructs (code fences, tables, lists) are correctly parsed as complete structures.
+
+#### Scenario: JSON code block renders as single element
+- **WHEN** a formatted tool result contains a markdown code fence (e.g., ```` ```json ... ``` ````)
+- **THEN** ToolCard SHALL pass the entire result string to a single `<Markdown>` component
+- **AND** SHALL NOT split the string on newlines into separate `<Markdown>` components
+- **AND** the rendered output SHALL appear as one contiguous bordered code block, not multiple fragmented blocks
+
+#### Scenario: Plain text result rendered correctly
+- **WHEN** a formatted tool result is plain text (no markdown constructs)
+- **THEN** ToolCard SHALL still render it as a single `<Markdown>` block
+- **AND** line breaks within the plain text SHALL be preserved by the Markdown renderer

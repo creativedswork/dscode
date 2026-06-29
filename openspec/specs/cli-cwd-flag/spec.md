@@ -23,6 +23,14 @@ The CLI entry point in `src/core/main.ts` SHALL accept a `--cwd <path>` option. 
 #### Scenario: --cwd composes with --web
 - **WHEN** dscode is invoked as `dscode --cwd /home/user/myproject --web --web-port 8080`
 - **THEN** the working directory SHALL be `/home/user/myproject` AND the web server SHALL start on port 8080
+- **AND** the web server SHALL serve the SPA frontend assets from the dscode project root's `dist/web/` directory (not from the `--cwd` directory)
+
+#### Scenario: --cwd with --web serves frontend from project root
+- **WHEN** dscode is invoked as `dscode --cwd /home/user/myproject --web`
+- **AND** the dscode project root is `/opt/dscode`
+- **THEN** `process.chdir("/home/user/myproject")` SHALL be called for tool execution context
+- **AND** the web server SHALL resolve `dist/web/index.html` from `/opt/dscode/dist/web/` (not `/home/user/myproject/dist/web/`)
+- **AND** the browser loading `http://localhost:3000` SHALL receive the SPA correctly, not a 404
 
 #### Scenario: No --cwd flag (backward compatible)
 - **WHEN** dscode is invoked without `--cwd`

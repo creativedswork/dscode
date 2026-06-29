@@ -53,6 +53,7 @@ export interface WebUiOptions {
   harness: HarnessAPI;
   configStore: ConfigWatch;
   config: HarnessConfig;
+  projectRoot?: string;
 }
 
 /**
@@ -65,6 +66,7 @@ export class WebUiBackend implements UiBackend {
   private harness: HarnessAPI;
   private config: HarnessConfig;
   private configStore: ConfigWatch;
+  private projectRoot: string;
   private httpServer: ReturnType<typeof createServer>;
   private wsServer: WsServer;
   private currentClient: WebSocketClient | null = null;
@@ -100,6 +102,7 @@ export class WebUiBackend implements UiBackend {
     this.port = options.port;
     this.harness = options.harness;
     this.configStore = options.configStore;
+    this.projectRoot = options.projectRoot ?? process.cwd();
     this.config = options.config;
 
     this.wsServer = new WsServer();
@@ -1283,7 +1286,7 @@ export class WebUiBackend implements UiBackend {
   private serveSpa(req: IncomingMessage, res: ServerResponse): void {
     // Resolve web dist: try dist/web relative to project root first (for tsx/source mode),
     // then fall back to __dirname-relative (for bundled mode).
-    const projectDist = join(resolve(process.cwd()), "dist", "web");
+    const projectDist = join(resolve(this.projectRoot), "dist", "web");
     const moduleDist = join(fileURLToPath(new URL(".", import.meta.url)), "web");
     const webDist = existsSync(projectDist) ? projectDist : moduleDist;
 
