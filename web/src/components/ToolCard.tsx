@@ -65,11 +65,6 @@ export function ToolCard({ tool }: ToolCardProps) {
     return parsed.cleanedText;
   }, [tool.images, tool.result, hasResult, hasMcpApp]);
 
-  const displayLines = useMemo(() => {
-    if (!displayText) return [];
-    return displayText.split('\n');
-  }, [displayText]);
-
   return (
     <div
       className="text-xs p-2.5 min-w-0"
@@ -122,15 +117,7 @@ export function ToolCard({ tool }: ToolCardProps) {
           className="mt-1.5 max-h-40 overflow-y-auto"
           style={{ color: isError ? "var(--color-error-text)" : "var(--color-text)" }}
         >
-          {displayLines.map((line, i) => (
-            <span key={i} data-collider="tool-result-line">
-              {line ? (
-                <Markdown className="text-xs">{line}</Markdown>
-              ) : (
-                <br />
-              )}
-            </span>
-          ))}
+          <Markdown className="text-xs">{displayText}</Markdown>
         </div>
       )}
 

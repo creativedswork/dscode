@@ -18,28 +18,72 @@ type ContentBlock =
   | { type: "text"; content: string }
   | { type: "image"; img: Image };
 
+function compactJsonSummary(obj: unknown): string {
+  if (typeof obj === "string") return obj.length > 60 ? obj.slice(0, 57) + "..." : obj;
+  if (typeof obj === "number" || typeof obj === "boolean") return String(obj);
+  if (obj === null) return "null";
+  if (Array.isArray(obj)) {
+    if (obj.length === 0) return "[]";
+    const sample = obj.slice(0, 3).map((v) => compactJsonSummary(v)).join(", ");
+    return obj.length > 3 ? `[${sample}, …${obj.length - 3} more]` : `[${sample}]`;
+  }
+  if (typeof obj === "object") {
+    const keys = Object.keys(obj as Record<string, unknown>);
+    // MCP-style envelope: { data, meta } → unwrap to data
+    if (keys.length === 2 && keys.includes("data") && keys.includes("meta")) {
+      return compactJsonSummary((obj as any).data);
+    }
+    // status-only: { ok: true } or { error: "..." }
+    if (keys.length === 1 && (keys[0] === "ok" || keys[0] === "error")) {
+      const v = (obj as any)[keys[0]];
+      return keys[0] === "ok" ? (v ? "✓ ok" : "✗ failed") : `error: ${String(v).slice(0, 40)}`;
+    }
+    if (keys.length <= 3) {
+      const entries = keys.map((k) => {
+        const v = (obj as any)[k];
+        const vs = compactJsonSummary(v);
+        return `${k}: ${vs}`;
+      });
+      return `{${entries.join(", ")}}`;
+    }
+    return `{${keys.length} keys}`;
+  }
+  return String(obj).slice(0, 60);
+}
+
+function tryParseJson(text: string): unknown | null {
+  const trimmed = text.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
+  try { return JSON.parse(trimmed); } catch { return null; }
+}
+
 function toolArgsPreview(args: unknown): string {
-  if (typeof args === "string") return args.slice(0, 80);
+  if (typeof args === "string") return args.slice(0, 60);
   try {
-    return JSON.stringify(args).slice(0, 80);
+    const s = JSON.stringify(args);
+    return s.length > 60 ? s.slice(0, 57) + "..." : s;
   } catch {
-    return String(args).slice(0, 80);
+    return String(args).slice(0, 60);
   }
 }
 
 function toolResultPreview(result: unknown): string {
-  if (typeof result === "string") return result.slice(0, 120);
+  if (typeof result === "string") {
+    const parsed = tryParseJson(result);
+    return parsed ? compactJsonSummary(parsed) : result.slice(0, 120);
+  }
   if (result && typeof result === "object") {
     const r = result as Record<string, unknown>;
     if (Array.isArray(r.content)) {
       const first = r.content[0];
       if (first && typeof first === "object" && "text" in first) {
-        return String(first.text).slice(0, 120);
+        const parsed = tryParseJson(String(first.text));
+        return parsed ? compactJsonSummary(parsed) : String(first.text).slice(0, 120);
       }
     }
   }
   try {
-    return JSON.stringify(result).slice(0, 120);
+    return compactJsonSummary(JSON.parse(JSON.stringify(result)));
   } catch {
     return String(result).slice(0, 120);
   }
@@ -239,17 +283,15 @@ export class ConversationView {
       lines.push(c.magenta.bold("agent ›") + "\n" + this.currentAssistantText);
     }
     if (this.toolEntries.length > 0) {
-      lines.push("");
-      lines.push(c.dim("──── ⚙ Tools ────────────────────────"));
       for (const t of this.toolEntries) {
         const icon = t.isError ? c.red("✗") : c.cyan("✓");
         const preview = toolResultPreview(t.result);
         const argsStr = toolArgsPreview(t.args);
-        lines.push(` ${icon} ${c.cyan(t.name)} ${c.dim(argsStr)}${preview ? c.dim(" → ") + preview : ""}`);
+        const previewPart = preview ? c.dim(" → ") + preview : "";
+        lines.push(`${icon} ${c.cyan(t.name)} ${c.dim(argsStr)}${previewPart}`);
       }
     }
     if (lines.length > 0) {
-      lines.push("");
       this.pushText(lines.join("\n"));
     }
     this.currentAssistantText = "";
@@ -451,7 +493,6 @@ export class ConversationView {
       return this.renderPermSubOptions(lines);
     }
 
-    lines.push("");
     lines.push(c.yellow.bold(" Permissions ────────────────────────────────────"));
     lines.push(c.yellow(` Tool: ${this._activePermission.toolName}`));
     if (this._activePermission.preview) {
@@ -486,10 +527,8 @@ export class ConversationView {
         { label: `exact: ${tn}`, key: "1" },
         { label: fuzzyLabel, key: "2" },
       ];
-      lines.push("");
       lines.push(c.yellow.bold(" Always Allow ──────────────────────────────────────"));
       lines.push(c.dim(" Choose exact or fuzzy pattern:"));
-      lines.push("");
       for (let i = 0; i < subOptions.length; i++) {
         const opt = subOptions[i];
         const selected = i === this.permSubSelected;
@@ -519,10 +558,8 @@ export class ConversationView {
       }
     }
 
-    lines.push("");
     lines.push(c.yellow.bold(" Save Rule ──────────────────────────────────────────────────────"));
     lines.push(c.dim(" Choose exact or fuzzy pattern:"));
-    lines.push("");
     for (let i = 0; i < subOptions.length; i++) {
       const opt = subOptions[i];
       const selected = i === this.permSubSelected;
