@@ -14,6 +14,7 @@ import { DriverRegistry } from "../drivers/registry.js";
 import { ToolRegistry } from "../drivers/tool-registry.js";
 import { makeDiscoveryDriver } from "../drivers/discovery.js";
 import { SkillManager } from "../skills/manager.js";
+import { CommandManager } from "../commands/manager.js";
 import { PermissionManager } from "../permissions/manager.js";
 import { MCPManager } from "../mcp/manager.js";
 import type { MCPClientEvent } from "../mcp/types.js";
@@ -41,6 +42,7 @@ export class Harness implements HarnessAPI {
   driverRegistry: DriverRegistry;
   toolRegistry: ToolRegistry;
   skillManager: SkillManager;
+  commandManager: CommandManager;
   permissionManager: PermissionManager;
   mcpManager: MCPManager | undefined;
   appHostManager?: AppHostManager;
@@ -71,6 +73,7 @@ export class Harness implements HarnessAPI {
     this.memoryManager = new MemoryManager(config.dataDir, config.projectPath, config.memory);
     this.driverRegistry = new DriverRegistry();
     this.toolRegistry = new ToolRegistry(this.driverRegistry);
+    this.commandManager = new CommandManager(config.userCommandsDir, config.projectCommandsDir);
     this.skillManager = new SkillManager(config.userSkillsDir, config.projectSkillsDir);
     this.permissionManager = new PermissionManager(
       config.permissions,
@@ -116,7 +119,7 @@ export class Harness implements HarnessAPI {
 
     const memories = this.memoryManager.getRelevantMemories();
     const skillSection = this.skillManager.getSystemPromptSection();
-    this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection);
+    this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection, this.commandManager.getSystemPromptSection());
     const systemPrompt = this.baseSystemPrompt.replace("__DEFERRED_HINT__", this.toolRegistry.buildDeferredToolsHint());
 
     const model = resolveModel(this.config.provider, this.config.modelId);
@@ -713,7 +716,7 @@ export class Harness implements HarnessAPI {
     // Refresh system prompt with new project memories and skills
     const memories = this.memoryManager.getRelevantMemories();
     const skillSection = this.skillManager.getSystemPromptSection();
-    this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection);
+    this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection, this.commandManager.getSystemPromptSection());
     this.agent.state.systemPrompt = this.baseSystemPrompt.replace("__DEFERRED_HINT__", this.toolRegistry.buildDeferredToolsHint());
 
     return { success: true };
@@ -749,7 +752,7 @@ export class Harness implements HarnessAPI {
     }
   }
 
-  private buildSystemPrompt(memories: string, skillSection: string): string {
+  private buildSystemPrompt(memories: string, skillSection: string, commandsSection: string): string {
     let prompt = `# Identity
 
 You are dscode — a digital studio for content-driven creation.
@@ -819,9 +822,12 @@ __DEFERRED_HINT__`;
       prompt += "\n\n" + skillSection;
     }
 
-    prompt += `\n\n## Using Skills
+    prompt += `\n\n## Using Skills\n\nYou have a \`skill\` tool available. When you decide to use a skill from the list above, call \`skill\` with the skill name to load its full instructions and allowed tools. Read the instructions, then follow them.`;
 
-You have a \`skill\` tool available. When you decide to use a skill from the list above, call \`skill\` with the skill name to load its full instructions and allowed tools. Read the instructions, then follow them.`;
+
+    if (commandsSection) {
+      prompt += "\n\n# Commands\n\n" + commandsSection;
+    }
 
     if (memories) {
       prompt += "\n\n" + memories;

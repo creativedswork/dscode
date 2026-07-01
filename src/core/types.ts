@@ -28,6 +28,8 @@ export interface HarnessConfig {
   dataDir: string;
   userSkillsDir: string;
   projectSkillsDir: string;
+  userCommandsDir: string;
+  projectCommandsDir: string;
   context: ContextConfig;
   memory: MemoryConfig;
   permissions: PermissionsConfig;
@@ -151,6 +153,16 @@ export interface SkillManifest {
   // If empty/undefined, defaults to safe read-only tools.
   tools?: string[];
   instructions?: string;
+  source: "user" | "project";
+  path: string;
+}
+
+// --- Commands (user-defined prompt templates, /-triggered, .dscode/commands/<name>.md or <subdir>/<name>.md)
+
+export interface CommandManifest {
+  name: string;
+  description: string;
+  body: string;
   source: "user" | "project";
   path: string;
 }

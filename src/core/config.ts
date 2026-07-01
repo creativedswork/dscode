@@ -300,6 +300,8 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
 
   const userSkillsDir = join(configDir, "skills");
   const projectSkillsDir = join(projectPath, ".dscode", "skills");
+  const userCommandsDir = join(configDir, "commands");
+  const projectCommandsDir = join(projectPath, ".dscode", "commands");
   const defaultThinkingLevel: ThinkingLevel = getThinkingLevel(provider, modelId);
   const validThinkingLevels = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
   const rawThinkingLevel = process.env.AGENT_THINKING_LEVEL ?? userConfig.thinkingLevel ?? merged.thinkingLevel;
@@ -343,6 +345,8 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
     projectPath,
     configDir,
     dataDir,
+    userCommandsDir,
+    projectCommandsDir,
     userSkillsDir,
     projectSkillsDir,
     context: {

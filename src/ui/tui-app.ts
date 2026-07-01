@@ -35,7 +35,7 @@ import { c, editorTheme } from "./theme.js";
 import { deriveFuzzyPattern, deriveFuzzyArgPattern, describeFuzzyArgPattern } from "../permissions/fuzzy.js";
 import { prefetchLlmSuggestions, getLlmSuggestions, LlmSuggestion } from "../permissions/fuzzy-llm.js";
 import { ConversationView, findPermOptionByKey } from "./conversation.js";
-import { getSlashCommandAutocomplete, executeSlashCommand } from "./commands.js";
+import { getSlashCommandAutocomplete, executeSlashCommand, resolveCustomCommand } from "./commands.js";
 import { buildMcpServers, createInitialMcpBrowserState, getMcpVisibleRows, reduceMcpBrowserState, renderMcpServerList, renderMcpToolList } from "./mcp-browser.js";
 import type { McpBrowserState } from "./mcp-browser.js";
 import { resolveAtFileRefs, listProjectFiles } from "../utils/at-file-resolver.js";
@@ -186,7 +186,7 @@ export class TuiApp {
     this.loader = new CancellableLoader(this.tui, c.cyan, c.dim, "Waiting...");
 
     const autocomplete = new HybridAutocompleteProvider(
-      getSlashCommandAutocomplete(),
+      getSlashCommandAutocomplete(deps.commandManager.listManifests()),
       deps.config.projectPath,
     );
     this.editor = new Editor(this.tui, editorTheme, { paddingX: 1 });
@@ -1106,6 +1106,19 @@ export class TuiApp {
 
     if (this.processing) return;
 
+    if (text.startsWith("/")) {
+      const executed = executeSlashCommand(text, { harness: this.deps, ui: this as any });
+      if (executed) {
+        return;
+      }
+      // Check custom commands
+      const expanded = resolveCustomCommand(text, { harness: this.deps, ui: this as any, commandManager: this.deps.commandManager });
+      if (expanded !== undefined) {
+        this.handleInput(expanded);
+        return;
+      }
+      // Not a known command — fall through to normal chat handling
+    }
     if (text.startsWith("/")) {
       const executed = executeSlashCommand(text, { harness: this.deps, ui: this as any });
       if (executed) {

@@ -1,4 +1,5 @@
 import type { SlashCommand as AutocompleteSlashCommand } from "@earendil-works/pi-tui";
+import type { CommandManifest } from "../core/types.js";
 
 import type { HarnessAPI } from "../core/harness-api.js";
 import type { UiBackend } from "./backend.js";
@@ -21,15 +22,16 @@ function fmtLocalDateTime(ts: number): string {
 }
 import { runEval } from "../eval/index.js";
 
-
 interface SlashCommandContext {
   harness: HarnessAPI;
   ui: UiBackend;
+  commandManager?: { getManifest(name: string): CommandManifest | undefined; listManifests(): CommandManifest[] };
 }
 
 interface SlashCommandDef {
   name: string;
   description: string;
+  source?: "builtin" | "custom";
   execute(args: string, ctx: SlashCommandContext): void | Promise<void>;
 }
 
@@ -675,8 +677,10 @@ const COMMANDS: SlashCommandDef[] = [
   },
 ];
 
-export function getSlashCommandAutocomplete(): AutocompleteSlashCommand[] {
-  return COMMANDS.map((c) => ({ name: c.name, description: c.description }));
+export function getSlashCommandAutocomplete(customCommands?: CommandManifest[]): AutocompleteSlashCommand[] {
+  const custom = (customCommands ?? []).map((c) => ({ name: c.name, description: c.description }));
+  const builtin = COMMANDS.map((c) => ({ name: c.name, description: c.description }));
+  return [...custom, ...builtin];
 }
 
 
@@ -689,6 +693,7 @@ export function executeSlashCommand(
   const commandName = spaceIdx === -1 ? text.slice(1) : text.slice(1, spaceIdx);
   const args = spaceIdx === -1 ? "" : text.slice(spaceIdx + 1).trim();
 
+  // Built-in commands take priority on name conflict
   const cmd = COMMANDS.find((c) => c.name === commandName);
   if (!cmd) return undefined;
 
@@ -704,4 +709,29 @@ export function executeSlashCommand(
     (ctx.ui as any).addError(`${commandName}: ${err instanceof Error ? err.message : String(err)}`);
     return commandName;
   }
+}
+
+/** Execute a custom command: resolve $input placeholder and return the expanded prompt text */
+export function resolveCustomCommand(
+  text: string,
+  ctx: SlashCommandContext,
+): string | undefined {
+  if (!text.startsWith("/")) return undefined;
+  const spaceIdx = text.indexOf(" ");
+  const commandName = spaceIdx === -1 ? text.slice(1) : text.slice(1, spaceIdx);
+  const args = spaceIdx === -1 ? "" : text.slice(spaceIdx + 1).trim();
+
+  // Built-in commands are NOT resolved here — those are handled by executeSlashCommand
+  const builtin = COMMANDS.find((c) => c.name === commandName);
+  if (builtin) return undefined;
+
+  if (!ctx.commandManager) return undefined;
+  const manifest = ctx.commandManager.getManifest(commandName);
+  if (!manifest) return undefined;
+
+  // Replace $input with user args, or return body as-is if no $input
+  if (manifest.body.includes("$input")) {
+    return manifest.body.replace(/\$input/g, args);
+  }
+  return manifest.body;
 }

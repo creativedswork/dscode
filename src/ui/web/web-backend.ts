@@ -11,7 +11,7 @@ import type { UiBackend } from "../backend.js";
 import type { HarnessConfig, PermissionPromptResult } from "../../core/types.js";
 import type { ConfigWatch } from "../../core/config-watch.js";
 import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig, normalizeTransport, normalizeProtocolVersion, loadScopedSettings, projectSettingsPath } from "../../core/config.js";
-import { executeSlashCommand, getSlashCommandAutocomplete } from "../commands.js";
+import { executeSlashCommand, getSlashCommandAutocomplete, resolveCustomCommand } from "../commands.js";
 import { deriveFuzzyPattern, deriveFuzzyArgPattern, describeFuzzyArgPattern } from "../../permissions/fuzzy.js";
 import { prefetchLlmSuggestions, getLlmSuggestions } from "../../permissions/fuzzy-llm.js";
 import type { HarnessAPI } from "../../core/harness-api.js";
@@ -479,7 +479,7 @@ export class WebUiBackend implements UiBackend {
 
         if (text.startsWith("/")) {
           const firstWord = text.slice(1).split(/\s+/)[0];
-          const knownCommands = getSlashCommandAutocomplete().map(c => c.name);
+          const knownCommands = getSlashCommandAutocomplete(this.harness.commandManager.listManifests()).map(c => c.name);
           if (knownCommands.includes(firstWord)) {
             this.pendingImages = [];
             this.handleSlashCommand(client, text);
@@ -678,27 +678,47 @@ export class WebUiBackend implements UiBackend {
 
   private async handleSlashCommand(client: WebSocketClient, text: string): Promise<void> {
     try {
-
-      
-
       const executed = executeSlashCommand(text, { harness: this.harness, ui: this });
+      if (executed) {
+        // Push updated session list so sidebar auto-refreshes
+        this.pushSessionList(client);
+        client.send({ type: "loader", state: "hide" });
+        setTimeout(() => {
+          client.send({ type: "config", data: this.buildConfigData() });
+        }, 100);
+        return;
+      }
 
-      if (!executed) {
-        // Not a known command — treat as regular chat message
+      // Check custom commands
+      const expanded = resolveCustomCommand(text, { harness: this.harness, ui: this, commandManager: this.harness.commandManager });
+      if (expanded !== undefined) {
         this.pendingImages = [];
-        // Send as user message then prompt the agent
-        client.send({ type: 'user_message', text } as any);
-        await this.harness.promptAndSave(text).catch((err: any) => {
+        client.send({ type: 'user_message', text: expanded } as any);
+        await this.harness.promptAndSave(expanded).catch((err: any) => {
           client.send({
             type: 'error',
             text: err instanceof Error ? err.message : String(err),
           });
         });
+        this.pushSessionList(client);
+        client.send({ type: "loader", state: "hide" });
+        setTimeout(() => {
+          client.send({ type: "config", data: this.buildConfigData() });
+        }, 100);
+        return;
       }
 
-      // Push updated session list so sidebar auto-refreshes
-      this.pushSessionList(client);
+      // Not a known command — treat as regular chat message
+      this.pendingImages = [];
+      client.send({ type: 'user_message', text } as any);
+      await this.harness.promptAndSave(text).catch((err: any) => {
+        client.send({
+          type: 'error',
+          text: err instanceof Error ? err.message : String(err),
+        });
+      });
 
+      this.pushSessionList(client);
       client.send({ type: "loader", state: "hide" });
       setTimeout(() => {
         client.send({ type: "config", data: this.buildConfigData() });
