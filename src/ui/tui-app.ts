@@ -1114,14 +1114,17 @@ export class TuiApp {
       // Check custom commands
       const expanded = resolveCustomCommand(text, { harness: this.deps, ui: this as any, commandManager: this.deps.commandManager });
       if (expanded !== undefined) {
-        this.handleInput(expanded);
-        return;
-      }
-      // Not a known command — fall through to normal chat handling
-    }
-    if (text.startsWith("/")) {
-      const executed = executeSlashCommand(text, { harness: this.deps, ui: this as any });
-      if (executed) {
+        // Treat all custom commands as completion-first: if no args provided,
+        // re-populate the editor so the user can type args before submitting.
+        const spaceIdx = text.indexOf(" ");
+        const cmdName = spaceIdx === -1 ? text.slice(1) : text.slice(1, spaceIdx);
+        const manifest = this.deps.commandManager.getManifest(cmdName);
+        const hasArgs = spaceIdx !== -1 && text.slice(spaceIdx + 1).trim().length > 0;
+        if (manifest && !hasArgs) {
+          this.editor.setText(text + " ");
+          return;
+        }
+        this.handleSubmit(expanded);
         return;
       }
       // Not a known command — fall through to normal chat handling

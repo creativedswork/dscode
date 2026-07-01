@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "edit",
-      "overwrite_file"
+      "overwrite_file",
+      "write_file"
     ]
   }
 }

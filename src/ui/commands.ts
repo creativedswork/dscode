@@ -729,9 +729,12 @@ export function resolveCustomCommand(
   const manifest = ctx.commandManager.getManifest(commandName);
   if (!manifest) return undefined;
 
-  // Replace $input with user args, or return body as-is if no $input
+  // Replace $input with user args, or append args at end if no $input placeholder
   if (manifest.body.includes("$input")) {
     return manifest.body.replace(/\$input/g, args);
+  }
+  if (args) {
+    return manifest.body + "\n\n" + args;
   }
   return manifest.body;
 }
