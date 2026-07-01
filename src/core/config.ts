@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { getEnvApiKey } from "@mariozechner/pi-ai";
+import { getEnvApiKey } from "../models/index.js";
 
 export const PROVIDER_ENV_VARS: Record<string, string> = {
   deepseek: "DEEPSEEK_API_KEY",

@@ -1,5 +1,5 @@
-import { getModel, getModels, getProviders } from "@mariozechner/pi-ai";
-import type { Api, Model } from "@mariozechner/pi-ai";
+import { builtinModels } from "@earendil-works/pi-ai/providers/all";
+import type { Api, AssistantMessage, AssistantMessageEventStream, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import type { ThinkingLevel } from "../core/types.js";
 import { buildQwenModel, QWEN_MODELS } from "./qwen.js";
 
@@ -7,6 +7,8 @@ type ModelFactory = (modelId: string) => Model<Api>;
 
 const providerFactories = new Map<string, ModelFactory>();
 const customModelDefs = new Map<string, { id: string; name: string }[]>();
+
+const models = builtinModels();
 
 export function registerProvider(
   name: string,
@@ -18,13 +20,13 @@ export function registerProvider(
 }
 
 export function getAllProviders(): string[] {
-  const builtin = getProviders() as string[];
+  const builtin = models.getProviders().map((p) => p.id);
   const custom = Array.from(providerFactories.keys());
   return [...new Set([...builtin, ...custom])];
 }
 
 export function getAllModels(provider: string): { id: string; name: string }[] {
-  const builtin = getModels(provider as any) as { id: string; name: string }[];
+  const builtin = models.getModels(provider as any).map((m) => ({ id: m.id, name: m.name }));
   if (builtin.length > 0) return builtin;
   return customModelDefs.get(provider) ?? [];
 }
@@ -46,7 +48,7 @@ export function getVisionProviders(): string[] {
 }
 
 export function resolveModel(provider: string, modelId: string): Model<Api> {
-  const builtin = (getModel as (p: string, m: string) => Model<Api> | undefined)(provider, modelId);
+  const builtin = models.getModel(provider, modelId);
   if (builtin) return builtin;
 
   const factory = providerFactories.get(provider);
@@ -70,6 +72,75 @@ export function getThinkingLevel(provider: string, modelId: string): ThinkingLev
   if (modelId.includes("thinking")) return "high";
   if (modelId.includes("pro")) return "medium";
   return "off";
+}
+
+// --- Stream / complete wrappers (delegating to Models instance) ---
+
+export function streamSimple(
+  model: Model<Api>,
+  context: Context,
+  options?: SimpleStreamOptions,
+): AssistantMessageEventStream {
+  return models.streamSimple(model, context, options);
+}
+
+export function completeSimple(
+  model: Model<Api>,
+  context: Context,
+  options?: SimpleStreamOptions,
+): Promise<AssistantMessage> {
+  return models.completeSimple(model, context, options);
+}
+
+export function complete(
+  model: Model<Api>,
+  context: Context,
+  options?: SimpleStreamOptions,
+): Promise<AssistantMessage> {
+  return models.complete(model, context, options);
+}
+
+// --- Environment API key lookup ---
+
+const API_KEY_ENV_VARS: Record<string, string> = {
+  deepseek: "DEEPSEEK_API_KEY",
+  openai: "OPENAI_API_KEY",
+  anthropic: "ANTHROPIC_API_KEY",
+  google: "GEMINI_API_KEY",
+  groq: "GROQ_API_KEY",
+  cerebras: "CEREBRAS_API_KEY",
+  xai: "XAI_API_KEY",
+  openrouter: "OPENROUTER_API_KEY",
+  "vercel-ai-gateway": "AI_GATEWAY_API_KEY",
+  zai: "ZAI_API_KEY",
+  "zai-coding-cn": "ZAI_CODING_CN_API_KEY",
+  mistral: "MISTRAL_API_KEY",
+  minimax: "MINIMAX_API_KEY",
+  "minimax-cn": "MINIMAX_CN_API_KEY",
+  moonshotai: "MOONSHOT_API_KEY",
+  "moonshotai-cn": "MOONSHOT_API_KEY",
+  huggingface: "HF_TOKEN",
+  fireworks: "FIREWORKS_API_KEY",
+  together: "TOGETHER_API_KEY",
+  opencode: "OPENCODE_API_KEY",
+  "opencode-go": "OPENCODE_API_KEY",
+  "kimi-coding": "KIMI_API_KEY",
+  "cloudflare-workers-ai": "CLOUDFLARE_API_KEY",
+  "cloudflare-ai-gateway": "CLOUDFLARE_API_KEY",
+  nvidia: "NVIDIA_API_KEY",
+  "ant-ling": "ANT_LING_API_KEY",
+  xiaomi: "XIAOMI_API_KEY",
+  "xiaomi-token-plan-cn": "XIAOMI_TOKEN_PLAN_CN_API_KEY",
+  "xiaomi-token-plan-ams": "XIAOMI_TOKEN_PLAN_AMS_API_KEY",
+  "xiaomi-token-plan-sgp": "XIAOMI_TOKEN_PLAN_SGP_API_KEY",
+};
+
+export function getEnvApiKey(provider: string): string | undefined {
+  const envVar = API_KEY_ENV_VARS[provider];
+  if (envVar && process.env[envVar]) {
+    return process.env[envVar];
+  }
+  return undefined;
 }
 
 // Register built-in providers

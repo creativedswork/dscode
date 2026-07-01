@@ -1,8 +1,8 @@
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, resolve, relative, sep } from "node:path";
 
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type } from "@mariozechner/pi-ai";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { Type } from "@earendil-works/pi-ai";
 
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".next", "__pycache__", ".dscode"]);
 

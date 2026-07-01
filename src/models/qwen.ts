@@ -1,4 +1,4 @@
-import type { Api, Model } from "@mariozechner/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 
 export const DASHSCOPE_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 

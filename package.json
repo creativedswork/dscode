@@ -47,8 +47,8 @@
   },
   "dependencies": {
     "@earendil-works/pi-tui": "^0.74.0",
-    "@mariozechner/pi-agent-core": "^0.73.1",
-    "@mariozechner/pi-ai": "^0.73.1",
+    "@earendil-works/pi-agent-core": "^0.80.3",
+    "@earendil-works/pi-ai": "^0.80.3",
     "chalk": "^5.5.0",
     "tesseract.js": "^7.0.0",
     "ws": "^8.21.0"

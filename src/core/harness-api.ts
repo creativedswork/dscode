@@ -1,5 +1,5 @@
-import type { Agent } from "@mariozechner/pi-agent-core";
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { Agent } from "@earendil-works/pi-agent-core";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { SessionManager } from "../session/manager.js";
 import type { ContextManager } from "../context/manager.js";
 import type { MemoryManager } from "../memory/manager.js";

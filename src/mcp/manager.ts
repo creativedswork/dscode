@@ -1,6 +1,6 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type } from "@mariozechner/pi-ai";
-import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { Type } from "@earendil-works/pi-ai";
+import type { TextContent, ImageContent } from "@earendil-works/pi-ai";
 
 import type {
   MCPClientEvent,
@@ -18,7 +18,7 @@ import type { DriverRegistry } from "../drivers/registry.js";
 import type { Driver } from "../core/types.js";
 import { ImageCache } from "../utils/image-cache.js";
 import type { ImagePipeline } from "../drivers/vision/pipeline.js";
-import type { AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
+import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 
 function extractToolResultPreview(result: unknown): string {
   if (typeof result === "string") return result;

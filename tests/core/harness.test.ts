@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Type } from "@mariozechner/pi-ai";
+import { Type } from "@earendil-works/pi-ai";
 import { DriverRegistry } from "../../src/drivers/registry.js";
 import { ToolRegistry } from "../../src/drivers/tool-registry.js";
 import { makeDiscoveryDriver } from "../../src/drivers/discovery.js";

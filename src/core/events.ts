@@ -1,4 +1,4 @@
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { McpServerInfo } from "../ui/shared/types.js";
 import type { AppInstance } from "../mcp/app/types.js";
 import type { ConfigData } from "../ui/shared/types.js";

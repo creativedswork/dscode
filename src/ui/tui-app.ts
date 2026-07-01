@@ -16,8 +16,8 @@ import {
   hyperlink,
 } from "@earendil-works/pi-tui";
 
-import type { Agent } from "@mariozechner/pi-agent-core";
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { Agent } from "@earendil-works/pi-agent-core";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { SessionManager } from "../session/manager.js";
 import type { MemoryManager } from "../memory/manager.js";
 import type { DriverRegistry } from "../drivers/registry.js";

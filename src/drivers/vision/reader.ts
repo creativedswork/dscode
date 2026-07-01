@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { execFile, execFileSync, exec, execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 
 const MIME_MAP: Record<string, string> = {
   ".png": "image/png",

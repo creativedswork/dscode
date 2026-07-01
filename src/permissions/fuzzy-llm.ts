@@ -1,5 +1,5 @@
-import type { Model, Api, AssistantMessage } from "@mariozechner/pi-ai";
-import { complete } from "@mariozechner/pi-ai";
+import type { Model, Api, AssistantMessage } from "@earendil-works/pi-ai";
+import { complete } from "../models/index.js";
 
 export interface LlmSuggestion {
   /** Human-readable label for the UI, e.g. "All git push commands" */

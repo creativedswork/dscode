@@ -1,5 +1,5 @@
-import type { Agent } from "@mariozechner/pi-agent-core";
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { Agent } from "@earendil-works/pi-agent-core";
+import type { ImageContent } from "@earendil-works/pi-ai";
 
 import type { ImageRef, SerializedSession, SessionMetadata, VisionMessage } from "../core/types.js";
 import { ImageCache } from "../utils/image-cache.js";

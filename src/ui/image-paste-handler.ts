@@ -1,5 +1,5 @@
 import type { Editor, TUI, Text } from "@earendil-works/pi-tui";
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import { ImageManager } from "./image-manager.js";
 import type { ConversationView } from "./conversation.js";
 import { c } from "./theme.js";

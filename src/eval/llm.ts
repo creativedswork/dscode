@@ -7,7 +7,7 @@ import type { EvalResult, DeviationPoint, RootCause, HarnessRule } from "./types
 import type { HarnessAPI } from "../core/harness-api.js";
 import type { SerializedSession } from "../session/types.js";
 import { resolveModel } from "../models/index.js";
-import { completeSimple } from "@mariozechner/pi-ai";
+import { completeSimple } from "../models/index.js";
 import { CausalGraphStore } from "./graph-store.js";
 import { parseSessionToSteps, safeJsonParse, validateSubtasks, validateSubtaskEdges, validateAgentEdges, validateCandidateSet, validateAttribution, validateStepDataFlows, type ValidationResult, type HistoryStep, type Subtask, type SubtaskEdge, type AgentNode, type AgentEdge, type StepDataFlow, type CandidateSet, type Attribution, type RecoveryArc } from "./schemas.js";
 import { computeStats, type SessionStats } from "./stats.js";

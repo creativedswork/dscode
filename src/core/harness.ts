@@ -1,10 +1,11 @@
 import { existsSync } from "node:fs";
 import { resolve, join } from "node:path";
-import { Agent } from "@mariozechner/pi-agent-core";
-import type { AfterToolCallContext, AfterToolCallResult, AgentMessage, AgentTool, BeforeToolCallContext } from "@mariozechner/pi-agent-core";
-import { streamSimple, Type } from "@mariozechner/pi-ai";
-import type { Api, AssistantMessage, Context, ImageContent, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
+import { Agent } from "@earendil-works/pi-agent-core";
+import type { AfterToolCallContext, AfterToolCallResult, AgentMessage, AgentTool, BeforeToolCallContext } from "@earendil-works/pi-agent-core";
+import { Type } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Context, ImageContent, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 
+import { streamSimple } from "../models/index.js";
 import type { HarnessConfig } from "./types.js";
 import { saveUserConfig, loadScopedSettings, projectSettingsPath, userSettingsPath, loadMcpServers } from "./config.js";
 import { SessionManager } from "../session/manager.js";

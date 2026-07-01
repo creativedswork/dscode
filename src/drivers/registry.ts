@@ -1,4 +1,4 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 
 import type { Driver } from "../core/types.js";
 import { readFileTool, writeFileTool, overwriteFileTool, listFilesTool } from "./fs.js";
