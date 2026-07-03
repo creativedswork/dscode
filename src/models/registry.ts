@@ -1,7 +1,8 @@
 import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { Api, AssistantMessage, AssistantMessageEventStream, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import { createProvider, lazyApi, envApiKeyAuth } from "@earendil-works/pi-ai";
+import { DASHSCOPE_BASE, QWEN_MODELS } from "./qwen.js";
 import type { ThinkingLevel } from "../core/types.js";
-import { buildQwenModel, QWEN_MODELS } from "./qwen.js";
 
 type ModelFactory = (modelId: string) => Model<Api>;
 
@@ -9,6 +10,17 @@ const providerFactories = new Map<string, ModelFactory>();
 const customModelDefs = new Map<string, { id: string; name: string }[]>();
 
 const models = builtinModels();
+
+// Register qwen as a pi-ai custom provider (DashScope OpenAI-compatible)
+const qwenProvider = createProvider({
+  id: "qwen",
+  name: "Qwen (DashScope)",
+  baseUrl: DASHSCOPE_BASE,
+  auth: { apiKey: envApiKeyAuth("DashScope API key", ["DASHSCOPE_API_KEY"]) },
+  models: Object.entries(QWEN_MODELS).map(([id, def]) => ({ id, name: `Qwen: ${id}`, ...def })) as Model<"openai-completions">[],
+  api: lazyApi(() => import("@earendil-works/pi-ai/api/openai-completions")),
+});
+models.setProvider(qwenProvider);
 
 export function registerProvider(
   name: string,
@@ -143,12 +155,4 @@ export function getEnvApiKey(provider: string): string | undefined {
   return undefined;
 }
 
-// Register built-in providers
-registerProvider(
-  "qwen",
-  buildQwenModel,
-  Object.entries(QWEN_MODELS).map(([id, def]) => ({
-    id,
-    name: `Qwen: ${id}`,
-  })),
-);
+// qwen provider is now registered via createProvider() + models.setProvider() above
