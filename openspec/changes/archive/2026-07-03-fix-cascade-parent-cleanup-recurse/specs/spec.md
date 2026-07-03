@@ -146,11 +146,24 @@ The TransitionCanvas SHALL apply distinct visual destruction effects to struck `
 - **AND** 40–70 particles SHALL spawn from the card position
 - **AND** the card SHALL fade to opacity 0 starting at 250ms
 
-#### Scenario: message-card destruction
-- **WHEN** cluster strikes a `data-collider="message-card"` element (via parent cleanup after all children struck)
+#### Scenario: message-card destruction (direct strike)
+- **WHEN** cluster strikes a `data-collider="message-card"` element directly (not via parent cleanup, i.e. message-card is a leaf row)
 - **THEN** `destroyMessageCard()` SHALL apply a brief white flash (backgroundColor to white, then transition to transparent over 80ms)
 - **AND** 4–6 polygon shards SHALL spawn from card center
-- **AND** the card's opacity SHALL NOT be changed
+- **AND** the card's opacity SHALL NOT be changed (child colliders still need to be individually struck)
+
+#### Scenario: message-card destruction (recursive parent cleanup)
+- **WHEN** all child colliders inside a message-card and all nested containers have been struck
+- **THEN** the recursive parent cleanup SHALL reach the message-card
+- **AND** the message-card SHALL fade to `opacity: 0` with `transition: opacity 200ms ease-out`
+- **AND** particles SHALL spawn from the card position
+
+#### Scenario: recursive parent cleanup walks full ancestor chain
+- **WHEN** a collider row is struck
+- **THEN** after destruction, the cleanup logic SHALL walk up the DOM tree collecting all `[data-collider="tool-card"]` and `[data-collider="message-card"]` ancestors
+- **AND** for each ancestor, from innermost to outermost, SHALL check whether all of its `[data-collider]` descendants have been struck
+- **AND** if all descendants are struck, the ancestor SHALL be cleaned up (particles + opacity 0)
+- **AND** if any descendant is not yet struck, the walk SHALL stop (no further ancestor cleanup)
 
 #### Scenario: table-cell destruction
 - **WHEN** cluster strikes a `data-collider="table-cell"` element
