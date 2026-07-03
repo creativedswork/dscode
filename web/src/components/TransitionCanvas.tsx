@@ -802,6 +802,33 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       c.hopState = "hopping";
     }
 
+    // ── Recursive parent container cleanup ──
+    // Walks up the DOM tree checking each ancestor container (tool-card, message-card).
+    // When all children of a container are struck or hidden, cleanup that container
+    // and continue upward. Stops when a container still has unstruck children.
+    function cleanupParents(el: HTMLElement): void {
+      let current: HTMLElement | null = el.parentElement;
+      while (current) {
+        const type = current.getAttribute("data-collider");
+        if (type !== "tool-card" && type !== "message-card") {
+          current = current.parentElement;
+          continue;
+        }
+        const children = current.querySelectorAll<HTMLElement>("[data-collider]");
+        const allDone = [...children].every((child) => {
+          const childRow = s.rows.find((r) => r.el === child);
+          if (childRow && !childRow.struck) return false;
+          return true;
+        });
+        if (!allDone) break;
+        spawnParticles(current);
+        current.style.transition = "opacity 200ms ease-out";
+        current.style.opacity = "0";
+        current = current.parentElement;
+      }
+    }
+
+
     function strikeRow(): void {
       const c = s.cluster;
       if (c.rowIndex < 0 || c.rowIndex >= s.rows.length) return;
@@ -815,10 +842,8 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       const impactY = row.top + row.height * 0.35;
 
       row.el.style.transition = "none";
-      row.el.style.backgroundColor = "rgba(255,255,255,0.85)";
-      row.el.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
-
-      destroyByType(row.el, impactX, impactY);
+      // ── Recursive parent container cleanup ──
+      cleanupParents(row.el);
 
       requestAnimationFrame(() => {
         row.el.style.transition =
@@ -840,23 +865,6 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         const ly = c.y + offset.oy + (CLUSTER_SIZE / 2);
         const color = s.letterColorMap[offset.char] ?? colors.accent;
         spawnImpactFragments(lx, ly, color);
-      }
-
-      // ── Cleanup parent container if all children struck ──
-      const parentCard = row.el.closest<HTMLElement>(
-        '[data-collider="tool-card"], [data-collider="message-card"]'
-      );
-      if (parentCard) {
-        const siblings = parentCard.querySelectorAll<HTMLElement>("[data-collider]");
-        const allStruck = [...siblings].every((child) => {
-          const childRow = s.rows.find((r) => r.el === child);
-          return !childRow || childRow.struck === true;
-        });
-        if (allStruck) {
-          spawnParticles(parentCard);
-          parentCard.style.transition = "opacity 200ms ease-out";
-          parentCard.style.opacity = "0";
-        }
       }
 
       // ── Recalibrate all row positions ──
