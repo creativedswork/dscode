@@ -326,6 +326,14 @@ This is the kind of harness work we invest in: not adding more AI, but making th
 
 ---
 
+## Contributing
+
+dscode is currently a single-developer SDD project and does not accept direct code contributions (Pull Requests).
+
+We welcome bug reports, feature ideas, and technical discussions via **[GitHub Issues](https://github.com/creativedswork/dscode/issues)**. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full policy.
+
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution policy & how the SDD workflow operates |
+
 ## Learn more
 
 | Document | What's inside |

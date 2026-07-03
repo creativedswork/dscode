@@ -330,6 +330,14 @@ dscode 使用两层 `settings.json`，项目级配置覆盖用户级配置：
 
 ---
 
+## 参与方式
+
+dscode 目前是单人 SDD 开发项目，暂不接受直接的代码贡献（Pull Request）。
+
+欢迎通过 **[GitHub Issues](https://github.com/creativedswork/dscode/issues)** 提交 bug 报告、功能建议和技术讨论。详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 参与方式说明 & SDD 工作流介绍 |
+
 ## 了解更多
 
 | 文档 | 内容 |
