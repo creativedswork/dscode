@@ -96,10 +96,12 @@ class HybridAutocompleteProvider implements AutocompleteProvider {
       const afterCursor = currentLine.slice(cursorCol);
       const isDir = item.label.endsWith("/");
       const suffix = isDir ? "" : " ";
-      const newLine = `${beforePrefix}${item.value}${suffix}${afterCursor}`;
+      const atIdx = prefix.indexOf("@");
+      const newLine = `${beforePrefix}${prefix.slice(0, atIdx)}@${item.value}${suffix}${afterCursor}`;
       const newLines = [...lines];
       newLines[cursorLine] = newLine;
-      return { lines: newLines, cursorLine, cursorCol: beforePrefix.length + item.value.length + suffix.length };
+      const insertedLength = prefix.slice(0, atIdx).length + 1 + item.value.length + suffix.length;
+      return { lines: newLines, cursorLine, cursorCol: beforePrefix.length + insertedLength };
     }
     return this.slashProvider.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
   }
@@ -1141,6 +1143,9 @@ export class TuiApp {
       for (const warn of resolved.warnings) {
         this.conversation.addInfo(c.yellow(`@${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}`));
       }
+    }
+    if (resolved.reject) {
+      return;
     }
     text = resolved.text;
     if (resolved.images.length > 0) {
