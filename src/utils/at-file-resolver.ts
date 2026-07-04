@@ -5,6 +5,7 @@ export interface AtFileLimits {
   maxFiles: number;
   maxFileSize: number;
   maxTotalSize: number;
+  maxImageSize: number;
 }
 
 export interface AtFileWarning {
@@ -22,11 +23,13 @@ export interface AtFileResolveResult {
   text: string;
   warnings: AtFileWarning[];
   images: ImageRef[];
+  reject: boolean;
 }
 
 const DEFAULT_LIMITS: AtFileLimits = {
   maxFiles: 5,
   maxFileSize: 50 * 1024,
+  maxImageSize: 20 * 1024 * 1024,
   maxTotalSize: 200 * 1024,
 };
 
@@ -173,7 +176,7 @@ export function resolveAtFileRefs(
   const atPaths = extractAtPaths(text);
 
   if (atPaths.length === 0) {
-    return { text, warnings, images };
+    return { text, warnings, images, reject: false };
   }
 
   const resolvedPaths: string[] = [];
@@ -210,16 +213,10 @@ export function resolveAtFileRefs(
         warnings.push({ type: "not_found", path: relPath });
         continue;
       }
-      if (buf.length > resolvedLimits.maxFileSize) {
-        warnings.push({ type: "truncated", path: relPath, detail: `Image exceeds ${resolvedLimits.maxFileSize} bytes, skipped` });
-        continue;
+      if (buf.length > resolvedLimits.maxImageSize) {
+        warnings.push({ type: "truncated", path: relPath, detail: `Image exceeds ${resolvedLimits.maxImageSize} bytes` });
+        return { text, warnings, images, reject: true };
       }
-      const remainingTotal = resolvedLimits.maxTotalSize - totalContentSize;
-      if (buf.length > remainingTotal) {
-        warnings.push({ type: "total_truncated", detail: `Skipping @${relPath}: total size limit reached` });
-        break;
-      }
-      totalContentSize += buf.length;
       images.push({
         data: buf.toString("base64"),
         mimeType: imageMimeType(relPath),
@@ -281,7 +278,7 @@ export function resolveAtFileRefs(
     text = text.replace(pathRegex, block);
   }
 
-  return { text, warnings, images };
+  return { text, warnings, images, reject: false };
 }
 
 // ── File search for autocomplete ──

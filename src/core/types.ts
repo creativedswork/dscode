@@ -46,6 +46,7 @@ export interface AtFileConfig {
   maxFiles: number;
   maxFileSize: number;
   maxTotalSize: number;
+  maxImageSize: number;
 }
 
 
@@ -104,7 +105,6 @@ export interface RetryInfo {
   error: string;
   level: "stream" | "turn";
 }
-
 // --- Memory ---
 
 export interface MemoryEntry {

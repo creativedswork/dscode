@@ -372,6 +372,7 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
       maxFiles: (merged.atFileMaxFiles as number) ?? 5,
       maxFileSize: (merged.atFileMaxFileSize as number) ?? 50 * 1024,
       maxTotalSize: (merged.atFileMaxTotalSize as number) ?? 200 * 1024,
+      maxImageSize: (merged.atFileMaxImageSize as number) ?? 20 * 1024 * 1024,
     },
     agentsMdContent: loadAgentsMd(projectPath),
     vision,

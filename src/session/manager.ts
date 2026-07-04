@@ -35,6 +35,75 @@ function extractFirstUserMessage(messages: unknown[]): string {
   return "";
 }
 
+// Regex to match slash commands like /opsx:propose or /help
+const SLASH_COMMAND_RE = /^\/[a-zA-Z][a-zA-Z0-9_-]*\s*/;
+
+function extractText(msg: any): string {
+  const content = msg.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const textBlock = content.find((b: any) => b.type === "text");
+    return textBlock?.text ?? "";
+  }
+  return "";
+}
+
+function isCommandMessage(text: string): boolean {
+  return SLASH_COMMAND_RE.test(text);
+}
+
+function stripCommandPrefix(text: string): string {
+  return text.replace(SLASH_COMMAND_RE, "").trim();
+}
+
+function extractSessionTitle(messages: any[]): string {
+  // First pass: prefer the first non-command user message
+  for (const msg of messages) {
+    if (msg.role !== "user") continue;
+    const text = extractText(msg);
+    if (!text) continue;
+    if (!isCommandMessage(text)) {
+      return text.slice(0, 60);
+    }
+  }
+
+  // Second pass: all messages are commands, use first command's argument if meaningful
+  for (const msg of messages) {
+    if (msg.role !== "user") continue;
+    const text = extractText(msg);
+    if (!text) continue;
+    const arg = stripCommandPrefix(text);
+    if (arg.length >= 3) {
+      return arg.slice(0, 60);
+    }
+  }
+
+  // Fallback: strip command from first message
+  const first = messages[0];
+  if (first) {
+    const text = extractText(first);
+    const stripped = stripCommandPrefix(text);
+    if (stripped) return stripped.slice(0, 60);
+    if (text) return text.slice(0, 60);
+  }
+
+  return "New session";
+}
+
+function isTitleBetter(current: string, candidate: string): boolean {
+  // Always replace placeholder
+  if (!current || current === "New session") return true;
+
+  // Current title is a command remnant — replace with anything better
+  if (isCommandMessage(current)) return true;
+
+  // Current is very short and candidate is meaningfully longer
+  if (current.length < 10 && candidate.length >= current.length + 5) return true;
+
+  // Don't replace a good title with a shorter one
+  return false;
+}
+
 /**
  * Restore inline images from ImageRef[] for agent/frontend consumption.
  * Mutates the message in-place: removes `images` field and injects
@@ -170,19 +239,12 @@ export class SessionManager {
       this.current.pendingPermission = pendingPermission;
     }
 
-    if (this.current.title === "New session") {
-      const first = messages[0];
-      const content = (first as any)?.content;
-
-      if (Array.isArray(content)) {
-        const textBlock = content.find((b: any) => b.type === "text");
-        if (textBlock) {
-          this.current.title = textBlock.text.slice(0, 60);
-        }
-      } else if (typeof content === "string") {
-        this.current.title = content.slice(0, 60);
-      }
+    // Extract title from conversation — strips commands, prefers substantive messages
+    const candidate = extractSessionTitle(messages);
+    if (isTitleBetter(this.current.title, candidate)) {
+      this.current.title = candidate;
     }
+
 
     if (!this.current.preview) {
       this.current.preview = extractFirstUserMessage(messages as unknown[]);

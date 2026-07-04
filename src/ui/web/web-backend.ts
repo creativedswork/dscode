@@ -487,6 +487,10 @@ export class WebUiBackend implements UiBackend {
           }
         }
         const resolved = resolveAtFileRefs(this.config.projectPath, text, this.config.atFile ?? {});
+        if (resolved.reject) {
+          client.send({ type: "error", text: resolved.warnings.map(w => `@${w.path ?? ""}: ${w.type}${w.detail ? ` — ${w.detail}` : ""}`).join("\n") });
+          return;
+        }
         text = resolved.text;
         if (resolved.images.length > 0) {
           const atImages = resolved.images.map((img) => ({
