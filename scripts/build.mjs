@@ -25,7 +25,7 @@ async function main() {
     format: "esm",
     outfile,
     banner: { js: "#!/usr/bin/env node" },
-    external: ["@earendil-works/*", "@mariozechner/*", "chalk", "tesseract.js", "ws", "sharp"],
+    external: ["@earendil-works/*", "@mariozechner/*", "chalk", "tesseract.js", "ws", "sharp", "pngjs", "jpeg-js"],
     sourcemap: false,
     minify: false,
     logLevel: "info",

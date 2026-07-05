@@ -70,6 +70,10 @@ function stripBomAndDecode(buf: Buffer): string {
   return buf.toString("utf8");
 }
 
+function normalizeName(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, "");
+}
+
 export function parseCommandFile(
   filePath: string,
   source: "user" | "project",
@@ -98,7 +102,7 @@ export function parseCommandFile(
   if (!parsed.description) return null;
 
   // name is optional: if present, must match derived name (sanity check)
-  if (parsed.name !== undefined && parsed.name !== derivedName) {
+  if (parsed.name !== undefined && normalizeName(parsed.name) !== normalizeName(derivedName)) {
     console.warn(
       `[commands] Skipping ${filePath}: frontmatter name "${parsed.name}" does not match path-derived name "${derivedName}"`,
     );

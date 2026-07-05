@@ -46,15 +46,18 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@earendil-works/pi-tui": "^0.74.0",
     "@earendil-works/pi-agent-core": "^0.80.3",
     "@earendil-works/pi-ai": "^0.80.3",
+    "@earendil-works/pi-tui": "^0.74.0",
     "chalk": "^5.5.0",
+    "jpeg-js": "^0.4.4",
+    "pngjs": "^7.0.0",
     "tesseract.js": "^7.0.0",
     "ws": "^8.21.0"
   },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "@types/pngjs": "^6.0.5",
     "@types/sharp": "^0.31.1",
     "@types/ws": "^8.18.1",
     "esbuild": "^0.28.0",

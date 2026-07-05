@@ -5,6 +5,7 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { c } from "./theme.js";
+import { convertJpegToPng, detectImageFormat } from "../utils/image-convert.js";
 import type { PermissionPrompt } from "./shared/types.js";
 
 interface ToolEntry {
@@ -361,21 +362,40 @@ export class ConversationView {
   }
 
   addInlineImage(base64Data: string, mimeType: string): void {
+    // Detect actual format from magic bytes, not file extension.
+    // A WebP named .png will be correctly identified as webp.
+    const format = detectImageFormat(base64Data);
+    let displayData = base64Data;
+    let displayMimeType = mimeType;
+    let needsConversion = false;
+
+    if (format === "jpeg") {
+      const pngData = convertJpegToPng(base64Data);
+      if (pngData) {
+        displayData = pngData;
+        displayMimeType = "image/png";
+        needsConversion = true;
+      }
+    } else if (format === "webp") {
+      // WebP requires sharp for conversion (async). Skip terminal render
+      // but still save to disk with correct format info.
+      displayMimeType = "image/webp";
+    }
+
     // Always save to file — reliable across all terminals
     const cacheDir = join(homedir(), ".dscode", "image-cache");
     mkdirSync(cacheDir, { recursive: true });
-    const ext = mimeType.split("/")[1] || "png";
+    const ext = displayMimeType.split("/")[1] || "png";
     const filename = `${Date.now()}.${ext}`;
     const filePath = join(cacheDir, filename);
-    writeFileSync(filePath, Buffer.from(base64Data, "base64"));
+    writeFileSync(filePath, Buffer.from(displayData, "base64"));
     this.pushText(c.dim(`[image: ${filePath}]`));
 
     // Attempt terminal-native image rendering (Kitty, iTerm2, Ghostty, etc.)
-    // Skip JPEG — terminal graphics protocols have inconsistent JPEG format support
-    const isJpeg = mimeType === "image/jpeg" || mimeType === "image/jpg";
-    if (!isJpeg) {
+    // Skip WebP — requires async sharp conversion, not yet implemented.
+    if (format !== "webp") {
       try {
-        const img = new Image(base64Data, mimeType, this.imageTheme, {
+        const img = new Image(displayData, displayMimeType, this.imageTheme, {
           maxHeightCells: 12,
           maxWidthCells: 40,
         });
@@ -383,6 +403,8 @@ export class ConversationView {
       } catch {
         // Image creation failed — fallback to file path only
       }
+    } else if (needsConversion || format !== mimeType.split("/")[1]) {
+      this.pushText(c.yellow(`  (image is ${format}, not ${mimeType.split("/")[1]} — terminal render skipped)`));
     }
     this.render();
   }
