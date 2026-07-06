@@ -33,6 +33,17 @@ function isImageItem(item: DataTransferItem): boolean {
   return item.type.startsWith("image/");
 }
 
+/**
+ * Heuristic: does the captured text look like a file path
+ * rather than CJK prose? Mirrors logic from at-file-resolver.ts.
+ */
+function isLikelyFilePath(text: string): boolean {
+  if (text.includes("/") || text.includes("\\")) return true;
+  if (/\.[a-zA-Z0-9]{1,6}$/.test(text)) return true;
+  if (/[a-zA-Z0-9\-_]/.test(text)) return true;
+  return false;
+}
+
 
 export function MessageInput({
   onSend,
@@ -103,8 +114,8 @@ export function MessageInput({
 
     const cursorPos = textarea.selectionStart ?? text.length;
     const textBeforeCursor = text.slice(0, cursorPos);
-    const atMatch = textBeforeCursor.match(/(?:^|[\s])@("([^"]*)"?|([^\s]*))$/);
-    if (!atMatch) return;
+    const atMatch = textBeforeCursor.match(/(?:^|(?<![a-zA-Z0-9]))@("([^"]*)"?|([^\s]*))$/);
+    if (!atMatch || !isLikelyFilePath(atMatch[2] ?? atMatch[3] ?? "")) return;
 
     const atIdx = textBeforeCursor.lastIndexOf("@");
     if (atIdx === -1) return;
@@ -115,6 +126,7 @@ export function MessageInput({
     const newText = `${before}${newPrefix}${after}`;
     setText(newText);
     setFileFilter(dirPath + "/");
+    setShowFileMenu(true);
 
     onCommand({ type: "file_list", prefix: dirPath + "/" });
 
@@ -312,9 +324,9 @@ export function MessageInput({
 
     const cursorPos = e.target.selectionStart ?? val.length;
     const textBeforeCursor = val.slice(0, cursorPos);
-    const atMatch = textBeforeCursor.match(/(?:^|[\s])@("([^"]*)"?|([^\s]*))$/);
+    const atMatch = textBeforeCursor.match(/(?:^|(?<![a-zA-Z0-9]))@("([^"]*)"?|([^\s]*))$/);
 
-    if (atMatch) {
+    if (atMatch && isLikelyFilePath(atMatch[2] ?? atMatch[3] ?? "")) {
       setShowFileMenu(true);
       setFileFilter(atMatch[2] ?? atMatch[3] ?? "");
     } else {

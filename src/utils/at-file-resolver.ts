@@ -154,17 +154,55 @@ function inferLanguage(filePath: string): string {
   return LANG_MAP[ext] ?? "";
 }
 
-const AT_FILE_RE = /(?<!\S)@([^\s@]+)/g;
+/**
+ * Heuristic: does the captured text look like a file path
+ * rather than CJK prose? A capture is treated as a path if it:
+ *   - contains a path separator (/ or \), or
+ *   - contains a dot followed by 1-6 alphanumeric chars (file extension), or
+ *   - contains any ASCII alphanumeric, '-', or '_' (not pure CJK)
+ */
+function isLikelyFilePath(text: string): boolean {
+  // Has path separator
+  if (text.includes("/") || text.includes("\\")) return true;
+  // Has file extension pattern
+  if (/\.[a-zA-Z0-9]{1,6}$/.test(text)) return true;
+  // Contains at least one ASCII alphanumeric or common path char
+  if (/[a-zA-Z0-9\-_]/.test(text)) return true;
+  // Pure CJK without any path indicator → not a path
+  return false;
+}
+
+
+/**
+ * Simple regex to find all @sequences (without prefix check — prefix
+ * validation is done in extractAtPaths to avoid tsx transpiler issues).
+ */
+const AT_RE = /@([^\s@]+)/g;
+
+function isValidAtPrefix(ch: string | undefined): boolean {
+  if (ch === undefined) return true; // start of string
+  if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") return true;
+  // Non-ASCII characters (CJK, punctuation, etc.) are valid prefixes
+  if (ch.charCodeAt(0) > 127) return true;
+  // Latin letters and digits are NOT valid prefixes (prevent abc@ref)
+  if (/[a-zA-Z0-9]/.test(ch)) return false;
+  // Other ASCII: punctuation, symbols — allow
+  return true;
+}
 
 function extractAtPaths(text: string): string[] {
   const paths: string[] = [];
   let match: RegExpExecArray | null;
-  while ((match = AT_FILE_RE.exec(text)) !== null) {
-    paths.push(match[1]);
+  while ((match = AT_RE.exec(text)) !== null) {
+    const prevChar = match.index > 0 ? text[match.index - 1] : undefined;
+    if (!isValidAtPrefix(prevChar)) continue;
+    const captured = match[1];
+    if (isLikelyFilePath(captured)) {
+      paths.push(captured);
+    }
   }
   return paths;
 }
-
 export function resolveAtFileRefs(
   projectPath: string,
   text: string,
@@ -223,7 +261,7 @@ export function resolveAtFileRefs(
       });
       // Replace @path with an image indicator in the text
       const escapedPath = relPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const pathRegex = new RegExp(`(?<!\\S)@${escapedPath}(?!\\S)`, "g");
+      const pathRegex = new RegExp(`(?:^|(?<![a-zA-Z0-9]))@${escapedPath}(?!\\S)`, "g");
       text = text.replace(pathRegex, `[Image: @${relPath}]`);
       continue;
     }
@@ -274,7 +312,7 @@ export function resolveAtFileRefs(
     const block = `\`${relPath}\`:\n\`\`\`${langTag}\n${content}${truncNote}\n\`\`\``;
 
     const escapedPath = relPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const pathRegex = new RegExp(`(?<!\\S)@${escapedPath}(?!\\S)`, "g");
+    const pathRegex = new RegExp(`(?:^|(?<![a-zA-Z0-9]))@${escapedPath}(?!\\S)`, "g");
     text = text.replace(pathRegex, block);
   }
 
