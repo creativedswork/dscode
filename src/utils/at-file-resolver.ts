@@ -1,5 +1,5 @@
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
-import { join, relative, resolve, sep, basename } from "node:path";
+import { join, relative, resolve, sep, basename, isAbsolute } from "node:path";
 
 export interface AtFileLimits {
   maxFiles: number;
@@ -7,7 +7,6 @@ export interface AtFileLimits {
   maxTotalSize: number;
   maxImageSize: number;
 }
-
 export interface AtFileWarning {
   type: "not_found" | "binary_skipped" | "truncated" | "too_many_files" | "total_truncated" | "path_escape";
   path?: string;
@@ -110,6 +109,10 @@ const MAX_WALK_FILES = 5000;
 // ── Path safety ──
 
 function safeResolveWithin(projectPath: string, relPath: string): string | null {
+  // Accept absolute paths that point to existing files (for drag-and-drop from outside the project)
+  if (isAbsolute(relPath) && existsSync(relPath)) {
+    return relPath;
+  }
   const resolved = resolve(projectPath, relPath);
   const projectRoot = resolve(projectPath) + sep;
   if (!resolved.startsWith(projectRoot) && resolved !== resolve(projectPath)) {

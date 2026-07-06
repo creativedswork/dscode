@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import type { ImageAttachment, FileListItem } from "../types";
-import { PaperPlaneTilt, Folder, File } from "@phosphor-icons/react";
+import type { ImageAttachment, FileAttachment, FileListItem } from "../types";
+import { PaperPlaneTilt, Folder, File, Image, TextAlignLeft, Video, SpeakerHigh, FilePdf, Archive, X } from "@phosphor-icons/react";
 
 interface MessageInputProps {
   onSend: (text: string, images?: ImageAttachment[]) => void;
@@ -44,6 +44,22 @@ function isLikelyFilePath(text: string): boolean {
   return false;
 }
 
+function getFileIcon(mimeType: string) {
+  if (mimeType.startsWith("image/")) return Image;
+  if (mimeType.startsWith("text/")) return TextAlignLeft;
+  if (mimeType.startsWith("video/")) return Video;
+  if (mimeType.startsWith("audio/")) return SpeakerHigh;
+  if (mimeType === "application/pdf") return FilePdf;
+  if (mimeType.startsWith("application/zip") || mimeType.startsWith("application/x-")) return Archive;
+  return File;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 
 export function MessageInput({
   onSend,
@@ -58,6 +74,8 @@ export function MessageInput({
 }: MessageInputProps) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<ImageAttachment[]>([]);
+  const [files, setFiles] = useState<FileAttachment[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
@@ -92,7 +110,7 @@ export function MessageInput({
 
   const handleSubmit = useCallback(() => {
     const trimmed = text.trim();
-    if (!trimmed && images.length === 0) return;
+    if (!trimmed && images.length === 0 && files.length === 0) return;
     // Push to history if non-empty and not duplicate of last entry
     if (trimmed && historyRef.current[0] !== trimmed) {
       historyRef.current.unshift(trimmed);
@@ -104,9 +122,10 @@ export function MessageInput({
     onSend(trimmed, images.length > 0 ? images : undefined);
     setText("");
     setImages([]);
+    setFiles([]);
     setShowSlashMenu(false);
     setShowFileMenu(false);
-  }, [text, images, onSend, onSlashCommand]);
+  }, [text, images, files, onSend, onSlashCommand]);
 
   const navigateToDirectory = (dirPath: string) => {
     const textarea = textareaRef.current;
@@ -366,6 +385,69 @@ export function MessageInput({
     setImages((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
+  const removeFile = useCallback((index: number) => {
+    setFiles((prev) => {
+      const removed = prev[index];
+      if (removed) {
+        // Remove the corresponding @path from text
+        const escaped = removed.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const pathRegex = new RegExp(`@${escaped}\\s?`, "g");
+        setText((t) => t.replace(pathRegex, "").replace(/\s+$/, ""));
+      }
+      return prev.filter((_, i) => i !== index);
+    });
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (processing) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    setIsDragOver(true);
+  }, [processing]);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    if (processing) return;
+    e.preventDefault();
+    setIsDragOver(false);
+
+    const droppedFiles = e.dataTransfer.files;
+    if (droppedFiles.length === 0) return;
+
+    const newFiles: FileAttachment[] = [];
+    let insertText = "";
+
+    for (let i = 0; i < droppedFiles.length; i++) {
+      const file = droppedFiles[i];
+      const path = (file as any).path ?? file.name;
+      newFiles.push({
+        name: file.name,
+        size: file.size,
+        mimeType: file.type || "application/octet-stream",
+        path: path,
+      });
+      const atPath = path.endsWith("/") || file.type === ""
+        ? `@${path}/`
+        : `@${path}`;
+      insertText += (insertText ? " " : "") + atPath;
+    }
+
+    setFiles((prev) => [...prev, ...newFiles]);
+    if (insertText) {
+      setText((prev) => {
+        const trimmed = prev.trimEnd();
+        return (trimmed ? trimmed + " " : "") + insertText + " ";
+      });
+    }
+
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  }, [processing]);
+
   const adjustHeight = () => {
     const ta = textareaRef.current;
     if (ta) {
@@ -384,9 +466,13 @@ export function MessageInput({
   return (
     <div
       className="px-4 py-3 relative"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       style={{
         borderTop: "1px solid var(--color-border)",
-        backgroundColor: "var(--color-surface)",
+        backgroundColor: isDragOver ? "var(--color-surface-hover)" : "var(--color-surface)",
+        transition: "background-color 0.2s ease",
       }}
     >
       {/* Slash command popover */}
@@ -500,6 +586,49 @@ export function MessageInput({
         </div>
       )}
 
+      {/* File chips */}
+      {files.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-2 max-w-4xl mx-auto">
+          {files.map((f, i) => {
+            const IconComponent = getFileIcon(f.mimeType);
+            return (
+              <div
+                key={i}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm max-w-[200px]"
+                style={{
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "8px",
+                  backgroundColor: "var(--color-bg)",
+                }}
+              >
+                <IconComponent size={14} weight="bold" style={{ color: "var(--color-text-muted)", flexShrink: 0 }} />
+                <span
+                  className="truncate text-xs"
+                  style={{ color: "var(--color-text)" }}
+                  title={f.name}
+                >
+                  {f.name}
+                </span>
+                <span
+                  className="text-xs flex-shrink-0"
+                  style={{ color: "var(--color-text-muted)" }}
+                >
+                  {formatFileSize(f.size)}
+                </span>
+                <button
+                  onClick={() => removeFile(i)}
+                  className="flex-shrink-0 w-4 h-4 rounded text-xs flex items-center justify-center ml-0.5"
+                  style={{ color: "var(--color-text-muted)" }}
+                  title="Remove file"
+                >
+                  <X size={12} weight="bold" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {/* Image thumbnails */}
       {images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2 max-w-4xl mx-auto">
@@ -569,7 +698,7 @@ export function MessageInput({
         ) : (
           <button
             onClick={handleSubmit}
-            disabled={!text.trim() && images.length === 0}
+            disabled={!text.trim() && images.length === 0 && files.length === 0}
             className="btn-primary shrink-0"
           >
             <PaperPlaneTilt size={16} weight="bold" />

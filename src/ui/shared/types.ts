@@ -15,6 +15,13 @@ export interface ImageRef {
   mimeType: string;
 }
 
+export interface FileAttachment {
+  name: string;
+  size: number;
+  mimeType: string;
+  path: string; // absolute filesystem path
+}
+
 // ── MCP ──
 
 export interface McpToolInfo {
