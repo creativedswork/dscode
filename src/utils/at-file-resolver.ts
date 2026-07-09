@@ -322,6 +322,144 @@ export function resolveAtFileRefs(
   return { text, warnings, images, reject: false };
 }
 
+
+// ── Shared internal file path resolver ──
+// Resolves an explicit array of file paths (absolute or relative) into
+// an array of text blocks (for code files) and a parallel ImageRef array.
+
+interface ResolvedBlocks {
+  blocks: string[];
+  warnings: AtFileWarning[];
+  images: ImageRef[];
+  reject: boolean;
+}
+
+function resolveFilePathsInternal(
+  projectPath: string,
+  paths: string[],
+  limits: AtFileLimits,
+): ResolvedBlocks {
+  const warnings: AtFileWarning[] = [];
+  const images: ImageRef[] = [];
+  const blocks: string[] = [];
+
+  const resolvedPaths = paths.slice(0, limits.maxFiles);
+  if (paths.length > limits.maxFiles) {
+    warnings.push({
+      type: "too_many_files",
+      detail: `Skipped ${paths.length - limits.maxFiles} file(s): ${paths.slice(limits.maxFiles).join(", ")}`,
+    });
+  }
+
+  let totalContentSize = 0;
+  for (const relPath of resolvedPaths) {
+    const fullPath = safeResolveWithin(projectPath, relPath);
+    if (!fullPath) {
+      warnings.push({ type: "path_escape", path: relPath, detail: "Path escapes project directory" });
+      continue;
+    }
+
+    if (!existsSync(fullPath)) {
+      warnings.push({ type: "not_found", path: relPath });
+      continue;
+    }
+
+    // Handle image files — read as base64
+    if (isImagePath(relPath)) {
+      let buf: Buffer;
+      try {
+        buf = readFileSync(fullPath);
+      } catch {
+        warnings.push({ type: "not_found", path: relPath });
+        continue;
+      }
+      if (buf.length > limits.maxImageSize) {
+        warnings.push({ type: "truncated", path: relPath, detail: `Image exceeds ${limits.maxImageSize} bytes` });
+        return { blocks, warnings, images, reject: true };
+      }
+      images.push({
+        data: buf.toString("base64"),
+        mimeType: imageMimeType(relPath),
+      });
+      blocks.push(`[Image: @${relPath}]`);
+      continue;
+    }
+
+    if (!isTextPath(relPath)) {
+      warnings.push({ type: "binary_skipped", path: relPath, detail: "Binary or non-text file" });
+      continue;
+    }
+
+    let buf: Buffer;
+    try {
+      buf = readFileSync(fullPath);
+    } catch {
+      warnings.push({ type: "not_found", path: relPath });
+      continue;
+    }
+
+    if (isBinaryContent(buf)) {
+      warnings.push({ type: "binary_skipped", path: relPath, detail: "Binary or non-text file" });
+      continue;
+    }
+
+    let content = buf.toString("utf8");
+    let wasTruncated = false;
+
+    if (buf.length > limits.maxFileSize) {
+      content = content.slice(0, limits.maxFileSize);
+      warnings.push({ type: "truncated", path: relPath, detail: `File truncated at ${limits.maxFileSize} bytes` });
+      wasTruncated = true;
+    }
+
+    const remainingTotal = limits.maxTotalSize - totalContentSize;
+    if (content.length > remainingTotal) {
+      content = content.slice(0, remainingTotal);
+      const allTruncated = resolvedPaths.slice(resolvedPaths.indexOf(relPath)).join(", ");
+      warnings.push({
+        type: "total_truncated",
+        detail: `Total file content truncated at ${limits.maxTotalSize} bytes. Skipped: ${allTruncated}`,
+      });
+      wasTruncated = true;
+    }
+
+    totalContentSize += content.length;
+
+    const lang = inferLanguage(relPath);
+    const langTag = lang ? ` ${lang}` : "";
+    const truncNote = wasTruncated ? " [...truncated...]" : "";
+    blocks.push(`\`${relPath}\`:\n\`\`\`${langTag}\n${content}${truncNote}\n\`\`\``);
+  }
+
+  return { blocks, warnings, images, reject: false };
+}
+
+/**
+ * Resolve an explicit array of file paths into message content.
+ * Unlike resolveAtFileRefs, this does NOT scan text for @path patterns —
+ * it takes a pre-built array of absolute or relative paths (e.g., from
+ * drag-and-drop tracker).
+ */
+export function resolveFileRefs(
+  projectPath: string,
+  fileRefs: string[],
+  limits?: Partial<AtFileLimits>,
+): AtFileResolveResult {
+  if (fileRefs.length === 0) {
+    return { text: "", warnings: [], images: [], reject: false };
+  }
+
+  const resolvedLimits: AtFileLimits = { ...DEFAULT_LIMITS, ...limits };
+  const { blocks, warnings, images, reject } = resolveFilePathsInternal(
+    projectPath,
+    fileRefs,
+    resolvedLimits,
+  );
+
+  const text = blocks.join("\n\n");
+  return { text, warnings, images, reject };
+}
+
 // ── File search for autocomplete ──
 
 function isIgnoredPath(parts: string[]): boolean {

@@ -1,9 +1,10 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import type { ImageAttachment, FileAttachment, FileListItem } from "../types";
+import { FileTracker } from "@dscode/shared/file-tracker";
 import { PaperPlaneTilt, Folder, File, Image, TextAlignLeft, Video, SpeakerHigh, FilePdf, Archive, X } from "@phosphor-icons/react";
 
 interface MessageInputProps {
-  onSend: (text: string, images?: ImageAttachment[]) => void;
+  onSend: (text: string, images?: ImageAttachment[], fileRefs?: string[]) => void;
   onAbort: () => void;
   onSlashCommand: (command: string) => void;
   onCommand: (cmd: { type: "file_list"; prefix: string }) => void;
@@ -11,6 +12,7 @@ interface MessageInputProps {
   slashCommands: { name: string; description: string }[];
   fileListItems: FileListItem[];
   fileListPrefix: string;
+  projectPath: string;
   viewMode?: "chat" | "dashboard";
 }
 
@@ -54,6 +56,17 @@ function getFileIcon(mimeType: string) {
   return File;
 }
 
+function getFileIconFromPath(path: string) {
+  const ext = path.slice(path.lastIndexOf(".")).toLowerCase();
+  if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"].includes(ext)) return Image;
+  if ([".txt", ".md", ".mdx", ".log", ".csv"].includes(ext)) return TextAlignLeft;
+  if ([".mp4", ".avi", ".mov", ".webm"].includes(ext)) return Video;
+  if ([".mp3", ".wav", ".ogg"].includes(ext)) return SpeakerHigh;
+  if (ext === ".pdf") return FilePdf;
+  if ([".zip", ".tar", ".gz", ".7z", ".rar"].includes(ext)) return Archive;
+  return File;
+}
+
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -71,10 +84,11 @@ export function MessageInput({
   fileListItems,
   fileListPrefix,
   viewMode,
+  projectPath,
 }: MessageInputProps) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<ImageAttachment[]>([]);
-  const [files, setFiles] = useState<FileAttachment[]>([]);
+  const [files, setFiles] = useState<{ absPath: string; displayPath: string }[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
@@ -87,6 +101,7 @@ export function MessageInput({
   const historyCursorRef = useRef<number>(-1);
   const draftRef = useRef<string>("");
   const isComposingRef = useRef(false);
+  const trackerRef = useRef<FileTracker>(new FileTracker());
   const MAX_HISTORY = 100;
 
   const filteredCommands = slashCommands.filter(
@@ -110,7 +125,8 @@ export function MessageInput({
 
   const handleSubmit = useCallback(() => {
     const trimmed = text.trim();
-    if (!trimmed && images.length === 0 && files.length === 0) return;
+    const fileRefs = trackerRef.current.drain();
+    if (!trimmed && images.length === 0 && fileRefs.length === 0) return;
     // Push to history if non-empty and not duplicate of last entry
     if (trimmed && historyRef.current[0] !== trimmed) {
       historyRef.current.unshift(trimmed);
@@ -119,13 +135,13 @@ export function MessageInput({
       }
     }
     historyCursorRef.current = -1;
-    onSend(trimmed, images.length > 0 ? images : undefined);
+    onSend(trimmed, images.length > 0 ? images : undefined, fileRefs.length > 0 ? fileRefs : undefined);
     setText("");
     setImages([]);
     setFiles([]);
     setShowSlashMenu(false);
     setShowFileMenu(false);
-  }, [text, images, files, onSend, onSlashCommand]);
+  }, [text, images, onSend]);
 
   const navigateToDirectory = (dirPath: string) => {
     const textarea = textareaRef.current;
@@ -385,17 +401,9 @@ export function MessageInput({
     setImages((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
-  const removeFile = useCallback((index: number) => {
-    setFiles((prev) => {
-      const removed = prev[index];
-      if (removed) {
-        // Remove the corresponding @path from text
-        const escaped = removed.path.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const pathRegex = new RegExp(`@${escaped}\\s?`, "g");
-        setText((t) => t.replace(pathRegex, "").replace(/\s+$/, ""));
-      }
-      return prev.filter((_, i) => i !== index);
-    });
+  const removeFile = useCallback((absPath: string) => {
+    trackerRef.current.remove(absPath);
+    setFiles((prev) => prev.filter((f) => f.absPath !== absPath));
   }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -417,36 +425,22 @@ export function MessageInput({
     const droppedFiles = e.dataTransfer.files;
     if (droppedFiles.length === 0) return;
 
-    const newFiles: FileAttachment[] = [];
-    let insertText = "";
+    const tracker = trackerRef.current;
+    const newEntries: { absPath: string; displayPath: string }[] = [];
 
     for (let i = 0; i < droppedFiles.length; i++) {
       const file = droppedFiles[i];
-      const path = (file as any).path ?? file.name;
-      newFiles.push({
-        name: file.name,
-        size: file.size,
-        mimeType: file.type || "application/octet-stream",
-        path: path,
-      });
-      const atPath = path.endsWith("/") || file.type === ""
-        ? `@${path}/`
-        : `@${path}`;
-      insertText += (insertText ? " " : "") + atPath;
+      const absPath = (file as any).path ?? file.name;
+      const displayPath = tracker.add(absPath, projectPath);
+      newEntries.push({ absPath, displayPath });
     }
 
-    setFiles((prev) => [...prev, ...newFiles]);
-    if (insertText) {
-      setText((prev) => {
-        const trimmed = prev.trimEnd();
-        return (trimmed ? trimmed + " " : "") + insertText + " ";
-      });
-    }
+    setFiles((prev) => [...prev, ...newEntries]);
 
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
     });
-  }, [processing]);
+  }, [processing, projectPath]);
 
   const adjustHeight = () => {
     const ta = textareaRef.current;
@@ -589,11 +583,11 @@ export function MessageInput({
       {/* File chips */}
       {files.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2 max-w-4xl mx-auto">
-          {files.map((f, i) => {
-            const IconComponent = getFileIcon(f.mimeType);
+          {files.map((f) => {
+            const IconComponent = getFileIconFromPath(f.displayPath);
             return (
               <div
-                key={i}
+                key={f.absPath}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm max-w-[200px]"
                 style={{
                   border: "1px solid var(--color-border)",
@@ -605,18 +599,12 @@ export function MessageInput({
                 <span
                   className="truncate text-xs"
                   style={{ color: "var(--color-text)" }}
-                  title={f.name}
+                  title={f.displayPath}
                 >
-                  {f.name}
-                </span>
-                <span
-                  className="text-xs flex-shrink-0"
-                  style={{ color: "var(--color-text-muted)" }}
-                >
-                  {formatFileSize(f.size)}
+                  {f.displayPath}
                 </span>
                 <button
-                  onClick={() => removeFile(i)}
+                  onClick={() => removeFile(f.absPath)}
                   className="flex-shrink-0 w-4 h-4 rounded text-xs flex items-center justify-center ml-0.5"
                   style={{ color: "var(--color-text-muted)" }}
                   title="Remove file"
@@ -629,7 +617,6 @@ export function MessageInput({
         </div>
       )}
 
-      {/* Image thumbnails */}
       {images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2 max-w-4xl mx-auto">
           {images.map((img, i) => (

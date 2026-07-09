@@ -202,14 +202,14 @@ export function App() {
 
   const { connected, send } = useWebSocket(handleEvent);
 
-  const handleSend = useCallback((text: string, images?: ImageAttachment[]) => {
+  const handleSend = useCallback((text: string, images?: ImageAttachment[], fileRefs?: string[]) => {
     if (!text.trim() && (!images || images.length === 0)) return;
     turnStartRef.current = Date.now();
     setProcessing(true);
     if (viewMode === "dashboard") {
       send({ type: "artifact", action: "update", instruction: text });
     } else {
-      send({ type: "chat", text, images: images?.length ? images : undefined });
+      send({ type: "chat", text, images: images?.length ? images : undefined, fileRefs: fileRefs?.length ? fileRefs : undefined });
     }
   }, [send, viewMode]);
 
@@ -325,7 +325,7 @@ export function App() {
             <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} sessionActiveMs={sessionActiveMs} permissionPrompt={permissionPrompt} onPermission={handlePermission} containerRef={chatContainerRef} scrollLocked={transitionPhase === "animating"} />
           )}
           <MessageInput onSend={handleSend} onAbort={handleAbort} onSlashCommand={handleSlashCommand} onCommand={handleCommand}
-            processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} viewMode={viewMode} />
+            processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} viewMode={viewMode} projectPath={config?.projectPath ?? ""} />
           </div>
         </main>
       </div>

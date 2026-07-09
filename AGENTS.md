@@ -22,7 +22,7 @@
 ```bash
 npm start              # REPL
 npm start -- --web     # Web 模式
-npm run build:web      # 构建前端（npm start 前需先执行）
+npm run build          # 构建 (npm start 前需先执行)
 npm run typecheck      # 类型检查
 npm test               # 测试
 ```

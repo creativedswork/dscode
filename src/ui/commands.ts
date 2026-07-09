@@ -183,7 +183,7 @@ const COMMANDS: SlashCommandDef[] = [
           "/image <filepath>          Attach an image file to the next message",
           "/image clipboard           Attach image from clipboard (macOS)",
           "",
-          "In Web UI: paste images (Ctrl+V). Drag-and-drop support coming soon.",
+          "In Web UI: paste images (Ctrl+V). Drag-and-drop files to attach them (Web UI and TUI).",
           "",
           "Vision pipeline:",
           "  If the primary model supports images → routed directly.",

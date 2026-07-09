@@ -19,7 +19,7 @@ import type { MCPManager } from "../../mcp/manager.js";
 import type { AppHostManager } from "../../mcp/app/host.js";
 import type { AppInstance } from "../../mcp/app/types.js";
 import { buildMcpServers } from "../mcp-browser.js";
-import { resolveAtFileRefs, listProjectFiles } from "../../utils/at-file-resolver.js";
+import { resolveAtFileRefs, resolveFileRefs, listProjectFiles } from "../../utils/at-file-resolver.js";
 import { rebuildDisplayMessages } from "../../session/display.js";
 import { formatToolResultForUI } from "../shared/tool-result-formatter.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
@@ -501,6 +501,25 @@ export class WebUiBackend implements UiBackend {
         }
         for (const warn of resolved.warnings) {
           client.send({ type: "info", display: "toast", text: `@${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}` });
+        }
+        // Resolve fileRefs from drag-and-drop tracker
+        if (cmd.fileRefs && cmd.fileRefs.length > 0) {
+          const refsResolved = resolveFileRefs(this.config.projectPath, cmd.fileRefs, this.config.atFile ?? {});
+          if (!refsResolved.reject) {
+            if (refsResolved.text) {
+              text = text ? `${text}\n\n${refsResolved.text}` : refsResolved.text;
+            }
+            if (refsResolved.images.length > 0) {
+              const refImages = refsResolved.images.map((img) => ({
+                data: img.data,
+                mimeType: img.mimeType,
+              }));
+              images = [...(images ?? []), ...refImages];
+            }
+          }
+          for (const warn of refsResolved.warnings) {
+            client.send({ type: "info", display: "toast", text: `${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}` });
+          }
         }
         // Broadcast user message to client before sending to agent
         client.send({ type: "user_message", text, images: images && images.length > 0 ? images : undefined } as any);

@@ -42,6 +42,10 @@ import { resolveAtFileRefs, listProjectFiles } from "../utils/at-file-resolver.j
 import { readClipboardImageNonBlocking } from "../utils/image.js";
 import { ImageManager } from "./image-manager.js";
 import { ImagePasteHandler } from "./image-paste-handler.js";
+import { FileTracker } from "./shared/file-tracker.js";
+import { resolveFileRefs } from "../utils/at-file-resolver.js";
+import { existsSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
 // TuiDeps replaced by HarnessAPI — see src/core/harness-api.ts
 
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;
@@ -169,6 +173,10 @@ export class TuiApp {
   private stopping = false;
   // ── Image lifecycle (delegated to ImagePasteHandler) ──
   private imagePasteHandler: ImagePasteHandler;
+  // ── File tracker for drag-and-drop ──
+  private fileTracker: FileTracker;
+  // ── Attachment bar scroll offset ──
+  private attachmentScrollOffset: number = 0;
   // Pre-drained images: captured in input listener before Editor's onChange("") clears them
   private drainedSubmitImages: ImageContent[] | null = null;
   private lastPasteTime = 0;
@@ -199,14 +207,16 @@ export class TuiApp {
       this.imageStatus,
       this.tui,
     );
+    this.fileTracker = new FileTracker();
     this.editor.setAutocompleteProvider(autocomplete);
     this.editor.onSubmit = (text) => this.handleSubmit(text.trim());
     this.editor.onChange = (text) => {
-      // Sync [image:<id>] placeholders with image manager via ID-set diff.
-      // Extract all valid placeholder IDs from the text.
+      // ── Sync [image:<id>] placeholders with image manager via ID-set diff. ──
+      // Strip [file:xxx] markers first to avoid conflict with [image:N] detection.
+      const textForImages = text.replace(/\[file:[^\]]+\]/g, "");
       const RE = /\[image:(\d+)\]/g;
       const presentIds = new Set<number>();
-      for (const m of text.matchAll(RE)) {
+      for (const m of textForImages.matchAll(RE)) {
         presentIds.add(Number(m[1]));
       }
       // Guard: if images were pre-drained by input listener (Enter key),
@@ -217,6 +227,42 @@ export class TuiApp {
           this.imagePasteHandler.removeImageById(id);
         }
       }
+
+      // ── Sync [file:xxx] markers with FileTracker (bidirectional) ──
+      const fileMarkerRe = /\[file:([^\]]+)\]/g;
+      const presentDisplayPaths = new Set<string>();
+      for (const m of text.matchAll(fileMarkerRe)) {
+        presentDisplayPaths.add(m[1]);
+      }
+
+      const currentDisplayPaths = this.fileTracker.getDisplayPaths();
+      const currentAbsPaths = this.fileTracker.getAll();
+      const displayToAbs = new Map<string, string>();
+      for (let j = 0; j < currentDisplayPaths.length; j++) {
+        displayToAbs.set(currentDisplayPaths[j], currentAbsPaths[j]);
+      }
+
+      // Added: present in text but not in tracker
+      for (const dp of presentDisplayPaths) {
+        if (!displayToAbs.has(dp)) {
+          const absPath = resolvePath(this.deps.config.projectPath, dp);
+          if (existsSync(absPath)) {
+            this.fileTracker.add(absPath, this.deps.config.projectPath);
+          }
+        }
+      }
+
+      // Removed: in tracker but not in text
+      for (const dp of currentDisplayPaths) {
+        if (!presentDisplayPaths.has(dp)) {
+          const absPath = displayToAbs.get(dp);
+          if (absPath) {
+            this.fileTracker.remove(absPath);
+          }
+        }
+      }
+
+      this.updateAttachmentBar();
     };
 
     this.tui.addInputListener((data) => {
@@ -521,9 +567,77 @@ export class TuiApp {
         this.pasteClipboardImage();
         return true;
       }
+
+      // ── Attachment bar: display-only, scroll via arrows ──
+      const fileCount = this.fileTracker.count;
+      const imageCount = this.imagePasteHandler.imageCount;
+      if (fileCount > 0 || imageCount > 0) {
+        if (matchesKey(data, Key.escape)) {
+          this.fileTracker.clear();
+          this.imagePasteHandler.clear();
+          this.attachmentScrollOffset = 0;
+          // Strip [file:xxx] markers from editor text
+          const currentText = this.editor.getText();
+          const cleaned = currentText.replace(/\[file:[^\]]+\]\s*/g, "");
+          if (cleaned !== currentText) {
+            this.editor.setText(cleaned);
+          }
+          this.updateAttachmentBar();
+          return true;
+        }
+        if (matchesKey(data, Key.left)) {
+          this.attachmentScrollOffset = Math.max(0, this.attachmentScrollOffset - 1);
+          this.updateAttachmentBar();
+          return true;
+        }
+        if (matchesKey(data, Key.right)) {
+          this.attachmentScrollOffset += 1;
+          this.updateAttachmentBar();
+          return true;
+        }
+      }
     }
 
     return false;
+  }
+
+
+  private updateAttachmentBar(): void {
+    const imageCount = this.imagePasteHandler.imageCount;
+    const filePaths = this.fileTracker.getDisplayPaths();
+    const fileAbsPaths = this.fileTracker.getAll();
+
+    if (imageCount === 0 && filePaths.length === 0) {
+      this.imageStatus.setText("");
+      return;
+    }
+
+    // Clamp scroll offset
+    const maxScroll = Math.max(0, filePaths.length - 1);
+    this.attachmentScrollOffset = Math.min(this.attachmentScrollOffset, maxScroll);
+
+    const parts: string[] = [];
+
+    if (imageCount > 0) {
+      const label = ` \u{1F5BC} ${imageCount} image${imageCount > 1 ? "s" : ""} `;
+      parts.push(c.bgBlue(label));
+    }
+
+    if (filePaths.length > 0) {
+      parts.push("\u{1F4CE}");
+    }
+
+    for (let i = this.attachmentScrollOffset; i < filePaths.length; i++) {
+      const label = ` ${filePaths[i]} `;
+      parts.push(hyperlink(c.bgBlue(label), `file://${fileAbsPaths[i]}`));
+    }
+
+    const chipsLine = parts.join(" ");
+    const scrollHint = this.attachmentScrollOffset > 0
+      ? ` +${this.attachmentScrollOffset} more`
+      : "";
+    const hintLine = c.dim(`\u2190 \u2192 scroll${scrollHint} \u00b7 Esc clear all`);
+    this.imageStatus.setText(`${chipsLine}\n${hintLine}`);
   }
 
   openMcpBrowser(): void {
@@ -710,6 +824,17 @@ export class TuiApp {
           : `[paste # ${totalChars} chars]`;
         this.conversation.addInfo(c.dim(`Large paste accepted — ${desc}. Press Enter to submit full content.`));
       }
+      // Check for file drop: single absolute path to an existing file
+      const trimmed = pasteContent.trim();
+      if (trimmed && (trimmed.startsWith("/") || /^[A-Za-z]:[/\\]/.test(trimmed))) {
+        if (existsSync(trimmed)) {
+          const displayPath = this.fileTracker.add(trimmed, this.deps.config.projectPath);
+          this.editor.insertTextAtCursor("[file:" + displayPath + "] ");
+          this.updateAttachmentBar();
+          return { consume: true };
+        }
+      }
+      
       return undefined;
     }
 
@@ -1069,6 +1194,19 @@ export class TuiApp {
     }
     const hasText = text.length > 0;
     const hasImages = Boolean(images?.length);
+    const fileRefs = this.fileTracker.drain();
+    const hasFiles = fileRefs.length > 0;
+    if (!hasText && !hasImages && !hasFiles) {
+      const now = Date.now();
+      if (now - this.lastPasteTime < 100) return;
+      this.lastPasteTime = now;
+      readClipboardImageNonBlocking().then((img) => {
+        if (img) {
+          this.imagePasteHandler.addImage(img);
+        }
+      });
+    const hasText = text.length > 0;
+    const hasImages = Boolean(images?.length);
     if (!hasText && !hasImages) {
       const now = Date.now();
       if (now - this.lastPasteTime < 100) return;
@@ -1138,6 +1276,15 @@ export class TuiApp {
     }
 
     // Resolve @file references
+    // Capture @path refs before resolution for dedup with fileRefs
+    const atPathRe = /@([^\s@]+)/g;
+    const atPathAbsPaths = new Set<string>();
+    let atRefMatch: RegExpExecArray | null;
+    while ((atRefMatch = atPathRe.exec(text)) !== null) {
+      const absPath = resolvePath(this.deps.config.projectPath, atRefMatch[1]);
+      if (existsSync(absPath)) atPathAbsPaths.add(absPath);
+    }
+    // Resolve @file references
     const resolved = resolveAtFileRefs(this.deps.config.projectPath, text, this.deps.config.atFile ?? {});
     if (resolved.warnings.length > 0) {
       for (const warn of resolved.warnings) {
@@ -1156,7 +1303,28 @@ export class TuiApp {
       }) as ImageContent);
       images = [...(images ?? []), ...atImages];
     }
-    if (images && images.length > 0 && !resolveModel(this.deps.config.provider, this.deps.config.modelId).input.includes("image")) {
+    // Resolve fileRefs from tracker (drag-and-drop files) with @path dedup
+    if (hasFiles) {
+      const dedupedFileRefs = fileRefs.filter(f => !atPathAbsPaths.has(f));
+      if (dedupedFileRefs.length > 0) {
+        const refsResolved = resolveFileRefs(this.deps.config.projectPath, dedupedFileRefs, this.deps.config.atFile ?? {});
+        if (refsResolved.warnings.length > 0) {
+          for (const warn of refsResolved.warnings) {
+            this.conversation.addInfo(c.yellow(`${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}`));
+          }
+        }
+        text = text ? `${text}\n${refsResolved.text}` : refsResolved.text;
+        if (refsResolved.images.length > 0) {
+          const refImages: ImageContent[] = refsResolved.images.map((img) => ({
+            type: "image" as const,
+            data: img.data,
+            mimeType: img.mimeType,
+          }) as ImageContent);
+          images = [...(images ?? []), ...refImages];
+        }
+      }
+    }
+    if (images && images.length > 0 && !resolveModel(this.deps.config.provider, this.deps.config.modelId).input.includes("image"))
       this.conversation.addInfo(
         c.dim(`${resolveModel(this.deps.config.provider, this.deps.config.modelId).name} does not support image input natively — using vision model or OCR.`),
       );
