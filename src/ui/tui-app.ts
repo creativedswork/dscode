@@ -1205,8 +1205,9 @@ export class TuiApp {
           this.imagePasteHandler.addImage(img);
         }
       });
-    const hasText = text.length > 0;
-    const hasImages = Boolean(images?.length);
+      return;
+    }
+
     if (!hasText && !hasImages) {
       const now = Date.now();
       if (now - this.lastPasteTime < 100) return;
@@ -1328,7 +1329,6 @@ export class TuiApp {
       this.conversation.addInfo(
         c.dim(`${resolveModel(this.deps.config.provider, this.deps.config.modelId).name} does not support image input natively — using vision model or OCR.`),
       );
-    }
 
     const imageIndicator = images
       ? c.dim(`[${images.length} image(s) attached]`)

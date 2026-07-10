@@ -51,3 +51,37 @@ dscode 在 `src/models/registry.ts` 模块初始化时，通过 pi-ai 的 `creat
 - `<project>/.dscode/settings.json` — 项目偏好，覆盖用户设置
 - `~/.mcp.json` — 用户全局 MCP servers，包含敏感信息不提交
 - `<project>/.mcp.json` — 项目 MCP servers，应加入 `.gitignore`
+
+## 日志排查
+
+当需要追踪运行时执行路径时，使用项目内置的 Logger（**禁止 `console.log`**，TUI 独占终端，stdout 不可见）。
+
+### Logger API
+
+日志写入 `~/.dscode/logs/<channel>.log`，支持 channel：`lifecycle | session | tool | analysis`。
+
+| 位置 | 调用方式 |
+|------|---------|
+| `tui-app.ts` / `web-backend.ts` | `this.deps.logger.info("tool", "diag-tag", \`msg...\`)` |
+| `commands.ts` | `ctx.harness.logger.info("tool", "diag-tag", \`msg...\`)` |
+| `harness.ts` | `this.logger.info("tool", "diag-tag", \`msg...\`)` |
+
+### 操作流程
+
+```bash
+# 1. 清空旧日志
+> ~/.dscode/logs/tool.log
+
+# 2. 启动并触发目标行为
+npm start
+
+# 3. 查看
+cat ~/.dscode/logs/tool.log | grep diag-tag
+```
+
+### 注意事项
+
+- 排查完毕后**删除诊断日志**，避免污染代码和日志文件
+- 添加日志后运行 `npm run typecheck` 确保编译通过
+- 标签（diag-tag）用有意义的名称，方便 grep 过滤
+- 必要时在关键分支的入口和出口**都加日志**，而不是只加一处
