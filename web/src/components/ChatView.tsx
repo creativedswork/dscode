@@ -114,7 +114,7 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
     <div ref={(el) => { (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = el; if (containerRef) { (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el; } }} onScroll={handleChatScroll} className={"flex-1 overflow-y-auto min-h-0 px-4 py-4 space-y-4" + (scrollLocked ? " overflow-hidden pointer-events-none" : "")}>
       {messages.map((msg) => (
         <ErrorBoundary key={msg.id} fallback={<FallbackBubble message={msg} />}>
-          <MessageBubble message={msg} sessionTime={sessionTime} />
+          {msg.role === "user" ? <UserBubble message={msg} /> : <AssistantMessage message={msg} sessionTime={sessionTime} />}
         </ErrorBoundary>
       ))}
 
@@ -361,39 +361,16 @@ function InlinePermission({
   );
 }
 
-function MessageBubble({ message, sessionTime }: { message: UIMessage; sessionTime: number }) {
-  const isUser = message.role === "user";
+function UserBubble({ message }: { message: UIMessage }) {
   const safeContent = typeof message.content === "string" ? message.content : "";
 
   return (
-    <div className={`flex ${isUser ? "justify-end" : "justify-start"} animate-fade-up`}>
-      <div
-        data-collider="message-card"
-        className="max-w-[85%] md:max-w-[75%] px-4 py-3"
-        style={
-          isUser
-            ? {
-                borderRadius: "12px 12px 4px 12px",
-                backgroundColor: "var(--color-user-bubble)",
-                color: "var(--color-user-bubble-text)",
-              }
-            : {
-                borderRadius: "12px 12px 12px 4px",
-                border: "1px solid var(--color-border)",
-                backgroundColor: "var(--color-surface)",
-                color: "var(--color-text)",
-              }
-        }
-      >
-        {message.thinking && (
-          <ThinkingBlock thinking={message.thinking} isStreaming={message.isStreaming} sessionTime={sessionTime} />
-        )}
-
+    <div className="user-msg">
+      <div className="meta">You · 09:41</div>
+      <div data-collider="message-card" className="content">
         {message.images && message.images.length > 0 && (
-          <div className={`flex flex-wrap gap-2 mb-2 ${isUser ? "justify-end" : "justify-start"}`}>
+          <div className="flex flex-wrap gap-2 mb-2 justify-end">
             {message.images.map((img, i) => {
-              // Backend restores ImageRef to ImageAttachment before sending.
-              // Handle both types for type safety / cache miss fallback.
               const src = "data" in img
                 ? `data:${img.mimeType};base64,${(img as any).data}`
                 : undefined;
@@ -411,30 +388,72 @@ function MessageBubble({ message, sessionTime }: { message: UIMessage; sessionTi
           </div>
         )}
 
-        <div style={{ color: isUser ? "var(--color-user-bubble-text)" : "var(--color-text)" }}>
-          {safeContent || (message.images && message.images.length > 0) ? (
-            safeContent ? (
-              safeContent.split('\n').map((line, i) => (
-                <span key={i} data-collider="text-line">
-                  {line ? <Markdown className="text-sm leading-relaxed">{line}</Markdown> : <br />}
-                </span>
-              ))
-            ) : (
-              <Markdown className="text-sm leading-relaxed">{safeContent}</Markdown>
-            )
-          ) : (
-            message.isStreaming && !message.thinking && (!message.images || message.images.length === 0) ? (
-              <span className="inline-block w-2 h-4 animate-pulse rounded-sm" style={{ backgroundColor: "var(--color-accent)" }} />
-            ) : null
-          )}
-        </div>
+        {safeContent ? (
+          safeContent.split('\n').map((line, i) => (
+            <span key={i} data-collider="text-line">
+              {line ? <Markdown className="text-sm leading-relaxed">{line}</Markdown> : <br />}
+            </span>
+          ))
+        ) : (
+          message.isStreaming && !message.thinking && (!message.images || message.images.length === 0) ? (
+            <span className="inline-block w-2 h-4 animate-pulse rounded-sm" style={{ backgroundColor: "var(--color-accent)" }} />
+          ) : null
+        )}
+      </div>
+    </div>
+  );
+}
 
-        {message.tools && message.tools.length > 0 && (
-          <div className="mt-3 space-y-2">
-            {message.tools.map((tool, i) => (
-              <ToolCard key={`${tool.name}-${i}`} tool={tool} />
-            ))}
-          </div>
+function AssistantMessage({ message, sessionTime }: { message: UIMessage; sessionTime: number }) {
+  const safeContent = typeof message.content === "string" ? message.content : "";
+
+  return (
+    <div className="assistant-msg">
+      <div className="meta">dscode · 09:41</div>
+
+      {message.thinking && (
+        <ThinkingBlock thinking={message.thinking} isStreaming={message.isStreaming} sessionTime={sessionTime} />
+      )}
+
+      {message.images && message.images.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {message.images.map((img, i) => {
+            const src = "data" in img
+              ? `data:${img.mimeType};base64,${(img as any).data}`
+              : undefined;
+            return (
+              <img
+                key={i}
+                src={src ?? "/placeholder-image.svg"}
+                alt={`Attached image ${i + 1}`}
+                className="max-w-[200px] max-h-[200px] object-cover rounded cursor-pointer hover:opacity-90 transition-opacity"
+                style={{ border: "1px solid var(--color-border)" }}
+                onClick={() => src && window.open(src, "_blank")}
+              />
+            );
+          })}
+        </div>
+      )}
+
+      {message.tools && message.tools.length > 0 && (
+        <div className="space-y-2">
+          {message.tools.map((tool, i) => (
+            <ToolCard key={`${tool.name}-${i}`} tool={tool} />
+          ))}
+        </div>
+      )}
+
+      <div className="text-response">
+        {safeContent ? (
+          safeContent.split('\n').map((line, i) => (
+            <span key={i} data-collider="text-line">
+              {line ? <Markdown className="text-sm leading-relaxed">{line}</Markdown> : <br />}
+            </span>
+          ))
+        ) : (
+          message.isStreaming && !message.thinking && (!message.images || message.images.length === 0) ? (
+            <span className="inline-block w-2 h-4 animate-pulse rounded-sm" style={{ backgroundColor: "var(--color-accent)" }} />
+          ) : null
         )}
       </div>
     </div>
@@ -442,17 +461,20 @@ function MessageBubble({ message, sessionTime }: { message: UIMessage; sessionTi
 }
 
 function ThinkingBlock({ thinking, isStreaming, sessionTime }: { thinking: string; isStreaming?: boolean; sessionTime: number }) {
+  const [collapsed, setCollapsed] = useState(!isStreaming);
+
+  // auto-expand when streaming starts
+  useEffect(() => {
+    if (isStreaming) setCollapsed(false);
+  }, [isStreaming]);
+
   return (
-    <details className="mb-2 group" open={isStreaming}>
-      <summary className="text-xs cursor-pointer select-none" style={{ color: "var(--color-text-muted)" }}>
-        {isStreaming ? `Thinking... (${formatTime(Math.floor(sessionTime / 1000))})` : "Thought"}
-      </summary>
-      <div
-        className="mt-1.5 text-xs italic leading-relaxed pl-3 max-h-60 overflow-y-auto"
-        style={{ borderLeft: "2px solid var(--color-accent)", color: "var(--color-text-muted)" }}
-      >
-        {thinking}
+    <div className={`thinking${collapsed ? " collapsed" : ""}`}>
+      <div className="label" onClick={() => setCollapsed(!collapsed)}>
+        <span className="dot" />
+        Thinking
       </div>
-    </details>
+      <div className="thinking-body">{thinking}</div>
+    </div>
   );
 }
