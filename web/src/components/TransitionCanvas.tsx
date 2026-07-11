@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { Particle, ImpactRing, Shard } from "../animation/types";
+import type { Particle, ImpactRing, Shard, TimestampEntry } from "../animation/types";
 
 interface TransitionCanvasProps {
   artifactReady: boolean;
@@ -58,6 +58,9 @@ interface AnimationState {
   breathPhase: number;
   // ── Color map ──
   letterColorMap: Record<string, string>;
+  // ── Timestamp dissolution ──
+  timestamps: TimestampEntry[];
+  dissolvedTimestampEls: Set<HTMLElement>;
 }
 
 interface ThemeColors {
@@ -324,6 +327,38 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       return rows;
     }
 
+    // ── Timestamp list builder ──
+    function buildTimestampList(): TimestampEntry[] {
+      const all = container.querySelectorAll<HTMLElement>(".meta");
+      const canvasRect = canvas!.getBoundingClientRect();
+      const entries: TimestampEntry[] = [];
+
+      all.forEach((el) => {
+        // Skip timestamps nested inside [data-collider] elements (e.g. inside cards)
+        if (el.closest("[data-collider]")) return;
+        if (!el.textContent?.trim()) return;
+
+        const rect = el.getBoundingClientRect();
+        const top = rect.top - canvasRect.top;
+        const bottom = top + rect.height;
+
+        // Visibility filter
+        if (top >= H || bottom <= 0) return;
+
+        entries.push({
+          el,
+          top,
+          left: rect.left - canvasRect.left,
+          width: rect.width,
+          height: rect.height,
+          dissolved: false,
+        });
+      });
+
+      return entries;
+    }
+
+
     // ── Initialize state ──
     const s: AnimationState = {
       phase: "cascade",
@@ -358,6 +393,8 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       scaleY: 1,
       breathPhase: 0,
       letterColorMap,
+      timestamps: [],
+      dissolvedTimestampEls: new Set(),
     };
     stateRef.current = s;
 
@@ -729,6 +766,9 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         case "message-card":
           destroyMessageCard(el);
           break;
+        case "thinking-block":
+          destroyThinkingBlock(el);
+          break;
         case "table-cell":
           destroyTextLine(el);
           break;
@@ -828,6 +868,99 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       }
     }
 
+
+
+
+
+    // ── Timestamp dissolution ──
+
+    const PROXIMITY_THRESHOLD = 60;
+
+    function dissolveTimestamp(entry: TimestampEntry): void {
+      if (entry.dissolved) return;
+      entry.dissolved = true;
+      s.dissolvedTimestampEls.add(entry.el);
+
+      const canvasRect = canvas!.getBoundingClientRect();
+      const rect = entry.el.getBoundingClientRect();
+      const rx = rect.left - canvasRect.left;
+      const ry = rect.top - canvasRect.top;
+      const text = entry.el.textContent || "";
+      const chars = [...text];
+
+      // Find the "·" separator index
+      const sepIdx = chars.indexOf("·");
+
+      // Estimate character width for particle spread
+      const charWidth = entry.width / Math.max(chars.length, 1);
+
+      chars.forEach((ch, i) => {
+        if (ch === " ") return;
+        const cx = rx + i * charWidth + charWidth / 2;
+        const cy = ry + entry.height / 2;
+        const count = randInt(2, 3);
+
+        for (let j = 0; j < count; j++) {
+          s.particles.push({
+            x: cx + rand(-charWidth * 0.3, charWidth * 0.3),
+            y: cy + rand(-entry.height * 0.3, entry.height * 0.3),
+            vx: rand(-2, 2),
+            vy: rand(-4, -1),
+            size: rand(1, 3),
+            color: sepIdx >= 0 && i >= sepIdx ? colors.textMuted : colors.accent,
+            phase: "fall",
+            life: randInt(400, 600),
+          });
+        }
+      });
+
+      // Fade the DOM element
+      entry.el.style.transition = "opacity 300ms ease-out";
+      entry.el.style.opacity = "0";
+    }
+
+    function checkTimestampProximity(): void {
+      const c = s.cluster;
+      const clusterY = c.y;
+
+      for (const entry of s.timestamps) {
+        if (entry.dissolved) continue;
+        const centerY = entry.top + entry.height / 2;
+        if (Math.abs(clusterY - centerY) < PROXIMITY_THRESHOLD) {
+          dissolveTimestamp(entry);
+        }
+      }
+    }
+
+    function destroyThinkingBlock(el: HTMLElement): void {
+      const canvasRect = canvas!.getBoundingClientRect();
+      const rect = el.getBoundingClientRect();
+      const rx = rect.left - canvasRect.left;
+      const ry = rect.top - canvasRect.top;
+      const rw = rect.width;
+      const rh = rect.height;
+
+      // Gentle particles from the text region
+      const count = randInt(15, 25);
+      for (let i = 0; i < count; i++) {
+        const px = rx + rand(0, rw);
+        const py = ry + rand(rh * 0.3, rh * 0.9);
+        s.particles.push({
+          x: px,
+          y: py,
+          vx: rand(-1.5, 1.5),
+          vy: rand(-3, -1),
+          size: rand(1, 2),
+          color: py < ry + rh * 0.4 ? colors.accent : colors.textMuted,
+          phase: "fall",
+          life: randInt(600, 1000),
+        });
+      }
+
+      // Fade the entire block
+      el.style.transition = "opacity 300ms ease-out";
+      el.style.opacity = "0";
+    }
 
     function strikeRow(): void {
       const c = s.cluster;
@@ -1007,6 +1140,11 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         }
       }
 
+
+      // ── Timestamp proximity check (hop and dwell only) ──
+      if (c.hopState === "hopping" || c.hopState === "dwell") {
+        checkTimestampProximity();
+      }
       // Update cascade particles (life + off-screen removal, no floor bounce)
       const toRemove: Particle[] = [];
       for (const p of s.particles) {
@@ -1307,6 +1445,9 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
 
       // ── Initialize cascade ──
       s.rows = buildRowList();
+
+      s.timestamps = buildTimestampList();
+      console.log("[dscode] timestamps:", s.timestamps.length);
 
       // Init cluster
       s.cluster.x = W / 2;

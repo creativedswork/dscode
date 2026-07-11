@@ -469,7 +469,7 @@ function ThinkingBlock({ thinking, isStreaming, sessionTime }: { thinking: strin
   }, [isStreaming]);
 
   return (
-    <div className={`thinking${collapsed ? " collapsed" : ""}`}>
+    <div className={`thinking${collapsed ? " collapsed" : ""}`} data-collider="thinking-block">
       <div className="label" onClick={() => setCollapsed(!collapsed)}>
         <span className="dot" />
         Thinking

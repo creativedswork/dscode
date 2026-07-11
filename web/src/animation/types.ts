@@ -33,3 +33,12 @@ export interface Shard {
   life: number;
   points: { x: number; y: number }[];
 }
+
+export interface TimestampEntry {
+  el: HTMLElement;
+  top: number;
+  left: number;
+  width: number;
+  height: number;
+  dissolved: boolean;
+}
