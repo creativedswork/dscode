@@ -1174,7 +1174,7 @@ export class TuiApp {
     return `${minutes}m ${seconds}s`;
   }
 
-  private handleSubmit(text: string): void {
+  private handleSubmit(text: string, echoText?: string): void {
     text = text.replace(/\[image:\d+\]\s*/g, "").trim();
     // Use pre-drained images if Enter was intercepted in input listener,
     // otherwise drain now (for programmatic submits like /image command).
@@ -1265,7 +1265,7 @@ export class TuiApp {
           this.editor.setText(text + " ");
           return;
         }
-        this.handleSubmit(expanded);
+        this.handleSubmit(expanded, this.formatUserEcho(text));
         return;
       }
       // Not a known command — fall through to normal chat handling
@@ -1336,7 +1336,7 @@ export class TuiApp {
     const userMessage = hasText
       ? imageIndicator ? `${text}\n${imageIndicator}` : text
       : imageIndicator;
-    this.addUserMessage(userMessage);
+    this.addUserMessage(echoText ?? userMessage);
 
     // Re-add images as inline images (drafts were removed by editor.setText onChange)
     if (images && images.length > 0) {
@@ -1423,5 +1423,12 @@ export class TuiApp {
 
   private updateImageStatus(): void {
     this.imagePasteHandler.updateStatus();
+  }
+
+  private formatUserEcho(text: string): string {
+    if (text.length <= 80) return text;
+    const firstLine = text.split("\n")[0];
+    const count = text.length.toLocaleString();
+    return `${firstLine}\n${c.dim(`(${count} chars)`)}`;
   }
 }
