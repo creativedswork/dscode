@@ -27,25 +27,23 @@ export async function readImageFile(path: string): Promise<ImageContent> {
 // ── Platform-specific clipboard scripts ──
 
 function darwinClipboardScript(tmpPath: string): string {
-  // Use AppKit NSPasteboard — the same API native macOS apps use.
-  // Try NSPasteboardTypePNG first, then NSPasteboardTypeTIFF.
-  // TIFF must be converted to PNG via NSBitmapImageRep.
-  // Single-quote escaping: replace ' with '"'"' for osascript -e
-  const esc = tmpPath.replace(/'/g, `'"'"'`);
+  // JXA (JavaScript for Automation) — lower startup overhead than AppleScript.
+  // Uses ObjC bridge to read NSPasteboard directly via AppKit.
+  const esc = tmpPath.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   return [
-    `use framework "AppKit"`,
-    `set pb to current application's NSPasteboard's generalPasteboard()`,
-    `set imgData to pb's dataForType:(current application's NSPasteboardTypePNG)`,
-    `if imgData is missing value then`,
-    `  set imgData to pb's dataForType:(current application's NSPasteboardTypeTIFF)`,
-    `  if imgData is not missing value then`,
-    `    set bitmap to current application's NSBitmapImageRep's imageRepWithData:imgData`,
-    `    set imgData to bitmap's representationUsingType:(current application's NSBitmapImageFileTypePNG) |properties|:{}`,
-    `  end if`,
-    `end if`,
-    `if imgData is not missing value then`,
-    `  imgData's writeToFile:"${esc}" atomically:true`,
-    `end if`,
+    `ObjC.import('AppKit');`,
+    `var pb = $.NSPasteboard.generalPasteboard;`,
+    `var imgData = pb.dataForType($.NSPasteboardTypePNG);`,
+    `if (!imgData || imgData.isNil()) {`,
+    `  imgData = pb.dataForType($.NSPasteboardTypeTIFF);`,
+    `  if (imgData && !imgData.isNil()) {`,
+    `    var bitmap = $.NSBitmapImageRep.imageRepWithData(imgData);`,
+    `    imgData = bitmap.representationUsingTypeProperties($.NSBitmapImageFileTypePNG, {});`,
+    `  }`,
+    `}`,
+    `if (imgData && !imgData.isNil()) {`,
+    `  imgData.writeToFileAtomically("${esc}", true);`,
+    `}`,
   ].join("\n");
 }
 
@@ -117,7 +115,7 @@ export async function readClipboardImage(): Promise<ImageContent | null> {
 
   try {
     if (process.platform === "darwin") {
-      execFileSync("osascript", ["-e", darwinClipboardScript(tmpPath)], { stdio: "ignore", timeout: 5000 });
+      execFileSync("osascript", ["-l", "JavaScript", "-e", darwinClipboardScript(tmpPath)], { stdio: "ignore", timeout: 5000 });
     } else if (process.platform === "win32") {
       execFileSync("powershell", ["-Sta", "-NoProfile", "-Command", win32ClipboardScript(tmpPath)], { stdio: "ignore", timeout: 5000 });
     } else if (process.platform === "linux") {
@@ -140,7 +138,7 @@ export function readClipboardImageNonBlocking(): Promise<ImageContent | null> {
 
   if (process.platform === "darwin") {
     return new Promise((resolve) => {
-      execFile("osascript", ["-e", darwinClipboardScript(tmpPath)], { timeout: 5000 }, (err) => {
+      execFile("osascript", ["-l", "JavaScript", "-e", darwinClipboardScript(tmpPath)], { timeout: 5000 }, (err) => {
         if (err) { resolve(null); return; }
         resolve(resolveImageFromFile(tmpPath));
       });

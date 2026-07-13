@@ -563,7 +563,8 @@ export class TuiApp {
         this.handleCtrlC();
         return true;
       }
-      if (matchesKey(data, Key.super("v")) || matchesKey(data, Key.ctrl("v")) || data === "\x16") {
+      if ((matchesKey(data, Key.super("v")) || matchesKey(data, Key.ctrl("v")) || data === "\x16") && !data.includes(":3u")) {
+        this.deps.logger.info("tool", "paste-diag", `Cmd+V raw: ${JSON.stringify(data)}`);
         this.pasteClipboardImage();
         return true;
       }
@@ -924,7 +925,7 @@ export class TuiApp {
           mimeType: "image/png",
         };
         // Defer addImage to avoid requestRender(true) during pi-tui input processing
-        queueMicrotask(() => this.imagePasteHandler.addImage(img));
+        queueMicrotask(() => { this.imagePasteHandler.addImage(img); setTimeout(() => this.tui.requestRender(true), 0); });
       } catch {
         // Malformed base64 — consume silently
       }
@@ -979,18 +980,27 @@ export class TuiApp {
   }
 
   private pasteClipboardImage(): void {
+    this.deps.logger.info("tool", "paste-diag", "pasteClipboardImage: called");
     const now = Date.now();
     if (now - this.lastPasteTime < 100) return;
     this.lastPasteTime = now;
-    readClipboardImageNonBlocking().then((img) => {
-      if (img) {
-        this.imagePasteHandler.addImage(img);
-      } else {
-        this.conversation.addInfo(c.dim("No image found in clipboard. Use /image <path> to attach an image file."));
-      }
-    });
+    const tryRead = (attempt: number) => {
+      readClipboardImageNonBlocking().then((img) => {
+        if (img) {
+          this.imagePasteHandler.addImage(img);
+          this.deps.logger.info("tool", "paste-diag", "pasteClipboardImage: SUCCESS");
+          setTimeout(() => this.tui.requestRender(true), 0);
+        } else if (attempt < 1) {
+          this.deps.logger.info("tool", "paste-diag", `pasteClipboardImage: retry after ${attempt}`);
+          setTimeout(() => tryRead(attempt + 1), 1500);
+        } else {
+          this.conversation.addInfo(c.dim("No image found in clipboard. Use /image <path> to attach an image file."));
+          this.deps.logger.info("tool", "paste-diag", "pasteClipboardImage: NULL");
+        }
+      });
+    };
+    tryRead(0);
   }
-
   private handleCtrlC(): void {
     if (this.resolvePermission) {
       this.resolvePermissionChoice({ decision: "deny" });
@@ -1205,6 +1215,7 @@ export class TuiApp {
       readClipboardImageNonBlocking().then((img) => {
         if (img) {
           this.imagePasteHandler.addImage(img);
+          setTimeout(() => this.tui.requestRender(true), 0);
         }
       });
       return;
@@ -1217,6 +1228,7 @@ export class TuiApp {
       readClipboardImageNonBlocking().then((img) => {
         if (img) {
           this.imagePasteHandler.addImage(img);
+          setTimeout(() => this.tui.requestRender(true), 0);
         }
       });
       return;
