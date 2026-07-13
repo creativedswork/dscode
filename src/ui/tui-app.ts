@@ -585,12 +585,12 @@ export class TuiApp {
           this.updateAttachmentBar();
           return true;
         }
-        if (matchesKey(data, Key.left)) {
+        if (matchesKey(data, Key.ctrlShift("left"))) {
           this.attachmentScrollOffset = Math.max(0, this.attachmentScrollOffset - 1);
           this.updateAttachmentBar();
           return true;
         }
-        if (matchesKey(data, Key.right)) {
+        if (matchesKey(data, Key.ctrlShift("right"))) {
           this.attachmentScrollOffset += 1;
           this.updateAttachmentBar();
           return true;
@@ -637,7 +637,7 @@ export class TuiApp {
     const scrollHint = this.attachmentScrollOffset > 0
       ? ` +${this.attachmentScrollOffset} more`
       : "";
-    const hintLine = c.dim(`\u2190 \u2192 scroll${scrollHint} \u00b7 Esc clear all`);
+    const hintLine = c.dim(`Ctrl+Shift+\u2190 \u2192 scroll${scrollHint} \u00b7 Esc clear all`);
     this.imageStatus.setText(`${chipsLine}\n${hintLine}`);
     this.tui.requestRender(true);
   }

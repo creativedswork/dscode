@@ -167,6 +167,7 @@ export class WebUiBackend implements UiBackend {
     h.events.on("config:change", (e) => { this.broadcast({ type: "config", data: e.data }); });
     h.events.on("mcp:state", (e) => { this.broadcast({ type: "mcp_state", servers: e.servers }); });
     h.events.on("mcp:browser:open", () => { this.pushMcpState(); this.broadcast({ type: "mcp_open_browser" }); });
+    h.events.on("mcp:tool:progress", (e) => { this.broadcast({ type: "tool_progress", name: e.toolName, progress: e.progress, total: e.total, message: e.message }); });
     h.events.on("session:saved", () => { this.pushSessionListToAll(); });
     h.events.on("session:created", () => { this.pushSessionListToAll(); });
     h.events.on("session:deleted", () => { this.pushSessionListToAll(); });

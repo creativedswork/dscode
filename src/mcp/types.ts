@@ -192,7 +192,7 @@ export interface MCPCancelledNotificationParams {
 }
 
 export type MCPClientEvent =
-  | { type: "progress"; serverName: string; params: MCPProgressNotificationParams }
+  | { type: "progress"; serverName: string; params: MCPProgressNotificationParams; toolName?: string }
   | { type: "message"; serverName: string; params: MCPLoggingMessageNotificationParams }
   | { type: "cancelled"; serverName: string; params: MCPCancelledNotificationParams }
   | { type: "tools_list_changed"; serverName: string }

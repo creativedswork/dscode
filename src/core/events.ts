@@ -49,6 +49,7 @@ export type HarnessEvent =
   // MCP
   | { type: "mcp:state"; servers: McpServerInfo[] }
   | { type: "mcp:browser:open" }
+  | { type: "mcp:tool:progress"; toolName: string; serverName: string; progress: number; total?: number; message?: string }
   | { type: "mcp:app:registered"; app: AppInstance };
 
 export type HarnessEventType = HarnessEvent["type"];

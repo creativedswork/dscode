@@ -119,6 +119,9 @@ export interface ToolCallEntry {
   isError: boolean;
   images?: ImageAttachment[];
   mcpApp?: McpAppInfo;
+  progress?: number;
+  progressTotal?: number;
+  progressMessage?: string;
 }
 
 // ── Conversation messages ──
@@ -128,7 +131,6 @@ export interface ConversationMessage {
   content: string;
   thinking?: string;
   tools?: ToolCallEntry[];
-  images?: (ImageAttachment | ImageRef)[];
 }
 
 export interface UIMessage {
@@ -189,6 +191,7 @@ export type ServerEvent =
   | { type: "thinking_delta"; delta: string }
   | { type: "text_delta"; delta: string }
   | { type: "tool_start"; name: string; args: unknown }
+  | { type: "tool_progress"; name: string; progress: number; total?: number; message?: string }
   | { type: "context_window"; total: number; used: number; free: number; categories: { system: number; rules: number; user: number; thinking: number; readwrite: number; edit: number; shell: number; skill: number; mcp: number; other: number } }
 
   | { type: "tool_end"; name: string; result: string; isError: boolean; images?: ImageAttachment[] }

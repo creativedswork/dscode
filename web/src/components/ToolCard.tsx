@@ -1,9 +1,10 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import type { ToolCallEntry } from "../types";
 import { Markdown } from "./Markdown";
 
 interface ToolCardProps {
   tool: ToolCallEntry;
+  thinking?: string;
 }
 
 interface ParsedImage {
@@ -39,6 +40,15 @@ function extractImages(text: string): { images: ParsedImage[]; cleanedText: stri
   }
 
   return { images, cleanedText: cleaned };
+}
+
+function formatElapsed(ms: number): string {
+  if (ms < 1000) return "0s";
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const remSec = sec % 60;
+  return `${min}m ${remSec}s`;
 }
 
 function tryParseJSON(text: string): unknown | null {
@@ -145,12 +155,68 @@ function RichListItem({ item }: { item: RichItem }) {
   );
 }
 
-export function ToolCard({ tool }: ToolCardProps) {
+export function ToolCard({ tool, thinking }: ToolCardProps) {
   const isError = tool.isError;
   const hasResult = tool.result && tool.result.length > 0;
-  const hasMcpApp = !!tool.mcpApp;
-  const [open, setOpen] = useState(false);
   const isMcp = tool.name.startsWith("mcp__");
+  const hasMcpApp = !!tool.mcpApp;
+  const [open, setOpen] = useState(isMcp && !hasResult);
+  const userManuallyCollapsed = useRef(false);
+  const hasProgress = typeof tool.progress === "number";
+  const hasProgressTotal = typeof tool.progressTotal === "number" && tool.progressTotal > 0;
+  const progressPercent = hasProgressTotal
+    ? Math.max(0, Math.min(100, Math.round((tool.progress! / tool.progressTotal!) * 100)))
+    : 0;
+  const isIndeterminate = hasProgress && !hasProgressTotal;
+  const isCompleted = hasResult && !isError;
+
+  // Elapsed time tracking
+  const startTimeRef = useRef<number>(Date.now());
+  const [elapsedMs, setElapsedMs] = useState(0);
+  useEffect(() => {
+    if (!isMcp || hasResult) return;
+    startTimeRef.current = Date.now();
+    const interval = setInterval(() => {
+      setElapsedMs(Date.now() - startTimeRef.current);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isMcp, hasResult]);
+  const elapsedText = hasResult ? "" : formatElapsed(elapsedMs);
+
+  // Auto-expand on first progress, respect manual collapse
+  const hadProgressRef = useRef(hasProgress);
+  useEffect(() => {
+    if (hasProgress && !hadProgressRef.current && !userManuallyCollapsed.current) {
+      setOpen(true);
+    }
+    hadProgressRef.current = hasProgress;
+  }, [hasProgress]);
+
+  // Fade-out state: true when progress bar was visible but tool is now done
+  const [progressDone, setProgressDone] = useState(false);
+  if (hasProgress && !hasResult) {
+    if (progressDone) setProgressDone(false);
+  }
+
+  const handleHeaderClick = () => {
+    if (open) {
+      userManuallyCollapsed.current = true;
+    } else {
+      userManuallyCollapsed.current = false;
+    }
+    setOpen(!open);
+  };
+
+  // Determine status icon
+  const statusIcon = isError
+    ? "\u2717"
+    : hasResult && !isError
+    ? "\u2713"
+    : "\u25CC";
+  const statusClass = isError ? "err" : "ok";
+  const spinnerClass = hasProgress && !hasResult ? " spinner" : "";
+  const showProgressBar = hasProgress && !isCompleted;
+  const showProgressFadeOut = isCompleted && !progressDone;
 
   const images = useMemo(() => {
     if (tool.images && tool.images.length > 0) {
@@ -181,18 +247,87 @@ export function ToolCard({ tool }: ToolCardProps) {
       <div
         data-collider="tool-header"
         className="tool-card-header"
-        onClick={() => setOpen(!open)}
+        onClick={handleHeaderClick}
       >
-        <span className={`status ${isError ? "err" : "ok"}`}>
-          {isError ? "\u2717" : "\u2713"}
+        <span className={`status ${statusClass}${spinnerClass}`}>
+          {statusIcon}
         </span>
         <span className="name">{tool.name}</span>
         {isMcp && <span className="mcp-badge">MCP</span>}
         {tool.args && <span className="args">{tool.args}</span>}
+        {/* Mini progress bar in collapsed header */}
+        {!open && hasProgress && (
+          <span className="mini-progress-bar">
+            <span className="mini-progress-bar-track">
+              <span
+                className={`mini-progress-fill${isIndeterminate ? " indeterminate" : ""}`}
+                style={isIndeterminate ? undefined : { width: `${progressPercent}%` }}
+              />
+            </span>
+            {!isIndeterminate && (
+              <span className="mini-progress-text">{progressPercent}%</span>
+            )}
+          </span>
+        )}
         <span className="arrow">{"\u25BE"}</span>
       </div>
 
       <div className="tool-card-body">
+        {/* Execution Card for in-progress MCP tools */}
+        {isMcp && !hasResult && (
+          <div className="exec-card" data-collider="exec-card">
+            <div className="exec-card-top">
+              <span className="exec-card-label">
+                <span className="exec-pulse-dot" />
+                Live · {hasProgress ? "executing" : "waiting"}
+              </span>
+              {elapsedText && (
+                <span className="exec-elapsed">{elapsedText}</span>
+              )}
+            </div>
+            {!hasProgress ? (
+              <span className="exec-waiting-text">Waiting for execution to begin…</span>
+            ) : (
+              <div className="exec-progress-section">
+                <div className="progress-bar">
+                  <div
+                    className={`progress-fill${isIndeterminate ? " indeterminate" : ""}`}
+                    style={isIndeterminate ? undefined : { width: `${progressPercent}%` }}
+                  />
+                </div>
+                <div className="exec-progress-footer">
+                  {!isIndeterminate && (
+                    <span className="progress-text">{progressPercent}%</span>
+                  )}
+                  {tool.progressMessage && (
+                    <span className="progress-message">{tool.progressMessage}</span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Progress bar in expanded body (non-MCP tools + fade-out) */}
+        {!isMcp && (showProgressBar || showProgressFadeOut) && (
+          <div className={`progress-container${showProgressFadeOut ? " progress-fade-out" : ""}`}
+            onTransitionEnd={() => { if (showProgressFadeOut) setProgressDone(true); }}
+          >
+            <div className="progress-bar">
+              <div
+                className={`progress-fill${isIndeterminate ? " indeterminate" : ""}`}
+                style={isIndeterminate ? undefined : { width: `${progressPercent}%` }}
+              />
+            </div>
+            {!isIndeterminate && (
+              <span className="progress-text">{progressPercent}%</span>
+            )}
+            {tool.progressMessage && (
+              <span className="progress-message">{tool.progressMessage}</span>
+            )}
+          </div>
+        )}
+
         {images && images.length > 0 && (
           <div style={{ padding: "8px 14px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
             {images.map((img, i) => (

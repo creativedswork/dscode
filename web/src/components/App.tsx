@@ -129,6 +129,7 @@ export function App() {
       case "user_message":
       case "thinking_delta":
       case "text_delta":
+      case "tool_progress":
       case "tool_start":
       case "tool_end":
       case "mcp_app":

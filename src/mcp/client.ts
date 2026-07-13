@@ -37,6 +37,7 @@ type PendingEntry = {
   reject: (e: Error) => void;
   timer: NodeJS.Timeout;
   progressToken?: string | number;
+  toolName?: string;
 };
 
 type HttpResponseData = {
@@ -172,7 +173,7 @@ export class MCPClient {
   }
 
   async callTool(name: string, args: unknown, signal?: AbortSignal): Promise<unknown> {
-    return this.request("tools/call", { name, arguments: args }, TOOL_CALL_TIMEOUT, true, signal);
+    return this.request("tools/call", { name, arguments: args }, TOOL_CALL_TIMEOUT, true, signal, name);
   }
 
   async readResource(uri: string, signal?: AbortSignal): Promise<MCPResourcesReadResult> {
@@ -583,7 +584,9 @@ export class MCPClient {
   private handleNotification(method: string, params: unknown): void {
     switch (method) {
       case "notifications/progress":
-        this.emit({ type: "progress", serverName: this.config.name, params: params as MCPProgressNotificationParams });
+        const pp = params as MCPProgressNotificationParams;
+        const pending = this.pending.get(pp.progressToken);
+        this.emit({ type: "progress", serverName: this.config.name, params: pp, toolName: pending?.toolName });
         return;
       case "notifications/message":
         this.emit({ type: "message", serverName: this.config.name, params: params as MCPLoggingMessageNotificationParams });
@@ -602,7 +605,7 @@ export class MCPClient {
     }
   }
 
-  private request(method: string, params?: unknown, timeout = this.config.requestTimeoutMs ?? REQUEST_TIMEOUT, withProgress = false, signal?: AbortSignal): Promise<unknown> {
+  private request(method: string, params?: unknown, timeout = this.config.requestTimeoutMs ?? REQUEST_TIMEOUT, withProgress = false, signal?: AbortSignal, toolName?: string): Promise<unknown> {
     if (this.closed) {
       return Promise.reject(new Error(`MCP request "${method}" rejected: client closed`));
     }
@@ -659,7 +662,7 @@ export class MCPClient {
         reject(new Error(`MCP request "${method}" timed out after ${timeout}ms`));
       }, timeout);
 
-      this.pending.set(id, { resolve: (v) => { cleanup(); resolve(v); }, reject: (err) => { cleanup(); reject(err); }, timer, method, progressToken: withProgress ? id : undefined });
+      this.pending.set(id, { resolve: (v) => { cleanup(); resolve(v); }, reject: (err) => { cleanup(); reject(err); }, timer, method, progressToken: withProgress ? id : undefined, toolName });
 
       let httpReq: ReturnType<typeof httpRequest> | ReturnType<typeof httpsRequest> | null = null;
 

@@ -1110,10 +1110,16 @@ __DEFERRED_HINT__`;
           || this.isProgressComplete(event.params.progress, event.params.total)
           || this.progressBucket(event.params.progress, event.params.total) !== this.progressBucket(previous.progress, previous.total);
 
-        if (shouldReport) {
-          const summary = this.formatProgress(event.params.progress, event.params.total);
-          const detail = event.params.message ? ` ${event.params.message}` : "";
-          this.events.emit({ type: "ui:info", text: `MCP ${event.serverName}: ${summary}${detail}` });
+        // Emit harness event for inline progress bars (Web UI)
+        if (event.toolName) {
+          this.events.emit({
+            type: "mcp:tool:progress",
+            toolName: `mcp__${event.serverName}_${event.toolName}`,
+            serverName: event.serverName,
+            progress: event.params.progress,
+            total: event.params.total,
+            message: event.params.message,
+          });
         }
         return;
       }

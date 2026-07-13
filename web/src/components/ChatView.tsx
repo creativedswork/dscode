@@ -438,7 +438,7 @@ function AssistantMessage({ message, sessionTime }: { message: UIMessage; sessio
       {message.tools && message.tools.length > 0 && (
         <div className="space-y-2">
           {message.tools.map((tool, i) => (
-            <ToolCard key={`${tool.name}-${i}`} tool={tool} />
+            <ToolCard key={`${tool.name}-${i}`} tool={tool} thinking={message.thinking} />
           ))}
         </div>
       )}
