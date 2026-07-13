@@ -609,6 +609,7 @@ export class TuiApp {
 
     if (imageCount === 0 && filePaths.length === 0) {
       this.imageStatus.setText("");
+      this.tui.requestRender(true);
       return;
     }
 
@@ -638,6 +639,7 @@ export class TuiApp {
       : "";
     const hintLine = c.dim(`\u2190 \u2192 scroll${scrollHint} \u00b7 Esc clear all`);
     this.imageStatus.setText(`${chipsLine}\n${hintLine}`);
+    this.tui.requestRender(true);
   }
 
   openMcpBrowser(): void {
