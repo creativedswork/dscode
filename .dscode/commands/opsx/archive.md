@@ -64,7 +64,24 @@ Archive a completed change in the experimental workflow.
 
    If user chooses sync, use Task tool (subagent_type: "general-purpose", prompt: "Use Skill tool to invoke openspec-sync-specs for change '<name>'. Delta spec analysis: <include the analyzed delta spec summary>"). Proceed to archive regardless of choice.
 
-5. **Perform the archive**
+5. **Handle consolidate artifact (spec-driven-plus and derived schemas)**
+
+   Check `artifactPaths` from the status JSON for a `consolidate` artifact.
+
+   **If consolidate artifact exists:**
+   - Check if `consolidate.md` is `done` in the status
+   - **If not done:**
+     - Announce: "Generating consolidate merge before archive..."
+     - Run `openspec instructions consolidate --change "<name>" --json`
+     - Use the returned instruction + template to create `consolidate.md`
+     - This merges the current proposal with related archived change proposals
+     - Show a brief summary: merged N related changes, timeline from X to Y
+   - **If already done:**
+     - Note: "consolidate.md already exists" and proceed
+
+   **If no consolidate artifact:** Skip this step (schema doesn't support it).
+
+6. **Perform the archive**
 
    Create an `archive` directory under `planningHome.changesDir` if it doesn't exist:
    ```bash
@@ -81,7 +98,7 @@ Archive a completed change in the experimental workflow.
    mv "<changeRoot>" "<planningHome.changesDir>/archive/YYYY-MM-DD-<name>"
    ```
 
-6. **Display summary**
+7. **Display summary**
 
    Show archive completion summary including:
    - Change name
