@@ -99,6 +99,74 @@ describe("SessionManager", () => {
     expect(meta!.title).toBe("Hello from content blocks");
   });
 
+  it("should use last qualifying message as title", () => {
+    const session = manager.createSession("deepseek", "deepseek-v4-flash");
+    const agent = createMockAgent([
+      { role: "user", content: "First topic: login bug" },
+      { role: "assistant", content: "ok" },
+      { role: "user", content: "Actually, redesign the auth system instead" },
+    ]);
+    manager.saveSession(agent);
+    const meta = manager.getCurrentMetadata();
+    expect(meta!.title).toBe("Actually, redesign the auth system instead");
+  });
+
+  it("should strip colon commands like /opsx:apply", () => {
+    const session = manager.createSession("deepseek", "deepseek-v4-flash");
+    const agent = createMockAgent([
+      { role: "user", content: "/opsx:apply fix login bug" },
+    ]);
+    manager.saveSession(agent);
+    const meta = manager.getCurrentMetadata();
+    expect(meta!.title).toBe("fix login bug");
+  });
+
+  it("should skip noise messages when choosing title", () => {
+    const session = manager.createSession("deepseek", "deepseek-v4-flash");
+    const agent = createMockAgent([
+      { role: "user", content: "Debug the auth flow please" },
+      { role: "assistant", content: "done" },
+      { role: "user", content: "thanks" },
+    ]);
+    manager.saveSession(agent);
+    const meta = manager.getCurrentMetadata();
+    expect(meta!.title).toBe("Debug the auth flow please");
+  });
+
+  it("should skip Chinese noise messages", () => {
+    const session = manager.createSession("deepseek", "deepseek-v4-flash");
+    const agent = createMockAgent([
+      { role: "user", content: "请帮我修复登录页面的bug" },
+      { role: "assistant", content: "好的" },
+      { role: "user", content: "谢谢" },
+    ]);
+    manager.saveSession(agent);
+    const meta = manager.getCurrentMetadata();
+    expect(meta!.title).toBe("请帮我修复登录页面的bug");
+  });
+
+  it("should skip short messages for title", () => {
+    const session = manager.createSession("deepseek", "deepseek-v4-flash");
+    const agent = createMockAgent([
+      { role: "user", content: "fix it" },
+      { role: "user", content: "Please help debug the session manager" },
+    ]);
+    manager.saveSession(agent);
+    const meta = manager.getCurrentMetadata();
+    expect(meta!.title).toBe("Please help debug the session manager");
+  });
+
+  it("should fall back to New session when all messages are noise", () => {
+    const session = manager.createSession("deepseek", "deepseek-v4-flash");
+    const agent = createMockAgent([
+      { role: "user", content: "ok" },
+      { role: "user", content: "thanks" },
+    ]);
+    manager.saveSession(agent);
+    const meta = manager.getCurrentMetadata();
+    expect(meta!.title).toBe("New session");
+  });
+
   it("should return error when loading non-existent session", async () => {
     const agent = createMockAgent();
     const result = await manager.loadSession("nonexistent-id", agent);

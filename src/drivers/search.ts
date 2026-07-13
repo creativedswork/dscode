@@ -1,10 +1,19 @@
-import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { readFile, readdir, stat } from "node:fs/promises";
 import { join, resolve, relative, sep } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".next", "__pycache__", ".dscode"]);
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 function globToRegex(pattern: string): RegExp {
   let re = "";
@@ -42,18 +51,18 @@ function globToRegex(pattern: string): RegExp {
   return new RegExp("^" + re + "$", "i");
 }
 
-function walkDir(
+async function walkDir(
   dir: string,
   baseDir: string,
   includePattern: RegExp | null,
   skipDirs: Set<string>,
   results: string[],
   maxResults: number,
-): void {
+): Promise<void> {
   if (results.length >= maxResults) return;
   let entries: string[];
   try {
-    entries = readdirSync(dir);
+    entries = await readdir(dir);
   } catch {
     return;
   }
@@ -61,15 +70,15 @@ function walkDir(
     if (results.length >= maxResults) return;
     if (skipDirs.has(name)) continue;
     const fullPath = join(dir, name);
-    let stat;
+    let fileStat;
     try {
-      stat = statSync(fullPath);
+      fileStat = await stat(fullPath);
     } catch {
       continue;
     }
-    if (stat.isDirectory()) {
-      walkDir(fullPath, baseDir, includePattern, skipDirs, results, maxResults);
-    } else if (stat.isFile()) {
+    if (fileStat.isDirectory()) {
+      await walkDir(fullPath, baseDir, includePattern, skipDirs, results, maxResults);
+    } else if (fileStat.isFile()) {
       const rel = relative(baseDir, fullPath);
       if (!includePattern || includePattern.test(rel)) {
         results.push(fullPath);
@@ -98,7 +107,7 @@ export const grepTool: AgentTool<typeof grepParams> = {
     const dir = resolve(path ?? process.cwd());
     const max = maxResults ?? 50;
 
-    if (!existsSync(dir)) {
+    if (!(await fileExists(dir))) {
       return {
         content: [{ type: "text", text: `Error: directory not found: ${dir}` }],
         details: { error: "not_found" },
@@ -107,7 +116,7 @@ export const grepTool: AgentTool<typeof grepParams> = {
 
     const includeRe = include ? globToFilenamePattern(include) : null;
     const files: string[] = [];
-    walkDir(dir, dir, includeRe, SKIP_DIRS, files, max);
+    await walkDir(dir, dir, includeRe, SKIP_DIRS, files, max);
 
     let regex: RegExp;
     try {
@@ -125,9 +134,9 @@ export const grepTool: AgentTool<typeof grepParams> = {
       if (results.length >= max) break;
       let content: string;
       try {
-        const stat = statSync(file);
-        if (stat.size > 512 * 1024) continue;
-        content = readFileSync(file, "utf8");
+        const fileStat = await stat(file);
+        if (fileStat.size > 512 * 1024) continue;
+        content = await readFile(file, "utf8");
       } catch {
         continue;
       }
@@ -163,7 +172,7 @@ export const globTool: AgentTool<typeof globParams> = {
   execute: async (_id, { pattern, cwd: cwdArg }) => {
     const dir = resolve(cwdArg ?? process.cwd());
 
-    if (!existsSync(dir)) {
+    if (!(await fileExists(dir))) {
       return {
         content: [{ type: "text", text: `Error: directory not found: ${dir}` }],
         details: { error: "not_found" },
@@ -172,7 +181,7 @@ export const globTool: AgentTool<typeof globParams> = {
 
     const regex = globToRegex(pattern);
     const results: string[] = [];
-    walkDir(dir, dir, regex, SKIP_DIRS, results, 200);
+    await walkDir(dir, dir, regex, SKIP_DIRS, results, 200);
 
     const display = results.map((f) => {
       const rel = relative(dir, f);

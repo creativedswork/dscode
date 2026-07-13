@@ -1,7 +1,16 @@
 import { createHash } from "node:crypto";
 import { Logger } from "../../utils/logger.js";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFile, writeFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
@@ -186,7 +195,7 @@ export const editTool: AgentTool<typeof editParams> = {
     }
     const resolved = resolve(effectivePath);
 
-    if (!existsSync(resolved)) {
+    if (!(await fileExists(resolved))) {
       return {
         content: [{ type: "text", text: `Error: file not found: ${resolved}` }],
         details: { error: "not_found", suggested_action: "check_path" },
@@ -200,7 +209,7 @@ export const editTool: AgentTool<typeof editParams> = {
       };
     }
 
-    const raw = readFileSync(resolved, "utf8");
+    const raw = await readFile(resolved, "utf8");
     const lines = raw.split("\n");
     const { resolutionMap, displayIndex } = hashLines(lines);
     const qualities = classifyLinesWithFrequency(lines);
@@ -485,7 +494,7 @@ export const editTool: AgentTool<typeof editParams> = {
           const recovery = recoverBySnapshot(snapshotLines, lines, operations, snapCtx);
           if ("lines" in recovery) {
             const recoveredContent = recovery.lines.join("\n");
-            writeFileSync(resolved, recoveredContent);
+            await writeFile(resolved, recoveredContent);
             if (cpm) cpm.commit(resolved);
             const recoveredVersion = computeFileVersion(recoveredContent);
             const crossVersionWarning = undefined;
@@ -548,7 +557,7 @@ export const editTool: AgentTool<typeof editParams> = {
           if (retry.valid) {
             const retryResult = applyEditOperations(lines, operations, rebuiltCtx);
             const retryContent = retryResult.join("\n");
-            writeFileSync(resolved, retryContent);
+            await writeFile(resolved, retryContent);
             if (cpm) cpm.commit(resolved);
             const retryVersion = computeFileVersion(retryContent);
             const crossVersionWarning = undefined;
@@ -625,7 +634,7 @@ export const editTool: AgentTool<typeof editParams> = {
     const snapshotId = computeFileVersion(raw);
     captureUndoSnapshot(resolved, raw);
     const newContent = resultLines.join("\n");
-    writeFileSync(resolved, newContent);
+    await writeFile(resolved, newContent);
 
     const newFileVersion = computeFileVersion(newContent);
     const safetyMode = safety_check ?? "strict";

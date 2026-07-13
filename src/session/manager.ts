@@ -35,8 +35,17 @@ function extractFirstUserMessage(messages: unknown[]): string {
   return "";
 }
 
-// Regex to match slash commands like /opsx:propose or /help
-const SLASH_COMMAND_RE = /^\/[a-zA-Z][a-zA-Z0-9_-]*\s*/;
+// Regex to match slash commands like /opsx:propose, /opsx:apply, or /help
+const SLASH_COMMAND_RE = /^\/[a-zA-Z][a-zA-Z0-9_:-]*\s*/;
+
+// Messages matching these patterns are not useful as session titles
+const NOISE_PATTERNS: RegExp[] = [
+  /^(thanks|thank you|thx|ok|okay|yes|no|hi|hello|hey|good|great|nice|cool)[!.\s]*$/i,
+  /^[谢谢好的嗯哦啊哈嘿嗨]+$/,
+  /^[.,!?;:]+$/,
+];
+
+const MIN_TITLE_LENGTH = 10;
 
 function extractText(msg: any): string {
   const content = msg.content;
@@ -56,35 +65,46 @@ function stripCommandPrefix(text: string): string {
   return text.replace(SLASH_COMMAND_RE, "").trim();
 }
 
+function isNoiseMessage(text: string): boolean {
+  return NOISE_PATTERNS.some((p) => p.test(text));
+}
+
 function extractSessionTitle(messages: any[]): string {
-  // First pass: prefer the first non-command user message
-  for (const msg of messages) {
+  // Pass 1: reverse scan — prefer the last qualifying non-command user message
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
     if (msg.role !== "user") continue;
     const text = extractText(msg);
     if (!text) continue;
-    if (!isCommandMessage(text)) {
-      return text.slice(0, 60);
-    }
+    if (isCommandMessage(text)) continue;
+    if (isNoiseMessage(text)) continue;
+    if (text.length < MIN_TITLE_LENGTH) continue;
+    return text.slice(0, 60);
   }
 
-  // Second pass: all messages are commands, use first command's argument if meaningful
-  for (const msg of messages) {
+  // Pass 2: reverse scan — use last command's argument if meaningful
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
     if (msg.role !== "user") continue;
     const text = extractText(msg);
     if (!text) continue;
+    if (!isCommandMessage(text)) continue;
     const arg = stripCommandPrefix(text);
-    if (arg.length >= 3) {
+    if (arg.length >= MIN_TITLE_LENGTH) {
       return arg.slice(0, 60);
     }
   }
 
-  // Fallback: strip command from first message
-  const first = messages[0];
-  if (first) {
-    const text = extractText(first);
+  // Pass 3: fallback — any non-noise user message
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== "user") continue;
+    const text = extractText(msg);
+    if (!text) continue;
+    if (isNoiseMessage(text)) continue;
     const stripped = stripCommandPrefix(text);
     if (stripped) return stripped.slice(0, 60);
-    if (text) return text.slice(0, 60);
+    return text.slice(0, 60);
   }
 
   return "New session";
@@ -93,9 +113,6 @@ function extractSessionTitle(messages: any[]): string {
 function isTitleBetter(current: string, candidate: string): boolean {
   // Always replace placeholder
   if (!current || current === "New session") return true;
-
-  // Current title is a command remnant — replace with anything better
-  if (isCommandMessage(current)) return true;
 
   // Current is very short and candidate is meaningfully longer
   if (current.length < 10 && candidate.length >= current.length + 5) return true;
