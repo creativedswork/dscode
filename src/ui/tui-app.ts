@@ -564,7 +564,6 @@ export class TuiApp {
         return true;
       }
       if ((matchesKey(data, Key.super("v")) || matchesKey(data, Key.ctrl("v")) || data === "\x16") && !data.includes(":3u")) {
-        this.deps.logger.info("tool", "paste-diag", `Cmd+V raw: ${JSON.stringify(data)}`);
         this.pasteClipboardImage();
         return true;
       }
@@ -803,7 +802,6 @@ export class TuiApp {
   private handlePasteImage(data: string): InputListenerResult {
     // ── Kitty image protocol (ESC _ G ... ESC \) ──
     // These APC sequences can arrive outside bracketed paste when the terminal
-    // natively pastes images via Kitty protocol.
     const kittyResult = this.handleKittyProtocol(data);
     if (kittyResult) {
       return kittyResult;
@@ -830,8 +828,10 @@ export class TuiApp {
       // Check for file drop: single absolute path to an existing file
       const trimmed = pasteContent.trim();
       if (trimmed && (trimmed.startsWith("/") || /^[A-Za-z]:[/\\]/.test(trimmed))) {
-        if (existsSync(trimmed)) {
-          const displayPath = this.fileTracker.add(trimmed, this.deps.config.projectPath);
+        // Unescape shell-style escapes (Ghostty escapes spaces in drag-drop paths)
+        const unescaped = trimmed.replace(/\\(.)/g, "$1");
+        if (existsSync(unescaped)) {
+          const displayPath = this.fileTracker.add(unescaped, this.deps.config.projectPath);
           this.editor.insertTextAtCursor("[file:" + displayPath + "] ");
           this.updateAttachmentBar();
           return { consume: true };
@@ -980,7 +980,6 @@ export class TuiApp {
   }
 
   private pasteClipboardImage(): void {
-    this.deps.logger.info("tool", "paste-diag", "pasteClipboardImage: called");
     const now = Date.now();
     if (now - this.lastPasteTime < 100) return;
     this.lastPasteTime = now;
@@ -988,14 +987,11 @@ export class TuiApp {
       readClipboardImageNonBlocking().then((img) => {
         if (img) {
           this.imagePasteHandler.addImage(img);
-          this.deps.logger.info("tool", "paste-diag", "pasteClipboardImage: SUCCESS");
           setTimeout(() => this.tui.requestRender(true), 0);
         } else if (attempt < 1) {
-          this.deps.logger.info("tool", "paste-diag", `pasteClipboardImage: retry after ${attempt}`);
           setTimeout(() => tryRead(attempt + 1), 1500);
         } else {
           this.conversation.addInfo(c.dim("No image found in clipboard. Use /image <path> to attach an image file."));
-          this.deps.logger.info("tool", "paste-diag", "pasteClipboardImage: NULL");
         }
       });
     };
