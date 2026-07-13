@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Defines how tool results are formatted for display in the frontend, ensuring content-aware rendering with proper code fences, MCP rich lists, and visual distinction.
+
+## Requirements
 
 ### Requirement: Content-aware tool result formatting
 `formatToolResultForUI` SHALL detect the content type of tool result text and apply appropriate formatting before it reaches the frontend. The function SHALL produce markdown-ready output so that ToolCard can render it through the shared `<Markdown>` component.

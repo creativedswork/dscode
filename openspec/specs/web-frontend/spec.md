@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Defines the visual and behavioral requirements for the dscode web frontend, including design language, themes, session management, processing indicators, permission dialogs, transitions, and message rendering.
+
+## Requirements
 
 ### Requirement: Warm design language
 All frontend components SHALL use the warm design system tokens defined in the `warm-design-system` spec. Every component MUST reference semantic CSS custom properties for colors and follow the typography and shape language specifications.
@@ -235,7 +239,6 @@ The `ThinkingBlock` component SHALL render as a `<div class="thinking">` with a 
 - **THEN** a label row with "Thinking" uppercase text and a 5px amber dot SHALL appear above the content
 
 
-## MODIFIED Requirements
 
 ### Requirement: Theme support
 The frontend SHALL support warm light and warm dark themes using warm stone/taupe gray neutrals (not cream/beige). The initial theme defaults to warm light. Dark mode uses warm deep gray-brown tones instead of cold blue-grays.
