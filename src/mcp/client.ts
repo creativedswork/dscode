@@ -22,7 +22,7 @@ import type {
 import { DEFAULT_MCP_PROTOCOL_VERSION } from "./types.js";
 
 const REQUEST_TIMEOUT = 30_000;
-const TOOL_CALL_TIMEOUT = 60_000;
+const TOOL_CALL_TIMEOUT = 120_000;
 
 function expandTilde(p: string): string {
   if (p.startsWith("~")) {
@@ -38,6 +38,8 @@ type PendingEntry = {
   timer: NodeJS.Timeout;
   progressToken?: string | number;
   toolName?: string;
+  timeoutMs: number;
+  cleanup: () => void;
 };
 
 type HttpResponseData = {
@@ -173,11 +175,11 @@ export class MCPClient {
   }
 
   async callTool(name: string, args: unknown, signal?: AbortSignal): Promise<unknown> {
-    return this.request("tools/call", { name, arguments: args }, TOOL_CALL_TIMEOUT, true, signal, name);
+    return this.request("tools/call", { name, arguments: args }, this.config.requestTimeoutMs ?? TOOL_CALL_TIMEOUT, true, signal, name);
   }
 
   async readResource(uri: string, signal?: AbortSignal): Promise<MCPResourcesReadResult> {
-    return this.request("resources/read", { uri }, TOOL_CALL_TIMEOUT, true, signal) as Promise<MCPResourcesReadResult>;
+    return this.request("resources/read", { uri }, this.config.requestTimeoutMs ?? TOOL_CALL_TIMEOUT, true, signal) as Promise<MCPResourcesReadResult>;
   }
 
   async close(): Promise<void> {
@@ -585,6 +587,7 @@ export class MCPClient {
     switch (method) {
       case "notifications/progress":
         const pp = params as MCPProgressNotificationParams;
+        this.resetTimeout(pp.progressToken);
         const pending = this.pending.get(pp.progressToken);
         this.emit({ type: "progress", serverName: this.config.name, params: pp, toolName: pending?.toolName });
         return;
@@ -653,6 +656,17 @@ export class MCPClient {
         signal?.removeEventListener("abort", onAbort);
       };
 
+      const entry: PendingEntry = {
+        resolve: (v) => { cleanup(); resolve(v); },
+        reject: (err) => { cleanup(); reject(err); },
+        timer: undefined!,
+        method,
+        progressToken: withProgress ? id : undefined,
+        toolName,
+        timeoutMs: timeout,
+        cleanup,
+      };
+
       const timer = setTimeout(() => {
         cleanup();
         this.pending.delete(id);
@@ -661,8 +675,9 @@ export class MCPClient {
         }
         reject(new Error(`MCP request "${method}" timed out after ${timeout}ms`));
       }, timeout);
+      entry.timer = timer;
 
-      this.pending.set(id, { resolve: (v) => { cleanup(); resolve(v); }, reject: (err) => { cleanup(); reject(err); }, timer, method, progressToken: withProgress ? id : undefined, toolName });
+      this.pending.set(id, entry);
 
       let httpReq: ReturnType<typeof httpRequest> | ReturnType<typeof httpsRequest> | null = null;
 
@@ -743,6 +758,24 @@ export class MCPClient {
         httpReq.end();
       }
     });
+  }
+
+  private resetTimeout(id: string | number): void {
+    const entry = this.pending.get(id);
+    if (!entry) return;
+    clearTimeout(entry.timer);
+    entry.cleanup();
+    entry.timer = setTimeout(() => {
+      this.pending.delete(id);
+      entry.cleanup();
+      if (entry.method !== "initialize") {
+        this.sendNotification("notifications/cancelled", {
+          requestId: id,
+          reason: `Request timed out after ${entry.timeoutMs}ms of inactivity`,
+        });
+      }
+      entry.reject(new Error(`MCP request "${entry.method}" timed out after ${entry.timeoutMs}ms`));
+    }, entry.timeoutMs);
   }
 
   private sendNotification(method: string, params?: unknown): void {

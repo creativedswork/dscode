@@ -1114,7 +1114,7 @@ __DEFERRED_HINT__`;
         if (event.toolName) {
           this.events.emit({
             type: "mcp:tool:progress",
-            toolName: `mcp__${event.serverName}_${event.toolName}`,
+            toolName: `mcp__${event.serverName}__${event.toolName}`,
             serverName: event.serverName,
             progress: event.params.progress,
             total: event.params.total,

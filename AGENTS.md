@@ -44,6 +44,19 @@ dscode 在 `src/models/registry.ts` 模块初始化时，通过 pi-ai 的 `creat
 2. 在 `registry.ts` 中用 `createProvider()` 构造 Provider
 3. 调用 `models.setProvider()` 注册 ⚠️ 光注册到 dscode 自己的 Map 不够，必须注册到 pi-ai 实例
 
+## MCP 命名规范
+
+MCP tool/driver name 必须使用 `src/mcp/names.ts` 中的工具函数构造，**禁止手动拼接字符串**。
+
+```
+mcpToolName("github", "search_repos") → "mcp__github__search_repos"
+mcpDriverName("github")             → "mcp__github"
+isMcpToolName(name)                  → boolean
+```
+
+分隔符固定为双下划线 `__`（`mcp__<server>__<tool>`），不是单下划线。
+手动拼接容易写出 `` `mcp__${server}_${tool}` `` 导致 reducer 匹配失败。
+
 
 ## 配置文件
 
