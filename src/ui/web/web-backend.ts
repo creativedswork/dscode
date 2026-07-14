@@ -15,7 +15,7 @@ import { executeSlashCommand, getSlashCommandAutocomplete, resolveCustomCommand 
 import { deriveFuzzyPattern, deriveFuzzyArgPattern, describeFuzzyArgPattern } from "../../permissions/fuzzy.js";
 import { prefetchLlmSuggestions, getLlmSuggestions } from "../../permissions/fuzzy-llm.js";
 import type { HarnessAPI } from "../../core/harness-api.js";
-import { setPendingTitleHint } from "../../session/manager.js";
+import { setTitleIntent } from "../../session/manager.js";
 import type { MCPManager } from "../../mcp/manager.js";
 import type { AppHostManager } from "../../mcp/app/host.js";
 import type { AppInstance } from "../../mcp/app/types.js";
@@ -720,7 +720,7 @@ export class WebUiBackend implements UiBackend {
         this.pendingImages = [];
         // Set title hint with user's actual input so title extraction uses it
         const cmdArgs = text.slice(text.indexOf(" ") + 1).trim();
-        if (cmdArgs) setPendingTitleHint(cmdArgs);
+        if (cmdArgs) setTitleIntent(cmdArgs);
 
         client.send({ type: 'user_message', text: expanded } as any);
         await this.harness.promptAndSave(expanded).catch((err: any) => {

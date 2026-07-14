@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, existsSync, readFileSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { SessionManager } from "../../src/session/manager.js";
+import { SessionManager, setTitleIntent } from "../../src/session/manager.js";
 import { SessionStore } from "../../src/session/store.js";
 
 // Minimal Agent mock
@@ -239,6 +239,119 @@ describe("SessionManager", () => {
     expect(meta2!.title).toBe("Bug is in isTitleBetter");
   });
 
+  // ── titleIntent tests ──
+
+  // 3.1: titleIntent survives multiple extractSessionTitle calls
+  it("should persist titleIntent across multiple saveSession calls", () => {
+    const session = manager.createSession("deepseek", "deepseek-v4-flash");
+    setTitleIntent("MCP progress");
+
+    // First save: only a system instruction (injected, no real human message)
+    const agent1 = createMockAgent([
+      { role: "user", content: "Enter explore mode. Think deeply. Visualize freely. Follow t" },
+    ]);
+    manager.saveSession(agent1);
+    const meta1 = manager.getCurrentMetadata();
+    expect(meta1!.title).toBe("MCP progress");
+
+    // Second save: same injected message, titleIntent should still be used
+    const agent2 = createMockAgent([
+      { role: "user", content: "Enter explore mode. Think deeply. Visualize freely. Follow t" },
+      { role: "assistant", content: "ok" },
+    ]);
+    manager.saveSession(agent2);
+    const meta2 = manager.getCurrentMetadata();
+    expect(meta2!.title).toBe("MCP progress");
+
+    // Third save: still no real human message
+    const agent3 = createMockAgent([
+      { role: "user", content: "Enter explore mode. Think deeply. Visualize freely. Follow t" },
+      { role: "assistant", content: "ok" },
+      { role: "user", content: "/opsx:apply fix something" },
+    ]);
+    manager.saveSession(agent3);
+    const meta3 = manager.getCurrentMetadata();
+    expect(meta3!.title).toBe("MCP progress");
+  });
+
+  // 3.2: titleIntent persists even when Pass 1 finds a real human message
+  it("titleIntent persists over Pass 1 human message", () => {
+    const session = manager.createSession("deepseek", "deepseek-v4-flash");
+    setTitleIntent("MCP progress");
+
+    // User sends a real non-command message, but titleIntent still wins
+    const agent = createMockAgent([
+      { role: "user", content: "/opsx:explore debug" },
+      { role: "user", content: "Actually the title is still broken" },
+    ]);
+    manager.saveSession(agent);
+    const meta = manager.getCurrentMetadata();
+    expect(meta!.title).toBe("MCP progress");
+  });
+
+  // 3.3: titleIntent takes priority over Pass 2 (command argument)
+  it("titleIntent should beat command argument in Pass 2", () => {
+    const session = manager.createSession("deepseek", "deepseek-v4-flash");
+    setTitleIntent("Debug title extraction");
+
+    // Only has injected system instruction + command message, no real human message
+    const agent = createMockAgent([
+      { role: "user", content: "Enter explore mode. Think deeply. Visualize freely. Follow t" },
+      { role: "user", content: "/help" },
+    ]);
+    manager.saveSession(agent);
+    const meta = manager.getCurrentMetadata();
+    // titleIntent should win over the command argument (which would be empty here)
+    // and over the injected system instruction
+    expect(meta!.title).toBe("Debug title extraction");
+  });
+
+  // 3.4: titleIntent always wins, never cleared by extractSessionTitle
+  it("titleIntent persists against Pass 1", () => {
+    const session = manager.createSession("deepseek", "deepseek-v4-flash");
+    setTitleIntent("Debug title extraction");
+
+    // First save: has both titleIntent set AND a real human message
+    const agent1 = createMockAgent([
+      { role: "user", content: "/opsx:explore debug" },
+      { role: "user", content: "Actually the bug is much deeper than that" },
+    ]);
+    manager.saveSession(agent1);
+    // titleIntent takes priority
+    expect(manager.getCurrentMetadata()!.title).toBe("Debug title extraction");
+
+    // Second save: titleIntent still set, still wins
+    const agent2 = createMockAgent([
+      { role: "user", content: "/opsx:explore debug" },
+      { role: "user", content: "Actually the bug is much deeper than that" },
+      { role: "assistant", content: "ok" },
+    ]);
+    manager.saveSession(agent2);
+    expect(manager.getCurrentMetadata()!.title).toBe("Debug title extraction");
+  });
+
+
+  // 3.5: title not overwritten by injected system instruction text across multiple saves
+  it("title should not be overwritten by injected system instruction", () => {
+    const session = manager.createSession("deepseek", "deepseek-v4-flash");
+    setTitleIntent("MCP progress");
+
+    // First save: only injected system instruction
+    const agent1 = createMockAgent([
+      { role: "user", content: "Enter explore mode. Think deeply. Visualize freely. Follow t" },
+    ]);
+    manager.saveSession(agent1);
+    expect(manager.getCurrentMetadata()!.title).toBe("MCP progress");
+
+    // Second save: more turns, still only injected instructions
+    const agent2 = createMockAgent([
+      { role: "user", content: "Enter explore mode. Think deeply. Visualize freely. Follow t" },
+      { role: "assistant", content: "Let me explore that..." },
+      { role: "user", content: "Enter explore mode. Think deeply. Visualize freely. Follow t" },
+    ]);
+    manager.saveSession(agent2);
+    expect(manager.getCurrentMetadata()!.title).toBe("MCP progress");
+  });
 
   it("should return error when loading non-existent session", async () => {
     const agent = createMockAgent();

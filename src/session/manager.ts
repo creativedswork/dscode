@@ -70,19 +70,19 @@ function isNoiseMessage(text: string): boolean {
 }
 
 // When a custom command (e.g. /opsx:explore) injects a large instruction body,
-// the caller can set a hint with the user's actual input to use as the title.
-let pendingTitleHint: string | null = null;
+// the caller can set the user's actual input as the title intent.
+// Unlike a transient hint, titleIntent persists across multiple saveSession
+// calls and is only cleared when Pass 1 finds a real non-command human message.
+let titleIntent: string | null = null;
 
-export function setPendingTitleHint(hint: string): void {
-  pendingTitleHint = hint;
+export function setTitleIntent(intent: string): void {
+  titleIntent = intent;
 }
-
 function extractSessionTitle(messages: any[]): string {
-  // Check for explicit title hint from custom command resolution
-  if (pendingTitleHint) {
-    const hint = pendingTitleHint;
-    pendingTitleHint = null;
-    if (hint.length >= MIN_TITLE_LENGTH) return hint.slice(0, 60);
+  // titleIntent takes priority — persists across saveSession calls.
+  // Only setTitleIntent() modifies it; never cleared here.
+  if (titleIntent && titleIntent.length >= MIN_TITLE_LENGTH) {
+    return titleIntent.slice(0, 60);
   }
 
   // Pass 1: reverse scan — prefer the last qualifying non-command user message
