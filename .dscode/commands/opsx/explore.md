@@ -77,11 +77,17 @@ Depending on what the user brings, you might:
 - Identify what could go wrong
 - Find gaps in understanding
 - Suggest spikes or investigations
-**Create prototypes for frontend ideas**
+**Create HTML prototypes for frontend ideas**
 - When the conversation touches UI/frontend topics, detect it naturally (keywords: UI, 页面, 界面, 组件, 交互, 样式, 视觉, CSS, frontend, landing, dashboard, 原型, prototype, redesign, 动效)
-- Offer: "这个话题涉及前端设计，要不要我出一个原型（prototype.md）？"
-- If yes: check for active change → create `prototype.md` via `openspec instructions prototype --change "<name>" --json`
+- Offer: "这个话题涉及前端设计，要不要出一个 HTML 原型？"
+- If yes:
+  1. Load `prototype-workflow` skill (auto-loads `html-output`)
+  2. Extract `--color-*` CSS variables from `web/index.css`
+  3. Generate self-contained HTML at `docs/prototypes/<change-name>-<descriptor>.html`
+  4. Iterate visually based on user feedback on the prototype
+  5. When design is confirmed, capture decisions into `design.md` / `specs`
 - Prototype is optional — it never blocks apply
+- Canonical example: session 00MRIZMZQJ (`docs/prototypes/mcp-toolcard-execution-view-prototype.html`)
 
 ---
 
@@ -121,14 +127,14 @@ If the user mentions a change or you detect one is relevant:
 
 2. **Reference them naturally in conversation**
    - "Your design mentions using Redis, but we just realized SQLite fits better..."
-   - "The proposal scopes this to premium users, but we're now thinking everyone..."
+    | Design insight for frontend | `docs/prototypes/<name>.html` |
 
 3. **Offer to capture when decisions are made**
 
     | Insight Type               | Where to Capture               |
     |----------------------------|--------------------------------|
     | New requirement discovered | `specs/<capability>/spec.md` |
-    | Design insight for frontend | `prototype.md`              |
+    | Design insight for frontend | `docs/prototypes/<name>.html` |
     | Requirement changed        | `specs/<capability>/spec.md` |
     | Design decision made       | `design.md`                  |
     | Scope changed              | `proposal.md`                |
