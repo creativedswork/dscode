@@ -121,6 +121,7 @@ async function main(): Promise<void> {
   }
 
   const { web, webPort, debug, cwd } = parseArgs();
+  const projectRoot = process.cwd();  // capture before loadConfig may chdir
   const config = loadConfig(cwd);
 
   if (config.apiKey) {
@@ -139,6 +140,7 @@ async function main(): Promise<void> {
     // Web mode: create WebUiBackend with HTTP + WebSocket server
     const { WebUiBackend } = await import("../ui/web/web-backend.js");
     const webUi = new WebUiBackend({
+      projectRoot,
       port: webPort,
       harness,
       config,

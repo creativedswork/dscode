@@ -4,6 +4,7 @@
 
 export type {
   ImageAttachment,
+  FileAttachment,
   ClientCommand,
   SessionInfo,
   McpServerInfo,

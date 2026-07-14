@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MCP ToolCard Execution View — Prototype</title>
+<style>
+  :root {
+    --color-bg: #f8f7f5;
+    --color-surface: #f3f2ef;
+    --color-surface-hover: #ebe9e5;
+    --color-border: #e6e4e0;
+    --color-text: #2d2a26;
+    --color-text-muted: #8a8580;
+    --color-accent: #ca8a04;
+    --color-accent-bg: rgba(202, 138, 4, 0.12);
+    --color-success: #edf4ed;
+    --color-success-text: #347539;
+    --color-error: #fdebec;
+    --color-error-text: #9f2f2d;
+    --color-user-bubble: #ca8a04;
+    --color-user-bubble-text: #ffffff;
+    --color-execution-card: #faf9f6;
+    --font-mono: 'Geist Mono', 'JetBrains Mono', 'SF Mono', monospace;
+    --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    padding: 40px 20px;
+    max-width: 680px;
+    margin: 0 auto;
+  }
+
+  /* ── Header ── */
+  .proto-header {
+    margin-bottom: 36px;
+  }
+  .proto-header .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-accent);
+    margin-bottom: 8px;
+  }
+  .proto-header h1 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    margin-bottom: 4px;
+  }
+  .proto-header .sub {
+    font-size: 13px;
+    color: var(--color-text-muted);
+  }
+
+  /* ── State Switcher ── */
+  .state-switcher {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 28px;
+    flex-wrap: wrap;
+  }
+  .state-btn {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 6px 14px;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-surface);
+    color: var(--color-text-muted);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .state-btn:hover { background: var(--color-surface-hover); }
+  .state-btn.active {
+    background: var(--color-accent-bg);
+    color: var(--color-accent);
+    border-color: var(--color-accent);
+  }
+
+  /* ── ToolCard ── */
+  .tool-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-left: 2px solid var(--color-accent);
+    border-radius: 6px;
+    overflow: hidden;
+    transition: background 0.15s;
+    margin-bottom: 40px;
+  }
+
+  .tool-card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    cursor: pointer;
+    user-select: none;
+  }
+
+  .tool-card-header .status {
+    font-size: 11px;
+    width: 20px; height: 20px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 4px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .tool-card-header .status.ok { background: var(--color-success); color: var(--color-success-text); }
+  .tool-card-header .status.err { background: var(--color-error); color: var(--color-error-text); }
+  .tool-card-header .status.spinner {
+    animation: spin 1.2s linear infinite;
+    background: var(--color-accent-bg);
+    color: var(--color-accent);
+  }
+
+  .tool-card-header .name {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-accent);
+  }
+  .tool-card-header .args {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .tool-card-header .mcp-badge {
+    font-family: var(--font-mono);
+    font-size: 8px; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    padding: 1px 5px; border-radius: 3px;
+    background: var(--color-accent-bg);
+    color: var(--color-accent);
+    flex-shrink: 0;
+  }
+  .tool-card-header .arrow {
+    font-size: 10px;
+    color: var(--color-text-muted);
+    transition: transform 0.3s;
+    opacity: 0.4;
+  }
+  .tool-card.open .tool-card-header .arrow { transform: rotate(180deg); }
+
+  /* ── ToolCard Body ── */
+  .tool-card-body {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.35s ease;
+  }
+  .tool-card.open .tool-card-body {
+    max-height: 600px;
+  }
+
+  /* ── Execution Card ── */
+  .exec-card {
+    margin: 0 14px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-execution-card);
+    overflow: hidden;
+  }
+
+  .exec-card-top {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .exec-card-label {
+    font-family: var(--font-mono);
+    font-size: 9px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--color-text-muted);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .exec-card-label .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--color-accent);
+  }
+  .exec-card-label .dot.pulse {
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+
+  .exec-thinking {
+    font-family: var(--font-sans);
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--color-text);
+  }
+  .exec-thinking p + p { margin-top: 4px; }
+  .exec-thinking .highlight {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    background: var(--color-accent-bg);
+    color: var(--color-accent);
+    padding: 1px 5px;
+    border-radius: 3px;
+  }
+
+  /* ── Progress Section Inside Exec Card ── */
+  .exec-progress {
+    padding: 12px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .progress-bar-wrap {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--color-surface-hover);
+    overflow: hidden;
+    position: relative;
+  }
+  .progress-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    background: var(--color-accent);
+    transition: width 0.4s ease;
+  }
+  .progress-bar-fill.indeterminate {
+    width: 30% !important;
+    animation: indeterminate-slide 1.5s ease-in-out infinite;
+  }
+
+  .progress-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .progress-pct {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-accent);
+  }
+  .progress-msg {
+    font-size: 11px;
+    color: var(--color-text-muted);
+  }
+  .progress-elapsed {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--color-text-muted);
+    opacity: 0.7;
+  }
+
+  /* ── Result Section (completed state) ── */
+  .exec-result {
+    padding: 12px 14px;
+    border-top: 1px solid var(--color-border);
+  }
+  .exec-result pre {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--color-text-muted);
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+
+  /* ── Waiting state ── */
+  .exec-waiting {
+    padding: 20px 14px;
+    text-align: center;
+  }
+  .exec-waiting .wait-icon {
+    font-size: 24px;
+    margin-bottom: 8px;
+  }
+  .exec-waiting .wait-text {
+    font-size: 12px;
+    color: var(--color-text-muted);
+  }
+
+  /* ── Animations ── */
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  @keyframes indeterminate-slide {
+    0% { transform: translateX(-100%); }
+    50% { transform: translateX(233%); }
+    100% { transform: translateX(-100%); }
+  }
+
+  /* ── Comparison section ── */
+  .comparison {
+    margin-top: 48px;
+    padding-top: 32px;
+    border-top: 1px solid var(--color-border);
+  }
+  .comparison h2 {
+    font-size: 16px;
+    font-weight: 700;
+    margin-bottom: 20px;
+  }
+  .comp-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+  .comp-col {
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 16px;
+    background: var(--color-surface);
+  }
+  .comp-col h3 {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--color-text-muted);
+  }
+  .comp-col h3.bad { color: var(--color-error-text); }
+  .comp-col h3.good { color: var(--color-success-text); }
+  .comp-col ul {
+    font-size: 12px;
+    color: var(--color-text-muted);
+    padding-left: 16px;
+    line-height: 1.7;
+  }
+</style>
+</head>
+<body>
+
+<div class="proto-header">
+  <div class="eyebrow">MCP ToolCard · Design Prototype</div>
+  <h1>Execution View inside ToolCard</h1>
+  <div class="sub">Combining progress notifications + thinking log + result — all in one card</div>
+</div>
+
+<div class="state-switcher">
+  <button class="state-btn active" data-state="executing">Executing (62%)</button>
+  <button class="state-btn" data-state="indeterminate">Indeterminate</button>
+  <button class="state-btn" data-state="waiting">Waiting (no progress yet)</button>
+  <button class="state-btn" data-state="completed">Completed</button>
+</div>
+
+<!-- ── ToolCard ── -->
+<div class="tool-card open" id="toolcard">
+  <div class="tool-card-header" id="toolcard-header">
+    <span class="status ok spinner" id="status-icon">◌</span>
+    <span class="name">mcp__meshy_generate_3d</span>
+    <span class="mcp-badge">MCP</span>
+    <span class="args">{"prompt":"a dragon"}</span>
+    <span class="arrow">▾</span>
+  </div>
+
+  <div class="tool-card-body">
+    <!-- EXECUTION CARD -->
+    <div class="exec-card" id="exec-card">
+
+      <!-- Top: Thinking log -->
+      <div class="exec-card-top" id="exec-top">
+        <div class="exec-card-label">
+          <span class="dot pulse" id="exec-dot"></span>
+          <span id="exec-label">Live · executing</span>
+        </div>
+        <div class="exec-thinking" id="exec-thinking">
+          <p>Task created with ID <span class="highlight">019f5ab0</span></p>
+          <p>模型生成任务已创建，等待完成中（约 2-3 分钟）…</p>
+          <p>进度 62%，正在生成中。检查当前状态…</p>
+        </div>
+      </div>
+
+      <!-- Progress bar -->
+      <div class="exec-progress" id="exec-progress">
+        <div class="progress-bar-wrap">
+          <div class="progress-bar-fill" id="progress-fill" style="width:62%"></div>
+        </div>
+        <div class="progress-meta">
+          <span class="progress-pct" id="progress-pct">62%</span>
+          <span class="progress-msg" id="progress-msg">Generating 3D mesh...</span>
+          <span class="progress-elapsed">⏱ 48s</span>
+        </div>
+      </div>
+
+      <!-- Result (hidden initially) -->
+      <div class="exec-result" id="exec-result" style="display:none">
+        <pre>{"task_id":"019f5ab0","status":"SUCCESS","model_url":"https://..."}</pre>
+      </div>
+
+      <!-- Waiting state (hidden initially) -->
+      <div class="exec-waiting" id="exec-waiting" style="display:none">
+        <div class="wait-icon">⏳</div>
+        <div class="wait-text">Waiting for execution to begin...</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Before / After Comparison ── -->
+<div class="comparison">
+  <h2>Before → After</h2>
+  <div class="comp-grid">
+    <div class="comp-col">
+      <h3 class="bad">✗ Before</h3>
+      <ul>
+        <li>Progress text only visible in collapsed Thinking block</li>
+        <li>ToolCard body completely empty during execution</li>
+        <li>Header shows static ◌ with no progress indication</li>
+        <li>User has to manually expand Thinking to see status</li>
+        <li>Progress data from notifications/progress unused in UI</li>
+      </ul>
+    </div>
+    <div class="comp-col">
+      <h3 class="good">✓ After (this prototype)</h3>
+      <ul>
+        <li>Execution card inside ToolCard body with live thinking log</li>
+        <li>Progress bar with percentage + message + elapsed time</li>
+        <li>Header spinner + mini bar when collapsed</li>
+        <li>All execution context in one place — single click to expand</li>
+        <li>Graceful fallback: "Waiting..." state when no progress yet</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<script>
+  const states = {
+    executing: {
+      statusIcon: '◌',
+      statusClass: 'ok spinner',
+      label: 'Live · executing',
+      dotClass: 'dot pulse',
+      thinking: `<p>Task created with ID <span class="highlight">019f5ab0</span></p><p>模型生成任务已创建，等待完成中（约 2-3 分钟）…</p><p>进度 62%，正在生成中。检查当前状态…</p>`,
+      progressWidth: '62%',
+      progressPct: '62%',
+      progressMsg: 'Generating 3D mesh...',
+      elapsed: '⏱ 48s',
+      showProgress: true,
+      showResult: false,
+      showWaiting: false,
+      indeterminate: false
+    },
+    indeterminate: {
+      statusIcon: '◌',
+      statusClass: 'ok spinner',
+      label: 'Live · executing',
+      dotClass: 'dot pulse',
+      thinking: `<p>Fetching search results...</p><p>已获取 150 条结果，正在处理中…</p>`,
+      progressWidth: '30%',
+      progressPct: '',
+      progressMsg: 'Processing results...',
+      elapsed: '⏱ 12s',
+      showProgress: true,
+      showResult: false,
+      showWaiting: false,
+      indeterminate: true
+    },
+    waiting: {
+      statusIcon: '◌',
+      statusClass: 'ok spinner',
+      label: 'Live · waiting',
+      dotClass: 'dot pulse',
+      thinking: `<p>Sending request to MCP server...</p>`,
+      progressWidth: '0%',
+      progressPct: '',
+      progressMsg: '',
+      elapsed: '⏱ 2s',
+      showProgress: false,
+      showResult: false,
+      showWaiting: true,
+      indeterminate: false
+    },
+    completed: {
+      statusIcon: '✓',
+      statusClass: 'ok',
+      label: 'Completed',
+      dotClass: 'dot',
+      thinking: `<p>Task created with ID <span class="highlight">019f5ab0</span></p><p>模型生成完成，获取结果中…</p>`,
+      progressWidth: '100%',
+      progressPct: '100%',
+      progressMsg: 'Complete',
+      elapsed: '⏱ 2m 14s',
+      showProgress: true,
+      showResult: true,
+      showWaiting: false,
+      indeterminate: false
+    }
+  };
+
+  document.querySelectorAll('.state-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.state-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      const s = states[btn.dataset.state];
+
+      // Status icon
+      const icon = document.getElementById('status-icon');
+      icon.textContent = s.statusIcon;
+      icon.className = 'status ' + s.statusClass;
+
+      // Label
+      document.getElementById('exec-label').textContent = s.label;
+      document.getElementById('exec-dot').className = s.dotClass;
+
+      // Thinking
+      document.getElementById('exec-thinking').innerHTML = s.thinking;
+
+      // Progress
+      const pg = document.getElementById('exec-progress');
+      const fill = document.getElementById('progress-fill');
+      pg.style.display = s.showProgress ? '' : 'none';
+      fill.style.width = s.progressWidth;
+      fill.className = 'progress-bar-fill' + (s.indeterminate ? ' indeterminate' : '');
+      document.getElementById('progress-pct').textContent = s.progressPct;
+      document.getElementById('progress-msg').textContent = s.progressMsg;
+      document.querySelector('.progress-elapsed').textContent = s.elapsed;
+
+      // Result
+      document.getElementById('exec-result').style.display = s.showResult ? '' : 'none';
+      if (s.showResult) {
+        document.getElementById('exec-progress').style.borderBottom = '1px solid var(--color-border)';
+      } else {
+        document.getElementById('exec-progress').style.borderBottom = '';
+      }
+
+      // Waiting
+      document.getElementById('exec-waiting').style.display = s.showWaiting ? '' : 'none';
+      document.getElementById('exec-top').style.display = s.showWaiting ? 'none' : '';
+    });
+  });
+
+  // Toggle expand/collapse on header click
+  document.getElementById('toolcard-header').addEventListener('click', () => {
+    document.getElementById('toolcard').classList.toggle('open');
+  });
+</script>
+</body>
+</html>

@@ -1,4 +1,4 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 import type { DriverRegistry } from "../drivers/registry.js";

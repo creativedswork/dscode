@@ -92,7 +92,7 @@ dscode is purpose-built for DeepSeek V4 Pro — our recommended model for digita
 <tr>
 <td width="33%" valign="top">
   <strong>🖥 Terminal + Web</strong><br />
-  <sub>Full TUI with streaming, thinking, tool calls. Modern React Web UI with identical feature parity via WebSocket.</sub>
+  <sub>Full TUI with streaming, thinking, tool calls, per-turn token usage & cost stats. Modern React Web UI with identical feature parity via WebSocket.</sub>
 </td>
 <td width="33%" valign="top">
   <strong>🔌 MCP Connector</strong><br />
@@ -115,6 +115,20 @@ dscode is purpose-built for DeepSeek V4 Pro — our recommended model for digita
 <td width="33%" valign="top">
   <strong>🔧 Built-in Drivers</strong><br />
   <sub><code>read_file</code>, <code>write_file</code>, <code>edit</code> (hash-anchor), <code>bash</code>, <code>grep</code>, <code>glob</code>. MCP tools discovered on-demand via <code>search_tools</code>.</sub>
+</td>
+</tr>
+<tr>
+<td width="33%" valign="top">
+  <strong>🎬 Dashboard & Motion</strong><br />
+  <sub>Chat↔Dashboard cascade transition with physics-based "dscode" cluster animation. Session dashboard with context-window usage bar.</sub>
+</td>
+<td width="33%" valign="top">
+  <strong>📐 Hash-Anchor Editing</strong><br />
+  <sub>Content-addressable file editing with 3-level adaptive resolution, atomic batch operations, checkpoint safety rollback, and structured invalidation scopes.</sub>
+</td>
+<td width="33%" valign="top">
+  <strong>🔁 Retry & Resilience</strong><br />
+  <sub>Exponential backoff with configurable retry policy. Handles rate limits, timeouts, and server errors transparently. Respects Retry-After headers.</sub>
 </td>
 </tr>
 </table>
@@ -311,6 +325,14 @@ One example where we went deeper: the **edit tool**. Based on [@_can1357's hash-
 This is the kind of harness work we invest in: not adding more AI, but making the AI's tools dependable.
 
 ---
+
+## Contributing
+
+dscode is currently a single-developer SDD project and does not accept direct code contributions (Pull Requests).
+
+We welcome bug reports, feature ideas, and technical discussions via **[GitHub Issues](https://github.com/creativedswork/dscode/issues)**. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full policy.
+
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Contribution policy & how the SDD workflow operates |
 
 ## Learn more
 

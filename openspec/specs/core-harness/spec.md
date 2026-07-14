@@ -60,14 +60,14 @@ After `updateProjectPath()` creates a new `MCPManager` and registers its drivers
 - **THEN** `this.agent.state.tools` contains AgentTool objects from the new MCPManager, not stale objects from the old (shutdown) MCPManager
 
 ### Requirement: updateProjectPath merges user-level MCP config
-When loading MCP server configurations in `updateProjectPath()`, the harness SHALL merge user-level settings from `~/.dscode/settings.json` with the new project-level settings, giving project-level settings precedence. This SHALL be consistent with the merge behavior in `loadConfig()`.
+When loading MCP server configurations in `updateProjectPath()`, the harness SHALL load from `~/.mcp.json` (user-level) and `<project>/.mcp.json` (project-level), giving project-level precedence. If neither `.mcp.json` exists, it SHALL fall back to `settings.json` (deprecated path, prints warning). This SHALL be consistent with the merge behavior in `loadConfig()`.
 
 #### Scenario: User-level MCP servers preserved
-- **WHEN** `updateProjectPath()` is called and user-level settings contain MCP server configurations
+- **WHEN** `updateProjectPath()` is called and `~/.mcp.json` contains MCP server configurations
 - **THEN** those user-level MCP servers are included in the new `MCPManager` alongside project-level MCP servers
 
 #### Scenario: Project-level MCP overrides user-level
-- **WHEN** `updateProjectPath()` is called and both user-level and project-level settings define an MCP server with the same name
+- **WHEN** `updateProjectPath()` is called and both `~/.mcp.json` and `<project>/.mcp.json` define an MCP server with the same name
 - **THEN** the project-level configuration takes precedence
 
 ### Requirement: Harness implements HarnessAPI

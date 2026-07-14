@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Defines the visual and behavioral requirements for the dscode web frontend, including design language, themes, session management, processing indicators, permission dialogs, transitions, and message rendering.
+
+## Requirements
 
 ### Requirement: Warm design language
 All frontend components SHALL use the warm design system tokens defined in the `warm-design-system` spec. Every component MUST reference semantic CSS custom properties for colors and follow the typography and shape language specifications.
@@ -209,8 +213,32 @@ The `ArtifactContainer` component SHALL render exactly one loading/empty state: 
 - **THEN** it SHALL render three bouncing dots with the text "Generating dashboard..."
 - **AND** no "Waiting for dashboard generation..." message SHALL appear
 
+### Requirement: Flat message layout for assistant messages
+Assistant messages SHALL render using the flat message layout system defined in `flat-message-layout` spec. The existing bubble-based message rendering SHALL be replaced with the `.assistant-msg` flat vertical flow container.
 
-## MODIFIED Requirements
+#### Scenario: Assistant message uses flat layout
+- **WHEN** an assistant message renders with role `assistant`
+- **THEN** it SHALL use the `.assistant-msg` container structure as defined in `flat-message-layout`
+- **AND** SHALL NOT use the legacy `.message-card` bubble wrapper
+
+#### Scenario: User message keeps bubble style
+- **WHEN** a user message renders with role `user`
+- **THEN** it SHALL retain the existing bubble style with `data-collider="message-card"`
+- **AND** the bubble SHALL have `border-radius: 16px 16px 4px 16px` and `background: var(--color-user-bubble)`
+
+### Requirement: Thinking block uses div instead of details
+The `ThinkingBlock` component SHALL render as a `<div class="thinking">` with a CSS left border rather than a `<details>` element. The thinking content SHALL be always visible.
+
+#### Scenario: Thinking renders as div
+- **WHEN** the model sends `thinking_delta` events
+- **THEN** the thinking content SHALL render in a `<div class="thinking">` with `border-left: 2px solid var(--border)`
+- **AND** SHALL NOT use `<details>` or `<summary>` elements
+
+#### Scenario: Thinking label with dot indicator
+- **WHEN** thinking content renders
+- **THEN** a label row with "Thinking" uppercase text and a 5px amber dot SHALL appear above the content
+
+
 
 ### Requirement: Theme support
 The frontend SHALL support warm light and warm dark themes using warm stone/taupe gray neutrals (not cream/beige). The initial theme defaults to warm light. Dark mode uses warm deep gray-brown tones instead of cold blue-grays.

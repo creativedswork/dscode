@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import { ImagePipeline } from "../../../src/drivers/vision/pipeline.js";
 import type { ProcessResult } from "../../../src/drivers/vision/types.js";
 

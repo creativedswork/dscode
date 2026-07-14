@@ -1,4 +1,5 @@
 import type { SlashCommand as AutocompleteSlashCommand } from "@earendil-works/pi-tui";
+import type { CommandManifest } from "../core/types.js";
 
 import type { HarnessAPI } from "../core/harness-api.js";
 import type { UiBackend } from "./backend.js";
@@ -21,15 +22,16 @@ function fmtLocalDateTime(ts: number): string {
 }
 import { runEval } from "../eval/index.js";
 
-
 interface SlashCommandContext {
   harness: HarnessAPI;
   ui: UiBackend;
+  commandManager?: { getManifest(name: string): CommandManifest | undefined; listManifests(): CommandManifest[] };
 }
 
 interface SlashCommandDef {
   name: string;
   description: string;
+  source?: "builtin" | "custom";
   execute(args: string, ctx: SlashCommandContext): void | Promise<void>;
 }
 
@@ -67,8 +69,10 @@ const COMMANDS: SlashCommandDef[] = [
           "",
           "Configuration files:",
           "  ~/.dscode/config.json          Runtime config (managed by /config)",
-          "  ~/.dscode/settings.json        User-level settings (MCP, permissions, skills)",
+          "  ~/.dscode/settings.json        User-level settings (permissions, skills)",
           "  <project>/.dscode/settings.json  Project-level settings (overrides user-level)",
+          "  ~/.mcp.json                    User-level MCP servers (all projects)",
+          "  <project>/.mcp.json              Project MCP servers (sensitive, gitignore)",
           "",
           "Settings example (~/.dscode/settings.json):",
           "  {\"permissions\": {\"deny\": [\"*.env\", \"*.secret\"]}}",
@@ -76,7 +80,9 @@ const COMMANDS: SlashCommandDef[] = [
           "See docs/ARCHITECTURE.md for the full settings schema.",
         ],
         mcp: [
-          "dscode is MCP-first. Configure MCP servers in ~/.dscode/settings.json:",
+          "dscode is MCP-first. Configure MCP servers in .mcp.json files:",
+          "  ~/.mcp.json           User MCP servers (all projects)",
+          "  <project>/.mcp.json   Project MCP servers (add to .gitignore)",
           "",
           "  {\"mcpServers\": {",
           "    \"blender\": {\"command\": \"uvx\", \"args\": [\"blender-mcp\"]},",
@@ -177,7 +183,7 @@ const COMMANDS: SlashCommandDef[] = [
           "/image <filepath>          Attach an image file to the next message",
           "/image clipboard           Attach image from clipboard (macOS)",
           "",
-          "In Web UI: drag & drop, paste, or click to upload images.",
+          "In Web UI: paste images (Ctrl+V). Drag-and-drop files to attach them (Web UI and TUI).",
           "",
           "Vision pipeline:",
           "  If the primary model supports images → routed directly.",
@@ -671,8 +677,10 @@ const COMMANDS: SlashCommandDef[] = [
   },
 ];
 
-export function getSlashCommandAutocomplete(): AutocompleteSlashCommand[] {
-  return COMMANDS.map((c) => ({ name: c.name, description: c.description }));
+export function getSlashCommandAutocomplete(customCommands?: CommandManifest[]): AutocompleteSlashCommand[] {
+  const custom = (customCommands ?? []).map((c) => ({ name: c.name, description: c.description }));
+  const builtin = COMMANDS.map((c) => ({ name: c.name, description: c.description }));
+  return [...custom, ...builtin];
 }
 
 
@@ -685,6 +693,7 @@ export function executeSlashCommand(
   const commandName = spaceIdx === -1 ? text.slice(1) : text.slice(1, spaceIdx);
   const args = spaceIdx === -1 ? "" : text.slice(spaceIdx + 1).trim();
 
+  // Built-in commands take priority on name conflict
   const cmd = COMMANDS.find((c) => c.name === commandName);
   if (!cmd) return undefined;
 
@@ -700,4 +709,32 @@ export function executeSlashCommand(
     (ctx.ui as any).addError(`${commandName}: ${err instanceof Error ? err.message : String(err)}`);
     return commandName;
   }
+}
+
+/** Execute a custom command: resolve $input placeholder and return the expanded prompt text */
+export function resolveCustomCommand(
+  text: string,
+  ctx: SlashCommandContext,
+): string | undefined {
+  if (!text.startsWith("/")) return undefined;
+  const spaceIdx = text.indexOf(" ");
+  const commandName = spaceIdx === -1 ? text.slice(1) : text.slice(1, spaceIdx);
+  const args = spaceIdx === -1 ? "" : text.slice(spaceIdx + 1).trim();
+
+  // Built-in commands are NOT resolved here — those are handled by executeSlashCommand
+  const builtin = COMMANDS.find((c) => c.name === commandName);
+  if (builtin) return undefined;
+
+  if (!ctx.commandManager) return undefined;
+  const manifest = ctx.commandManager.getManifest(commandName);
+  if (!manifest) return undefined;
+
+  // Replace $input with user args, or append args at end if no $input placeholder
+  if (manifest.body.includes("$input")) {
+    return manifest.body.replace(/\$input/g, args);
+  }
+  if (args) {
+    return manifest.body + "\n\n" + args;
+  }
+  return manifest.body;
 }

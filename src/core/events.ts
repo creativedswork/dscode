@@ -1,4 +1,4 @@
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { McpServerInfo } from "../ui/shared/types.js";
 import type { AppInstance } from "../mcp/app/types.js";
 import type { ConfigData } from "../ui/shared/types.js";
@@ -49,6 +49,7 @@ export type HarnessEvent =
   // MCP
   | { type: "mcp:state"; servers: McpServerInfo[] }
   | { type: "mcp:browser:open" }
+  | { type: "mcp:tool:progress"; toolName: string; serverName: string; progress: number; total?: number; message?: string }
   | { type: "mcp:app:registered"; app: AppInstance };
 
 export type HarnessEventType = HarnessEvent["type"];

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { Type } from "@mariozechner/pi-ai";
+import { Type } from "@earendil-works/pi-ai";
 
 import { buildMcpServers } from "../../src/ui/mcp-browser.js";
 import { DriverRegistry } from "../../src/drivers/registry.js";

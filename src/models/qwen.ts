@@ -1,4 +1,4 @@
-import type { Api, Model } from "@mariozechner/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 
 export const DASHSCOPE_BASE = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 
@@ -12,7 +12,7 @@ export const QWEN_MODELS: Record<string, Omit<Model<Api>, "id" | "name">> = {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 1_000_000,
     maxTokens: 65536,
-    compat: { supportsDeveloperRole: false },
+    compat: { supportsDeveloperRole: false, thinkingFormat: "qwen" },
   },
   "qwen3-coder": {
     api: "openai-completions",
@@ -23,7 +23,7 @@ export const QWEN_MODELS: Record<string, Omit<Model<Api>, "id" | "name">> = {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 131_072,
     maxTokens: 8192,
-    compat: { supportsDeveloperRole: false },
+    compat: { supportsDeveloperRole: false, thinkingFormat: "qwen" },
   },
   "qwq-32b": {
     api: "openai-completions",
@@ -34,7 +34,7 @@ export const QWEN_MODELS: Record<string, Omit<Model<Api>, "id" | "name">> = {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 131_072,
     maxTokens: 8192,
-    compat: { supportsDeveloperRole: false },
+    compat: { supportsDeveloperRole: false, thinkingFormat: "qwen" },
   },
   "qwen-max": {
     api: "openai-completions",
@@ -45,7 +45,7 @@ export const QWEN_MODELS: Record<string, Omit<Model<Api>, "id" | "name">> = {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 32_768,
     maxTokens: 8192,
-    compat: { supportsDeveloperRole: false },
+    compat: { supportsDeveloperRole: false, thinkingFormat: "qwen" },
   },
   "qwen-plus": {
     api: "openai-completions",
@@ -56,7 +56,7 @@ export const QWEN_MODELS: Record<string, Omit<Model<Api>, "id" | "name">> = {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 131_072,
     maxTokens: 8192,
-    compat: { supportsDeveloperRole: false },
+    compat: { supportsDeveloperRole: false, thinkingFormat: "qwen" },
   },
   "qwen-turbo": {
     api: "openai-completions",
@@ -67,7 +67,7 @@ export const QWEN_MODELS: Record<string, Omit<Model<Api>, "id" | "name">> = {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 1_000_000,
     maxTokens: 8192,
-    compat: { supportsDeveloperRole: false },
+    compat: { supportsDeveloperRole: false, thinkingFormat: "qwen" },
   },
 };
 
@@ -86,5 +86,6 @@ export function buildQwenModel(modelId: string): Model<Api> {
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 131_072,
     maxTokens: 8192,
+    compat: { supportsDeveloperRole: false, thinkingFormat: "qwen" },
   };
 }

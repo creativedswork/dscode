@@ -11,7 +11,7 @@ import { computeSeverity } from "./types.js";
 import type { HarnessAPI } from "../../core/harness-api.js";
 import type { Logger } from "../../utils/logger.js";
 import { resolveModel } from "../../models/index.js";
-import { completeSimple } from "@mariozechner/pi-ai";
+import { completeSimple } from "../../models/index.js";
 import { RULE_MERGE_SYSTEM, buildStep8Prompt, extractJSON } from "../prompts.js";
 import { validateMergeDecisions, type MergeDecision } from "../schemas.js";
 

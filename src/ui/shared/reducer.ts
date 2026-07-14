@@ -82,6 +82,20 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
         return { tools };
       });
 
+    case "tool_progress": {
+      const next = [...prev];
+      const last = next[next.length - 1];
+      if (last?.isStreaming && last.tools) {
+        const tools = last.tools.map((t) =>
+          t.name === event.name && !t.result
+            ? { ...t, progress: event.progress, progressTotal: event.total, progressMessage: event.message }
+            : t,
+        );
+        next[next.length - 1] = { ...last, tools };
+      }
+      return next;
+    }
+
     case "tool_end": {
       const next = [...prev];
       const last = next[next.length - 1];

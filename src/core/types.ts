@@ -1,4 +1,4 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { MCPServerConfig } from "../mcp/types.js";
 
 // Re-export session data layer types
@@ -28,6 +28,8 @@ export interface HarnessConfig {
   dataDir: string;
   userSkillsDir: string;
   projectSkillsDir: string;
+  userCommandsDir: string;
+  projectCommandsDir: string;
   context: ContextConfig;
   memory: MemoryConfig;
   permissions: PermissionsConfig;
@@ -44,6 +46,7 @@ export interface AtFileConfig {
   maxFiles: number;
   maxFileSize: number;
   maxTotalSize: number;
+  maxImageSize: number;
 }
 
 
@@ -102,7 +105,6 @@ export interface RetryInfo {
   error: string;
   level: "stream" | "turn";
 }
-
 // --- Memory ---
 
 export interface MemoryEntry {
@@ -151,6 +153,16 @@ export interface SkillManifest {
   // If empty/undefined, defaults to safe read-only tools.
   tools?: string[];
   instructions?: string;
+  source: "user" | "project";
+  path: string;
+}
+
+// --- Commands (user-defined prompt templates, /-triggered, .dscode/commands/<name>.md or <subdir>/<name>.md)
+
+export interface CommandManifest {
+  name: string;
+  description: string;
+  body: string;
   source: "user" | "project";
   path: string;
 }

@@ -1,5 +1,5 @@
-import type { Agent } from "@mariozechner/pi-agent-core";
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { Agent } from "@earendil-works/pi-agent-core";
+import type { ImageContent } from "@earendil-works/pi-ai";
 
 import type { ImageRef, SerializedSession, SessionMetadata, VisionMessage } from "../core/types.js";
 import { ImageCache } from "../utils/image-cache.js";
@@ -33,6 +33,105 @@ function extractFirstUserMessage(messages: unknown[]): string {
     }
   }
   return "";
+}
+
+// Regex to match slash commands like /opsx:propose, /opsx:apply, or /help
+const SLASH_COMMAND_RE = /^\/[a-zA-Z][a-zA-Z0-9_:-]*\s*/;
+
+// Messages matching these patterns are not useful as session titles
+const NOISE_PATTERNS: RegExp[] = [
+  /^(thanks|thank you|thx|ok|okay|yes|no|hi|hello|hey|good|great|nice|cool)[!.\s]*$/i,
+  /^[谢谢好的嗯哦啊哈嘿嗨]+$/,
+  /^[.,!?;:]+$/,
+];
+
+const MIN_TITLE_LENGTH = 10;
+
+function extractText(msg: any): string {
+  const content = msg.content;
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const textBlock = content.find((b: any) => b.type === "text");
+    return textBlock?.text ?? "";
+  }
+  return "";
+}
+
+function isCommandMessage(text: string): boolean {
+  return SLASH_COMMAND_RE.test(text);
+}
+
+function stripCommandPrefix(text: string): string {
+  return text.replace(SLASH_COMMAND_RE, "").trim();
+}
+
+function isNoiseMessage(text: string): boolean {
+  return NOISE_PATTERNS.some((p) => p.test(text));
+}
+
+// When a custom command (e.g. /opsx:explore) injects a large instruction body,
+// the caller can set the user's actual input as the title intent.
+// Unlike a transient hint, titleIntent persists across multiple saveSession
+// calls and is only cleared when Pass 1 finds a real non-command human message.
+let titleIntent: string | null = null;
+
+export function setTitleIntent(intent: string): void {
+  titleIntent = intent;
+}
+function extractSessionTitle(messages: any[]): string {
+  // titleIntent takes priority — persists across saveSession calls.
+  // Only setTitleIntent() modifies it; never cleared here.
+  if (titleIntent && titleIntent.length >= MIN_TITLE_LENGTH) {
+    return titleIntent.slice(0, 60);
+  }
+
+  // Pass 1: reverse scan — prefer the last qualifying non-command user message
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== "user") continue;
+    const text = extractText(msg);
+    if (!text) continue;
+    if (isCommandMessage(text)) continue;
+    if (isNoiseMessage(text)) continue;
+    if (text.length < MIN_TITLE_LENGTH) continue;
+    return text.slice(0, 60);
+  }
+
+  // Pass 2: reverse scan — use last command's argument if meaningful
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== "user") continue;
+    const text = extractText(msg);
+    if (!text) continue;
+    if (!isCommandMessage(text)) continue;
+    const arg = stripCommandPrefix(text);
+    if (arg.length >= MIN_TITLE_LENGTH) {
+      return arg.slice(0, 60);
+    }
+  }
+
+  // Pass 3: fallback — any non-noise user message
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i];
+    if (msg.role !== "user") continue;
+    const text = extractText(msg);
+    if (!text) continue;
+    if (isNoiseMessage(text)) continue;
+    const stripped = stripCommandPrefix(text);
+    if (stripped) return stripped.slice(0, 60);
+    return text.slice(0, 60);
+  }
+
+  return "New session";
+}
+
+function isTitleBetter(current: string, candidate: string): boolean {
+  // Always replace placeholder
+  if (!current || current === "New session") return true;
+
+  // candidate is a truncated prefix of current — keep the longer title
+  if (candidate.length < current.length && current.startsWith(candidate)) return false;
+  return true;
 }
 
 /**
@@ -170,19 +269,12 @@ export class SessionManager {
       this.current.pendingPermission = pendingPermission;
     }
 
-    if (this.current.title === "New session") {
-      const first = messages[0];
-      const content = (first as any)?.content;
-
-      if (Array.isArray(content)) {
-        const textBlock = content.find((b: any) => b.type === "text");
-        if (textBlock) {
-          this.current.title = textBlock.text.slice(0, 60);
-        }
-      } else if (typeof content === "string") {
-        this.current.title = content.slice(0, 60);
-      }
+    // Extract title from conversation — strips commands, prefers substantive messages
+    const candidate = extractSessionTitle(messages);
+    if (isTitleBetter(this.current.title, candidate)) {
+      this.current.title = candidate;
     }
+
 
     if (!this.current.preview) {
       this.current.preview = extractFirstUserMessage(messages as unknown[]);

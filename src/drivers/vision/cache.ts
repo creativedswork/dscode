@@ -3,7 +3,7 @@ import { Logger } from "../../utils/logger.js";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ImageRef } from "./types.js";
 
 const CACHE_SUBDIR = join(homedir(), ".dscode", "data", "images");

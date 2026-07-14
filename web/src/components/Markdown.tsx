@@ -17,9 +17,10 @@ export function Markdown({ children, className = "" }: MarkdownProps) {
             const codeEl = children as React.ReactElement | undefined;
             const codeContent = codeEl?.props?.children;
             const wrappedChildren = typeof codeContent === 'string'
-              ? codeContent.split('\n').map((line: string, i: number) => (
-                  <span key={i} data-collider="code-line">{line}</span>
-                ))
+              ? codeContent.split('\n').flatMap((line: string, i: number) => {
+                  const el = <span key={i} data-collider="code-line">{line}</span>;
+                  return i > 0 ? ['\n', el] : [el];
+                })
               : children;
             return (
               <pre

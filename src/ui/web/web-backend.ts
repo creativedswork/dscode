@@ -3,23 +3,24 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFileSync, existsSync } from "node:fs";
 import { join, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ImageContent } from "@mariozechner/pi-ai";
-import type { Api, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
-import { streamSimple } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
+import type { Api, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
+import { streamSimple } from "../../models/index.js";
 import { getAllProviders, getAllModels, getVisionModels, getVisionProviders, resolveModel } from "../../models/index.js";
 import type { UiBackend } from "../backend.js";
 import type { HarnessConfig, PermissionPromptResult } from "../../core/types.js";
 import type { ConfigWatch } from "../../core/config-watch.js";
 import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig, normalizeTransport, normalizeProtocolVersion, loadScopedSettings, projectSettingsPath } from "../../core/config.js";
-import { executeSlashCommand, getSlashCommandAutocomplete } from "../commands.js";
+import { executeSlashCommand, getSlashCommandAutocomplete, resolveCustomCommand } from "../commands.js";
 import { deriveFuzzyPattern, deriveFuzzyArgPattern, describeFuzzyArgPattern } from "../../permissions/fuzzy.js";
 import { prefetchLlmSuggestions, getLlmSuggestions } from "../../permissions/fuzzy-llm.js";
 import type { HarnessAPI } from "../../core/harness-api.js";
+import { setTitleIntent } from "../../session/manager.js";
 import type { MCPManager } from "../../mcp/manager.js";
 import type { AppHostManager } from "../../mcp/app/host.js";
 import type { AppInstance } from "../../mcp/app/types.js";
 import { buildMcpServers } from "../mcp-browser.js";
-import { resolveAtFileRefs, listProjectFiles } from "../../utils/at-file-resolver.js";
+import { resolveAtFileRefs, resolveFileRefs, listProjectFiles } from "../../utils/at-file-resolver.js";
 import { rebuildDisplayMessages } from "../../session/display.js";
 import { formatToolResultForUI } from "../shared/tool-result-formatter.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
@@ -53,6 +54,7 @@ export interface WebUiOptions {
   harness: HarnessAPI;
   configStore: ConfigWatch;
   config: HarnessConfig;
+  projectRoot?: string;
 }
 
 /**
@@ -65,6 +67,7 @@ export class WebUiBackend implements UiBackend {
   private harness: HarnessAPI;
   private config: HarnessConfig;
   private configStore: ConfigWatch;
+  private projectRoot: string;
   private httpServer: ReturnType<typeof createServer>;
   private wsServer: WsServer;
   private currentClient: WebSocketClient | null = null;
@@ -100,6 +103,7 @@ export class WebUiBackend implements UiBackend {
     this.port = options.port;
     this.harness = options.harness;
     this.configStore = options.configStore;
+    this.projectRoot = options.projectRoot ?? process.cwd();
     this.config = options.config;
 
     this.wsServer = new WsServer();
@@ -164,6 +168,7 @@ export class WebUiBackend implements UiBackend {
     h.events.on("config:change", (e) => { this.broadcast({ type: "config", data: e.data }); });
     h.events.on("mcp:state", (e) => { this.broadcast({ type: "mcp_state", servers: e.servers }); });
     h.events.on("mcp:browser:open", () => { this.pushMcpState(); this.broadcast({ type: "mcp_open_browser" }); });
+    h.events.on("mcp:tool:progress", (e) => { this.broadcast({ type: "tool_progress", name: e.toolName, progress: e.progress, total: e.total, message: e.message }); });
     h.events.on("session:saved", () => { this.pushSessionListToAll(); });
     h.events.on("session:created", () => { this.pushSessionListToAll(); });
     h.events.on("session:deleted", () => { this.pushSessionListToAll(); });
@@ -476,7 +481,7 @@ export class WebUiBackend implements UiBackend {
 
         if (text.startsWith("/")) {
           const firstWord = text.slice(1).split(/\s+/)[0];
-          const knownCommands = getSlashCommandAutocomplete().map(c => c.name);
+          const knownCommands = getSlashCommandAutocomplete(this.harness.commandManager.listManifests()).map(c => c.name);
           if (knownCommands.includes(firstWord)) {
             this.pendingImages = [];
             this.handleSlashCommand(client, text);
@@ -484,6 +489,10 @@ export class WebUiBackend implements UiBackend {
           }
         }
         const resolved = resolveAtFileRefs(this.config.projectPath, text, this.config.atFile ?? {});
+        if (resolved.reject) {
+          client.send({ type: "error", text: resolved.warnings.map(w => `@${w.path ?? ""}: ${w.type}${w.detail ? ` — ${w.detail}` : ""}`).join("\n") });
+          return;
+        }
         text = resolved.text;
         if (resolved.images.length > 0) {
           const atImages = resolved.images.map((img) => ({
@@ -494,6 +503,25 @@ export class WebUiBackend implements UiBackend {
         }
         for (const warn of resolved.warnings) {
           client.send({ type: "info", display: "toast", text: `@${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}` });
+        }
+        // Resolve fileRefs from drag-and-drop tracker
+        if (cmd.fileRefs && cmd.fileRefs.length > 0) {
+          const refsResolved = resolveFileRefs(this.config.projectPath, cmd.fileRefs, this.config.atFile ?? {});
+          if (!refsResolved.reject) {
+            if (refsResolved.text) {
+              text = text ? `${text}\n\n${refsResolved.text}` : refsResolved.text;
+            }
+            if (refsResolved.images.length > 0) {
+              const refImages = refsResolved.images.map((img) => ({
+                data: img.data,
+                mimeType: img.mimeType,
+              }));
+              images = [...(images ?? []), ...refImages];
+            }
+          }
+          for (const warn of refsResolved.warnings) {
+            client.send({ type: "info", display: "toast", text: `${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}` });
+          }
         }
         // Broadcast user message to client before sending to agent
         client.send({ type: "user_message", text, images: images && images.length > 0 ? images : undefined } as any);
@@ -675,27 +703,51 @@ export class WebUiBackend implements UiBackend {
 
   private async handleSlashCommand(client: WebSocketClient, text: string): Promise<void> {
     try {
-
-      
-
       const executed = executeSlashCommand(text, { harness: this.harness, ui: this });
+      if (executed) {
+        // Push updated session list so sidebar auto-refreshes
+        this.pushSessionList(client);
+        client.send({ type: "loader", state: "hide" });
+        setTimeout(() => {
+          client.send({ type: "config", data: this.buildConfigData() });
+        }, 100);
+        return;
+      }
 
-      if (!executed) {
-        // Not a known command — treat as regular chat message
+      // Check custom commands
+      const expanded = resolveCustomCommand(text, { harness: this.harness, ui: this, commandManager: this.harness.commandManager });
+      if (expanded !== undefined) {
         this.pendingImages = [];
-        // Send as user message then prompt the agent
-        client.send({ type: 'user_message', text } as any);
-        await this.harness.promptAndSave(text).catch((err: any) => {
+        // Set title hint with user's actual input so title extraction uses it
+        const cmdArgs = text.slice(text.indexOf(" ") + 1).trim();
+        if (cmdArgs) setTitleIntent(cmdArgs);
+
+        client.send({ type: 'user_message', text: expanded } as any);
+        await this.harness.promptAndSave(expanded).catch((err: any) => {
           client.send({
             type: 'error',
             text: err instanceof Error ? err.message : String(err),
           });
         });
+        this.pushSessionList(client);
+        client.send({ type: "loader", state: "hide" });
+        setTimeout(() => {
+          client.send({ type: "config", data: this.buildConfigData() });
+        }, 100);
+        return;
       }
 
-      // Push updated session list so sidebar auto-refreshes
-      this.pushSessionList(client);
+      // Not a known command — treat as regular chat message
+      this.pendingImages = [];
+      client.send({ type: 'user_message', text } as any);
+      await this.harness.promptAndSave(text).catch((err: any) => {
+        client.send({
+          type: 'error',
+          text: err instanceof Error ? err.message : String(err),
+        });
+      });
 
+      this.pushSessionList(client);
       client.send({ type: "loader", state: "hide" });
       setTimeout(() => {
         client.send({ type: "config", data: this.buildConfigData() });
@@ -1283,7 +1335,7 @@ export class WebUiBackend implements UiBackend {
   private serveSpa(req: IncomingMessage, res: ServerResponse): void {
     // Resolve web dist: try dist/web relative to project root first (for tsx/source mode),
     // then fall back to __dirname-relative (for bundled mode).
-    const projectDist = join(resolve(process.cwd()), "dist", "web");
+    const projectDist = join(resolve(this.projectRoot), "dist", "web");
     const moduleDist = join(fileURLToPath(new URL(".", import.meta.url)), "web");
     const webDist = existsSync(projectDist) ? projectDist : moduleDist;
 

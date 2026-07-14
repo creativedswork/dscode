@@ -1,9 +1,10 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import type { ImageAttachment, FileListItem } from "../types";
-import { PaperPlaneTilt, Folder, File } from "@phosphor-icons/react";
+import type { ImageAttachment, FileAttachment, FileListItem } from "../types";
+import { FileTracker } from "@dscode/shared/file-tracker";
+import { PaperPlaneTilt, Folder, File, Image, TextAlignLeft, Video, SpeakerHigh, FilePdf, Archive, X } from "@phosphor-icons/react";
 
 interface MessageInputProps {
-  onSend: (text: string, images?: ImageAttachment[]) => void;
+  onSend: (text: string, images?: ImageAttachment[], fileRefs?: string[]) => void;
   onAbort: () => void;
   onSlashCommand: (command: string) => void;
   onCommand: (cmd: { type: "file_list"; prefix: string }) => void;
@@ -11,6 +12,7 @@ interface MessageInputProps {
   slashCommands: { name: string; description: string }[];
   fileListItems: FileListItem[];
   fileListPrefix: string;
+  projectPath: string;
   viewMode?: "chat" | "dashboard";
 }
 
@@ -33,6 +35,44 @@ function isImageItem(item: DataTransferItem): boolean {
   return item.type.startsWith("image/");
 }
 
+/**
+ * Heuristic: does the captured text look like a file path
+ * rather than CJK prose? Mirrors logic from at-file-resolver.ts.
+ */
+function isLikelyFilePath(text: string): boolean {
+  if (text.includes("/") || text.includes("\\")) return true;
+  if (/\.[a-zA-Z0-9]{1,6}$/.test(text)) return true;
+  if (/[a-zA-Z0-9\-_]/.test(text)) return true;
+  return false;
+}
+
+function getFileIcon(mimeType: string) {
+  if (mimeType.startsWith("image/")) return Image;
+  if (mimeType.startsWith("text/")) return TextAlignLeft;
+  if (mimeType.startsWith("video/")) return Video;
+  if (mimeType.startsWith("audio/")) return SpeakerHigh;
+  if (mimeType === "application/pdf") return FilePdf;
+  if (mimeType.startsWith("application/zip") || mimeType.startsWith("application/x-")) return Archive;
+  return File;
+}
+
+function getFileIconFromPath(path: string) {
+  const ext = path.slice(path.lastIndexOf(".")).toLowerCase();
+  if ([".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"].includes(ext)) return Image;
+  if ([".txt", ".md", ".mdx", ".log", ".csv"].includes(ext)) return TextAlignLeft;
+  if ([".mp4", ".avi", ".mov", ".webm"].includes(ext)) return Video;
+  if ([".mp3", ".wav", ".ogg"].includes(ext)) return SpeakerHigh;
+  if (ext === ".pdf") return FilePdf;
+  if ([".zip", ".tar", ".gz", ".7z", ".rar"].includes(ext)) return Archive;
+  return File;
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 
 export function MessageInput({
   onSend,
@@ -44,9 +84,12 @@ export function MessageInput({
   fileListItems,
   fileListPrefix,
   viewMode,
+  projectPath,
 }: MessageInputProps) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<ImageAttachment[]>([]);
+  const [files, setFiles] = useState<{ absPath: string; displayPath: string }[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
   const [slashIndex, setSlashIndex] = useState(0);
@@ -58,6 +101,7 @@ export function MessageInput({
   const historyCursorRef = useRef<number>(-1);
   const draftRef = useRef<string>("");
   const isComposingRef = useRef(false);
+  const trackerRef = useRef<FileTracker>(new FileTracker());
   const MAX_HISTORY = 100;
 
   const filteredCommands = slashCommands.filter(
@@ -81,7 +125,8 @@ export function MessageInput({
 
   const handleSubmit = useCallback(() => {
     const trimmed = text.trim();
-    if (!trimmed && images.length === 0) return;
+    const fileRefs = trackerRef.current.drain();
+    if (!trimmed && images.length === 0 && fileRefs.length === 0) return;
     // Push to history if non-empty and not duplicate of last entry
     if (trimmed && historyRef.current[0] !== trimmed) {
       historyRef.current.unshift(trimmed);
@@ -90,12 +135,13 @@ export function MessageInput({
       }
     }
     historyCursorRef.current = -1;
-    onSend(trimmed, images.length > 0 ? images : undefined);
+    onSend(trimmed, images.length > 0 ? images : undefined, fileRefs.length > 0 ? fileRefs : undefined);
     setText("");
     setImages([]);
+    setFiles([]);
     setShowSlashMenu(false);
     setShowFileMenu(false);
-  }, [text, images, onSend, onSlashCommand]);
+  }, [text, images, onSend]);
 
   const navigateToDirectory = (dirPath: string) => {
     const textarea = textareaRef.current;
@@ -103,8 +149,8 @@ export function MessageInput({
 
     const cursorPos = textarea.selectionStart ?? text.length;
     const textBeforeCursor = text.slice(0, cursorPos);
-    const atMatch = textBeforeCursor.match(/(?:^|[\s])@("([^"]*)"?|([^\s]*))$/);
-    if (!atMatch) return;
+    const atMatch = textBeforeCursor.match(/(?:^|(?<![a-zA-Z0-9]))@("([^"]*)"?|([^\s]*))$/);
+    if (!atMatch || !isLikelyFilePath(atMatch[2] ?? atMatch[3] ?? "")) return;
 
     const atIdx = textBeforeCursor.lastIndexOf("@");
     if (atIdx === -1) return;
@@ -115,6 +161,7 @@ export function MessageInput({
     const newText = `${before}${newPrefix}${after}`;
     setText(newText);
     setFileFilter(dirPath + "/");
+    setShowFileMenu(true);
 
     onCommand({ type: "file_list", prefix: dirPath + "/" });
 
@@ -312,9 +359,9 @@ export function MessageInput({
 
     const cursorPos = e.target.selectionStart ?? val.length;
     const textBeforeCursor = val.slice(0, cursorPos);
-    const atMatch = textBeforeCursor.match(/(?:^|[\s])@("([^"]*)"?|([^\s]*))$/);
+    const atMatch = textBeforeCursor.match(/(?:^|(?<![a-zA-Z0-9]))@("([^"]*)"?|([^\s]*))$/);
 
-    if (atMatch) {
+    if (atMatch && isLikelyFilePath(atMatch[2] ?? atMatch[3] ?? "")) {
       setShowFileMenu(true);
       setFileFilter(atMatch[2] ?? atMatch[3] ?? "");
     } else {
@@ -354,6 +401,47 @@ export function MessageInput({
     setImages((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
+  const removeFile = useCallback((absPath: string) => {
+    trackerRef.current.remove(absPath);
+    setFiles((prev) => prev.filter((f) => f.absPath !== absPath));
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    if (processing) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+    setIsDragOver(true);
+  }, [processing]);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    if (processing) return;
+    e.preventDefault();
+    setIsDragOver(false);
+
+    const droppedFiles = e.dataTransfer.files;
+    if (droppedFiles.length === 0) return;
+
+    const tracker = trackerRef.current;
+    const newEntries: { absPath: string; displayPath: string }[] = [];
+
+    for (let i = 0; i < droppedFiles.length; i++) {
+      const file = droppedFiles[i];
+      const absPath = (file as any).path ?? file.name;
+      const displayPath = tracker.add(absPath, projectPath);
+      newEntries.push({ absPath, displayPath });
+    }
+
+    setFiles((prev) => [...prev, ...newEntries]);
+
+    requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+    });
+  }, [processing, projectPath]);
+
   const adjustHeight = () => {
     const ta = textareaRef.current;
     if (ta) {
@@ -372,9 +460,13 @@ export function MessageInput({
   return (
     <div
       className="px-4 py-3 relative"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
       style={{
         borderTop: "1px solid var(--color-border)",
-        backgroundColor: "var(--color-surface)",
+        backgroundColor: isDragOver ? "var(--color-surface-hover)" : "var(--color-surface)",
+        transition: "background-color 0.2s ease",
       }}
     >
       {/* Slash command popover */}
@@ -488,7 +580,43 @@ export function MessageInput({
         </div>
       )}
 
-      {/* Image thumbnails */}
+      {/* File chips */}
+      {files.length > 0 && (
+        <div className="flex flex-wrap gap-2 mb-2 max-w-4xl mx-auto">
+          {files.map((f) => {
+            const IconComponent = getFileIconFromPath(f.displayPath);
+            return (
+              <div
+                key={f.absPath}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm max-w-[200px]"
+                style={{
+                  border: "1px solid var(--color-border)",
+                  borderRadius: "8px",
+                  backgroundColor: "var(--color-bg)",
+                }}
+              >
+                <IconComponent size={14} weight="bold" style={{ color: "var(--color-text-muted)", flexShrink: 0 }} />
+                <span
+                  className="truncate text-xs"
+                  style={{ color: "var(--color-text)" }}
+                  title={f.displayPath}
+                >
+                  {f.displayPath}
+                </span>
+                <button
+                  onClick={() => removeFile(f.absPath)}
+                  className="flex-shrink-0 w-4 h-4 rounded text-xs flex items-center justify-center ml-0.5"
+                  style={{ color: "var(--color-text-muted)" }}
+                  title="Remove file"
+                >
+                  <X size={12} weight="bold" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2 max-w-4xl mx-auto">
           {images.map((img, i) => (
@@ -557,7 +685,7 @@ export function MessageInput({
         ) : (
           <button
             onClick={handleSubmit}
-            disabled={!text.trim() && images.length === 0}
+            disabled={!text.trim() && images.length === 0 && files.length === 0}
             className="btn-primary shrink-0"
           >
             <PaperPlaneTilt size={16} weight="bold" />

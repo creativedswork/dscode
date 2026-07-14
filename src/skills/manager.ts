@@ -1,4 +1,4 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
 
 import type { DriverRegistry } from "../drivers/registry.js";
 import type { Skill, SkillManifest } from "../core/types.js";

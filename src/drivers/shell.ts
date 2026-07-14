@@ -1,7 +1,8 @@
-import { execSync } from "node:child_process";
+import { exec } from "node:child_process";
+import { promisify } from "node:util";
 
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type } from "@mariozechner/pi-ai";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { Type } from "@earendil-works/pi-ai";
 
 const bashParams = Type.Object({
   command: Type.String({ description: "Shell command to execute" }),
@@ -15,13 +16,13 @@ export const bashTool: AgentTool<typeof bashParams> = {
   parameters: bashParams,
   executionMode: "sequential",
   execute: async (_id, { command, timeout }) => {
+    const execAsync = promisify(exec);
     const timeoutMs = timeout ?? 30000;
     try {
-      const stdout = execSync(command, {
+      const { stdout } = await execAsync(command, {
         timeout: timeoutMs,
         encoding: "utf8",
         maxBuffer: 1024 * 1024,
-        stdio: ["pipe", "pipe", "pipe"],
       });
       const output = stdout.slice(0, 10000);
       return {
@@ -31,10 +32,11 @@ export const bashTool: AgentTool<typeof bashParams> = {
     } catch (err: any) {
       const stdout = (err.stdout ?? "") as string;
       const stderr = (err.stderr ?? "") as string;
+      const exitCode = (err as any).code ?? 1;
       const output = (stdout + "\n" + stderr).trim().slice(0, 10000);
       return {
-        content: [{ type: "text", text: output || `Exit code: ${err.status ?? 1}` }],
-        details: { exitCode: err.status ?? 1, error: true },
+        content: [{ type: "text", text: output || `Exit code: ${exitCode}` }],
+        details: { exitCode, error: true },
       };
     }
   },

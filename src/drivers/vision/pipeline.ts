@@ -1,4 +1,4 @@
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import { ImageCache } from "./cache.js";
 import { ocrImages } from "./ocr.js";
 import { resolveVisionModel, describeImagesViaVisionModel } from "./client.js";

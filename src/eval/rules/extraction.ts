@@ -12,7 +12,7 @@ import { existsSync, readFileSync } from "node:fs";
 import type { HarnessAPI } from "../../core/harness-api.js";
 import { join } from "node:path";
 import { resolveModel } from "../../models/index.js";
-import { completeSimple } from "@mariozechner/pi-ai";
+import { completeSimple } from "../../models/index.js";
 import { parseSessionToSteps, type HistoryStep } from "../schemas.js";
 import { RULE_ATTRIBUTION_SYSTEM, buildStep7Prompt, buildHistorySummary, extractJSON } from "../prompts.js";
 import { safeJsonParse, validateHarnessRuleOutputs, type HarnessRuleOutput } from "../schemas.js";

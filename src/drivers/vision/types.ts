@@ -1,4 +1,4 @@
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { ImageRef } from "../../session/types.js";
 import type { VisionConfig } from "../../core/types.js";
 

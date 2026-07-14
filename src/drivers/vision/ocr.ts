@@ -1,5 +1,5 @@
 import { createWorker, Worker } from "tesseract.js";
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { ImageContent } from "@earendil-works/pi-ai";
 
 let worker: Worker | null = null;
 

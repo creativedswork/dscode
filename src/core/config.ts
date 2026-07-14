@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
-import { getEnvApiKey } from "@mariozechner/pi-ai";
+import { getEnvApiKey } from "../models/index.js";
 
 export const PROVIDER_ENV_VARS: Record<string, string> = {
   deepseek: "DEEPSEEK_API_KEY",
@@ -41,6 +41,14 @@ export function userSettingsPath(): string {
 
 export function projectSettingsPath(projectPath: string): string {
   return join(projectPath, ".dscode", "settings.json");
+}
+
+export function userMcpPath(): string {
+  return join(homedir(), ".mcp.json");
+}
+
+export function projectMcpPath(projectPath: string): string {
+  return join(projectPath, ".mcp.json");
 }
 
 function loadJsonSafe(path: string): Record<string, unknown> {
@@ -137,6 +145,98 @@ function loadAgentsMd(projectPath: string): string | undefined {
   }
 }
 
+/** Parse raw MCP server entries into MCPServerConfig array */
+export function parseMcpServers(raw: unknown[]): MCPServerConfig[] {
+  return raw
+    .filter((s: any) => s && typeof s === "object" && typeof s.name === "string")
+    .map((s: any) => {
+      const hasCommand = typeof s.command === "string" && s.command.length > 0;
+      const hasUrl = typeof s.url === "string" && s.url.length > 0;
+      const transport = normalizeTransport(s.transport ?? s.type, hasCommand, hasUrl);
+      return {
+        name: s.name,
+        description: s.description,
+        transport,
+        command: s.command,
+        args: s.args,
+        url: s.url,
+        env: s.env,
+        headers: s.headers,
+        preferredProtocolVersion: normalizeProtocolVersion(s.preferredProtocolVersion ?? s.protocolVersion),
+        allowLegacySseFallback: s.allowLegacySseFallback !== false,
+        requestTimeoutMs: typeof s.requestTimeoutMs === "number" ? s.requestTimeoutMs : undefined,
+        connectTimeoutMs: typeof s.connectTimeoutMs === "number" ? s.connectTimeoutMs : undefined,
+      };
+    });
+}
+
+/** Deep-merge mcpServers objects by server name */
+function deepMergeMcpServers(
+  base: Record<string, Record<string, unknown>>,
+  overlay: Record<string, Record<string, unknown>>,
+): Record<string, Record<string, unknown>> {
+  const result = { ...base };
+  for (const [name, cfg] of Object.entries(overlay)) {
+    result[name] = { ...(result[name] ?? {}), ...cfg };
+  }
+  return result;
+}
+
+/**
+ * Load MCP server configs from .mcp.json files, with settings.json fallback.
+ * Priority: project .mcp.json > user .mcp.json > settings.json (deprecated)
+ */
+export function loadMcpServers(
+  userSettings: Record<string, unknown>,
+  projectSettings: Record<string, unknown>,
+  projectPath: string,
+): { servers: MCPServerConfig[]; migrated: boolean } {
+  const userMcp = loadJsonSafe(userMcpPath());
+  const projectMcp = loadJsonSafe(projectMcpPath(projectPath));
+  const hasMcpJson = Object.keys(userMcp).length > 0 || Object.keys(projectMcp).length > 0;
+
+  // Build merged mcpServers from .mcp.json files
+  const userMcpServers = (userMcp.mcpServers as Record<string, Record<string, unknown>>) ?? {};
+  const projectMcpServers = (projectMcp.mcpServers as Record<string, Record<string, unknown>>) ?? {};
+  const mergedMcpServers = deepMergeMcpServers(userMcpServers, projectMcpServers);
+
+  let raw: unknown[] = [];
+  for (const [name, cfg] of Object.entries(mergedMcpServers)) {
+    raw.push({ name, ...cfg });
+  }
+
+  if (raw.length > 0) {
+    return { servers: parseMcpServers(raw), migrated: true };
+  }
+
+  // Fallback: load from settings.json (deprecated)
+  const merged = { ...userSettings, ...projectSettings };
+
+  let mcpServersRaw: unknown[] = [];
+  const mcpConfig = (merged.mcp as Record<string, unknown>) ?? {};
+  if (Array.isArray(mcpConfig.servers)) {
+    mcpServersRaw.push(...(mcpConfig.servers as unknown[]));
+  }
+  const mcpObj = merged.mcpServers as Record<string, Record<string, unknown>> | undefined;
+  if (mcpObj && typeof mcpObj === "object" && !Array.isArray(mcpObj)) {
+    for (const [name, cfg] of Object.entries(mcpObj)) {
+      mcpServersRaw.push({ name, ...cfg });
+    }
+  }
+
+  if (mcpServersRaw.length > 0) {
+    // Only warn if .mcp.json doesn't exist (user hasn't migrated yet)
+    if (!hasMcpJson) {
+      process.stderr.write(
+        "⚠ MCP config found in settings.json is deprecated. Please migrate to .mcp.json\n",
+      );
+    }
+    return { servers: parseMcpServers(mcpServersRaw), migrated: false };
+  }
+
+  return { servers: [], migrated: hasMcpJson };
+}
+
 export function loadConfig(cliCwd?: string): HarnessConfig {
   const startupPath = resolve(cliCwd ?? process.env.DSCODE_PROJECT_PATH ?? process.cwd());
   const configDir = dsConfigHome();
@@ -200,6 +300,8 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
 
   const userSkillsDir = join(configDir, "skills");
   const projectSkillsDir = join(projectPath, ".dscode", "skills");
+  const userCommandsDir = join(configDir, "commands");
+  const projectCommandsDir = join(projectPath, ".dscode", "commands");
   const defaultThinkingLevel: ThinkingLevel = getThinkingLevel(provider, modelId);
   const validThinkingLevels = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
   const rawThinkingLevel = process.env.AGENT_THINKING_LEVEL ?? userConfig.thinkingLevel ?? merged.thinkingLevel;
@@ -230,43 +332,8 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
     retryOnServerError: retryFromEnv.retryOnServerError ?? (mergedRetry.retryOnServerError as boolean) ?? true,
   };
 
-  // load MCP server configs from both formats:
-  // 1) { mcp: { servers: [{name, command, args, cwd, ...}] } }  (legacy array)
-  // 2) { mcpServers: { "name": {command, args, cwd, ...} } }    (object with named keys)
-  let mcpServersRaw: unknown[] = [];
-
-  const mcpConfig = (merged.mcp as Record<string, unknown>) ?? {};
-  if (Array.isArray(mcpConfig.servers)) {
-    mcpServersRaw.push(...(mcpConfig.servers as unknown[]));
-  }
-
-  const mcpObj = merged.mcpServers as Record<string, Record<string, unknown>> | undefined;
-  if (mcpObj && typeof mcpObj === "object" && !Array.isArray(mcpObj)) {
-    for (const [name, cfg] of Object.entries(mcpObj)) {
-      mcpServersRaw.push({ name, ...cfg });
-    }
-  }
-
-  const mcp: MCPServerConfig[] = mcpServersRaw.map((s: any) => {
-    const hasCommand = typeof s.command === "string" && s.command.length > 0;
-    const hasUrl = typeof s.url === "string" && s.url.length > 0;
-    const transport = normalizeTransport(s.transport ?? s.type, hasCommand, hasUrl);
-
-    return {
-      name: s.name,
-      description: s.description,
-      transport,
-      command: s.command,
-      args: s.args,
-      url: s.url,
-      env: s.env,
-      headers: s.headers,
-      preferredProtocolVersion: normalizeProtocolVersion(s.preferredProtocolVersion ?? s.protocolVersion),
-      allowLegacySseFallback: s.allowLegacySseFallback !== false,
-      requestTimeoutMs: typeof s.requestTimeoutMs === "number" ? s.requestTimeoutMs : undefined,
-      connectTimeoutMs: typeof s.connectTimeoutMs === "number" ? s.connectTimeoutMs : undefined,
-    };
-  });
+  // load MCP server configs from .mcp.json (preferred) or settings.json (deprecated fallback)
+  const { servers: mcp } = loadMcpServers(userSettings, projectSettings, projectPath);
 
   return {
     provider,
@@ -278,6 +345,8 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
     projectPath,
     configDir,
     dataDir,
+    userCommandsDir,
+    projectCommandsDir,
     userSkillsDir,
     projectSkillsDir,
     context: {
@@ -303,6 +372,7 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
       maxFiles: (merged.atFileMaxFiles as number) ?? 5,
       maxFileSize: (merged.atFileMaxFileSize as number) ?? 50 * 1024,
       maxTotalSize: (merged.atFileMaxTotalSize as number) ?? 200 * 1024,
+      maxImageSize: (merged.atFileMaxImageSize as number) ?? 20 * 1024 * 1024,
     },
     agentsMdContent: loadAgentsMd(projectPath),
     vision,

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import type { Particle, ImpactRing, Shard } from "../animation/types";
+import type { Particle, ImpactRing, Shard, TimestampEntry } from "../animation/types";
 
 interface TransitionCanvasProps {
   artifactReady: boolean;
@@ -58,6 +58,9 @@ interface AnimationState {
   breathPhase: number;
   // ── Color map ──
   letterColorMap: Record<string, string>;
+  // ── Timestamp dissolution ──
+  timestamps: TimestampEntry[];
+  dissolvedTimestampEls: Set<HTMLElement>;
 }
 
 interface ThemeColors {
@@ -324,34 +327,37 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       return rows;
     }
 
-    // ── Hide off-screen colliders to prevent ghost elements ──
-    function hideOffscreenColliders(): void {
-      const all = container.querySelectorAll<HTMLElement>("[data-collider]");
+    // ── Timestamp list builder ──
+    function buildTimestampList(): TimestampEntry[] {
+      const all = container.querySelectorAll<HTMLElement>(".meta");
       const canvasRect = canvas!.getBoundingClientRect();
+      const entries: TimestampEntry[] = [];
+
       all.forEach((el) => {
-        if (el.querySelector("[data-collider]")) return;
+        // Skip timestamps nested inside [data-collider] elements (e.g. inside cards)
+        if (el.closest("[data-collider]")) return;
         if (!el.textContent?.trim()) return;
+
         const rect = el.getBoundingClientRect();
         const top = rect.top - canvasRect.top;
         const bottom = top + rect.height;
-        if (top >= H || bottom <= 0) {
-          el.style.opacity = "0";
-          el.style.transition = "none";
-        }
 
-        // ── Inner scroll clip: hide rows clipped by overflow-y ancestors ──
-        // Prevents ghost rows from briefly appearing when scrollTop is
-        // restored after a strike inside a scrollable container.
-        const innerSa = findScrollAncestor(el);
-        if (innerSa) {
-          const saRect = innerSa.getBoundingClientRect();
-          if (rect.bottom <= saRect.top || rect.top >= saRect.bottom) {
-            el.style.opacity = "0";
-            el.style.transition = "none";
-          }
-        }
+        // Visibility filter
+        if (top >= H || bottom <= 0) return;
+
+        entries.push({
+          el,
+          top,
+          left: rect.left - canvasRect.left,
+          width: rect.width,
+          height: rect.height,
+          dissolved: false,
+        });
       });
+
+      return entries;
     }
+
 
     // ── Initialize state ──
     const s: AnimationState = {
@@ -387,6 +393,8 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       scaleY: 1,
       breathPhase: 0,
       letterColorMap,
+      timestamps: [],
+      dissolvedTimestampEls: new Set(),
     };
     stateRef.current = s;
 
@@ -451,12 +459,34 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
 
     function destroyTextLine(el: HTMLElement): void {
       const text = el.textContent || "";
+
+      // Empty line — skip clone, just fade
+      if (text.trim() === "") {
+        el.style.opacity = "0";
+        return;
+      }
+
       if (text.length > 80) {
         spawnParticles(el);
         return;
       }
+
+      // Hide original children (preserve layout)
+      for (const child of Array.from(el.children)) {
+        (child as HTMLElement).style.visibility = "hidden";
+      }
+
+      // Clone content into absolute overlay
+      const clone = el.cloneNode(true) as HTMLElement;
+      clone.innerHTML = "";
+      clone.style.position = "absolute";
+      clone.style.top = "0";
+      clone.style.left = "0";
+      clone.style.pointerEvents = "none";
+      el.style.position = "relative";
+      el.style.overflow = "visible";
+
       const chars = [...text];
-      el.innerHTML = "";
       const style = document.createElement("style");
       const styleId = `char-scatter-${Date.now()}`;
       style.id = styleId;
@@ -475,10 +505,14 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         span.style.setProperty("--sy", `${rand(-80, 20)}px`);
         span.style.setProperty("--sr", `${rand(-180, 180)}deg`);
         span.style.animation = "charScatter 400ms ease-out forwards";
-        el.appendChild(span);
+        clone.appendChild(span);
       });
+
+      el.appendChild(clone);
+
       setTimeout(() => {
         el.style.opacity = "0";
+        clone.remove();
         if (document.getElementById(styleId)) {
           document.getElementById(styleId)!.remove();
         }
@@ -489,15 +523,31 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       const originalText = el.textContent || "";
       const chars = [...originalText];
 
+      // Hide original children (preserve layout)
+      for (const child of Array.from(el.children)) {
+        (child as HTMLElement).style.visibility = "hidden";
+      }
+
+      // Clone content into absolute overlay
+      const clone = el.cloneNode(true) as HTMLElement;
+      clone.innerHTML = "";
+      clone.textContent = originalText;
+      clone.style.position = "absolute";
+      clone.style.top = "0";
+      clone.style.left = "0";
+      clone.style.pointerEvents = "none";
+      el.style.position = "relative";
+      el.style.overflow = "visible";
+
       function corrupt(ratio: number, jitter: number): void {
         const result = chars.map((ch, i) => {
           if (ch === " " || ch === "\n") return ch;
           if (Math.random() < ratio) return "▓";
           return ch;
         });
-        el.textContent = result.join("");
+        clone.textContent = result.join("");
         if (jitter > 0) {
-          el.style.transform = `translateX(${rand(-jitter, jitter)}px)`;
+          clone.style.transform = `translateX(${rand(-jitter, jitter)}px)`;
         }
       }
 
@@ -505,9 +555,16 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       setTimeout(() => corrupt(0.6, 8), 40);
       setTimeout(() => {
         corrupt(1.0, 4);
-        el.style.transition = "opacity 200ms ease-out";
-        el.style.opacity = "0";
+        clone.style.transition = "opacity 200ms ease-out";
+        clone.style.opacity = "0";
       }, 80);
+
+      el.appendChild(clone);
+
+      setTimeout(() => {
+        el.style.opacity = "0";
+        clone.remove();
+      }, 400);
     }
 
     function destroyToolCard(el: HTMLElement, impactX: number, impactY: number): void {
@@ -585,7 +642,22 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
     function destroyToolHeader(el: HTMLElement): void {
       const text = el.textContent || "";
       const chars = [...text];
-      el.innerHTML = "";
+
+      // Hide original children (preserve layout)
+      for (const child of Array.from(el.children)) {
+        (child as HTMLElement).style.visibility = "hidden";
+      }
+
+      // Clone content into absolute overlay
+      const clone = el.cloneNode(true) as HTMLElement;
+      clone.innerHTML = "";
+      clone.style.position = "absolute";
+      clone.style.top = "0";
+      clone.style.left = "0";
+      clone.style.pointerEvents = "none";
+      el.style.position = "relative";
+      el.style.overflow = "visible";
+
       const styleId = `th-scatter-${Date.now()}`;
       const style = document.createElement("style");
       style.id = styleId;
@@ -604,10 +676,14 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         span.style.setProperty("--sy", `${rand(-60, 10)}px`);
         span.style.setProperty("--sr", `${rand(-180, 180)}deg`);
         span.style.animation = "thScatter 350ms ease-out forwards";
-        el.appendChild(span);
+        clone.appendChild(span);
       });
+
+      el.appendChild(clone);
+
       setTimeout(() => {
         el.style.opacity = "0";
+        clone.remove();
         if (document.getElementById(styleId)) {
           document.getElementById(styleId)!.remove();
         }
@@ -621,8 +697,23 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         spawnParticles(el);
         return;
       }
+
+      // Hide original children (preserve layout)
+      for (const child of Array.from(el.children)) {
+        (child as HTMLElement).style.visibility = "hidden";
+      }
+
+      // Clone content into absolute overlay
+      const clone = el.cloneNode(true) as HTMLElement;
+      clone.innerHTML = "";
+      clone.style.position = "absolute";
+      clone.style.top = "0";
+      clone.style.left = "0";
+      clone.style.pointerEvents = "none";
+      el.style.position = "relative";
+      el.style.overflow = "visible";
+
       const chars = [...text];
-      el.innerHTML = "";
       const styleId = `trl-scatter-${Date.now()}`;
       const style = document.createElement("style");
       style.id = styleId;
@@ -641,16 +732,19 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         span.style.setProperty("--sy", `${rand(-60, 10)}px`);
         span.style.setProperty("--sr", `${rand(-120, 120)}deg`);
         span.style.animation = "trlScatter 300ms ease-out forwards";
-        el.appendChild(span);
+        clone.appendChild(span);
       });
+
+      el.appendChild(clone);
+
       setTimeout(() => {
         el.style.opacity = "0";
+        clone.remove();
         if (document.getElementById(styleId)) {
           document.getElementById(styleId)!.remove();
         }
       }, 330);
     }
-
     function destroyByType(el: HTMLElement, impactX: number, impactY: number): void {
       const type = el.getAttribute("data-collider");
       switch (type) {
@@ -671,6 +765,9 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
           break;
         case "message-card":
           destroyMessageCard(el);
+          break;
+        case "thinking-block":
+          destroyThinkingBlock(el);
           break;
         case "table-cell":
           destroyTextLine(el);
@@ -719,8 +816,8 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         if (candidate.struck) { nextIndex++; continue; }
         const candidateRect = candidate.el.getBoundingClientRect();
         const candidateTop = candidateRect.top - canvasRect.top;
-        // Skip rows shifted above current row, entirely above viewport, or candidate is above canvas
-        if (candidateTop < liveCurrentTop || candidateRect.bottom - canvasRect.top <= 0 || candidateTop < 0) { nextIndex++; continue; }
+        // Skip rows shifted above current row or entirely above viewport
+        if (candidateTop < liveCurrentTop || candidateRect.bottom - canvasRect.top <= 0) { nextIndex++; continue; }
         nextRow = candidate;
         c.nextRowIndex = nextIndex;
         liveNextTop = candidateTop;
@@ -745,6 +842,126 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       c.hopState = "hopping";
     }
 
+    // ── Recursive parent container cleanup ──
+    // Walks up the DOM tree checking each ancestor container (tool-card, message-card).
+    // When all children of a container are struck or hidden, cleanup that container
+    // and continue upward. Stops when a container still has unstruck children.
+    function cleanupParents(el: HTMLElement): void {
+      let current: HTMLElement | null = el.parentElement;
+      while (current) {
+        const type = current.getAttribute("data-collider");
+        if (type !== "tool-card" && type !== "message-card") {
+          current = current.parentElement;
+          continue;
+        }
+        const children = current.querySelectorAll<HTMLElement>("[data-collider]");
+        const allDone = [...children].every((child) => {
+          const childRow = s.rows.find((r) => r.el === child);
+          if (childRow && !childRow.struck) return false;
+          return true;
+        });
+        if (!allDone) break;
+        spawnParticles(current);
+        current.style.transition = "opacity 200ms ease-out";
+        current.style.opacity = "0";
+        current = current.parentElement;
+      }
+    }
+
+
+
+
+
+    // ── Timestamp dissolution ──
+
+    const PROXIMITY_THRESHOLD = 60;
+
+    function dissolveTimestamp(entry: TimestampEntry): void {
+      if (entry.dissolved) return;
+      entry.dissolved = true;
+      s.dissolvedTimestampEls.add(entry.el);
+
+      const canvasRect = canvas!.getBoundingClientRect();
+      const rect = entry.el.getBoundingClientRect();
+      const rx = rect.left - canvasRect.left;
+      const ry = rect.top - canvasRect.top;
+      const text = entry.el.textContent || "";
+      const chars = [...text];
+
+      // Find the "·" separator index
+      const sepIdx = chars.indexOf("·");
+
+      // Estimate character width for particle spread
+      const charWidth = entry.width / Math.max(chars.length, 1);
+
+      chars.forEach((ch, i) => {
+        if (ch === " ") return;
+        const cx = rx + i * charWidth + charWidth / 2;
+        const cy = ry + entry.height / 2;
+        const count = randInt(2, 3);
+
+        for (let j = 0; j < count; j++) {
+          s.particles.push({
+            x: cx + rand(-charWidth * 0.3, charWidth * 0.3),
+            y: cy + rand(-entry.height * 0.3, entry.height * 0.3),
+            vx: rand(-2, 2),
+            vy: rand(-4, -1),
+            size: rand(1, 3),
+            color: sepIdx >= 0 && i >= sepIdx ? colors.textMuted : colors.accent,
+            phase: "fall",
+            life: randInt(400, 600),
+          });
+        }
+      });
+
+      // Fade the DOM element
+      entry.el.style.transition = "opacity 300ms ease-out";
+      entry.el.style.opacity = "0";
+    }
+
+    function checkTimestampProximity(): void {
+      const c = s.cluster;
+      const clusterY = c.y;
+
+      for (const entry of s.timestamps) {
+        if (entry.dissolved) continue;
+        const centerY = entry.top + entry.height / 2;
+        if (Math.abs(clusterY - centerY) < PROXIMITY_THRESHOLD) {
+          dissolveTimestamp(entry);
+        }
+      }
+    }
+
+    function destroyThinkingBlock(el: HTMLElement): void {
+      const canvasRect = canvas!.getBoundingClientRect();
+      const rect = el.getBoundingClientRect();
+      const rx = rect.left - canvasRect.left;
+      const ry = rect.top - canvasRect.top;
+      const rw = rect.width;
+      const rh = rect.height;
+
+      // Gentle particles from the text region
+      const count = randInt(15, 25);
+      for (let i = 0; i < count; i++) {
+        const px = rx + rand(0, rw);
+        const py = ry + rand(rh * 0.3, rh * 0.9);
+        s.particles.push({
+          x: px,
+          y: py,
+          vx: rand(-1.5, 1.5),
+          vy: rand(-3, -1),
+          size: rand(1, 2),
+          color: py < ry + rh * 0.4 ? colors.accent : colors.textMuted,
+          phase: "fall",
+          life: randInt(600, 1000),
+        });
+      }
+
+      // Fade the entire block
+      el.style.transition = "opacity 300ms ease-out";
+      el.style.opacity = "0";
+    }
+
     function strikeRow(): void {
       const c = s.cluster;
       if (c.rowIndex < 0 || c.rowIndex >= s.rows.length) return;
@@ -752,65 +969,14 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       if (row.struck) return;
 
       row.struck = true;
-      // Snapshot row top before any DOM mutation or layout freeze.
-      // ── Position compensation for inline → inline-block shift ──
-      // Snapshot the element's pre-mutation visual position, then measure
-      // the delta after layout freeze. Apply a compensating transform so
-      // the element stays visually pinned regardless of browser reflow.
-      const preFreezeCanvasRect = canvas!.getBoundingClientRect();
-      const preFreezeRect = row.el.getBoundingClientRect();
-      const preFreezeTop = preFreezeRect.top - preFreezeCanvasRect.top;
-      const preFreezeLeft = preFreezeRect.left - preFreezeCanvasRect.left;
-      console.log("[dscode] strikeRow preFreezeTop:", preFreezeTop, "row.top:", row.top, "c.y:", c.y);
 
       // Impact effects — distributed across all six letters
       const impactX = row.landingX;
       const impactY = row.top + row.height * 0.35;
 
       row.el.style.transition = "none";
-      row.el.style.backgroundColor = "rgba(255,255,255,0.85)";
-      row.el.style.boxShadow = "0 0 20px rgba(255,255,255,0.6)";
-
-      // Lock layout before DOM mutation to prevent cascade drift
-      // Freeze all box-model properties: display, height, margins, padding, line-height
-      const cs = getComputedStyle(row.el);
-      if (cs.display === "inline") {
-        row.el.style.display = "inline-block";
-        row.el.style.verticalAlign = cs.verticalAlign || "baseline";
-      }
-      row.el.style.boxSizing = "border-box";
-      row.el.style.height = row.height + "px";
-      row.el.style.marginTop = cs.marginTop;
-      row.el.style.marginBottom = cs.marginBottom;
-      row.el.style.paddingTop = cs.paddingTop;
-      row.el.style.paddingBottom = cs.paddingBottom;
-      row.el.style.lineHeight = cs.lineHeight;
-
-      // Measure position delta caused by layout freeze and compensate
-      const postFreezeCanvasRect = canvas!.getBoundingClientRect();
-      const postFreezeRect = row.el.getBoundingClientRect();
-      const postFreezeTop = postFreezeRect.top - postFreezeCanvasRect.top;
-      const postFreezeLeft = postFreezeRect.left - postFreezeCanvasRect.left;
-      const compensateDy = preFreezeTop - postFreezeTop;
-      const compensateDx = preFreezeLeft - postFreezeLeft;
-      console.log("[dscode] strikeRow compensate dy:", compensateDy, "dx:", compensateDx);
-
-      // ── Snapshot inner scroll container position before DOM mutation ──
-      // Inner overflow-y: auto/scroll containers (e.g., ToolCard max-h-40) can
-      // drift their scrollTop when child content is destroyed via innerHTML
-      // replacement, causing hidden content to float up. Snapshot and restore.
-      const innerScrollAncestor = findScrollAncestor(row.el);
-      const innerScrollTop = innerScrollAncestor ? innerScrollAncestor.scrollTop : 0;
-      console.log("[dscode] strikeRow innerScrollTop snapshot:", innerScrollTop, "ancestor:", innerScrollAncestor?.tagName);
-
-
-      destroyByType(row.el, impactX, impactY);
-
-      // Restore inner scroll position to prevent cumulative drift
-      if (innerScrollAncestor && innerScrollAncestor.scrollTop !== innerScrollTop) {
-        console.log("[dscode] strikeRow restoring innerScrollTop from", innerScrollAncestor.scrollTop, "to", innerScrollTop);
-        innerScrollAncestor.scrollTop = innerScrollTop;
-      }
+      // ── Recursive parent container cleanup ──
+      cleanupParents(row.el);
 
       requestAnimationFrame(() => {
         row.el.style.transition =
@@ -824,10 +990,8 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
 
       const dx = rand(-8, 8);
       const dy = rand(-4, 2);
-      // Apply shake + position compensation from layout freeze
-      row.el.style.transform = `translate(${compensateDx + dx}px, ${compensateDy + dy}px)`;
+      row.el.style.transform = `translate(${dx}px, ${dy}px)`;
       row.el.style.transition += ", transform 120ms ease-out";
-      console.log("[dscode] strikeRow final transform:", `translate(${compensateDx + dx}px, ${compensateDy + dy}px)`, "compensateDy:", compensateDy);
 
       for (const offset of CLUSTER_OFFSETS) {
         const lx = c.x + offset.ox;
@@ -836,43 +1000,14 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         spawnImpactFragments(lx, ly, color);
       }
 
-      // ── Cleanup parent container if all children struck ──
-      const parentCard = row.el.closest<HTMLElement>(
-        '[data-collider="tool-card"], [data-collider="message-card"]'
-      );
-      if (parentCard) {
-        const siblings = parentCard.querySelectorAll<HTMLElement>("[data-collider]");
-        const allStruck = [...siblings].every((child) => {
-          const childRow = s.rows.find((r) => r.el === child);
-          return !childRow || childRow.struck === true;
-        });
-        if (allStruck) {
-          spawnParticles(parentCard);
-          parentCard.style.transition = "opacity 200ms ease-out";
-          parentCard.style.opacity = "0";
-        }
-      }
-
-      // ── Recalibrate all row positions after DOM mutation ──
-      // DOM destruction (innerHTML replacement, scatter spans) can cause
-      // subtle layout shifts even with height locking, especially when
-      // <span> elements contain block children (invalid nesting triggers
-      // browser block-in-inline splitting). Re-measure unstruck rows — the
-      // struck row uses the pre-freeze snapshot instead.
+      // ── Recalibrate all row positions ──
+      // With clone+overlay, DOM is not mutated, so live positions remain accurate.
+      // Re-measure all rows (including struck) for correctness.
       {
         const canvasRect = canvas!.getBoundingClientRect();
 
-        // Use pre-freeze snapshot (adjusted to current canvas position) for struck row.
-        // preFreezeTop was measured before DOM mutation; canvas may have shifted since.
-        const canvasShiftY = preFreezeCanvasRect.top - canvasRect.top;
-        row.top = preFreezeTop + canvasShiftY;
-        c.y = preFreezeTop + canvasShiftY;
-        console.log("[dscode] strikeRow canvasShiftY:", canvasShiftY, "preFreezeTop:", preFreezeTop, "adjustedTop:", preFreezeTop + canvasShiftY);
-
-        // Re-measure all remaining unstruck rows
         for (let i = 0; i < s.rows.length; i++) {
           const r = s.rows[i];
-          if (r.struck) continue;
           const rect = r.el.getBoundingClientRect();
           r.top = rect.top - canvasRect.top;
           r.left = rect.left - canvasRect.left;
@@ -892,6 +1027,7 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         }
       }
     }
+
 
     // ── Phase updates ──
 
@@ -1004,6 +1140,11 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         }
       }
 
+
+      // ── Timestamp proximity check (hop and dwell only) ──
+      if (c.hopState === "hopping" || c.hopState === "dwell") {
+        checkTimestampProximity();
+      }
       // Update cascade particles (life + off-screen removal, no floor bounce)
       const toRemove: Particle[] = [];
       for (const p of s.particles) {
@@ -1304,7 +1445,9 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
 
       // ── Initialize cascade ──
       s.rows = buildRowList();
-      hideOffscreenColliders();
+
+      s.timestamps = buildTimestampList();
+      console.log("[dscode] timestamps:", s.timestamps.length);
 
       // Init cluster
       s.cluster.x = W / 2;

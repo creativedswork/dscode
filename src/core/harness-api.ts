@@ -1,11 +1,12 @@
-import type { Agent } from "@mariozechner/pi-agent-core";
-import type { ImageContent } from "@mariozechner/pi-ai";
+import type { Agent } from "@earendil-works/pi-agent-core";
+import type { ImageContent } from "@earendil-works/pi-ai";
 import type { SessionManager } from "../session/manager.js";
 import type { ContextManager } from "../context/manager.js";
 import type { MemoryManager } from "../memory/manager.js";
 import type { DriverRegistry } from "../drivers/registry.js";
 import type { ToolRegistry } from "../drivers/tool-registry.js";
 import type { SkillManager } from "../skills/manager.js";
+import type { CommandManager } from "../commands/manager.js";
 import type { PermissionManager } from "../permissions/manager.js";
 import type { MCPManager } from "../mcp/manager.js";
 import type { HarnessConfig } from "./types.js";
@@ -23,6 +24,7 @@ export interface HarnessAPI {
   readonly sessionManager: SessionManager;
   readonly memoryManager: MemoryManager;
   readonly driverRegistry: DriverRegistry;
+  readonly commandManager: CommandManager;
   readonly toolRegistry: ToolRegistry;
   readonly skillManager: SkillManager;
   readonly permissionManager: PermissionManager;

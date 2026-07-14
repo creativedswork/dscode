@@ -1,12 +1,12 @@
 import { readFileSync, existsSync, statSync, readdirSync } from "node:fs";
-import { join, relative, resolve, sep, basename } from "node:path";
+import { join, relative, resolve, sep, basename, isAbsolute } from "node:path";
 
 export interface AtFileLimits {
   maxFiles: number;
   maxFileSize: number;
   maxTotalSize: number;
+  maxImageSize: number;
 }
-
 export interface AtFileWarning {
   type: "not_found" | "binary_skipped" | "truncated" | "too_many_files" | "total_truncated" | "path_escape";
   path?: string;
@@ -22,11 +22,13 @@ export interface AtFileResolveResult {
   text: string;
   warnings: AtFileWarning[];
   images: ImageRef[];
+  reject: boolean;
 }
 
 const DEFAULT_LIMITS: AtFileLimits = {
   maxFiles: 5,
   maxFileSize: 50 * 1024,
+  maxImageSize: 20 * 1024 * 1024,
   maxTotalSize: 200 * 1024,
 };
 
@@ -107,6 +109,10 @@ const MAX_WALK_FILES = 5000;
 // ── Path safety ──
 
 function safeResolveWithin(projectPath: string, relPath: string): string | null {
+  // Accept absolute paths that point to existing files (for drag-and-drop from outside the project)
+  if (isAbsolute(relPath) && existsSync(relPath)) {
+    return relPath;
+  }
   const resolved = resolve(projectPath, relPath);
   const projectRoot = resolve(projectPath) + sep;
   if (!resolved.startsWith(projectRoot) && resolved !== resolve(projectPath)) {
@@ -151,17 +157,55 @@ function inferLanguage(filePath: string): string {
   return LANG_MAP[ext] ?? "";
 }
 
-const AT_FILE_RE = /(?<!\S)@([^\s@]+)/g;
+/**
+ * Heuristic: does the captured text look like a file path
+ * rather than CJK prose? A capture is treated as a path if it:
+ *   - contains a path separator (/ or \), or
+ *   - contains a dot followed by 1-6 alphanumeric chars (file extension), or
+ *   - contains any ASCII alphanumeric, '-', or '_' (not pure CJK)
+ */
+function isLikelyFilePath(text: string): boolean {
+  // Has path separator
+  if (text.includes("/") || text.includes("\\")) return true;
+  // Has file extension pattern
+  if (/\.[a-zA-Z0-9]{1,6}$/.test(text)) return true;
+  // Contains at least one ASCII alphanumeric or common path char
+  if (/[a-zA-Z0-9\-_]/.test(text)) return true;
+  // Pure CJK without any path indicator → not a path
+  return false;
+}
+
+
+/**
+ * Simple regex to find all @sequences (without prefix check — prefix
+ * validation is done in extractAtPaths to avoid tsx transpiler issues).
+ */
+const AT_RE = /@([^\s@]+)/g;
+
+function isValidAtPrefix(ch: string | undefined): boolean {
+  if (ch === undefined) return true; // start of string
+  if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r") return true;
+  // Non-ASCII characters (CJK, punctuation, etc.) are valid prefixes
+  if (ch.charCodeAt(0) > 127) return true;
+  // Latin letters and digits are NOT valid prefixes (prevent abc@ref)
+  if (/[a-zA-Z0-9]/.test(ch)) return false;
+  // Other ASCII: punctuation, symbols — allow
+  return true;
+}
 
 function extractAtPaths(text: string): string[] {
   const paths: string[] = [];
   let match: RegExpExecArray | null;
-  while ((match = AT_FILE_RE.exec(text)) !== null) {
-    paths.push(match[1]);
+  while ((match = AT_RE.exec(text)) !== null) {
+    const prevChar = match.index > 0 ? text[match.index - 1] : undefined;
+    if (!isValidAtPrefix(prevChar)) continue;
+    const captured = match[1];
+    if (isLikelyFilePath(captured)) {
+      paths.push(captured);
+    }
   }
   return paths;
 }
-
 export function resolveAtFileRefs(
   projectPath: string,
   text: string,
@@ -173,7 +217,7 @@ export function resolveAtFileRefs(
   const atPaths = extractAtPaths(text);
 
   if (atPaths.length === 0) {
-    return { text, warnings, images };
+    return { text, warnings, images, reject: false };
   }
 
   const resolvedPaths: string[] = [];
@@ -210,23 +254,17 @@ export function resolveAtFileRefs(
         warnings.push({ type: "not_found", path: relPath });
         continue;
       }
-      if (buf.length > resolvedLimits.maxFileSize) {
-        warnings.push({ type: "truncated", path: relPath, detail: `Image exceeds ${resolvedLimits.maxFileSize} bytes, skipped` });
-        continue;
+      if (buf.length > resolvedLimits.maxImageSize) {
+        warnings.push({ type: "truncated", path: relPath, detail: `Image exceeds ${resolvedLimits.maxImageSize} bytes` });
+        return { text, warnings, images, reject: true };
       }
-      const remainingTotal = resolvedLimits.maxTotalSize - totalContentSize;
-      if (buf.length > remainingTotal) {
-        warnings.push({ type: "total_truncated", detail: `Skipping @${relPath}: total size limit reached` });
-        break;
-      }
-      totalContentSize += buf.length;
       images.push({
         data: buf.toString("base64"),
         mimeType: imageMimeType(relPath),
       });
       // Replace @path with an image indicator in the text
       const escapedPath = relPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const pathRegex = new RegExp(`(?<!\\S)@${escapedPath}(?!\\S)`, "g");
+      const pathRegex = new RegExp(`(?:^|(?<![a-zA-Z0-9]))@${escapedPath}(?!\\S)`, "g");
       text = text.replace(pathRegex, `[Image: @${relPath}]`);
       continue;
     }
@@ -277,11 +315,149 @@ export function resolveAtFileRefs(
     const block = `\`${relPath}\`:\n\`\`\`${langTag}\n${content}${truncNote}\n\`\`\``;
 
     const escapedPath = relPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const pathRegex = new RegExp(`(?<!\\S)@${escapedPath}(?!\\S)`, "g");
+    const pathRegex = new RegExp(`(?:^|(?<![a-zA-Z0-9]))@${escapedPath}(?!\\S)`, "g");
     text = text.replace(pathRegex, block);
   }
 
-  return { text, warnings, images };
+  return { text, warnings, images, reject: false };
+}
+
+
+// ── Shared internal file path resolver ──
+// Resolves an explicit array of file paths (absolute or relative) into
+// an array of text blocks (for code files) and a parallel ImageRef array.
+
+interface ResolvedBlocks {
+  blocks: string[];
+  warnings: AtFileWarning[];
+  images: ImageRef[];
+  reject: boolean;
+}
+
+function resolveFilePathsInternal(
+  projectPath: string,
+  paths: string[],
+  limits: AtFileLimits,
+): ResolvedBlocks {
+  const warnings: AtFileWarning[] = [];
+  const images: ImageRef[] = [];
+  const blocks: string[] = [];
+
+  const resolvedPaths = paths.slice(0, limits.maxFiles);
+  if (paths.length > limits.maxFiles) {
+    warnings.push({
+      type: "too_many_files",
+      detail: `Skipped ${paths.length - limits.maxFiles} file(s): ${paths.slice(limits.maxFiles).join(", ")}`,
+    });
+  }
+
+  let totalContentSize = 0;
+  for (const relPath of resolvedPaths) {
+    const fullPath = safeResolveWithin(projectPath, relPath);
+    if (!fullPath) {
+      warnings.push({ type: "path_escape", path: relPath, detail: "Path escapes project directory" });
+      continue;
+    }
+
+    if (!existsSync(fullPath)) {
+      warnings.push({ type: "not_found", path: relPath });
+      continue;
+    }
+
+    // Handle image files — read as base64
+    if (isImagePath(relPath)) {
+      let buf: Buffer;
+      try {
+        buf = readFileSync(fullPath);
+      } catch {
+        warnings.push({ type: "not_found", path: relPath });
+        continue;
+      }
+      if (buf.length > limits.maxImageSize) {
+        warnings.push({ type: "truncated", path: relPath, detail: `Image exceeds ${limits.maxImageSize} bytes` });
+        return { blocks, warnings, images, reject: true };
+      }
+      images.push({
+        data: buf.toString("base64"),
+        mimeType: imageMimeType(relPath),
+      });
+      blocks.push(`[Image: @${relPath}]`);
+      continue;
+    }
+
+    if (!isTextPath(relPath)) {
+      warnings.push({ type: "binary_skipped", path: relPath, detail: "Binary or non-text file" });
+      continue;
+    }
+
+    let buf: Buffer;
+    try {
+      buf = readFileSync(fullPath);
+    } catch {
+      warnings.push({ type: "not_found", path: relPath });
+      continue;
+    }
+
+    if (isBinaryContent(buf)) {
+      warnings.push({ type: "binary_skipped", path: relPath, detail: "Binary or non-text file" });
+      continue;
+    }
+
+    let content = buf.toString("utf8");
+    let wasTruncated = false;
+
+    if (buf.length > limits.maxFileSize) {
+      content = content.slice(0, limits.maxFileSize);
+      warnings.push({ type: "truncated", path: relPath, detail: `File truncated at ${limits.maxFileSize} bytes` });
+      wasTruncated = true;
+    }
+
+    const remainingTotal = limits.maxTotalSize - totalContentSize;
+    if (content.length > remainingTotal) {
+      content = content.slice(0, remainingTotal);
+      const allTruncated = resolvedPaths.slice(resolvedPaths.indexOf(relPath)).join(", ");
+      warnings.push({
+        type: "total_truncated",
+        detail: `Total file content truncated at ${limits.maxTotalSize} bytes. Skipped: ${allTruncated}`,
+      });
+      wasTruncated = true;
+    }
+
+    totalContentSize += content.length;
+
+    const lang = inferLanguage(relPath);
+    const langTag = lang ? ` ${lang}` : "";
+    const truncNote = wasTruncated ? " [...truncated...]" : "";
+    blocks.push(`\`${relPath}\`:\n\`\`\`${langTag}\n${content}${truncNote}\n\`\`\``);
+  }
+
+  return { blocks, warnings, images, reject: false };
+}
+
+/**
+ * Resolve an explicit array of file paths into message content.
+ * Unlike resolveAtFileRefs, this does NOT scan text for @path patterns —
+ * it takes a pre-built array of absolute or relative paths (e.g., from
+ * drag-and-drop tracker).
+ */
+export function resolveFileRefs(
+  projectPath: string,
+  fileRefs: string[],
+  limits?: Partial<AtFileLimits>,
+): AtFileResolveResult {
+  if (fileRefs.length === 0) {
+    return { text: "", warnings: [], images: [], reject: false };
+  }
+
+  const resolvedLimits: AtFileLimits = { ...DEFAULT_LIMITS, ...limits };
+  const { blocks, warnings, images, reject } = resolveFilePathsInternal(
+    projectPath,
+    fileRefs,
+    resolvedLimits,
+  );
+
+  const text = blocks.join("\n\n");
+  return { text, warnings, images, reject };
 }
 
 // ── File search for autocomplete ──

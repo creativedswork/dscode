@@ -1,12 +1,13 @@
 import { existsSync } from "node:fs";
 import { resolve, join } from "node:path";
-import { Agent } from "@mariozechner/pi-agent-core";
-import type { AfterToolCallContext, AfterToolCallResult, AgentMessage, AgentTool, BeforeToolCallContext } from "@mariozechner/pi-agent-core";
-import { streamSimple, Type } from "@mariozechner/pi-ai";
-import type { Api, AssistantMessage, Context, ImageContent, Model, SimpleStreamOptions } from "@mariozechner/pi-ai";
+import { Agent } from "@earendil-works/pi-agent-core";
+import type { AfterToolCallContext, AfterToolCallResult, AgentMessage, AgentTool, BeforeToolCallContext } from "@earendil-works/pi-agent-core";
+import { Type } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Context, ImageContent, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 
+import { streamSimple } from "../models/index.js";
 import type { HarnessConfig } from "./types.js";
-import { saveUserConfig, loadScopedSettings, projectSettingsPath, userSettingsPath, normalizeTransport, normalizeProtocolVersion } from "./config.js";
+import { saveUserConfig, loadScopedSettings, projectSettingsPath, userSettingsPath, loadMcpServers } from "./config.js";
 import { SessionManager } from "../session/manager.js";
 import { ContextManager } from "../context/manager.js";
 import { MemoryManager } from "../memory/manager.js";
@@ -14,6 +15,7 @@ import { DriverRegistry } from "../drivers/registry.js";
 import { ToolRegistry } from "../drivers/tool-registry.js";
 import { makeDiscoveryDriver } from "../drivers/discovery.js";
 import { SkillManager } from "../skills/manager.js";
+import { CommandManager } from "../commands/manager.js";
 import { PermissionManager } from "../permissions/manager.js";
 import { MCPManager } from "../mcp/manager.js";
 import type { MCPClientEvent } from "../mcp/types.js";
@@ -41,6 +43,7 @@ export class Harness implements HarnessAPI {
   driverRegistry: DriverRegistry;
   toolRegistry: ToolRegistry;
   skillManager: SkillManager;
+  commandManager: CommandManager;
   permissionManager: PermissionManager;
   mcpManager: MCPManager | undefined;
   appHostManager?: AppHostManager;
@@ -71,6 +74,7 @@ export class Harness implements HarnessAPI {
     this.memoryManager = new MemoryManager(config.dataDir, config.projectPath, config.memory);
     this.driverRegistry = new DriverRegistry();
     this.toolRegistry = new ToolRegistry(this.driverRegistry);
+    this.commandManager = new CommandManager(config.userCommandsDir, config.projectCommandsDir);
     this.skillManager = new SkillManager(config.userSkillsDir, config.projectSkillsDir);
     this.permissionManager = new PermissionManager(
       config.permissions,
@@ -116,7 +120,7 @@ export class Harness implements HarnessAPI {
 
     const memories = this.memoryManager.getRelevantMemories();
     const skillSection = this.skillManager.getSystemPromptSection();
-    this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection);
+    this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection, this.commandManager.getSystemPromptSection());
     const systemPrompt = this.baseSystemPrompt.replace("__DEFERRED_HINT__", this.toolRegistry.buildDeferredToolsHint());
 
     const model = resolveModel(this.config.provider, this.config.modelId);
@@ -670,48 +674,8 @@ export class Harness implements HarnessAPI {
     // Reload MCP servers from new project settings
     try {
       const userSettings = loadScopedSettings(userSettingsPath());
-      const newProjectSettings = loadScopedSettings(projectSettingsPath(resolvedPath));
-      const mergedSettings = { ...userSettings, ...newProjectSettings };
-
-      if (this.mcpManager) {
-        await this.mcpManager.shutdown();
-      }
-
-      let mcpServersRaw: unknown[] = [];
-      const mcpConfig = (mergedSettings.mcp as Record<string, unknown>) ?? {};
-      if (Array.isArray(mcpConfig.servers)) {
-        mcpServersRaw.push(...(mcpConfig.servers as unknown[]));
-      }
-      const mcpObj = mergedSettings.mcpServers as Record<string, Record<string, unknown>> | undefined;
-      if (mcpObj && typeof mcpObj === "object" && !Array.isArray(mcpObj)) {
-        for (const [name, cfg] of Object.entries(mcpObj)) {
-          if (cfg && typeof cfg === "object" && !Array.isArray(cfg)) {
-            mcpServersRaw.push({ name, ...cfg });
-          }
-        }
-      }
-
-      const mcpServers: import("../mcp/types.js").MCPServerConfig[] = mcpServersRaw
-        .filter((s: any) => s && typeof s === "object")
-        .map((s: any) => {
-          const hasCommand = typeof s.command === "string" && s.command.length > 0;
-          const hasUrl = typeof s.url === "string" && s.url.length > 0;
-          const transport = normalizeTransport(s.transport ?? s.type, hasCommand, hasUrl);
-          return {
-            name: s.name,
-            description: s.description,
-            transport,
-            command: s.command,
-            args: s.args,
-            url: s.url,
-            env: s.env,
-            headers: s.headers,
-            preferredProtocolVersion: normalizeProtocolVersion(s.preferredProtocolVersion ?? s.protocolVersion),
-            allowLegacySseFallback: s.allowLegacySseFallback !== false,
-            requestTimeoutMs: typeof s.requestTimeoutMs === "number" ? s.requestTimeoutMs : undefined,
-            connectTimeoutMs: typeof s.connectTimeoutMs === "number" ? s.connectTimeoutMs : undefined,
-          };
-        });
+      const projectSettings = loadScopedSettings(projectSettingsPath(resolvedPath));
+      const { servers: mcpServers } = loadMcpServers(userSettings, projectSettings, resolvedPath);
 
       if (mcpServers.length > 0) {
         this.configStore.setMcpServers(mcpServers);
@@ -753,7 +717,7 @@ export class Harness implements HarnessAPI {
     // Refresh system prompt with new project memories and skills
     const memories = this.memoryManager.getRelevantMemories();
     const skillSection = this.skillManager.getSystemPromptSection();
-    this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection);
+    this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection, this.commandManager.getSystemPromptSection());
     this.agent.state.systemPrompt = this.baseSystemPrompt.replace("__DEFERRED_HINT__", this.toolRegistry.buildDeferredToolsHint());
 
     return { success: true };
@@ -789,7 +753,7 @@ export class Harness implements HarnessAPI {
     }
   }
 
-  private buildSystemPrompt(memories: string, skillSection: string): string {
+  private buildSystemPrompt(memories: string, skillSection: string, commandsSection: string): string {
     let prompt = `# Identity
 
 You are dscode — a digital studio for content-driven creation.
@@ -859,9 +823,12 @@ __DEFERRED_HINT__`;
       prompt += "\n\n" + skillSection;
     }
 
-    prompt += `\n\n## Using Skills
+    prompt += `\n\n## Using Skills\n\nYou have a \`skill\` tool available. When you decide to use a skill from the list above, call \`skill\` with the skill name to load its full instructions and allowed tools. Read the instructions, then follow them.`;
 
-You have a \`skill\` tool available. When you decide to use a skill from the list above, call \`skill\` with the skill name to load its full instructions and allowed tools. Read the instructions, then follow them.`;
+
+    if (commandsSection) {
+      prompt += "\n\n# Commands\n\n" + commandsSection;
+    }
 
     if (memories) {
       prompt += "\n\n" + memories;
@@ -1143,10 +1110,16 @@ You have a \`skill\` tool available. When you decide to use a skill from the lis
           || this.isProgressComplete(event.params.progress, event.params.total)
           || this.progressBucket(event.params.progress, event.params.total) !== this.progressBucket(previous.progress, previous.total);
 
-        if (shouldReport) {
-          const summary = this.formatProgress(event.params.progress, event.params.total);
-          const detail = event.params.message ? ` ${event.params.message}` : "";
-          this.events.emit({ type: "ui:info", text: `MCP ${event.serverName}: ${summary}${detail}` });
+        // Emit harness event for inline progress bars (Web UI)
+        if (event.toolName) {
+          this.events.emit({
+            type: "mcp:tool:progress",
+            toolName: `mcp__${event.serverName}__${event.toolName}`,
+            serverName: event.serverName,
+            progress: event.params.progress,
+            total: event.params.total,
+            message: event.params.message,
+          });
         }
         return;
       }

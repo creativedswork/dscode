@@ -1,13 +1,24 @@
-schema: spec-driven
+schema: spec-driven-plus
 
-# Project context (optional)
-# This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+# Project context — shown to AI when creating artifacts
+context: |
+  This project uses a custom OpenSpec schema: **spec-driven-plus**.
+  It extends spec-driven with two additional artifacts:
+
+  1. **prototype** (optional, Explore-triggered):
+     When Explore discussions involve frontend/UI topics (页面, 界面, 组件,
+     交互, CSS, dashboard, landing, redesign, 动效等), naturally offer to
+     create an HTML prototype. See explore command for the full workflow
+     (load `html-output` skill → extract CSS variables → generate HTML at
+     `docs/prototypes/<name>.html`). Load `prototype-workflow` skill for constraints. Prototype does NOT block apply.
+
+  2. **consolidate** (pre-archive, auto-triggered):
+     Before archiving, merge the current proposal with related archived change
+     proposals into a unified narrative (consolidate.md). Scans archive/ for
+     related changes by topic/keywords. Always generated — even if no related
+     changes exist (simplified version).
+
+  A companion skill `spec-driven-plus-workflow` provides detailed behaviors.
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.

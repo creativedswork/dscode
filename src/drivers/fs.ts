@@ -1,8 +1,8 @@
-import { readFileSync, writeFileSync, existsSync, statSync, readdirSync, mkdirSync } from "node:fs";
+import { readFile, writeFile, stat, readdir, mkdir } from "node:fs/promises";
 import { join, resolve, dirname } from "node:path";
 
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type } from "@mariozechner/pi-ai";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { Type } from "@earendil-works/pi-ai";
 
 import {
   computeLineHash,
@@ -12,6 +12,15 @@ import {
   classifyLinesWithFrequency,
 } from "./edit/hash.js";
 import { getCheckpointManager, getFileWriteTracker, getSnapshotStore } from "../checkpoint/index.js";
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 const readFileParams = Type.Object({
   path: Type.String({ description: "Absolute file path to read" }),
@@ -31,20 +40,20 @@ export const readFileTool: AgentTool<typeof readFileParams> = {
   parameters: readFileParams,
   execute: async (_id, { path, offset, limit, hashes }) => {
     const resolved = resolve(path);
-    if (!existsSync(resolved)) {
+    if (!(await fileExists(resolved))) {
       return {
         content: [{ type: "text", text: `Error: file not found: ${resolved}` }],
         details: { error: "not_found" },
       };
     }
-    const stat = statSync(resolved);
-    if (stat.size > 2 * 1024 * 1024) {
+    const fileStat = await stat(resolved);
+    if (fileStat.size > 2 * 1024 * 1024) {
       return {
-        content: [{ type: "text", text: `Error: file too large (${stat.size} bytes)` }],
+        content: [{ type: "text", text: `Error: file too large (${fileStat.size} bytes)` }],
         details: { error: "too_large" },
       };
     }
-    const raw = readFileSync(resolved, "utf8");
+    const raw = await readFile(resolved, "utf8");
     const lines = raw.split("\n");
     const start = offset ?? 0;
     const count = limit ?? 200;
@@ -139,7 +148,7 @@ export const listFilesTool: AgentTool<typeof listFilesParams> = {
   parameters: listFilesParams,
   execute: async (_id, { path, recursive, maxDepth }) => {
     const resolved = resolve(path);
-    if (!existsSync(resolved)) {
+    if (!(await fileExists(resolved))) {
       return {
         content: [{ type: "text", text: `Error: directory not found: ${resolved}` }],
         details: { error: "not_found" },
@@ -149,20 +158,20 @@ export const listFilesTool: AgentTool<typeof listFilesParams> = {
     const results: string[] = [];
     const maxD = maxDepth ?? 3;
 
-    function walk(dir: string, depth: number): void {
+    async function walk(dir: string, depth: number): Promise<void> {
       if (depth > maxD || results.length >= 500) return;
-      const entries = readdirSync(dir, { withFileTypes: true });
+      const entries = await readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (SKIP.has(entry.name)) continue;
         const rel = join(dir, entry.name).slice(resolved.length + 1) || entry.name;
         results.push(entry.isDirectory() ? `${rel}/` : rel);
         if (entry.isDirectory() && recursive) {
-          walk(join(dir, entry.name), depth + 1);
+          await walk(join(dir, entry.name), depth + 1);
         }
       }
     }
 
-    walk(resolved, 0);
+    await walk(resolved, 0);
     const text = results.length > 0 ? results.join("\n") : "(empty directory)";
     return {
       content: [{ type: "text", text }],
@@ -189,10 +198,10 @@ export const writeFileTool: AgentTool<typeof writeFileParams> = {
   parameters: writeFileParams,
   execute: async (_id, { path, content, expected_file_version }) => {
     const resolved = resolve(path);
-    const fileExists = existsSync(resolved);
+    const alreadyExists = await fileExists(resolved);
 
-    if (fileExists && expected_file_version) {
-      const currentRaw = readFileSync(resolved, "utf8");
+    if (alreadyExists && expected_file_version) {
+      const currentRaw = await readFile(resolved, "utf8");
       const currentVersion = computeFileVersion(currentRaw);
       if (currentVersion !== expected_file_version) {
         return {
@@ -218,8 +227,8 @@ export const writeFileTool: AgentTool<typeof writeFileParams> = {
     }
 
     const dir = dirname(resolved);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
+    if (!(await fileExists(dir))) {
+      await mkdir(dir, { recursive: true });
     }
 
     // 4.2: Checkpoint before write + track writer
@@ -229,7 +238,7 @@ export const writeFileTool: AgentTool<typeof writeFileParams> = {
     if (cpm) cpm.save(resolved, "write_file");
     if (fwt) fwt.recordWrite(resolved, "write_file");
 
-    writeFileSync(resolved, content);
+    await writeFile(resolved, content);
     if (cpm) cpm.commit(resolved);
     const bytes = Buffer.byteLength(content, "utf8");
     const newFileVersion = computeFileVersion(content);
@@ -323,7 +332,7 @@ export const overwriteFileTool: AgentTool<typeof overwriteFileParams> = {
   execute: async (_id, { path, content, expected_file_version }) => {
     const resolved = resolve(path);
 
-    if (!existsSync(resolved)) {
+    if (!(await fileExists(resolved))) {
       return {
         content: [
           {
@@ -335,7 +344,7 @@ export const overwriteFileTool: AgentTool<typeof overwriteFileParams> = {
       };
     }
 
-    const currentRaw = readFileSync(resolved, "utf8");
+    const currentRaw = await readFile(resolved, "utf8");
     const currentVersion = computeFileVersion(currentRaw);
     if (currentVersion !== expected_file_version) {
       return {
@@ -360,8 +369,8 @@ export const overwriteFileTool: AgentTool<typeof overwriteFileParams> = {
     }
 
     const dir = dirname(resolved);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
+    if (!(await fileExists(dir))) {
+      await mkdir(dir, { recursive: true });
     }
 
     // 4.2: Checkpoint before overwrite + track writer
@@ -371,7 +380,7 @@ export const overwriteFileTool: AgentTool<typeof overwriteFileParams> = {
     if (cpm2) cpm2.save(resolved, "overwrite_file");
     if (fwt2) fwt2.recordWrite(resolved, "overwrite_file");
 
-    writeFileSync(resolved, content);
+    await writeFile(resolved, content);
     if (cpm2) cpm2.commit(resolved);
     const bytes = Buffer.byteLength(content, "utf8");
     const newFileVersion = computeFileVersion(content);

@@ -3,6 +3,7 @@
 // Each CHIFF Pass spawns an independent Agent session with fresh message history.
 // Agent self-terminates by producing valid JSON output matching the output schema.
 
+import { completeSimple } from "../../models/index.js";
 import {
   readFileSync, writeFileSync, existsSync, mkdirSync,
   readdirSync, statSync,
@@ -11,12 +12,11 @@ import { resolve, relative, sep, join } from "node:path";
 import type { HarnessAPI } from "../../core/harness-api.js";
 import { resolveModel } from "../../models/index.js";
 import {
-  completeSimple,
   type TextContent,
   type ThinkingContent,
   type ToolCall as PiToolCall,
   type Message as PiMessage,
-} from "@mariozechner/pi-ai";
+} from "@earendil-works/pi-ai";
 import { safeJsonParse, type ValidationResult } from "../schemas.js";
 import { extractJSON } from "../prompts.js";
 

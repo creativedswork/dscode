@@ -15,6 +15,13 @@ export interface ImageRef {
   mimeType: string;
 }
 
+export interface FileAttachment {
+  name: string;
+  size: number;
+  mimeType: string;
+  path: string; // absolute filesystem path
+}
+
 // ── MCP ──
 
 export interface McpToolInfo {
@@ -112,6 +119,9 @@ export interface ToolCallEntry {
   isError: boolean;
   images?: ImageAttachment[];
   mcpApp?: McpAppInfo;
+  progress?: number;
+  progressTotal?: number;
+  progressMessage?: string;
 }
 
 // ── Conversation messages ──
@@ -121,7 +131,6 @@ export interface ConversationMessage {
   content: string;
   thinking?: string;
   tools?: ToolCallEntry[];
-  images?: (ImageAttachment | ImageRef)[];
 }
 
 export interface UIMessage {
@@ -154,7 +163,7 @@ export interface PermOption {
 // ── Wire protocol ──
 
 export type ClientCommand =
-  | { type: "chat"; text: string; images?: ImageAttachment[]; clipboardImages?: ImageAttachment[] }
+  | { type: "chat"; text: string; images?: ImageAttachment[]; clipboardImages?: ImageAttachment[]; fileRefs?: string[] }
   | { type: "abort" }
   | { type: "permission"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; persistRule?: boolean; toolNamePattern?: string; fuzzyMode?: number; sessionGrantPattern?: string }
   | { type: "permission_response"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; denyReason?: string; toolNamePattern?: string }
@@ -182,6 +191,7 @@ export type ServerEvent =
   | { type: "thinking_delta"; delta: string }
   | { type: "text_delta"; delta: string }
   | { type: "tool_start"; name: string; args: unknown }
+  | { type: "tool_progress"; name: string; progress: number; total?: number; message?: string }
   | { type: "context_window"; total: number; used: number; free: number; categories: { system: number; rules: number; user: number; thinking: number; readwrite: number; edit: number; shell: number; skill: number; mcp: number; other: number } }
 
   | { type: "tool_end"; name: string; result: string; isError: boolean; images?: ImageAttachment[] }
