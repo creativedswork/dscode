@@ -167,6 +167,79 @@ describe("SessionManager", () => {
     expect(meta!.title).toBe("New session");
   });
 
+  // isTitleBetter: topic shift — command argument → human message
+  it("should update title when topic shifts from command to human message", () => {
+    const session = manager.createSession("deepseek", "deepseek-v4-flash");
+    // First save: only a command message → title from command argument
+    const agent1 = createMockAgent([
+      { role: "user", content: "/opsx:apply fix session title extraction bug" },
+    ]);
+    manager.saveSession(agent1);
+    const meta1 = manager.getCurrentMetadata();
+    expect(meta1!.title).toBe("fix session title extraction bug");
+
+    // Second save: user adds a human message → title should update
+    const agent2 = createMockAgent([
+      { role: "user", content: "/opsx:apply fix session title extraction bug" },
+      { role: "user", content: "Actually, the real bug is in isTitleBetter" },
+    ]);
+    manager.saveSession(agent2);
+    const meta2 = manager.getCurrentMetadata();
+    expect(meta2!.title).toBe("Actually, the real bug is in isTitleBetter");
+  });
+
+  // isTitleBetter: candidate is truncated prefix — keep current
+  it("should keep longer title when candidate is truncated prefix", () => {
+    const session = manager.createSession("deepseek", "deepseek-v4-flash");
+    const agent1 = createMockAgent([
+      { role: "user", content: "Debug session manager title extraction logic today" },
+    ]);
+    manager.saveSession(agent1);
+    const meta1 = manager.getCurrentMetadata();
+    expect(meta1!.title).toBe("Debug session manager title extraction logic today");
+
+    // Second save: same topic but shorter message
+    const agent2 = createMockAgent([
+      { role: "user", content: "Debug session manager title extraction logic today" },
+      { role: "user", content: "Debug session manager" },
+    ]);
+    manager.saveSession(agent2);
+    const meta2 = manager.getCurrentMetadata();
+    // Should keep the longer title since "Debug session manager" is a prefix
+    expect(meta2!.title).toBe("Debug session manager title extraction logic today");
+  });
+
+  // isTitleBetter: different but shorter → update
+  it("should update title when candidate is different but shorter", () => {
+    const session = manager.createSession("deepseek", "deepseek-v4-flash");
+    const agent1 = createMockAgent([
+      {
+        role: "user",
+        content: "I want to fix the session title extraction bug in the codebase thoroughly",
+      },
+    ]);
+    manager.saveSession(agent1);
+    const meta1 = manager.getCurrentMetadata();
+    // First 60 chars
+    expect(meta1!.title).toBe(
+      "I want to fix the session title extraction bug in the codeba"
+    );
+
+    // Second save: different topic, shorter message
+    const agent2 = createMockAgent([
+      {
+        role: "user",
+        content: "I want to fix the session title extraction bug in the codebase thoroughly",
+      },
+      { role: "user", content: "Bug is in isTitleBetter" },
+    ]);
+    manager.saveSession(agent2);
+    const meta2 = manager.getCurrentMetadata();
+    // Should update — "Bug is in isTitleBetter" is not a prefix of the old title
+    expect(meta2!.title).toBe("Bug is in isTitleBetter");
+  });
+
+
   it("should return error when loading non-existent session", async () => {
     const agent = createMockAgent();
     const result = await manager.loadSession("nonexistent-id", agent);

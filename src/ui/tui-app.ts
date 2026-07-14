@@ -19,6 +19,7 @@ import {
 import type { Agent } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { SessionManager } from "../session/manager.js";
+import { setPendingTitleHint } from "../session/manager.js";
 import type { MemoryManager } from "../memory/manager.js";
 import type { DriverRegistry } from "../drivers/registry.js";
 import type { ToolRegistry } from "../drivers/tool-registry.js";
@@ -1270,6 +1271,10 @@ export class TuiApp {
         const spaceIdx = text.indexOf(" ");
         const cmdName = spaceIdx === -1 ? text.slice(1) : text.slice(1, spaceIdx);
         const manifest = this.deps.commandManager.getManifest(cmdName);
+
+        // Set title hint with user's actual input so title extraction uses it
+        const args = text.slice(spaceIdx + 1).trim();
+        if (args) setPendingTitleHint(args);
         const hasArgs = spaceIdx !== -1 && text.slice(spaceIdx + 1).trim().length > 0;
         if (manifest && !hasArgs) {
           this.editor.setText(text + " ");

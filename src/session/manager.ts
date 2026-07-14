@@ -69,7 +69,22 @@ function isNoiseMessage(text: string): boolean {
   return NOISE_PATTERNS.some((p) => p.test(text));
 }
 
+// When a custom command (e.g. /opsx:explore) injects a large instruction body,
+// the caller can set a hint with the user's actual input to use as the title.
+let pendingTitleHint: string | null = null;
+
+export function setPendingTitleHint(hint: string): void {
+  pendingTitleHint = hint;
+}
+
 function extractSessionTitle(messages: any[]): string {
+  // Check for explicit title hint from custom command resolution
+  if (pendingTitleHint) {
+    const hint = pendingTitleHint;
+    pendingTitleHint = null;
+    if (hint.length >= MIN_TITLE_LENGTH) return hint.slice(0, 60);
+  }
+
   // Pass 1: reverse scan — prefer the last qualifying non-command user message
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i];
@@ -114,11 +129,9 @@ function isTitleBetter(current: string, candidate: string): boolean {
   // Always replace placeholder
   if (!current || current === "New session") return true;
 
-  // Current is very short and candidate is meaningfully longer
-  if (current.length < 10 && candidate.length >= current.length + 5) return true;
-
-  // Don't replace a good title with a shorter one
-  return false;
+  // candidate is a truncated prefix of current — keep the longer title
+  if (candidate.length < current.length && current.startsWith(candidate)) return false;
+  return true;
 }
 
 /**
