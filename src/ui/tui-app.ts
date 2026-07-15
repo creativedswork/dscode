@@ -180,6 +180,8 @@ export class TuiApp {
   private attachmentScrollOffset: number = 0;
   // Pre-drained images: captured in input listener before Editor's onChange("") clears them
   private drainedSubmitImages: ImageContent[] | null = null;
+  // Pre-drained files: captured in input listener before Editor's onChange("") clears them
+  private drainedSubmitFiles: string[] | null = null;
   private lastPasteTime = 0;
   // ── Kitty protocol multi-chunk buffer ──
   // Kitty transmits large images in chunks. Accumulate base64 payloads here
@@ -271,11 +273,16 @@ export class TuiApp {
       if (pasteResult) {
         return pasteResult;
       }
-      // Pre-submit drain: if Enter/Return is pressed with pending images,
+      // Pre-submit drain: if Enter/Return is pressed with pending images or files,
       // drain them NOW before the Editor fires onChange("") which would
-      // otherwise trigger removeImageById.
-      if ((matchesKey(data, Key.enter) || matchesKey(data, Key.return) || data === "\r" || data === "\n") && this.imagePasteHandler.imageCount > 0 && !this.processing) {
-        this.drainedSubmitImages = this.imagePasteHandler.drainImages();
+      // otherwise trigger removeImageById / fileTracker.remove.
+      if ((matchesKey(data, Key.enter) || matchesKey(data, Key.return) || data === "\r" || data === "\n") && !this.processing) {
+        if (this.imagePasteHandler.imageCount > 0) {
+          this.drainedSubmitImages = this.imagePasteHandler.drainImages();
+        }
+        if (this.fileTracker.count > 0) {
+          this.drainedSubmitFiles = this.fileTracker.drain();
+        }
       }
       if (this.handleInput(data)) {
         return { consume: true };
@@ -1203,7 +1210,8 @@ export class TuiApp {
     }
     const hasText = text.length > 0;
     const hasImages = Boolean(images?.length);
-    const fileRefs = this.fileTracker.drain();
+    const fileRefs = this.drainedSubmitFiles ?? this.fileTracker.drain();
+    this.drainedSubmitFiles = null;
     const hasFiles = fileRefs.length > 0;
     if (!hasText && !hasImages && !hasFiles) {
       const now = Date.now();
