@@ -1,6 +1,6 @@
 import { createServer, request as httpRequest } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync } from "node:fs";
 import { join, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ImageContent } from "@earendil-works/pi-ai";
@@ -58,7 +58,6 @@ export interface WebUiOptions {
 }
 
 /**
- * Web UI backend that implements UiBackend.
  * Creates an HTTP server + WebSocket server, serves the SPA,
  * and translates all UI callbacks into WebSocket events.
  */
@@ -765,11 +764,60 @@ export class WebUiBackend implements UiBackend {
         await this.handleArtifact(client, cmd as ClientCommand & { type: "artifact"; action: "generate" | "update"; context?: string; instruction?: string });
         break;
       }
+      case "cache": {
+        this.handleCache(client, cmd as ClientCommand & { type: "cache"; action: "size" | "clear" });
+        break;
+      }
       case "mcp": {
         this.handleMcp(client, cmd);
         break;
       }
     }
+  }
+
+  private handleCache(client: WebSocketClient, cmd: ClientCommand & { type: "cache"; action: "size" | "clear" }): void {
+    const uploadsDir = join(this.config.projectPath, ".dscode", "uploads");
+
+    if (cmd.action === "clear") {
+      if (existsSync(uploadsDir)) {
+        try {
+          rmSync(uploadsDir, { recursive: true, force: true });
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+      client.send({ type: "cache_size", totalBytes: 0, fileCount: 0, sessionCount: 0 });
+      return;
+    }
+
+    // action === "size"
+    let totalBytes = 0;
+    let fileCount = 0;
+    let sessionCount = 0;
+
+    if (existsSync(uploadsDir)) {
+      const sessionDirs = readdirSync(uploadsDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory());
+      sessionCount = sessionDirs.length;
+
+      for (const dir of sessionDirs) {
+        const sessionPath = join(uploadsDir, dir.name);
+        const files = readdirSync(sessionPath, { withFileTypes: true });
+        for (const f of files) {
+          if (f.isFile()) {
+            try {
+              const st = statSync(join(sessionPath, f.name));
+              totalBytes += st.size;
+              fileCount++;
+            } catch {
+              // skip
+            }
+          }
+        }
+      }
+    }
+
+    client.send({ type: "cache_size", totalBytes, fileCount, sessionCount });
   }
 
   private async handleSlashCommand(client: WebSocketClient, text: string): Promise<void> {
@@ -1189,8 +1237,8 @@ export class WebUiBackend implements UiBackend {
         }
         if (wasCurrent) {
           client.send({ type: "clear_conversation" });
-          this.cleanupUploadDir(cmd.id);
         }
+        this.cleanupUploadDir(cmd.id);
         client.send({ type: "info", display: "toast", text: "Session deleted." });
         const sessions = sessionManager.listSessions();
         const currentId = sessionManager.getCurrentSessionId?.() ?? undefined;

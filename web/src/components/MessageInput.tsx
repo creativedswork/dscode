@@ -12,6 +12,7 @@ interface MessageInputProps {
   fileListItems: FileListItem[];
   fileListPrefix: string;
   projectPath: string;
+  onToast?: (type: "warning" | "error", text: string) => void;
   viewMode?: "chat" | "dashboard";
 }
 
@@ -100,8 +101,8 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-const MAX_FILE_SIZE = 50 * 1024; // 50KB
-const MAX_TOTAL_SIZE = 200 * 1024; // 200KB
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_TOTAL_SIZE = 50 * 1024 * 1024; // 50 MB
 
 export function MessageInput({
   onSend,
@@ -114,6 +115,7 @@ export function MessageInput({
   fileListPrefix,
   viewMode,
   projectPath,
+  onToast,
 }: MessageInputProps) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<ImageAttachment[]>([]);
@@ -471,8 +473,13 @@ export function MessageInput({
         }
       } else {
         // Non-image: read as text, upload to server as temp file
-        if (file.size > MAX_FILE_SIZE || totalSize + file.size > MAX_TOTAL_SIZE) {
-          continue; // skip oversized
+        if (file.size > MAX_FILE_SIZE) {
+          onToast?.("warning", `File '${file.name}' exceeds 10 MB limit`);
+          continue;
+        }
+        if (totalSize + file.size > MAX_TOTAL_SIZE) {
+          onToast?.("warning", "Total file size exceeds 50 MB limit");
+          continue;
         }
         try {
           const content = await new Promise<string>((resolve, reject) => {

@@ -5,6 +5,10 @@ category: Workflow
 tags: [workflow, explore, experimental, thinking]
 ---
 
+# OPSX: Explore
+
+Enter explore mode - think through ideas, investigate problems, clarify requirements
+
 Enter explore mode. Think deeply. Visualize freely. Follow the conversation wherever it goes.
 
 **IMPORTANT: Explore mode is for thinking, not implementing.** You may read files, search code, and investigate the codebase, but you must NEVER write code or implement features. If the user asks you to implement something, remind them to exit explore mode first and create a change proposal. You MAY create OpenSpec artifacts (proposals, designs, specs) if the user asks—that's capturing thinking, not implementing.
@@ -77,16 +81,26 @@ Depending on what the user brings, you might:
 - Identify what could go wrong
 - Find gaps in understanding
 - Suggest spikes or investigations
+
 **Create HTML prototypes for frontend ideas**
-- When the conversation touches UI/frontend topics, detect it naturally (keywords: UI, page, component, interaction, style, visual, CSS, frontend, landing, dashboard, prototype, redesign, animation)
-- Offer: "This involves frontend design — want me to create an HTML prototype?"
+
+> ⚠️ **FRONTEND GATE (HARD RULE)**: Before writing ANY spec requirement,
+> design decision, or task that touches UI components, layout, or interaction
+> patterns, you MUST offer a prototype. Do NOT write spec/design/tasks until
+> the prototype is confirmed or the user explicitly dismisses it.
+> This applies even when also discussing architecture, protocols, or backend.
+> UI + backend discussions require the prototype OFFER before the spec WRITE.
+
+- When the conversation touches UI/frontend topics, detect it naturally (keywords: UI, page, component, interaction, style, visual, CSS, frontend, landing, dashboard, prototype, redesign, animation, rendering, layout, spacing, markup, DOM, card, display, toast, modal, panel, picker, button)
+- **ALWAYS offer** (not optional to skip): "This involves frontend design — want me to create an HTML prototype?"
 - If yes:
   1. Load `prototype-workflow` skill (auto-loads `html-output`)
   2. Extract `--color-*` CSS variables from `web/index.css`
   3. Generate self-contained HTML at `docs/prototypes/<change-name>-<descriptor>.html`
   4. Iterate visually based on user feedback on the prototype
   5. When design is confirmed, capture decisions into `design.md` / `specs`
-- Prototype is optional — it never blocks apply
+- If user says no — continue, but the offer was made
+- Canonical example: session 00MRIZMZQJ (`docs/prototypes/mcp-toolcard-execution-view-prototype.html`)
 - Canonical example: session 00MRIZMZQJ (`docs/prototypes/mcp-toolcard-execution-view-prototype.html`)
 
 ---
@@ -127,14 +141,16 @@ If the user mentions a change or you detect one is relevant:
 
 2. **Reference them naturally in conversation**
    - "Your design mentions using Redis, but we just realized SQLite fits better..."
-    | Design insight for frontend | `docs/prototypes/<name>.html` |
+   - "The proposal scopes this to premium users, but we're now thinking everyone..."
+    | ⚠️ Frontend/UI design        | **PROTOTYPE FIRST** — see Frontend Gate above. Then capture in `docs/prototypes/<name>.html` + `design.md` |
 
 3. **Offer to capture when decisions are made**
 
     | Insight Type               | Where to Capture               |
     |----------------------------|--------------------------------|
+- **Prototype before spec (HARD)**: Before writing any spec requirement, design decision, or task that involves UI components (toast, button, panel, picker, modal, input area), layout changes, or interaction patterns — ALWAYS offer an HTML prototype first. See Frontend Gate.
+- **Self-check before writing artifacts**: Does this change involve new UI? Existing component behavior changes? Am I about to write a scenario about toast/button/panel/picker/modal? → If yes to any, offer prototype first.
     | New requirement discovered | `specs/<capability>/spec.md` |
-    | Design insight for frontend | `docs/prototypes/<name>.html` |
     | Requirement changed        | `specs/<capability>/spec.md` |
     | Design decision made       | `design.md`                  |
     | Scope changed              | `proposal.md`                |
@@ -164,10 +180,10 @@ If the user mentions a change or you detect one is relevant:
 ## Ending Discovery
 
 There's no required ending. Discovery might:
+- **Before flowing into a proposal for frontend/UI changes**: "This involves frontend design — want to create an HTML prototype first?"
 
 - **Flow into a proposal**: "Ready to start? I can create a change proposal."
 - **Result in artifact updates**: "Updated design.md with these decisions"
-- **Flow into a prototype**: "This feels like it needs a frontend prototype. Want me to create one?"
 - **Just provide clarity**: User has what they need, moves on
 - **Continue later**: "We can pick this up anytime"
 

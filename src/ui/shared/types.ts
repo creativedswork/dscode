@@ -182,6 +182,7 @@ export type ClientCommand =
   | { type: "mcp"; action: "list" | "refresh" | "connect" | "disconnect"; serverName?: string }
   | { type: "file_list"; prefix: string }
   | { type: "mcp_app"; action: "rpc"; appId: string; message: object }
+  | { type: "cache"; action: "size" | "clear" }
   | { type: "artifact"; action: "generate" | "update"; context?: string; instruction?: string };
 
 export type ServerEvent =
@@ -215,5 +216,6 @@ export type ServerEvent =
   | { type: "artifact_start" }
   | { type: "artifact_delta"; delta: string }
   | { type: "artifact_end" }
+  | { type: "cache_size"; totalBytes: number; fileCount: number; sessionCount: number }
   | { type: "mcp_open_browser" }
 

@@ -65,6 +65,15 @@ isMcpToolName(name)                  → boolean
 - `~/.mcp.json` — 用户全局 MCP servers，包含敏感信息不提交
 - `<project>/.mcp.json` — 项目 MCP servers，应加入 `.gitignore`
 
+## Command & Skill File Priority
+
+Commands and skills may coexist in three locations: `.dscode/`, `.clinerules/`, `.claude/`.
+
+- **`.dscode/commands/` / `.dscode/skills/` is the canonical source**
+- **`.clinerules/` and `.claude/` are sync copies**
+- When modifying commands or skills, **must update all three locations**, with `.dscode/` as the authority
+- When searching for command definitions, **read `.dscode/` first** — do not stop at `.clinerules/` or `.claude/`
+
 ## 日志排查
 
 当需要追踪运行时执行路径时，使用项目内置的 Logger（**禁止 `console.log`**，TUI 独占终端，stdout 不可见）。

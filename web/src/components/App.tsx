@@ -79,6 +79,9 @@ export function App() {
   const [viewMode, setViewMode] = useState<"chat" | "dashboard">("chat");
   const [artifactHtml, setArtifactHtml] = useState("");
   const [artifactLoading, setArtifactLoading] = useState(false);
+  const [cacheSize, setCacheSize] = useState<{ totalBytes: number; fileCount: number; sessionCount: number } | null>(null);
+  const [cacheClearing, setCacheClearing] = useState(false);
+
   const [transitionPhase, setTransitionPhase] = useState<"idle" | "animating">("idle");
   const { toasts, addToast, removeToast } = useToasts();
   const turnStartRef = useRef<number>(0);
@@ -198,6 +201,10 @@ export function App() {
         }
         break;
       }
+      case "cache_size":
+        setCacheSize({ totalBytes: event.totalBytes, fileCount: event.fileCount, sessionCount: event.sessionCount });
+        setCacheClearing(false);
+        break;
     }
   }, [addToast, sessions]);
 
@@ -230,6 +237,11 @@ export function App() {
   const handleSlashCommand = useCallback((command: string) => send({ type: "slash", command }), [send]);
   const handleCommand = useCallback((cmd: { type: "file_list"; prefix: string }) => send(cmd as any), [send]);
   const handleConfigChange = useCallback((action: string, value: string) => send({ type: "config", action: action as any, value }), [send]);
+
+  const handleCacheAction = useCallback((action: "size" | "clear") => {
+    if (action === "clear") setCacheClearing(true);
+    send({ type: "cache", action } as any);
+  }, [send]);
   const handleSessionAction = useCallback((action: "list" | "save" | "load" | "delete", id?: string) => send({ type: "session", action, id }), [send]);
   const handleMcpAction = useCallback((action: "list" | "refresh" | "connect" | "disconnect", serverName?: string) => send({ type: "mcp", action, serverName } as any), [send]);
   const handleNewSession = useCallback(() => send({ type: "slash", command: "/reset" }), [send]);
@@ -314,7 +326,8 @@ export function App() {
         <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} activeTab={sidebarTab} onTabChange={setSidebarTab}
           sessions={sessions} currentSessionId={currentSessionId} mcpServers={mcpServers} config={config}
           onSessionAction={handleSessionAction} onMcpAction={handleMcpAction} onMcpServerAction={handleMcpAction}
-          onConfigChange={handleConfigChange} isProcessing={processing} onNewSession={handleNewSession} />
+          onConfigChange={handleConfigChange} isProcessing={processing} onNewSession={handleNewSession}
+          onCacheAction={handleCacheAction} cacheSize={cacheSize} cacheClearing={cacheClearing} />
         <main className="flex-1 flex flex-col min-w-0">
           <div className="flex-1 flex flex-col min-h-0" style={{ position: "relative" }}>
           {transitionPhase === "animating" && (
@@ -326,7 +339,8 @@ export function App() {
             <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} sessionActiveMs={sessionActiveMs} permissionPrompt={permissionPrompt} onPermission={handlePermission} containerRef={chatContainerRef} scrollLocked={transitionPhase === "animating"} />
           )}
           <MessageInput onSend={handleSend} onAbort={handleAbort} onSlashCommand={handleSlashCommand} onCommand={handleCommand}
-            processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} viewMode={viewMode} projectPath={config?.projectPath ?? ""} />
+            processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} viewMode={viewMode} projectPath={config?.projectPath ?? ""}
+            onToast={(type, text) => addToast({ type, text })} />
           </div>
         </main>
       </div>
