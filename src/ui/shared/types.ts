@@ -141,6 +141,7 @@ export interface UIMessage {
   tools?: ToolCallEntry[];
   isStreaming?: boolean;
   images?: (ImageAttachment | ImageRef)[];
+  createdAt?: number; // epoch ms
 }
 // ── Permissions ──
 

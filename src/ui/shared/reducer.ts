@@ -25,6 +25,7 @@ function updateLastOrCreate(
       tools: [],
       isStreaming: true,
       images: undefined,
+      createdAt: Date.now(),
       ...update({ id: "", role: "assistant" as const, content: "", thinking: "", tools: [] }),
     });
   }
@@ -40,6 +41,7 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
         content: normalizeContent(m.content),
         thinking: typeof m.thinking === "string" ? m.thinking : "",
         tools: Array.isArray(m.tools) ? m.tools : [],
+        createdAt: typeof m.createdAt === "number" ? m.createdAt : undefined,
         images: Array.isArray(m.images) ? m.images : [],
       }));
 
@@ -51,6 +53,7 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
           role: "user" as const,
           content: normalizeContent(event.text),
           images: (event as any).images ?? [],
+          createdAt: Date.now(),
         },
       ];
 
