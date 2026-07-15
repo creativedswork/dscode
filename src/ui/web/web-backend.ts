@@ -525,7 +525,7 @@ export class WebUiBackend implements UiBackend {
           for (const uf of cmd.uploadedFiles) {
             const tempName = `${ts}-${uf.name}`;
             const tempPath = join(uploadDir, tempName);
-            writeFileSync(tempPath, uf.content, "utf-8");
+            writeFileSync(tempPath, Buffer.from(uf.content, "base64"));
             tempPaths.push(tempPath);
           }
           if (tempPaths.length > 0) {

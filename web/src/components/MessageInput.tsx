@@ -472,7 +472,7 @@ export function MessageInput({
           // skip
         }
       } else {
-        // Non-image: read as text, upload to server as temp file
+        // Non-image: read as base64, upload to server as temp file
         if (file.size > MAX_FILE_SIZE) {
           onToast?.("warning", `File '${file.name}' exceeds 10 MB limit`);
           continue;
@@ -484,9 +484,13 @@ export function MessageInput({
         try {
           const content = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
-            reader.onload = () => resolve(reader.result as string);
+            reader.onload = () => {
+              const dataUrl = reader.result as string;
+              // Strip "data:<mime>;base64," prefix, keep raw base64
+              resolve(dataUrl.substring(dataUrl.indexOf(',') + 1));
+            };
             reader.onerror = reject;
-            reader.readAsText(file);
+            reader.readAsDataURL(file);
           });
           newUploads.push({ name: file.name, size: file.size, content });
           totalSize += file.size;

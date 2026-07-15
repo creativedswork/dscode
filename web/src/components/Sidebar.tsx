@@ -591,85 +591,6 @@ function SettingsPanel({
         </div>
       </div>
 
-      {/* Upload Cache */}
-      <div
-        className="pt-2"
-        style={{ borderTop: "1px solid var(--color-border)" }}
-      >
-        <label
-          className="text-xs mb-1 block"
-          style={{ color: "var(--color-text-muted)" }}
-        >
-          Upload Cache
-        </label>
-        <div
-          className="flex items-center justify-between px-3 py-2"
-          style={{
-            borderRadius: "8px",
-            border: cacheSize != null && cacheSize.totalBytes > 40 * 1024 * 1024
-              ? "1px solid var(--color-error-text)"
-              : "1px solid var(--color-border)",
-            backgroundColor: "var(--color-bg)",
-          }}
-        >
-          <div>
-            <div
-              style={{
-                fontFamily: "'Geist Mono', monospace",
-                fontSize: "16px",
-                fontWeight: 700,
-                color: "var(--color-text)",
-              }}
-            >
-              {cacheSize == null || cacheClearing
-                ? "..."
-                : cacheSize.totalBytes === 0
-                ? "0 B"
-                : cacheSize.totalBytes < 1024
-                ? `${cacheSize.totalBytes} B`
-                : cacheSize.totalBytes < 1024 * 1024
-                ? `${(cacheSize.totalBytes / 1024).toFixed(1)} KB`
-                : `${(cacheSize.totalBytes / (1024 * 1024)).toFixed(1)} MB`}
-            </div>
-            <div
-              className="text-xs"
-              style={{ color: "var(--color-text-muted)" }}
-            >
-              {cacheSize == null || cacheClearing
-                ? "calculating..."
-                : cacheSize.totalBytes === 0
-                ? "no cached files"
-                : `${cacheSize.fileCount} files · ${cacheSize.sessionCount} sessions`}
-            </div>
-          </div>
-          <button
-            onClick={() => onCacheAction?.("clear")}
-            disabled={cacheSize == null || cacheSize.totalBytes === 0 || cacheClearing}
-            className="text-xs px-3 py-1 rounded-btn transition-colors"
-            style={{
-              color: "var(--color-error-text)",
-              opacity: (cacheSize == null || cacheSize.totalBytes === 0 || cacheClearing) ? 0.4 : 1,
-              cursor: (cacheSize == null || cacheSize.totalBytes === 0 || cacheClearing) ? "not-allowed" : "pointer",
-            }}
-          >
-            Clear
-          </button>
-        </div>
-        {cacheSize != null && cacheSize.totalBytes > 40 * 1024 * 1024 && (
-          <p
-            className="text-xs mt-1"
-            style={{ color: "var(--color-error-text)" }}
-          >
-            Consider clearing to free disk space
-          </p>
-        )}
-        <p
-          className="text-xs mt-1"
-          style={{ color: "var(--color-text-muted)" }}
-        >
-          Files in .dscode/uploads/
-        </p>
-      </div>
 
       {/* Vision Model Section */}
       {config.vision != null || showVisionForm ? (
@@ -781,6 +702,86 @@ function SettingsPanel({
           style={{ color: "var(--color-text-muted)" }}
         >
           Max Tokens: {config.maxTokens.toLocaleString()}
+        </p>
+      </div>
+
+      {/* Upload Cache */}
+      <div
+        className="pt-2"
+        style={{ borderTop: "1px solid var(--color-border)" }}
+      >
+        <label
+          className="text-xs mb-1 block"
+          style={{ color: "var(--color-text-muted)" }}
+        >
+          Upload Cache
+        </label>
+        <div
+          className="flex items-center justify-between px-3 py-2"
+          style={{
+            borderRadius: "8px",
+            border: cacheSize != null && cacheSize.totalBytes > 40 * 1024 * 1024
+              ? "1px solid var(--color-error-text)"
+              : "1px solid var(--color-border)",
+            backgroundColor: "var(--color-bg)",
+          }}
+        >
+          <div>
+            <div
+              style={{
+                fontFamily: "'Geist Mono', monospace",
+                fontSize: "16px",
+                fontWeight: 700,
+                color: "var(--color-text)",
+              }}
+            >
+              {cacheSize == null || cacheClearing
+                ? "..."
+                : cacheSize.totalBytes === 0
+                ? "0 B"
+                : cacheSize.totalBytes < 1024
+                ? `${cacheSize.totalBytes} B`
+                : cacheSize.totalBytes < 1024 * 1024
+                ? `${(cacheSize.totalBytes / 1024).toFixed(1)} KB`
+                : `${(cacheSize.totalBytes / (1024 * 1024)).toFixed(1)} MB`}
+            </div>
+            <div
+              className="text-xs"
+              style={{ color: "var(--color-text-muted)" }}
+            >
+              {cacheSize == null || cacheClearing
+                ? "calculating..."
+                : cacheSize.totalBytes === 0
+                ? "no cached files"
+                : `${cacheSize.fileCount} files · ${cacheSize.sessionCount} sessions`}
+            </div>
+          </div>
+          <button
+            onClick={() => onCacheAction?.("clear")}
+            disabled={cacheSize == null || cacheSize.totalBytes === 0 || cacheClearing}
+            className="text-xs px-3 py-1 rounded-btn transition-colors"
+            style={{
+              color: "var(--color-error-text)",
+              opacity: (cacheSize == null || cacheSize.totalBytes === 0 || cacheClearing) ? 0.4 : 1,
+              cursor: (cacheSize == null || cacheSize.totalBytes === 0 || cacheClearing) ? "not-allowed" : "pointer",
+            }}
+          >
+            Clear
+          </button>
+        </div>
+        {cacheSize != null && cacheSize.totalBytes > 40 * 1024 * 1024 && (
+          <p
+            className="text-xs mt-1"
+            style={{ color: "var(--color-error-text)" }}
+          >
+            Consider clearing to free disk space
+          </p>
+        )}
+        <p
+          className="text-xs mt-1"
+          style={{ color: "var(--color-text-muted)" }}
+        >
+          Files in .dscode/uploads/
         </p>
       </div>
     </div>
