@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<!--
+  Change: fix-file-upload-cache
+  Descriptor: settings-cache-management
+  Generated: 2026-07-15
+-->
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Settings — Cache Management</title>
+<style>
+  :root {
+    --color-bg: #f8f7f5;
+    --color-surface: #f3f2ef;
+    --color-surface-hover: #ebe9e5;
+    --color-border: #e6e4e0;
+    --color-text: #2d2a26;
+    --color-text-muted: #8a8580;
+    --color-accent: #ca8a04;
+    --color-accent-hover: #a07004;
+    --color-error-text: #9f2f2d;
+    --color-error: #fdebec;
+    --font-mono: 'SF Mono', 'JetBrains Mono', monospace;
+    --font-sans: system-ui, -apple-system, sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    padding: 24px;
+    display: flex;
+    justify-content: center;
+  }
+
+  .panel {
+    width: 300px;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .panel-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .panel-tab {
+    flex: 1;
+    padding: 10px 0;
+    font-size: 12px;
+    font-weight: 500;
+    text-align: center;
+    background: none;
+    border: none;
+    font-family: inherit;
+    border-bottom: 2px solid transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+  }
+  .panel-tab.active {
+    color: var(--color-accent);
+    border-bottom-color: var(--color-accent);
+  }
+
+  .panel-body {
+    padding: 12px;
+  }
+
+  .settings-block {
+    margin-bottom: 16px;
+  }
+  .settings-label {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    margin-bottom: 6px;
+    display: block;
+  }
+  .settings-select, .settings-input {
+    width: 100%;
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: 12px;
+    padding: 8px 10px;
+    outline: none;
+    font-family: inherit;
+  }
+  .settings-input-row {
+    display: flex;
+    gap: 8px;
+  }
+  .settings-input-row .settings-input {
+    flex: 1;
+  }
+  .settings-btn {
+    font-size: 12px;
+    padding: 8px 14px;
+    border-radius: 6px;
+    border: 1px solid var(--color-accent);
+    background: var(--color-accent);
+    color: #fff;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .settings-divider {
+    border: none;
+    border-top: 1px solid var(--color-border);
+    margin: 12px 0;
+  }
+  .settings-footer {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    padding-top: 8px;
+    border-top: 1px solid var(--color-border);
+  }
+
+  /* Cache section */
+  .cache-block {
+    border-radius: 8px;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg);
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .cache-block.danger {
+    border-color: var(--color-error-text);
+  }
+  .cache-size {
+    font-family: var(--font-mono);
+    font-size: 16px;
+    font-weight: 600;
+  }
+  .cache-label {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    display: block;
+    margin-top: 2px;
+  }
+  .cache-clear-btn {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 6px 12px;
+    border-radius: 6px;
+    border: 1px solid var(--color-error-text);
+    background: transparent;
+    color: var(--color-error-text);
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .cache-clear-btn:hover {
+    background: var(--color-error);
+  }
+  .cache-clear-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .helper {
+    font-size: 10px;
+    color: var(--color-text-muted);
+    margin-top: 4px;
+  }
+</style>
+</head>
+<body>
+
+<div class="panel">
+  <div class="panel-tabs">
+    <button class="panel-tab">Sessions</button>
+    <button class="panel-tab">MCP</button>
+    <button class="panel-tab active">Settings</button>
+  </div>
+  <div class="panel-body">
+
+    <div class="settings-block">
+      <label class="settings-label">Provider</label>
+      <select class="settings-select" disabled><option>deepseek</option></select>
+    </div>
+
+    <div class="settings-block">
+      <label class="settings-label">Model</label>
+      <select class="settings-select" disabled><option>deepseek-chat</option></select>
+    </div>
+
+    <div class="settings-block">
+      <label class="settings-label">Thinking Level</label>
+      <select class="settings-select" disabled><option>off</option></select>
+    </div>
+
+    <div class="settings-block">
+      <label class="settings-label">API Key</label>
+      <div class="settings-input-row">
+        <input class="settings-input" type="password" placeholder="sk-..." disabled>
+        <button class="settings-btn" disabled>Set</button>
+      </div>
+    </div>
+
+    <div class="settings-block">
+      <label class="settings-label">Project Path</label>
+      <div class="settings-input-row">
+        <input class="settings-input" type="text" placeholder="/Users/..." disabled>
+        <button class="settings-btn" disabled>Set</button>
+      </div>
+    </div>
+
+    <hr class="settings-divider">
+
+    <!-- ═══ CACHE SECTION ═══ -->
+    <div class="settings-block">
+      <label class="settings-label">Upload Cache</label>
+      <div class="cache-block" id="cacheBlock">
+        <div>
+          <span class="cache-size" id="cacheSize">0 B</span>
+          <span class="cache-label" id="cacheSubtext">no cached files</span>
+        </div>
+        <button class="cache-clear-btn" id="clearBtn" disabled>Clear</button>
+      </div>
+      <div class="helper">Files stored in .dscode/uploads/</div>
+    </div>
+
+    <hr class="settings-divider">
+
+    <div class="settings-footer">Max Tokens: 131,072</div>
+  </div>
+</div>
+
+<!-- State Switcher -->
+<div style="position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:100;
+  display:flex;gap:6px;padding:6px 8px;border-radius:8px;
+  border:1px solid var(--color-border);background:var(--color-surface);
+  font-size:12px;font-family:var(--font-sans);">
+  <span style="color:var(--color-text-muted);font-size:10px;align-self:center;">Cache State&nbsp;</span>
+  <button onclick="setState('empty')" id="st-empty" style="padding:4px 10px;font-size:11px;border-radius:6px;border:1px solid var(--color-border);background:var(--color-accent);color:#fff;cursor:pointer;font-family:inherit;">Empty</button>
+  <button onclick="setState('small')" id="st-small" style="padding:4px 10px;font-size:11px;border-radius:6px;border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text-muted);cursor:pointer;font-family:inherit;">2.4 MB</button>
+  <button onclick="setState('medium')" id="st-medium" style="padding:4px 10px;font-size:11px;border-radius:6px;border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text-muted);cursor:pointer;font-family:inherit;">47 MB</button>
+  <button onclick="setState('large')" id="st-large" style="padding:4px 10px;font-size:11px;border-radius:6px;border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text-muted);cursor:pointer;font-family:inherit;">312 MB</button>
+  <button onclick="setState('loading')" id="st-loading" style="padding:4px 10px;font-size:11px;border-radius:6px;border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text-muted);cursor:pointer;font-family:inherit;">Loading...</button>
+  <button onclick="setState('clearing')" id="st-clearing" style="padding:4px 10px;font-size:11px;border-radius:6px;border:1px solid var(--color-border);background:var(--color-bg);color:var(--color-text-muted);cursor:pointer;font-family:inherit;">Clearing...</button>
+</div>
+
+<script>
+  var $size = document.getElementById('cacheSize');
+  var $sub = document.getElementById('cacheSubtext');
+  var $block = document.getElementById('cacheBlock');
+  var $btn = document.getElementById('clearBtn');
+
+  var buttons = {
+    empty: document.getElementById('st-empty'),
+    small: document.getElementById('st-small'),
+    medium: document.getElementById('st-medium'),
+    large: document.getElementById('st-large'),
+    loading: document.getElementById('st-loading'),
+    clearing: document.getElementById('st-clearing'),
+  };
+
+  function setState(s) {
+    // Update active button
+    Object.keys(buttons).forEach(function(k) {
+      buttons[k].style.background = 'var(--color-bg)';
+      buttons[k].style.color = 'var(--color-text-muted)';
+    });
+    if (buttons[s]) {
+      buttons[s].style.background = 'var(--color-accent)';
+      buttons[s].style.color = '#fff';
+    }
+
+    if (s === 'empty') {
+      $size.textContent = '0 B';
+      $sub.textContent = 'no cached files';
+      $block.classList.remove('danger');
+      $btn.disabled = true;
+    } else if (s === 'small') {
+      $size.textContent = '2.4 MB';
+      $sub.textContent = '7 files · 3 sessions';
+      $block.classList.remove('danger');
+      $btn.disabled = false;
+    } else if (s === 'medium') {
+      $size.textContent = '47 MB';
+      $sub.textContent = '23 files · 5 sessions';
+      $block.classList.remove('danger');
+      $btn.disabled = false;
+    } else if (s === 'large') {
+      $size.textContent = '312 MB';
+      $sub.textContent = '85 files · 12 sessions';
+      $block.classList.add('danger');
+      $btn.disabled = false;
+    } else if (s === 'loading') {
+      $size.textContent = '...';
+      $sub.textContent = 'calculating...';
+      $block.classList.remove('danger');
+      $btn.disabled = true;
+    } else if (s === 'clearing') {
+      $size.textContent = '...';
+      $sub.textContent = 'clearing...';
+      $block.classList.remove('danger');
+      $btn.disabled = true;
+      setTimeout(function() { setState('empty'); }, 1500);
+    }
+  }
+
+  $btn.addEventListener('click', function() {
+    if (!$btn.disabled) setState('clearing');
+  });
+</script>
+
+</body>
+</html>

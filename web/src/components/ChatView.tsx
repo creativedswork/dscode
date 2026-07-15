@@ -366,7 +366,7 @@ function UserBubble({ message }: { message: UIMessage }) {
 
   return (
     <div className="user-msg">
-      <div className="meta">You · 09:41</div>
+      <div className="meta">You{message.createdAt ? ` · ${new Date(message.createdAt).toLocaleTimeString()}` : ""}</div>
       <div data-collider="message-card" className="content">
         {message.images && message.images.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-2 justify-end">
@@ -409,7 +409,7 @@ function AssistantMessage({ message, sessionTime }: { message: UIMessage; sessio
 
   return (
     <div className="assistant-msg">
-      <div className="meta">dscode · 09:41</div>
+      <div className="meta">dscode{message.createdAt ? ` · ${new Date(message.createdAt).toLocaleTimeString()}` : ""}</div>
 
       {message.thinking && (
         <ThinkingBlock thinking={message.thinking} isStreaming={message.isStreaming} sessionTime={sessionTime} />

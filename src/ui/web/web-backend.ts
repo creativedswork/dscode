@@ -1,6 +1,6 @@
 import { createServer, request as httpRequest } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync } from "node:fs";
 import { join, extname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ImageContent } from "@earendil-works/pi-ai";
@@ -20,7 +20,7 @@ import type { MCPManager } from "../../mcp/manager.js";
 import type { AppHostManager } from "../../mcp/app/host.js";
 import type { AppInstance } from "../../mcp/app/types.js";
 import { buildMcpServers } from "../mcp-browser.js";
-import { resolveAtFileRefs, resolveFileRefs, listProjectFiles } from "../../utils/at-file-resolver.js";
+import { resolveAtFileRefs, resolveFileRefs, listProjectFiles, isImagePath } from "../../utils/at-file-resolver.js";
 import { rebuildDisplayMessages } from "../../session/display.js";
 import { formatToolResultForUI } from "../shared/tool-result-formatter.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
@@ -58,7 +58,6 @@ export interface WebUiOptions {
 }
 
 /**
- * Web UI backend that implements UiBackend.
  * Creates an HTTP server + WebSocket server, serves the SPA,
  * and translates all UI callbacks into WebSocket events.
  */
@@ -98,6 +97,17 @@ export class WebUiBackend implements UiBackend {
   private contextWindowThrottlePending: boolean = false;
   private lastArtifactHtml: string = "";
   private isAssistantTurn: boolean = false;
+
+  private cleanupUploadDir(sessionId: string): void {
+    const uploadDir = join(this.config.projectPath, ".dscode", "uploads", sessionId);
+    if (existsSync(uploadDir)) {
+      try {
+        rmSync(uploadDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+  }
 
   constructor(options: WebUiOptions) {
     this.port = options.port;
@@ -250,22 +260,6 @@ export class WebUiBackend implements UiBackend {
     this.broadcast({ type: "tool_start", name, args });
   }
 
-  toolEnd(name: string, result: unknown, isError: boolean): void {
-    const resultStr = typeof result === "string" ? result.slice(0, 5000) : JSON.stringify(result).slice(0, 5000);
-    const images = extractImagesFromToolResult(result);
-    if (this.currentAssistant) {
-      this.currentAssistant.tools = this.currentAssistant.tools.filter((t) => t.name !== name || t.result !== "");
-      this.currentAssistant.tools.push({
-        name,
-        args: "",
-        result: resultStr,
-        isError,
-        images,
-      });
-    }
-    this.broadcast({ type: "tool_end", name, result: resultStr, isError, images });
-    this.broadcastContextWindow(false);
-  }
   finishAssistantMessage(): void {
     this.broadcastSessionTime();
     this.stopSessionTimeBroadcast();
@@ -504,23 +498,82 @@ export class WebUiBackend implements UiBackend {
         for (const warn of resolved.warnings) {
           client.send({ type: "info", display: "toast", text: `@${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}` });
         }
-        // Resolve fileRefs from drag-and-drop tracker
+        // Handle uploaded files from web drag-and-drop (browser-read content → temp files)
+        if (cmd.uploadedFiles && cmd.uploadedFiles.length > 0) {
+          const sm = this.harness.sessionManager;
+          const sessionId = sm.getCurrentSessionId?.() ?? "default";
+          const ts = Date.now();
+          const uploadDir = join(this.config.projectPath, ".dscode", "uploads", sessionId);
+          mkdirSync(uploadDir, { recursive: true });
+          const tempPaths: string[] = [];
+          for (const uf of cmd.uploadedFiles) {
+            const tempName = `${ts}-${uf.name}`;
+            const tempPath = join(uploadDir, tempName);
+            writeFileSync(tempPath, Buffer.from(uf.content, "base64"));
+            tempPaths.push(tempPath);
+          }
+          if (tempPaths.length > 0) {
+            const pathLines = tempPaths.map(p => `- \`${p}\``).join('\n');
+            text = text ? `${text}\n\n📁 Attached files:\n${pathLines}` : `📁 Attached files:\n${pathLines}`;
+          }
+        }
+
+        // Handle fileRefs (TUI drag-and-drop: absolute filesystem paths)
         if (cmd.fileRefs && cmd.fileRefs.length > 0) {
-          const refsResolved = resolveFileRefs(this.config.projectPath, cmd.fileRefs, this.config.atFile ?? {});
-          if (!refsResolved.reject) {
-            if (refsResolved.text) {
-              text = text ? `${text}\n\n${refsResolved.text}` : refsResolved.text;
+          const imageRefs = cmd.fileRefs.filter(f => isImagePath(f));
+          const nonImageRefs = cmd.fileRefs.filter(f => !isImagePath(f));
+          // Non-image files from TUI: inject path references only (files exist on filesystem)
+          if (nonImageRefs.length > 0) {
+            const pathLines = nonImageRefs.map(f => `- \`${f}\``).join('\n');
+            text = text ? `${text}\n\n📁 Attached files:\n${pathLines}` : `📁 Attached files:\n${pathLines}`;
+          }
+          // Image files from TUI: resolve normally from filesystem
+          if (imageRefs.length > 0) {
+            const refsResolved = resolveFileRefs(this.config.projectPath, imageRefs, this.config.atFile ?? {});
+            if (!refsResolved.reject) {
+              if (refsResolved.text) {
+                text = text ? `${text}\n\n${refsResolved.text}` : refsResolved.text;
+              }
+              if (refsResolved.images.length > 0) {
+                const refImages = refsResolved.images.map((img) => ({
+                  data: img.data,
+                  mimeType: img.mimeType,
+                }));
+                images = [...(images ?? []), ...refImages];
+              }
             }
-            if (refsResolved.images.length > 0) {
-              const refImages = refsResolved.images.map((img) => ({
-                data: img.data,
-                mimeType: img.mimeType,
-              }));
-              images = [...(images ?? []), ...refImages];
+            for (const warn of refsResolved.warnings) {
+              client.send({ type: "info", display: "toast", text: `${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}` });
             }
           }
-          for (const warn of refsResolved.warnings) {
-            client.send({ type: "info", display: "toast", text: `${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}` });
+        }
+        // Split fileRefs by type: images vs non-images
+        if (cmd.fileRefs && cmd.fileRefs.length > 0) {
+          const imageRefs = cmd.fileRefs.filter(f => isImagePath(f));
+          const nonImageRefs = cmd.fileRefs.filter(f => !isImagePath(f));
+          // Non-image files: inject path references only
+          if (nonImageRefs.length > 0) {
+            const pathLines = nonImageRefs.map(f => `- \`${f}\``).join('\n');
+            text = text ? `${text}\n\n📁 Attached files:\n${pathLines}` : `📁 Attached files:\n${pathLines}`;
+          }
+          // Image files: resolve normally
+          if (imageRefs.length > 0) {
+            const refsResolved = resolveFileRefs(this.config.projectPath, imageRefs, this.config.atFile ?? {});
+            if (!refsResolved.reject) {
+              if (refsResolved.text) {
+                text = text ? `${text}\n\n${refsResolved.text}` : refsResolved.text;
+              }
+              if (refsResolved.images.length > 0) {
+                const refImages = refsResolved.images.map((img) => ({
+                  data: img.data,
+                  mimeType: img.mimeType,
+                }));
+                images = [...(images ?? []), ...refImages];
+              }
+            }
+            for (const warn of refsResolved.warnings) {
+              client.send({ type: "info", display: "toast", text: `${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}` });
+            }
           }
         }
         // Broadcast user message to client before sending to agent
@@ -535,6 +588,7 @@ export class WebUiBackend implements UiBackend {
               mimeType: img.mimeType,
             }) as ImageContent);
             this.pendingImages = [];
+            this.harness.logger.info("tool", "web-backend", `promptWithImages: textLen=${text.length}, images=${imageContents.length}, img[0].dataLen=${imageContents[0]?.data?.length ?? 0}, mime=${imageContents[0]?.mimeType ?? "?"}`);
             await this.harness.promptWithImages(text, imageContents);
           } else {
             this.pendingImages = [];
@@ -694,11 +748,60 @@ export class WebUiBackend implements UiBackend {
         await this.handleArtifact(client, cmd as ClientCommand & { type: "artifact"; action: "generate" | "update"; context?: string; instruction?: string });
         break;
       }
+      case "cache": {
+        this.handleCache(client, cmd as ClientCommand & { type: "cache"; action: "size" | "clear" });
+        break;
+      }
       case "mcp": {
         this.handleMcp(client, cmd);
         break;
       }
     }
+  }
+
+  private handleCache(client: WebSocketClient, cmd: ClientCommand & { type: "cache"; action: "size" | "clear" }): void {
+    const uploadsDir = join(this.config.projectPath, ".dscode", "uploads");
+
+    if (cmd.action === "clear") {
+      if (existsSync(uploadsDir)) {
+        try {
+          rmSync(uploadsDir, { recursive: true, force: true });
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+      client.send({ type: "cache_size", totalBytes: 0, fileCount: 0, sessionCount: 0 });
+      return;
+    }
+
+    // action === "size"
+    let totalBytes = 0;
+    let fileCount = 0;
+    let sessionCount = 0;
+
+    if (existsSync(uploadsDir)) {
+      const sessionDirs = readdirSync(uploadsDir, { withFileTypes: true })
+        .filter((d) => d.isDirectory());
+      sessionCount = sessionDirs.length;
+
+      for (const dir of sessionDirs) {
+        const sessionPath = join(uploadsDir, dir.name);
+        const files = readdirSync(sessionPath, { withFileTypes: true });
+        for (const f of files) {
+          if (f.isFile()) {
+            try {
+              const st = statSync(join(sessionPath, f.name));
+              totalBytes += st.size;
+              fileCount++;
+            } catch {
+              // skip
+            }
+          }
+        }
+      }
+    }
+
+    client.send({ type: "cache_size", totalBytes, fileCount, sessionCount });
   }
 
   private async handleSlashCommand(client: WebSocketClient, text: string): Promise<void> {
@@ -1119,6 +1222,7 @@ export class WebUiBackend implements UiBackend {
         if (wasCurrent) {
           client.send({ type: "clear_conversation" });
         }
+        this.cleanupUploadDir(cmd.id);
         client.send({ type: "info", display: "toast", text: "Session deleted." });
         const sessions = sessionManager.listSessions();
         const currentId = sessionManager.getCurrentSessionId?.() ?? undefined;

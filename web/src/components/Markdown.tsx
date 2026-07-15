@@ -24,13 +24,7 @@ export function Markdown({ children, className = "" }: MarkdownProps) {
               : children;
             return (
               <pre
-                className="p-3 overflow-x-auto text-xs my-2"
-                style={{
-                  borderRadius: "8px",
-                  backgroundColor: "var(--color-bg)",
-                  border: "1px solid var(--color-border)",
-                  color: "var(--color-text)",
-                }}
+                className="md-pre-base p-3 overflow-x-auto text-xs my-1"
               >
                 {wrappedChildren}
               </pre>

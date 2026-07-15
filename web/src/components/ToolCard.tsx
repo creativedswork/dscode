@@ -168,7 +168,6 @@ export function ToolCard({ tool, thinking }: ToolCardProps) {
     ? Math.max(0, Math.min(100, Math.round((tool.progress! / tool.progressTotal!) * 100)))
     : 0;
   const isIndeterminate = hasProgress && !hasProgressTotal;
-  const isCompleted = hasResult && !isError;
 
   // Elapsed time tracking
   const startTimeRef = useRef<number>(Date.now());
@@ -192,12 +191,6 @@ export function ToolCard({ tool, thinking }: ToolCardProps) {
     hadProgressRef.current = hasProgress;
   }, [hasProgress]);
 
-  // Fade-out state: true when progress bar was visible but tool is now done
-  const [progressDone, setProgressDone] = useState(false);
-  if (hasProgress && !hasResult) {
-    if (progressDone) setProgressDone(false);
-  }
-
   const handleHeaderClick = () => {
     if (open) {
       userManuallyCollapsed.current = true;
@@ -215,8 +208,6 @@ export function ToolCard({ tool, thinking }: ToolCardProps) {
     : "\u25CC";
   const statusClass = isError ? "err" : "ok";
   const spinnerClass = hasProgress && !hasResult ? " spinner" : "";
-  const showProgressBar = hasProgress && !isCompleted;
-  const showProgressFadeOut = isCompleted && !progressDone;
 
   const images = useMemo(() => {
     if (tool.images && tool.images.length > 0) {
@@ -308,26 +299,6 @@ export function ToolCard({ tool, thinking }: ToolCardProps) {
           </div>
         )}
 
-        {/* Progress bar in expanded body (non-MCP tools + fade-out) */}
-        {!isMcp && (showProgressBar || showProgressFadeOut) && (
-          <div className={`progress-container${showProgressFadeOut ? " progress-fade-out" : ""}`}
-            onTransitionEnd={() => { if (showProgressFadeOut) setProgressDone(true); }}
-          >
-            <div className="progress-bar">
-              <div
-                className={`progress-fill${isIndeterminate ? " indeterminate" : ""}`}
-                style={isIndeterminate ? undefined : { width: `${progressPercent}%` }}
-              />
-            </div>
-            {!isIndeterminate && (
-              <span className="progress-text">{progressPercent}%</span>
-            )}
-            {tool.progressMessage && (
-              <span className="progress-message">{tool.progressMessage}</span>
-            )}
-          </div>
-        )}
-
         {images && images.length > 0 && (
           <div style={{ padding: "8px 14px", display: "flex", flexWrap: "wrap", gap: "8px" }}>
             {images.map((img, i) => (
@@ -344,12 +315,8 @@ export function ToolCard({ tool, thinking }: ToolCardProps) {
         )}
 
         {hasResult && !hasMcpApp && !isMcp && (
-          <div className="tool-card-body-inner">
-            {tool.result.split('\n').map((line, i) => (
-              <span key={i} data-collider="tool-result-line">
-                {line === '' ? <br /> : <Markdown className="text-xs">{line}</Markdown>}
-              </span>
-            ))}
+          <div className="tool-card-body-inner" data-collider="tool-result-line">
+            <Markdown className="text-xs">{tool.result}</Markdown>
           </div>
         )}
 
@@ -363,7 +330,7 @@ export function ToolCard({ tool, thinking }: ToolCardProps) {
 
         {isMcp && !hasRichList && hasResult && (
           <div className="mcp-raw-block" data-collider="tool-result-line">
-            {tool.result}
+            <Markdown className="text-xs">{tool.result}</Markdown>
           </div>
         )}
       </div>

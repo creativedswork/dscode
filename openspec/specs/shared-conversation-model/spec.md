@@ -1,7 +1,9 @@
-## ADDED Requirements
+## Purpose
 
+Defines the canonical shared conversation data model — including UIMessage, ToolCallEntry, and ContentBlock types — and the pure conversationReducer function consumed by both TUI and Web UI to eliminate type drift and duplicate logic.
+## Requirements
 ### Requirement: Canonical UIMessage type
-The shared module SHALL define a canonical `UIMessage` type that represents a single conversation message with all possible content types (text, thinking, tool calls, images, streaming state).
+The shared module SHALL define a canonical `UIMessage` type that represents a single conversation message with all possible content types (text, thinking, tool calls, images, streaming state) and an optional creation timestamp.
 
 #### Scenario: User message
 - **WHEN** a user sends a message
@@ -18,6 +20,11 @@ The shared module SHALL define a canonical `UIMessage` type that represents a si
 #### Scenario: System message
 - **WHEN** a system event occurs
 - **THEN** the `UIMessage` has `role: "system"`, `content: string`
+
+#### Scenario: Message carries creation timestamp
+- **WHEN** a message is created by the reducer
+- **THEN** the `UIMessage` SHALL have an optional `createdAt?: number` field containing the epoch millisecond timestamp of message creation
+- **AND** when `createdAt` is absent, consumers SHALL treat the message as having no known creation time
 
 ### Requirement: Canonical ToolCallEntry type
 The shared module SHALL define a canonical `ToolCallEntry` type representing a single tool invocation within an assistant message.
@@ -73,6 +80,18 @@ The shared module SHALL export a pure function `conversationReducer(prev: UIMess
 - **WHEN** `ready` event is received with `messages` array
 - **THEN** the reducer maps each conversation message to a `UIMessage`, normalizing content to string format
 
+#### Scenario: User message records creation timestamp
+- **WHEN** `user_message` event is received with an optional `createdAt` field
+- **THEN** the reducer SHALL set `createdAt` on the resulting `UIMessage` to the event's `createdAt` value if present, or leave it undefined otherwise
+
+#### Scenario: Assistant message records creation timestamp
+- **WHEN** `updateLastOrCreate` creates or updates a streaming assistant message
+- **THEN** the reducer SHALL set `createdAt` on the new `UIMessage` to a provided timestamp value if present, preserving any existing `createdAt` on updated messages
+
+#### Scenario: Ready event propagates timestamps
+- **WHEN** `ready` event is received with `messages` array where individual messages have an optional `createdAt` field
+- **THEN** the reducer SHALL set `UIMessage.createdAt` to the message's `createdAt` value if present, or leave it undefined otherwise
+
 ### Requirement: Reducer is pure and side-effect-free
 The `conversationReducer` function SHALL be a pure function with no side effects, no external dependencies, and no DOM/Node API usage.
 
@@ -83,3 +102,4 @@ The `conversationReducer` function SHALL be a pure function with no side effects
 #### Scenario: No mutation of input
 - **WHEN** called with a `prev` array
 - **THEN** the original `prev` array is not modified
+

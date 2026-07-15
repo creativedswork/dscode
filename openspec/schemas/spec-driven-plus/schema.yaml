@@ -129,31 +129,32 @@ artifacts:
   - id: prototype
     generates: prototype.md
     description: >-
-      Frontend prototype design (optional, Explore-triggered, does not block apply)
+      Prototype manifest — mandatory artifact that blocks tasks creation. For UI
+      changes, references HTML prototypes from docs/prototypes/. For non-UI
+      changes, contains a stub stating no prototype is needed.
     template: prototype.md
     instruction: |
-      Create a prototype design artifact when Explore discussion involves frontend/UI needs.
+      Create the prototype manifest artifact. This is **mandatory** for all
+      changes — it blocks task creation until complete.
 
-      This artifact is **optional** — only create in these scenarios:
-      - New UI components or pages
-      - Visual style changes
-      - Interaction flow redesign
-      - User explicitly requests a prototype
+      For UI changes (new components, pages, visual interaction, style changes):
+      - Reference HTML prototype files from `docs/prototypes/` that were created
+        during explore (e.g., `docs/prototypes/<change-name>-*.html`)
+      - List each prototype file path with a summary of the visual direction and
+        key design decisions confirmed during visual iteration
+      - If no HTML prototype was created during explore but the change involves
+        UI, provide a brief visual direction description based on design.md
 
-      Content sections:
-      - **Visual Direction**: Color palette, typography, spacing philosophy, mood
-      - **Layout**: ASCII wireframe or Mermaid structural diagram showing component hierarchy
-      - **Interaction Flow**: Key state transitions using state diagrams or numbered steps
-      - **Design References**: Inspiration sources, existing components, constraints
-      - **Accessibility Notes**: Keyboard, screen reader, contrast, motion considerations
+      For non-UI changes (backend-only, config, refactoring):
+      - Write a stub: "No prototype needed — <one-line reason>"
+      - Example: "No prototype needed — backend-only change affecting the
+        config loader module."
 
-      If the Explore conversation already produced enough design thinking,
-      extract and organize it directly. If more info is needed, ask 1-2 key
-      questions before creating.
-
-      This produces a single prototype.md. Do NOT write HTML/CSS code —
-      that happens during the apply phase.
-    requires: []
+      The prototype artifact is the bridge between explore's visual exploration
+      and the implementation tasks. HTML prototypes are created during explore
+      (not here) — this artifact references and summarizes them.
+    requires:
+      - design
 
   - id: tasks
     generates: tasks.md
@@ -176,6 +177,7 @@ artifacts:
     requires:
       - specs
       - design
+      - prototype
 
   - id: consolidate
     generates: consolidate.md

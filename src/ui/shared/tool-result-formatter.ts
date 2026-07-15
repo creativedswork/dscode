@@ -6,7 +6,7 @@
  * is consistent regardless of which pipeline produces the output.
  */
 
-const DEFAULT_MAX_CHARS = 600;
+const DEFAULT_MAX_CHARS = 2000;
 
 /**
  * Extract a human-readable summary from write_file / overwrite_file results.

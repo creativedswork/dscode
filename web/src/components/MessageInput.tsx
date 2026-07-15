@@ -1,10 +1,9 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import type { ImageAttachment, FileAttachment, FileListItem } from "../types";
-import { FileTracker } from "@dscode/shared/file-tracker";
 import { PaperPlaneTilt, Folder, File, Image, TextAlignLeft, Video, SpeakerHigh, FilePdf, Archive, X } from "@phosphor-icons/react";
 
 interface MessageInputProps {
-  onSend: (text: string, images?: ImageAttachment[], fileRefs?: string[]) => void;
+  onSend: (text: string, images?: ImageAttachment[], fileRefs?: string[], uploadedFiles?: { name: string; content: string }[]) => void;
   onAbort: () => void;
   onSlashCommand: (command: string) => void;
   onCommand: (cmd: { type: "file_list"; prefix: string }) => void;
@@ -13,21 +12,50 @@ interface MessageInputProps {
   fileListItems: FileListItem[];
   fileListPrefix: string;
   projectPath: string;
+  onToast?: (type: "warning" | "error", text: string) => void;
   viewMode?: "chat" | "dashboard";
 }
 
 function fileToImageAttachment(file: File): Promise<ImageAttachment> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = async () => {
       const dataUrl = reader.result as string;
-      const commaIdx = dataUrl.indexOf(",");
-      const mimeType = dataUrl.slice(5, dataUrl.indexOf(";"));
-      const data = dataUrl.slice(commaIdx + 1);
+      const compressed = await compressImage(dataUrl);
+      const commaIdx = compressed.indexOf(",");
+      const mimeType = compressed.slice(5, compressed.indexOf(";"));
+      const data = compressed.slice(commaIdx + 1);
       resolve({ data, mimeType });
     };
     reader.onerror = reject;
     reader.readAsDataURL(file);
+  });
+}
+
+function compressImage(dataUrl: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new window.Image();
+    img.onload = () => {
+      const MAX_HEIGHT = 480;
+      if (img.height <= MAX_HEIGHT) {
+        resolve(dataUrl);
+        return;
+      }
+      const scale = MAX_HEIGHT / img.height;
+      const width = Math.round(img.width * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = width;
+      canvas.height = MAX_HEIGHT;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        resolve(dataUrl);
+        return;
+      }
+      ctx.drawImage(img, 0, 0, width, MAX_HEIGHT);
+      resolve(canvas.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = () => reject(new Error("Failed to load image for compression"));
+    img.src = dataUrl;
   });
 }
 
@@ -73,6 +101,8 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
+const MAX_TOTAL_SIZE = 50 * 1024 * 1024; // 50 MB
 
 export function MessageInput({
   onSend,
@@ -85,10 +115,11 @@ export function MessageInput({
   fileListPrefix,
   viewMode,
   projectPath,
+  onToast,
 }: MessageInputProps) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<ImageAttachment[]>([]);
-  const [files, setFiles] = useState<{ absPath: string; displayPath: string }[]>([]);
+  const [uploadedFiles, setUploadedFiles] = useState<{ name: string; size: number; content: string }[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
   const [slashFilter, setSlashFilter] = useState("");
@@ -101,7 +132,6 @@ export function MessageInput({
   const historyCursorRef = useRef<number>(-1);
   const draftRef = useRef<string>("");
   const isComposingRef = useRef(false);
-  const trackerRef = useRef<FileTracker>(new FileTracker());
   const MAX_HISTORY = 100;
 
   const filteredCommands = slashCommands.filter(
@@ -125,8 +155,7 @@ export function MessageInput({
 
   const handleSubmit = useCallback(() => {
     const trimmed = text.trim();
-    const fileRefs = trackerRef.current.drain();
-    if (!trimmed && images.length === 0 && fileRefs.length === 0) return;
+    if (!trimmed && images.length === 0 && uploadedFiles.length === 0) return;
     // Push to history if non-empty and not duplicate of last entry
     if (trimmed && historyRef.current[0] !== trimmed) {
       historyRef.current.unshift(trimmed);
@@ -135,13 +164,16 @@ export function MessageInput({
       }
     }
     historyCursorRef.current = -1;
-    onSend(trimmed, images.length > 0 ? images : undefined, fileRefs.length > 0 ? fileRefs : undefined);
+    const uploadPayload = uploadedFiles.length > 0
+      ? uploadedFiles.map(f => ({ name: f.name, content: f.content }))
+      : undefined;
+    onSend(trimmed, images.length > 0 ? images : undefined, undefined, uploadPayload);
     setText("");
     setImages([]);
-    setFiles([]);
+    setUploadedFiles([]);
     setShowSlashMenu(false);
     setShowFileMenu(false);
-  }, [text, images, onSend]);
+  }, [text, images, uploadedFiles, onSend]);
 
   const navigateToDirectory = (dirPath: string) => {
     const textarea = textareaRef.current;
@@ -401,9 +433,8 @@ export function MessageInput({
     setImages((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
-  const removeFile = useCallback((absPath: string) => {
-    trackerRef.current.remove(absPath);
-    setFiles((prev) => prev.filter((f) => f.absPath !== absPath));
+  const removeUploadedFile = useCallback((index: number) => {
+    setUploadedFiles((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -417,7 +448,7 @@ export function MessageInput({
     setIsDragOver(false);
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
+  const handleDrop = useCallback(async (e: React.DragEvent) => {
     if (processing) return;
     e.preventDefault();
     setIsDragOver(false);
@@ -425,22 +456,61 @@ export function MessageInput({
     const droppedFiles = e.dataTransfer.files;
     if (droppedFiles.length === 0) return;
 
-    const tracker = trackerRef.current;
-    const newEntries: { absPath: string; displayPath: string }[] = [];
+    const newImages: ImageAttachment[] = [];
+    const newUploads: { name: string; size: number; content: string }[] = [];
+    let totalSize = 0;
 
     for (let i = 0; i < droppedFiles.length; i++) {
       const file = droppedFiles[i];
-      const absPath = (file as any).path ?? file.name;
-      const displayPath = tracker.add(absPath, projectPath);
-      newEntries.push({ absPath, displayPath });
+
+      if (file.type.startsWith("image/")) {
+        // Image: read as base64, same as paste
+        try {
+          const img = await fileToImageAttachment(file);
+          newImages.push(img);
+        } catch {
+          // skip
+        }
+      } else {
+        // Non-image: read as base64, upload to server as temp file
+        if (file.size > MAX_FILE_SIZE) {
+          onToast?.("warning", `File '${file.name}' exceeds 10 MB limit`);
+          continue;
+        }
+        if (totalSize + file.size > MAX_TOTAL_SIZE) {
+          onToast?.("warning", "Total file size exceeds 50 MB limit");
+          continue;
+        }
+        try {
+          const content = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+              const dataUrl = reader.result as string;
+              // Strip "data:<mime>;base64," prefix, keep raw base64
+              resolve(dataUrl.substring(dataUrl.indexOf(',') + 1));
+            };
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          newUploads.push({ name: file.name, size: file.size, content });
+          totalSize += file.size;
+        } catch {
+          // skip
+        }
+      }
     }
 
-    setFiles((prev) => [...prev, ...newEntries]);
+    if (newImages.length > 0) {
+      setImages((prev) => [...prev, ...newImages]);
+    }
+    if (newUploads.length > 0) {
+      setUploadedFiles((prev) => [...prev, ...newUploads]);
+    }
 
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
     });
-  }, [processing, projectPath]);
+  }, [processing]);
 
   const adjustHeight = () => {
     const ta = textareaRef.current;
@@ -580,14 +650,14 @@ export function MessageInput({
         </div>
       )}
 
-      {/* File chips */}
-      {files.length > 0 && (
+      {/* Uploaded file chips */}
+      {uploadedFiles.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-2 max-w-4xl mx-auto">
-          {files.map((f) => {
-            const IconComponent = getFileIconFromPath(f.displayPath);
+          {uploadedFiles.map((f, i) => {
+            const IconComponent = getFileIconFromPath(f.name);
             return (
               <div
-                key={f.absPath}
+                key={`${f.name}-${i}`}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 text-sm max-w-[200px]"
                 style={{
                   border: "1px solid var(--color-border)",
@@ -599,12 +669,12 @@ export function MessageInput({
                 <span
                   className="truncate text-xs"
                   style={{ color: "var(--color-text)" }}
-                  title={f.displayPath}
+                  title={f.name}
                 >
-                  {f.displayPath}
+                  {f.name}
                 </span>
                 <button
-                  onClick={() => removeFile(f.absPath)}
+                  onClick={() => removeUploadedFile(i)}
                   className="flex-shrink-0 w-4 h-4 rounded text-xs flex items-center justify-center ml-0.5"
                   style={{ color: "var(--color-text-muted)" }}
                   title="Remove file"
@@ -685,7 +755,7 @@ export function MessageInput({
         ) : (
           <button
             onClick={handleSubmit}
-            disabled={!text.trim() && images.length === 0 && files.length === 0}
+            disabled={!text.trim() && images.length === 0 && uploadedFiles.length === 0}
             className="btn-primary shrink-0"
           >
             <PaperPlaneTilt size={16} weight="bold" />

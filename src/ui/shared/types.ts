@@ -141,6 +141,7 @@ export interface UIMessage {
   tools?: ToolCallEntry[];
   isStreaming?: boolean;
   images?: (ImageAttachment | ImageRef)[];
+  createdAt?: number; // epoch ms
 }
 // ── Permissions ──
 
@@ -163,7 +164,7 @@ export interface PermOption {
 // ── Wire protocol ──
 
 export type ClientCommand =
-  | { type: "chat"; text: string; images?: ImageAttachment[]; clipboardImages?: ImageAttachment[]; fileRefs?: string[] }
+  | { type: "chat"; text: string; images?: ImageAttachment[]; clipboardImages?: ImageAttachment[]; fileRefs?: string[]; uploadedFiles?: { name: string; content: string }[] }
   | { type: "abort" }
   | { type: "permission"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; persistRule?: boolean; toolNamePattern?: string; fuzzyMode?: number; sessionGrantPattern?: string }
   | { type: "permission_response"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; denyReason?: string; toolNamePattern?: string }
@@ -182,6 +183,7 @@ export type ClientCommand =
   | { type: "mcp"; action: "list" | "refresh" | "connect" | "disconnect"; serverName?: string }
   | { type: "file_list"; prefix: string }
   | { type: "mcp_app"; action: "rpc"; appId: string; message: object }
+  | { type: "cache"; action: "size" | "clear" }
   | { type: "artifact"; action: "generate" | "update"; context?: string; instruction?: string };
 
 export type ServerEvent =
@@ -215,5 +217,6 @@ export type ServerEvent =
   | { type: "artifact_start" }
   | { type: "artifact_delta"; delta: string }
   | { type: "artifact_end" }
+  | { type: "cache_size"; totalBytes: number; fileCount: number; sessionCount: number }
   | { type: "mcp_open_browser" }
 
