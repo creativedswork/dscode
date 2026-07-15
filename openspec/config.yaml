@@ -6,13 +6,19 @@ context: |
   It extends spec-driven with two additional artifacts:
 
   1. **prototype** (optional, Explore-triggered):
-     When Explore discussions involve frontend/UI topics (页面, 界面, 组件,
-     交互, CSS, dashboard, landing, redesign, 动效等), naturally offer to
+     When Explore discussions involve frontend/UI topics (UI, page, component,
+     interaction, CSS, dashboard, landing, redesign, animation, etc.), naturally offer to
      create an HTML prototype. See explore command for the full workflow
      (load `html-output` skill → extract CSS variables → generate HTML at
      `docs/prototypes/<name>.html`). Load `prototype-workflow` skill for constraints. Prototype does NOT block apply.
 
-  2. **consolidate** (pre-archive, auto-triggered):
+  2. **explore options → prototypes** (behavioral rule for explore mode):
+    When exploring a problem and multiple approaches emerge, do NOT ask the user
+    "which one?" — instead, create visual comparisons (ASCII diagrams for
+    architecture/logic, HTML prototypes for UI/frontend) showing each option
+    side-by-side. The user compares with their eyes, not their imagination.
+
+  3. **consolidate** (pre-archive, auto-triggered):
      Before archiving, merge the current proposal with related archived change
      proposals into a unified narrative (consolidate.md). Scans archive/ for
      related changes by topic/keywords. Always generated — even if no related

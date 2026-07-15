@@ -78,8 +78,8 @@ Depending on what the user brings, you might:
 - Find gaps in understanding
 - Suggest spikes or investigations
 **Create HTML prototypes for frontend ideas**
-- When the conversation touches UI/frontend topics, detect it naturally (keywords: UI, 页面, 界面, 组件, 交互, 样式, 视觉, CSS, frontend, landing, dashboard, 原型, prototype, redesign, 动效)
-- Offer: "这个话题涉及前端设计，要不要出一个 HTML 原型？"
+- When the conversation touches UI/frontend topics, detect it naturally (keywords: UI, page, component, interaction, style, visual, CSS, frontend, landing, dashboard, prototype, redesign, animation)
+- Offer: "This involves frontend design — want me to create an HTML prototype?"
 - If yes:
   1. Load `prototype-workflow` skill (auto-loads `html-output`)
   2. Extract `--color-*` CSS variables from `web/index.css`
