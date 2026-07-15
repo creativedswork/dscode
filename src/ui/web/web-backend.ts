@@ -20,7 +20,7 @@ import type { MCPManager } from "../../mcp/manager.js";
 import type { AppHostManager } from "../../mcp/app/host.js";
 import type { AppInstance } from "../../mcp/app/types.js";
 import { buildMcpServers } from "../mcp-browser.js";
-import { resolveAtFileRefs, resolveFileRefs, listProjectFiles } from "../../utils/at-file-resolver.js";
+import { resolveAtFileRefs, resolveFileRefs, listProjectFiles, isImagePath } from "../../utils/at-file-resolver.js";
 import { rebuildDisplayMessages } from "../../session/display.js";
 import { formatToolResultForUI } from "../shared/tool-result-formatter.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
@@ -504,23 +504,33 @@ export class WebUiBackend implements UiBackend {
         for (const warn of resolved.warnings) {
           client.send({ type: "info", display: "toast", text: `@${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}` });
         }
-        // Resolve fileRefs from drag-and-drop tracker
+        // Split fileRefs by type: images vs non-images
         if (cmd.fileRefs && cmd.fileRefs.length > 0) {
-          const refsResolved = resolveFileRefs(this.config.projectPath, cmd.fileRefs, this.config.atFile ?? {});
-          if (!refsResolved.reject) {
-            if (refsResolved.text) {
-              text = text ? `${text}\n\n${refsResolved.text}` : refsResolved.text;
-            }
-            if (refsResolved.images.length > 0) {
-              const refImages = refsResolved.images.map((img) => ({
-                data: img.data,
-                mimeType: img.mimeType,
-              }));
-              images = [...(images ?? []), ...refImages];
-            }
+          const imageRefs = cmd.fileRefs.filter(f => isImagePath(f));
+          const nonImageRefs = cmd.fileRefs.filter(f => !isImagePath(f));
+          // Non-image files: inject path references only
+          if (nonImageRefs.length > 0) {
+            const pathLines = nonImageRefs.map(f => `- \`${f}\``).join('\n');
+            text = text ? `${text}\n\n📁 Attached files:\n${pathLines}` : `📁 Attached files:\n${pathLines}`;
           }
-          for (const warn of refsResolved.warnings) {
-            client.send({ type: "info", display: "toast", text: `${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}` });
+          // Image files: resolve normally
+          if (imageRefs.length > 0) {
+            const refsResolved = resolveFileRefs(this.config.projectPath, imageRefs, this.config.atFile ?? {});
+            if (!refsResolved.reject) {
+              if (refsResolved.text) {
+                text = text ? `${text}\n\n${refsResolved.text}` : refsResolved.text;
+              }
+              if (refsResolved.images.length > 0) {
+                const refImages = refsResolved.images.map((img) => ({
+                  data: img.data,
+                  mimeType: img.mimeType,
+                }));
+                images = [...(images ?? []), ...refImages];
+              }
+            }
+            for (const warn of refsResolved.warnings) {
+              client.send({ type: "info", display: "toast", text: `${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}` });
+            }
           }
         }
         // Broadcast user message to client before sending to agent

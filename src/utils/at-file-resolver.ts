@@ -134,7 +134,7 @@ function isTextPath(filePath: string): boolean {
   return false;
 }
 
-function isImagePath(filePath: string): boolean {
+export function isImagePath(filePath: string): boolean {
   const ext = filePath.slice(filePath.lastIndexOf(".")).toLowerCase();
   return IMAGE_EXTENSIONS.has(ext);
 }

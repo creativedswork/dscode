@@ -44,7 +44,7 @@ import { readClipboardImageNonBlocking } from "../utils/image.js";
 import { ImageManager } from "./image-manager.js";
 import { ImagePasteHandler } from "./image-paste-handler.js";
 import { FileTracker } from "./shared/file-tracker.js";
-import { resolveFileRefs } from "../utils/at-file-resolver.js";
+import { resolveFileRefs, isImagePath } from "../utils/at-file-resolver.js";
 import { existsSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 // TuiDeps replaced by HarnessAPI — see src/core/harness-api.ts
@@ -1218,7 +1218,7 @@ export class TuiApp {
       return;
     }
 
-    if (!hasText && !hasImages) {
+    if (!hasText && !hasImages && !hasFiles) {
       const now = Date.now();
       if (now - this.lastPasteTime < 100) return;
       this.lastPasteTime = now;
@@ -1319,24 +1319,33 @@ export class TuiApp {
       }) as ImageContent);
       images = [...(images ?? []), ...atImages];
     }
-    // Resolve fileRefs from tracker (drag-and-drop files) with @path dedup
+    // Split fileRefs by type: images vs non-images
     if (hasFiles) {
-      const dedupedFileRefs = fileRefs.filter(f => !atPathAbsPaths.has(f));
-      if (dedupedFileRefs.length > 0) {
-        const refsResolved = resolveFileRefs(this.deps.config.projectPath, dedupedFileRefs, this.deps.config.atFile ?? {});
-        if (refsResolved.warnings.length > 0) {
-          for (const warn of refsResolved.warnings) {
-            this.conversation.addInfo(c.yellow(`${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}`));
+      const imageRefs = fileRefs.filter(f => isImagePath(f));
+      const nonImageRefs = fileRefs.filter(f => !isImagePath(f));
+      // Non-image files: inject path references only
+      if (nonImageRefs.length > 0) {
+        const pathLines = nonImageRefs.map(f => `- \`${f}\``).join('\n');
+        text = text ? `${text}\n\n📁 Attached files:\n${pathLines}` : `📁 Attached files:\n${pathLines}`;
+      }
+      // Image files: resolve with @path dedup
+      if (imageRefs.length > 0) {
+        const dedupedImageRefs = imageRefs.filter(f => !atPathAbsPaths.has(f));
+        if (dedupedImageRefs.length > 0) {
+          const refsResolved = resolveFileRefs(this.deps.config.projectPath, dedupedImageRefs, this.deps.config.atFile ?? {});
+          if (refsResolved.warnings.length > 0) {
+            for (const warn of refsResolved.warnings) {
+              this.conversation.addInfo(c.yellow(`${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}`));
+            }
           }
-        }
-        text = text ? `${text}\n${refsResolved.text}` : refsResolved.text;
-        if (refsResolved.images.length > 0) {
-          const refImages: ImageContent[] = refsResolved.images.map((img) => ({
-            type: "image" as const,
-            data: img.data,
-            mimeType: img.mimeType,
-          }) as ImageContent);
-          images = [...(images ?? []), ...refImages];
+          if (refsResolved.images.length > 0) {
+            const refImages: ImageContent[] = refsResolved.images.map((img) => ({
+              type: "image" as const,
+              data: img.data,
+              mimeType: img.mimeType,
+            }) as ImageContent);
+            images = [...(images ?? []), ...refImages];
+          }
         }
       }
     }
