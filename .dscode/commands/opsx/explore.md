@@ -201,15 +201,14 @@ If the user mentions a change or you detect one is relevant:
 
 ## Ending Discovery
 
-There's no required ending. Discovery might:
-- **Before flowing into a proposal for frontend/UI changes**: "This involves frontend design — want to create an HTML prototype first?"
+When exploration is wrapping up, **always direct the user to `/opsx:propose`** as the next step. Never suggest `/opsx:apply` directly — the flow is explore → propose → apply.
 
-- **Flow into a proposal**: "Ready to start? I can create a change proposal."
-- **Result in artifact updates**: "Updated design.md with these decisions"
-- **Just provide clarity**: User has what they need, moves on
-- **Continue later**: "We can pick this up anytime"
+- **If an HTML prototype was created**: "Great, we've confirmed the visual direction. Run `/opsx:propose` next — the prototype will be incorporated into the change's prototype artifact."
+- **If no prototype was created**: "Run `/opsx:propose` next to create a change proposal with all artifacts."
+- **If the user wants to just capture clarity**: You may summarize key insights, but still end by suggesting `/opsx:propose` if they want to formalize.
+- **If the user wants to continue later**: "We can pick this up anytime — when ready, run `/opsx:propose` to formalize this into a change."
 
-When things crystallize, you might offer a summary - but it's optional. Sometimes the thinking IS the value.
+**NEVER suggest `/opsx:apply`** — apply is for implementing an existing change, not for starting from exploration.
 
 ---
 

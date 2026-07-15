@@ -50,7 +50,7 @@ UI, 页面, 界面, 组件, 交互, 样式, 视觉, CSS, frontend, landing, dash
 3. 生成自包含 HTML → `docs/prototypes/<change-name>-<descriptor>.html`
 4. HTML 文件必须包含多状态切换按钮（如 waiting / in-progress / done / error），便于视觉迭代
 5. 在原型上直接接收视觉反馈并迭代，直到用户确认
-6. 确认后将最终设计决策写入对应 change 的 `design.md` / `specs`
+6. 确认后引导用户运行 `/opsx:propose` — 原型将作为 change 的 prototype artifact 被整合
 
 ## 生命周期
 

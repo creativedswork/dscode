@@ -1,38 +1,18 @@
-## Visual Direction
+## Prototype Files
 
-<!-- Color palette, typography, spacing philosophy, mood -->
-<!-- Example: Dark theme, Inter + JetBrains Mono, 8pt grid, editorial tone -->
+<!-- For UI changes: list HTML prototype files from docs/prototypes/ -->
+<!-- For non-UI changes: delete this section and use "Prototype Status" below -->
 
-## Layout
+<!-- Example:
+- `docs/prototypes/<change-name>-main-view.html` — Dark theme, 3-column layout,
+  collapsible sidebar. Confirmed: toast notifications top-right, 12px rounded cards.
+- `docs/prototypes/<change-name>-mobile-view.html` — Stacked layout, bottom nav bar.
+  Confirmed: swipe gestures for tab switching.
+-->
 
-<!-- Wireframe or structural diagram (ASCII art or Mermaid) -->
-<!-- Show component hierarchy, not pixel-level details -->
+## Prototype Status
 
-```
-┌─────────────────────────────────────┐
-│                                     │
-│              (sketch)               │
-│                                     │
-└─────────────────────────────────────┘
-```
+<!-- For non-UI changes: state that no prototype is needed with a one-line reason -->
+<!-- Example: No prototype needed — backend-only change affecting the config loader module. -->
 
-## Interaction Flow
-
-<!-- Key state transitions or user journey -->
-<!-- Use state diagrams or numbered steps -->
-
-```mermaid
-stateDiagram-v2
-    [*] --> Idle
-    Idle --> Active: trigger
-    Active --> Done: complete
-```
-
-## Design References
-
-<!-- Inspiration, existing patterns, constraints -->
-<!-- Links to existing components or external references -->
-
-## Accessibility Notes
-
-<!-- Keyboard, screen reader, contrast, motion considerations -->
+No prototype needed — <one-line reason: e.g., backend-only change, config update, refactoring with no UI impact>.

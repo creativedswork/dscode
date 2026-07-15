@@ -5,12 +5,13 @@ context: |
   This project uses a custom OpenSpec schema: **spec-driven-plus**.
   It extends spec-driven with two additional artifacts:
 
-  1. **prototype** (optional, Explore-triggered):
-     When Explore discussions involve frontend/UI topics (UI, page, component,
-     interaction, CSS, dashboard, landing, redesign, animation, etc.), naturally offer to
-     create an HTML prototype. See explore command for the full workflow
+  1. **prototype** (mandatory, blocks tasks creation):
+     For UI changes, reference HTML prototype files from `docs/prototypes/`
+     that were created during explore. For non-UI changes, write a stub stating
+     no prototype is needed. The prototype artifact is mandatory — tasks cannot
+     be created until prototype exists. See explore command for the full workflow
      (load `html-output` skill → extract CSS variables → generate HTML at
-     `docs/prototypes/<name>.html`). Load `prototype-workflow` skill for constraints. Prototype does NOT block apply.
+     `docs/prototypes/<name>.html`). Load `prototype-workflow` skill for constraints.
 
   2. **explore options → prototypes** (behavioral rule for explore mode):
     When exploring a problem and multiple approaches emerge, do NOT ask the user

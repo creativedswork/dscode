@@ -399,11 +399,10 @@
   }
 
   .tool-card-body-inner {
-    padding: 0 14px 12px;
-    border-top: 1px solid var(--color-border);
-    padding-top: 10px;
-    margin-top: 2px;
+    padding: 2px 14px 6px;
+    margin-top: 0;
     max-height: 400px;
+    background: var(--color-bg);
     overflow-y: auto;
   }
 
@@ -426,7 +425,6 @@
   .mcp-rich-list {
     display: flex;
     flex-direction: column;
-    border-top: 1px solid var(--color-border);
   }
   .mcp-rich-item {
     padding: 12px 14px;
@@ -493,8 +491,7 @@
 
   /* ── MCP Raw Output ── */
   .mcp-raw-block {
-    padding: 12px 14px;
-    border-top: 1px solid var(--color-border);
+    padding: 2px 14px 6px;
     max-height: 280px;
     overflow-y: auto;
     background: var(--color-bg);
@@ -539,6 +536,30 @@
     background-color: var(--color-accent);
   }
 }
+
+/* ── Unlayered: Markdown <pre> base + ToolCard scoped override ──
+   Unlayered CSS beats ALL @layer rules, including @layer utilities where
+   Tailwind's p-3 (12px) and my-1 (4px) live. @layer components rules could
+   never override @layer utilities regardless of specificity — that's why the
+   previous scoped override inside @layer components never worked.
+   Moving these rules to unlayered CSS is the fix. */
+.md-pre-base {
+  border-radius: 8px;
+  background-color: var(--color-bg);
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+/* ToolCard-scoped override: unlayered (beats @layer utilities) + higher
+   specificity than .md-pre-base (two classes vs one). Overrides padding
+   (p-3 → 6px 10px), margin (my-1 → 0), border (→ none), border-radius (→ 4px). */
+.tool-card-body-inner .md-pre-base {
+  padding: 6px 10px;
+  margin: 0;
+  border: none;
+  border-radius: 4px;
+}
+
 
 @media (max-width: 767px) {
   .resize-handle {

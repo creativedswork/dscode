@@ -31,13 +31,24 @@ When ready to implement, run /opsx:apply
 
    **IMPORTANT**: Do NOT proceed without understanding what the user wants to build.
 
-2. **Create the change directory**
+2. **Check for existing prototypes**
+
+   Before creating the change directory, check `docs/prototypes/` for HTML files
+   matching the change name (e.g., `<change-name>-*.html`):
+   - **If found**: Read the prototype HTML files — they are the design source-of-truth
+     from explore. These will be referenced in the prototype artifact.
+   - **If not found and the change involves UI**: Offer to generate a prototype first
+     using the `prototype-workflow` skill, or proceed if the user prefers to skip.
+   - **If not found and the change is non-UI**: Proceed — a non-UI stub prototype
+     artifact will be created during artifact generation.
+
+3. **Create the change directory**
    ```bash
    openspec new change "<name>"
    ```
    This creates a scaffolded change in the planning home resolved by the CLI with `.openspec.yaml`.
 
-3. **Get the artifact build order**
+4. **Get the artifact build order**
    ```bash
    openspec status --change "<name>" --json
    ```
@@ -46,7 +57,7 @@ When ready to implement, run /opsx:apply
    - `artifacts`: list of all artifacts with their status and dependencies
    - `planningHome`, `changeRoot`, `artifactPaths`, and `actionContext`: path and scope context. Use these instead of assuming repo-local paths.
 
-4. **Create artifacts in sequence until apply-ready**
+5. **Create artifacts in sequence until apply-ready**
 
    Use the **TodoWrite tool** to track progress through the artifacts.
 
@@ -78,7 +89,7 @@ When ready to implement, run /opsx:apply
       - Use **AskUserQuestion tool** to clarify
       - Then continue with creation
 
-5. **Show final status**
+6. **Show final status**
    ```bash
    openspec status --change "<name>"
    ```
