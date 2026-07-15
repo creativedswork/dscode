@@ -1,9 +1,7 @@
 ## Purpose
 
 Defines the visual and behavioral requirements for the dscode web frontend, including design language, themes, session management, processing indicators, permission dialogs, transitions, and message rendering.
-
 ## Requirements
-
 ### Requirement: Warm design language
 All frontend components SHALL use the warm design system tokens defined in the `warm-design-system` spec. Every component MUST reference semantic CSS custom properties for colors and follow the typography and shape language specifications.
 
@@ -187,7 +185,6 @@ ChatView SHALL expose a ref to its scroll container so TransitionCanvas can prog
 - **THEN** ChatView SHALL forward a `scrollContainerRef` (React ref to the scrollable DOM element) to TransitionCanvas
 - **AND** TransitionCanvas SHALL use this ref to save/restore scroll position and set `overflow: hidden` during animation
 
-
 ### Requirement: Dashboard mode disabled when session has no messages
 The `ViewModeSwitcher` component SHALL disable the "Dashboard" option when the current session has no messages (`messages.length === 0`). The "Chat" option SHALL remain selectable. The disabled option SHALL use the HTML `disabled` attribute on the `<option>` element.
 
@@ -237,8 +234,6 @@ The `ThinkingBlock` component SHALL render as a `<div class="thinking">` with a 
 #### Scenario: Thinking label with dot indicator
 - **WHEN** thinking content renders
 - **THEN** a label row with "Thinking" uppercase text and a 5px amber dot SHALL appear above the content
-
-
 
 ### Requirement: Theme support
 The frontend SHALL support warm light and warm dark themes using warm stone/taupe gray neutrals (not cream/beige). The initial theme defaults to warm light. Dark mode uses warm deep gray-brown tones instead of cold blue-grays.
@@ -389,8 +384,9 @@ The frontend SHALL provide a text input area at the bottom of the screen with fl
 
 #### Scenario: Slash command text submitted as chat
 - **WHEN** user submits text starting with `/` (e.g., `/help`, `/config key value`, or `/Users/foo/bar.ts`)
+
 ### Requirement: Session list shows running indicator
-The session list in the sidebar SHALL render a rotating spinner icon for the session that is currently active and processing. It SHALL NOT render any other visual indicator (no accent left border, no colored dot) for the active session. The indicator SHALL be driven by `isProcessing` and `currentSessionId` from the `sessions` server event.
+The session list in the sidebar SHALL render a rotating spinner icon for the session that is currently active and processing. The indicator SHALL be driven by `isProcessing` and `currentSessionId` from the `sessions` server event.
 
 #### Scenario: Running indicator visible
 - **WHEN** the frontend receives a `sessions` event with `currentSessionId: "A"`, `isProcessing: true`, and session A is in the list
@@ -403,14 +399,6 @@ The session list in the sidebar SHALL render a rotating spinner icon for the ses
 #### Scenario: Running indicator scoped to current session only
 - **WHEN** `currentSessionId` is "A" and `isProcessing` is true
 - **THEN** only session A's row shows the spinner; other session rows (B, C) do not
-
-#### Scenario: No accent border or colored dot on active session
-- **WHEN** any session row is rendered as the active session
-- **THEN** it does NOT render a left-side accent border (`borderLeft: 3px solid`) nor a colored dot indicator; only the `accent-bg` background and the Spinner (when processing) distinguish the active session
-The frontend SHALL support attaching images to messages via paste from clipboard, with flat, warm-toned thumbnail previews.
-
-#### Scenario: Paste image from clipboard
-- **WHEN** user pastes image data (Ctrl+V / Cmd+V) while input is focused
 
 ### Requirement: Session list shows running indicator
 The session list in the sidebar SHALL render a rotating spinner icon for the session that is currently active and processing. The indicator SHALL be driven by `isProcessing` and `currentSessionId` from the `sessions` server event.
@@ -448,7 +436,6 @@ The frontend SHALL store the `currentSessionId` received from each `sessions` ev
 
 ---
 
-
 ### Requirement: Artifact events handled in App
 The App component SHALL handle `artifact_start`, `artifact_delta`, and `artifact_end` server events, accumulating the delta content and passing it to the `ArtifactContainer` component.
 
@@ -479,3 +466,32 @@ The frontend SHALL provide an `ArtifactContainer` component that renders an `<if
 #### Scenario: ArtifactContainer with no content
 - **WHEN** `ArtifactContainer` receives `loading={false}` and empty `html`
 - **THEN** it displays "Waiting for dashboard generation..." in muted text
+
+### Requirement: Message timestamp display
+The frontend SHALL display the real creation time of each chat message in the meta line, formatted via the browser's locale-aware time formatting, and SHALL gracefully omit the time portion when a message has no timestamp.
+
+#### Scenario: User message shows real timestamp
+- **WHEN** a user message has `message.createdAt` set to a valid epoch millisecond value
+- **THEN** the `UserBubble` meta line SHALL display `"You · HH:MM AM/PM"` (locale-dependent) using `new Date(message.createdAt).toLocaleTimeString()`
+- **AND** the time string SHALL reflect the actual message creation time, not a hardcoded value
+
+#### Scenario: Assistant message shows real timestamp
+- **WHEN** an assistant message has `message.createdAt` set to a valid epoch millisecond value
+- **THEN** the `AssistantMessage` meta line SHALL display `"dscode · HH:MM AM/PM"` (locale-dependent) using `new Date(message.createdAt).toLocaleTimeString()`
+- **AND** the time string SHALL reflect the actual message creation time, not a hardcoded value
+
+#### Scenario: Message without timestamp omits time
+- **WHEN** a message has `message.createdAt` undefined or absent (e.g., legacy history messages)
+- **THEN** the meta line SHALL display only the role label (`"You"` for user, `"dscode"` for assistant) without the time separator or time string
+- **AND** no "09:41" or any hardcoded time string SHALL be displayed
+
+#### Scenario: Timestamp updates as new messages arrive
+- **WHEN** a new message is created during an active session
+- **THEN** its `createdAt` SHALL reflect the wall-clock time at creation
+- **AND** the displayed time SHALL differ from the time shown on previously created messages
+
+#### Scenario: All hardcoded time strings removed
+- **WHEN** the ChatView renders any message bubble (`UserBubble` or `AssistantMessage`)
+- **THEN** no hardcoded time string (such as `"09:41"`) SHALL appear anywhere in the meta line
+- **AND** all time values SHALL derive from `message.createdAt`
+

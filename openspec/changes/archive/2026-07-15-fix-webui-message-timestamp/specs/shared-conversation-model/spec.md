@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-Defines the canonical shared conversation data model — including UIMessage, ToolCallEntry, and ContentBlock types — and the pure conversationReducer function consumed by both TUI and Web UI to eliminate type drift and duplicate logic.
-## Requirements
 ### Requirement: Canonical UIMessage type
 The shared module SHALL define a canonical `UIMessage` type that represents a single conversation message with all possible content types (text, thinking, tool calls, images, streaming state) and an optional creation timestamp.
 
@@ -25,17 +23,6 @@ The shared module SHALL define a canonical `UIMessage` type that represents a si
 - **WHEN** a message is created by the reducer
 - **THEN** the `UIMessage` SHALL have an optional `createdAt?: number` field containing the epoch millisecond timestamp of message creation
 - **AND** when `createdAt` is absent, consumers SHALL treat the message as having no known creation time
-
-### Requirement: Canonical ToolCallEntry type
-The shared module SHALL define a canonical `ToolCallEntry` type representing a single tool invocation within an assistant message.
-
-#### Scenario: Tool call with result
-- **WHEN** a tool call completes
-- **THEN** the `ToolCallEntry` has `name: string`, `args: string`, `result: string`, `isError: boolean`, and optional `mcpApp?: McpAppInfo`
-
-#### Scenario: Tool call in progress
-- **WHEN** a tool call starts but hasn't completed
-- **THEN** the `ToolCallEntry` has `result: ""` indicating pending state
 
 ### Requirement: Conversation reducer function
 The shared module SHALL export a pure function `conversationReducer(prev: UIMessage[], event: ServerEvent): UIMessage[]` that transforms message state in response to server events.
@@ -91,15 +78,3 @@ The shared module SHALL export a pure function `conversationReducer(prev: UIMess
 #### Scenario: Ready event propagates timestamps
 - **WHEN** `ready` event is received with `messages` array where individual messages have an optional `createdAt` field
 - **THEN** the reducer SHALL set `UIMessage.createdAt` to the message's `createdAt` value if present, or leave it undefined otherwise
-
-### Requirement: Reducer is pure and side-effect-free
-The `conversationReducer` function SHALL be a pure function with no side effects, no external dependencies, and no DOM/Node API usage.
-
-#### Scenario: Same input produces same output
-- **WHEN** called with identical `prev` and `event` arguments
-- **THEN** the returned array is structurally identical
-
-#### Scenario: No mutation of input
-- **WHEN** called with a `prev` array
-- **THEN** the original `prev` array is not modified
-

@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<!--
+  Change: toolcard-compact-spacing
+  Date: 2025-01-20
+  Descriptor: v4-root-cause-fix
+  Description: Shows why built-in ToolCard still has blank space after v3 fix.
+               Root cause: (1) .tool-card-body-inner lacks background:var(--color-bg),
+               (2) Markdown <pre> uses inline styles that CSS cannot override.
+               Side-by-side: current broken state vs fixed state.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ToolCard Spacing v4 — Root Cause Fix</title>
+<style>
+  :root {
+    --color-bg: #f8f7f5;
+    --color-surface: #f3f2ef;
+    --color-surface-hover: #ebe9e5;
+    --color-border: #e6e4e0;
+    --color-text: #2d2a26;
+    --color-text-muted: #8a8580;
+    --color-accent: #ca8a04;
+    --color-accent-hover: #a07004;
+    --color-accent-bg: rgba(202, 138, 4, 0.12);
+    --color-success: #edf4ed;
+    --color-success-text: #347539;
+    --color-error: #fdebec;
+    --color-error-text: #9f2f2d;
+    --color-warning: #fbf3db;
+    --color-warning-text: #956400;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Geist Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--color-bg);
+    color: var(--color-text);
+    padding: 32px 24px;
+    min-height: 100vh;
+  }
+
+  .page-header { max-width: 920px; margin: 0 auto 20px; }
+  .page-header h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 6px; }
+  .page-header p { font-size: 13px; color: var(--color-text-muted); line-height: 1.5; }
+
+  .grid { max-width: 920px; margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .col-header { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--color-text-muted); margin-bottom: 10px; display: flex; align-items: center; gap: 8px; }
+  .tag { font-size: 9px; padding: 2px 7px; border-radius: 10px; font-weight: 700; }
+  .tag-broken { background: var(--color-error); color: var(--color-error-text); }
+  .tag-fixed { background: var(--color-success); color: var(--color-success-text); }
+
+  /* ── Shared card structure ── */
+  .tool-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 6px; overflow: hidden; margin-bottom: 14px; }
+  .tool-card-header { display: flex; align-items: center; gap: 10px; padding: 8px 14px; cursor: pointer; user-select: none; }
+  .tool-card-header .status { font-size: 11px; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; border-radius: 4px; font-weight: 700; flex-shrink: 0; background: var(--color-success); color: var(--color-success-text); }
+  .tool-card-header .name { font-family: 'Geist Mono', 'JetBrains Mono', monospace; font-size: 11px; font-weight: 600; color: var(--color-accent); }
+  .tool-card-header .args { font-size: 11px; color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .tool-card-header .arrow { font-size: 9px; color: var(--color-text-muted); opacity: 0.4; flex-shrink: 0; transform: rotate(180deg); }
+  .tool-card-body { overflow: hidden; }
+
+  /* ════════ LEFT: Current (broken) — simulates actual rendered state ════════ */
+  /* .tool-card-body-inner has NO background → inherits --color-surface */
+  .broken .tool-card-body-inner {
+    padding: 2px 14px 6px;
+    margin-top: 0;
+    max-height: 400px;
+    overflow-y: auto;
+    /* NO background — inherits --color-surface from .tool-card */
+  }
+  /* <pre> keeps inline styles: border, borderRadius, backgroundColor — CSS can't override */
+  .broken .md-pre {
+    background: var(--color-bg);           /* ← inline style, CSS can't override */
+    border: 1px solid var(--color-border);  /* ← inline style, CSS can't override */
+    border-radius: 8px;                     /* ← inline style, CSS can't override */
+    padding: 6px 10px;                      /* ← CSS override of p-3 works */
+    margin: 0;                              /* ← CSS override of my-1 works */
+    overflow-x: auto;
+    font-family: 'Geist Mono', 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--color-text);
+    white-space: pre;
+  }
+  .broken .md-pre .code-lang { display: block; font-size: 9px; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+
+  /* ════════ RIGHT: Fixed — background + no border ════════ */
+  .fixed .tool-card-body-inner {
+    padding: 2px 14px 6px;
+    margin-top: 0;
+    max-height: 400px;
+    overflow-y: auto;
+    background: var(--color-bg);            /* ← FIX #1: match pre background */
+  }
+  .fixed .md-pre {
+    background: var(--color-bg);
+    border: none;                            /* ← FIX #2: no border (moved from inline to class) */
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin: 0;
+    overflow-x: auto;
+    font-family: 'Geist Mono', 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--color-text);
+    white-space: pre;
+  }
+  .fixed .md-pre .code-lang { display: block; font-size: 9px; color: var(--color-text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+
+  /* ── MCP comparison (already works) ── */
+  .mcp-card { background: var(--color-surface); border: 1px solid var(--color-border); border-left: 2px solid var(--color-accent); border-radius: 6px; overflow: hidden; margin-bottom: 14px; }
+  .mcp-badge { display: inline-block; font-family: 'Geist Mono', monospace; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; padding: 1px 5px; border-radius: 3px; background: var(--color-accent-bg); color: var(--color-accent); flex-shrink: 0; }
+  .mcp-raw-block {
+    padding: 2px 14px 6px;
+    max-height: 280px;
+    overflow-y: auto;
+    background: var(--color-bg);            /* ← MCP already has this! */
+  }
+  .mcp-raw-block .md-pre {
+    background: var(--color-bg);
+    border: none;
+    border-radius: 4px;
+    padding: 6px 10px;
+    margin: 0;
+    overflow-x: auto;
+    font-family: 'Geist Mono', 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--color-text);
+    white-space: pre;
+  }
+
+  /* ── Annotations ── */
+  .annotation { max-width: 920px; margin: 12px auto 0; padding: 10px 14px; border-radius: 6px; font-size: 11px; line-height: 1.5; display: flex; align-items: flex-start; gap: 8px; }
+  .annotation.warn { background: var(--color-warning); color: var(--color-warning-text); }
+  .annotation.ok { background: var(--color-success); color: var(--color-success-text); }
+  .annotation .ann-icon { flex-shrink: 0; font-weight: 700; }
+  .annotation code { font-family: 'Geist Mono', monospace; font-size: 10px; }
+
+  .section-label { max-width: 920px; margin: 28px auto 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--color-text-muted); padding-bottom: 8px; border-bottom: 1px solid var(--color-border); }
+  .section-label:first-of-type { margin-top: 0; }
+
+  .root-cause { max-width: 920px; margin: 20px auto; padding: 16px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: 8px; font-size: 12px; line-height: 1.6; color: var(--color-text); }
+  .root-cause h3 { font-size: 13px; font-weight: 700; margin-bottom: 10px; }
+  .root-cause ul { padding-left: 18px; margin-top: 6px; }
+  .root-cause li { margin-bottom: 4px; }
+  .root-cause code { font-family: 'Geist Mono', monospace; font-size: 11px; background: var(--color-accent-bg); color: var(--color-accent); padding: 1px 4px; border-radius: 3px; }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>ToolCard Spacing v4 — Root Cause Fix</h1>
+  <p>Why built-in tools still show blank space after v3 changes. Two root causes identified and fixed.</p>
+</div>
+
+<div class="root-cause">
+  <h3>Root Cause Analysis</h3>
+  <strong>Why MCP tools look fine but built-in tools don't:</strong>
+  <ul>
+    <li><strong>Cause 1 — Missing background:</strong> <code>.mcp-raw-block</code> has <code>background: var(--color-bg)</code> but <code>.tool-card-body-inner</code> does NOT. The 2px container padding is invisible on MCP (same color as <code>&lt;pre&gt;</code> background) but visible on built-in tools (<code>--color-surface</code> vs <code>--color-bg</code> contrast).</li>
+    <li><strong>Cause 2 — Inline styles on <code>&lt;pre&gt;</code>:</strong> The Markdown component renders <code>&lt;pre&gt;</code> with <code>style={{ border, borderRadius, backgroundColor }}</code>. Inline styles (specificity 1,0,0,0) cannot be overridden by CSS selectors like <code>.tool-card-body-inner pre</code> (specificity 0,2,0). So <code>border: none</code> and <code>border-radius: 4px</code> from our CSS never take effect — the <code>&lt;pre&gt;</code> keeps its full border and 8px radius.</li>
+  </ul>
+  <strong>Fix:</strong> (1) Add <code>background: var(--color-bg)</code> to <code>.tool-card-body-inner</code>. (2) Move Markdown <code>&lt;pre&gt;</code> inline styles to a CSS class so scoped overrides work.
+</div>
+
+<div class="section-label">Built-in tool — list_files (JSON result)</div>
+<div class="grid">
+
+  <!-- LEFT: Current broken state -->
+  <div>
+    <div class="col-header">Current (broken) <span class="tag tag-broken">GAP VISIBLE</span></div>
+    <div class="tool-card broken">
+      <div class="tool-card-header">
+        <span class="status">✓</span>
+        <span class="name">list_files</span>
+        <span class="args">path: src/ui</span>
+        <span class="arrow">▾</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="tool-card-body-inner">
+          <div class="md-pre"><span class="code-lang">json</span>[
+  { "path": "src/ui/backend.ts", "isDir": false, "name": "backend.ts", "depth": 0 },
+  { "path": "src/ui/conversation.ts", "isDir": false, "name": "conversation.ts", "depth": 0 },
+  { "path": "src/ui/mdx", "isDir": true, "name": "mdx", "depth": 0 }
+]</div>
+        </div>
+      </div>
+    </div>
+    <div class="annotation warn">
+      <span class="ann-icon">⚠</span>
+      <span>2px gap is <code>--color-surface</code> (visible contrast against <code>&lt;pre&gt;</code>'s <code>--color-bg</code>). <code>&lt;pre&gt;</code> keeps inline <code>border: 1px solid</code> and <code>border-radius: 8px</code> — CSS <code>border: none</code> has no effect on inline styles.</span>
+    </div>
+  </div>
+
+  <!-- RIGHT: Fixed state -->
+  <div>
+    <div class="col-header">Fixed <span class="tag tag-fixed">TIGHT</span></div>
+    <div class="tool-card fixed">
+      <div class="tool-card-header">
+        <span class="status">✓</span>
+        <span class="name">list_files</span>
+        <span class="args">path: src/ui</span>
+        <span class="arrow">▾</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="tool-card-body-inner">
+          <div class="md-pre"><span class="code-lang">json</span>[
+  { "path": "src/ui/backend.ts", "isDir": false, "name": "backend.ts", "depth": 0 },
+  { "path": "src/ui/conversation.ts", "isDir": false, "name": "conversation.ts", "depth": 0 },
+  { "path": "src/ui/mdx", "isDir": true, "name": "mdx", "depth": 0 }
+]</div>
+        </div>
+      </div>
+    </div>
+    <div class="annotation ok">
+      <span class="ann-icon">✓</span>
+      <span>Container has <code>background: var(--color-bg)</code> — 2px gap invisible. <code>&lt;pre&gt;</code> inline styles moved to CSS class — <code>border: none</code>, <code>border-radius: 4px</code> now effective. Identical visual tightness to MCP tools.</span>
+    </div>
+  </div>
+
+</div>
+
+<div class="section-label">Built-in tool — bash (command output)</div>
+<div class="grid">
+
+  <div>
+    <div class="col-header">Current (broken) <span class="tag tag-broken">GAP VISIBLE</span></div>
+    <div class="tool-card broken">
+      <div class="tool-card-header">
+        <span class="status">✓</span>
+        <span class="name">bash</span>
+        <span class="args">npm test</span>
+        <span class="arrow">▾</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="tool-card-body-inner">
+          <div class="md-pre"><span class="code-lang">sh</span>PASS  src/ui/shared/reducer.test.ts
+PASS  src/utils/image.test.ts
+PASS  src/session/store.test.ts
+PASS  src/permissions/fuzzy.test.ts
+
+Tests:       5 passed, 5 total
+Time:        3.2s</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div>
+    <div class="col-header">Fixed <span class="tag tag-fixed">TIGHT</span></div>
+    <div class="tool-card fixed">
+      <div class="tool-card-header">
+        <span class="status">✓</span>
+        <span class="name">bash</span>
+        <span class="args">npm test</span>
+        <span class="arrow">▾</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="tool-card-body-inner">
+          <div class="md-pre"><span class="code-lang">sh</span>PASS  src/ui/shared/reducer.test.ts
+PASS  src/utils/image.test.ts
+PASS  src/session/store.test.ts
+PASS  src/permissions/fuzzy.test.ts
+
+Tests:       5 passed, 5 total
+Time:        3.2s</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="section-label">MCP tool — already works (for comparison)</div>
+<div class="grid">
+
+  <div>
+    <div class="col-header">MCP raw block <span class="tag tag-fixed">ALREADY FINE</span></div>
+    <div class="mcp-card">
+      <div class="tool-card-header">
+        <span class="status">✓</span>
+        <span class="name">mcp__github__get_file</span>
+        <span class="mcp-badge">MCP</span>
+        <span class="args">repo: dscode, path: README.md</span>
+        <span class="arrow">▾</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="mcp-raw-block">
+          <div class="md-pre"><span class="code-lang">md</span># DSCode
+
+A digital studio for content-driven creation.
+
+## Features
+
+- Writing — AI-assisted editing
+- Code — Full development environment</div>
+        </div>
+      </div>
+    </div>
+    <div class="annotation ok">
+      <span class="ann-icon">✓</span>
+      <span><code>.mcp-raw-block</code> already has <code>background: var(--color-bg)</code>. No visible gap. This is the target look for built-in tools.</span>
+    </div>
+  </div>
+
+  <div>
+    <div class="col-header">Built-in (fixed) — now matches MCP <span class="tag tag-fixed">MATCHES</span></div>
+    <div class="tool-card fixed">
+      <div class="tool-card-header">
+        <span class="status">✓</span>
+        <span class="name">read_file</span>
+        <span class="args">path: README.md</span>
+        <span class="arrow">▾</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="tool-card-body-inner">
+          <div class="md-pre"><span class="code-lang">md</span># DSCode
+
+A digital studio for content-driven creation.
+
+## Features
+
+- Writing — AI-assisted editing
+- Code — Full development environment</div>
+        </div>
+      </div>
+    </div>
+    <div class="annotation ok">
+      <span class="ann-icon">✓</span>
+      <span>After fix: built-in tool ToolCard visually identical to MCP raw block. Same background, same tight spacing, no border on <code>&lt;pre&gt;</code>.</span>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

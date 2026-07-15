@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-Defines how tool results are formatted for display in the frontend, ensuring content-aware rendering with proper code fences, MCP rich lists, and visual distinction.
-## Requirements
 ### Requirement: Content-aware tool result formatting
 `formatToolResultForUI` SHALL detect the content type of tool result text and apply appropriate formatting before it reaches the frontend. The function SHALL produce markdown-ready output so that ToolCard can render it through the shared `<Markdown>` component. The default truncation limit SHALL be 2000 characters.
 
@@ -72,24 +70,6 @@ The ToolCard component SHALL render the entire formatted tool result as a single
 - **THEN** the `<pre>` element SHALL have a vertical margin no greater than 4px top and 4px bottom
 - **AND** the container padding SHALL not exceed 10px top and 12px bottom
 
-### Requirement: MCP tool result rich list rendering
-When a tool with `mcp__` prefix returns a result that is valid JSON (starts with `{` or `[`), the ToolCard SHALL render the result as a `.mcp-rich-list` component instead of a standard code-fenced block. The rich list SHALL display structured results as vertically stacked cards with title, score, URL, content, and metadata. The `.mcp-rich-list` SHALL NOT have a `border-top` — visual separation relies on background contrast.
-
-#### Scenario: MCP JSON array renders as rich list
-- **WHEN** an MCP tool result is a JSON array
-- **THEN** ToolCard SHALL render `<div class="mcp-rich-list">` with one `<div class="mcp-rich-item">` per array element
-- **AND** each item SHALL attempt to extract `title`, `score`, `url`, `content` fields from the JSON object
-- **AND** unrecognized fields SHALL be ignored
-
-#### Scenario: MCP JSON object renders as rich list
-- **WHEN** an MCP tool result is a JSON object containing a search results-like structure
-- **THEN** ToolCard SHALL attempt to render it as a rich list using the same field extraction logic
-
-#### Scenario: Rich list compact spacing
-- **WHEN** a `.mcp-rich-list` renders inside a ToolCard
-- **THEN** the list SHALL NOT have a `border-top` property
-- **AND** visual separation from the header SHALL rely on background contrast
-
 ### Requirement: MCP tool result raw block rendering
 When an MCP tool result is not valid JSON, the ToolCard SHALL render the result through the `<Markdown>` component so that headings, lists, code blocks, and inline code are properly formatted. The container element (`.mcp-raw-block`) SHALL NOT set `font-family`, `color`, `white-space`, or `word-break` properties — these SHALL be owned by the `<Markdown>` component.
 
@@ -107,17 +87,3 @@ When an MCP tool result is not valid JSON, the ToolCard SHALL render the result 
 - **WHEN** the `.mcp-raw-block` container renders `<Markdown>` content
 - **THEN** the container SHALL NOT set `font-family`, `color`, `white-space`, or `word-break`
 - **AND** the `<Markdown>` component's `pre`, `code`, and `p` overrides SHALL control all text styling
-
-### Requirement: MCP tool card visual distinction
-Tool cards for MCP tools (name starts with `mcp__`) SHALL receive the `.mcp` CSS class to apply a left accent border and display an "MCP" badge in the header.
-
-#### Scenario: MCP class applied to tool card
-- **WHEN** a tool card for `mcp__github` or any `mcp__*` tool renders
-- **THEN** the card `<div>` SHALL have both `.tool-card` and `.mcp` classes
-- **AND** the header SHALL include a `.mcp-badge` element
-
-#### Scenario: Non-MCP tools not affected
-- **WHEN** a tool card for `read_file`, `bash`, `edit`, or any non-`mcp__` tool renders
-- **THEN** the card SHALL NOT have the `.mcp` class
-- **AND** the header SHALL NOT include an MCP badge
-
