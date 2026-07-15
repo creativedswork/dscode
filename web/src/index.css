@@ -400,17 +400,11 @@
 
   .tool-card-body-inner {
     padding: 0 14px 12px;
-    font-family: 'Geist Mono', 'JetBrains Mono', monospace;
-    font-size: 11px;
-    line-height: 1.5;
-    color: var(--color-text-muted);
     border-top: 1px solid var(--color-border);
     padding-top: 10px;
     margin-top: 2px;
-    max-height: 200px;
+    max-height: 400px;
     overflow-y: auto;
-    white-space: pre-wrap;
-    word-break: break-all;
   }
 
   /* ── MCP Badge ── */
@@ -501,14 +495,8 @@
   .mcp-raw-block {
     padding: 12px 14px;
     border-top: 1px solid var(--color-border);
-    font-family: 'Geist Mono', 'JetBrains Mono', monospace;
-    font-size: 11px;
-    line-height: 1.55;
-    color: var(--color-text-muted);
     max-height: 280px;
     overflow-y: auto;
-    white-space: pre-wrap;
-    word-break: break-all;
     background: var(--color-bg);
   }
 

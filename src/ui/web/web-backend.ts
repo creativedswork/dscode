@@ -260,22 +260,6 @@ export class WebUiBackend implements UiBackend {
     this.broadcast({ type: "tool_start", name, args });
   }
 
-  toolEnd(name: string, result: unknown, isError: boolean): void {
-    const resultStr = typeof result === "string" ? result.slice(0, 5000) : JSON.stringify(result).slice(0, 5000);
-    const images = extractImagesFromToolResult(result);
-    if (this.currentAssistant) {
-      this.currentAssistant.tools = this.currentAssistant.tools.filter((t) => t.name !== name || t.result !== "");
-      this.currentAssistant.tools.push({
-        name,
-        args: "",
-        result: resultStr,
-        isError,
-        images,
-      });
-    }
-    this.broadcast({ type: "tool_end", name, result: resultStr, isError, images });
-    this.broadcastContextWindow(false);
-  }
   finishAssistantMessage(): void {
     this.broadcastSessionTime();
     this.stopSessionTimeBroadcast();

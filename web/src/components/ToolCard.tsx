@@ -344,12 +344,8 @@ export function ToolCard({ tool, thinking }: ToolCardProps) {
         )}
 
         {hasResult && !hasMcpApp && !isMcp && (
-          <div className="tool-card-body-inner">
-            {tool.result.split('\n').map((line, i) => (
-              <span key={i} data-collider="tool-result-line">
-                {line === '' ? <br /> : <Markdown className="text-xs">{line}</Markdown>}
-              </span>
-            ))}
+          <div className="tool-card-body-inner" data-collider="tool-result-line">
+            <Markdown className="text-xs">{tool.result}</Markdown>
           </div>
         )}
 
@@ -363,7 +359,7 @@ export function ToolCard({ tool, thinking }: ToolCardProps) {
 
         {isMcp && !hasRichList && hasResult && (
           <div className="mcp-raw-block" data-collider="tool-result-line">
-            {tool.result}
+            <Markdown className="text-xs">{tool.result}</Markdown>
           </div>
         )}
       </div>

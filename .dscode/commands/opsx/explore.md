@@ -90,6 +90,30 @@ Depending on what the user brings, you might:
 > the prototype is confirmed or the user explicitly dismisses it.
 > This applies even when also discussing architecture, protocols, or backend.
 > UI + backend discussions require the prototype OFFER before the spec WRITE.
+>
+> ⚠️ **PRE-OUTPUT GATE (HARD RULE)**: The Frontend Gate above is NOT triggered
+> only at "spec write time" — it must fire BEFORE you present any analysis, fix
+> plan, or recommendation that touches UI. The common failure mode is framing a
+> task as "bug fix" or "investigation", then outputting UI design decisions
+> (CSS changes, layout fixes, rendering improvements) without ever offering a
+> prototype. To prevent this, run this self-check BEFORE presenting any output:
+>
+> 1. Does my upcoming output touch UI components / layout / CSS / interaction /
+>    rendering / visual presentation? (Check both the user's request AND your
+>    own analysis findings — the user may not say "UI" but your investigation
+>    may reveal CSS, rendering, layout, or component issues.)
+> 2. If YES → offer the prototype FIRST, then pause. Do NOT present the analysis
+>    or fix plan until the prototype is confirmed or dismissed.
+> 3. If NO → continue normally.
+>
+> Trigger keywords (non-exhaustive, includes both user-facing and internally
+> discovered terms): UI, page, component, interaction, style, visual, CSS,
+> frontend, landing, dashboard, prototype, redesign, animation, rendering,
+> layout, spacing, markup, DOM, card, display, toast, modal, panel, picker,
+> button, border, color, font, overflow, height, width, padding.
+>
+> There is NO "but this is just a bug fix" exception. Bug fixes that change how
+> things look ARE UI design decisions.
 
 - When the conversation touches UI/frontend topics, detect it naturally (keywords: UI, page, component, interaction, style, visual, CSS, frontend, landing, dashboard, prototype, redesign, animation, rendering, layout, spacing, markup, DOM, card, display, toast, modal, panel, picker, button)
 - **ALWAYS offer** (not optional to skip): "This involves frontend design — want me to create an HTML prototype?"
@@ -100,8 +124,6 @@ Depending on what the user brings, you might:
   4. Iterate visually based on user feedback on the prototype
   5. When design is confirmed, capture decisions into `design.md` / `specs`
 - If user says no — continue, but the offer was made
-- Canonical example: session 00MRIZMZQJ (`docs/prototypes/mcp-toolcard-execution-view-prototype.html`)
-- Canonical example: session 00MRIZMZQJ (`docs/prototypes/mcp-toolcard-execution-view-prototype.html`)
 
 ---
 

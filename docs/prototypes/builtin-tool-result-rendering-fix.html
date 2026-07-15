@@ -1,0 +1,906 @@
+<!DOCTYPE html>
+<!--
+  Change: builtin-tool-result-rendering-fix
+  Date: 2025-01-20
+  Description: Prototype comparing current (broken) vs proposed (fixed) rendering
+               of built-in tool results in the Web UI ToolCard component.
+-->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Built-in Tool Result Rendering — Before vs After</title>
+<style>
+  :root {
+    --color-bg: #f8f7f5;
+    --color-surface: #f3f2ef;
+    --color-surface-hover: #ebe9e5;
+    --color-border: #e6e4e0;
+    --color-text: #2d2a26;
+    --color-text-muted: #8a8580;
+    --color-accent: #ca8a04;
+    --color-accent-hover: #a07004;
+    --color-accent-bg: rgba(202, 138, 4, 0.12);
+    --color-success: #edf4ed;
+    --color-success-text: #347539;
+    --color-error: #fdebec;
+    --color-error-text: #9f2f2d;
+    --color-warning: #fbf3db;
+    --color-warning-text: #956400;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Geist Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: var(--color-bg);
+    color: var(--color-text);
+    padding: 32px 24px;
+    min-height: 100vh;
+  }
+
+  /* ── Page Header ── */
+  .page-header {
+    max-width: 920px;
+    margin: 0 auto 28px;
+  }
+  .page-header h1 {
+    font-size: 20px;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin-bottom: 6px;
+  }
+  .page-header p {
+    font-size: 13px;
+    color: var(--color-text-muted);
+    line-height: 1.5;
+  }
+
+  /* ── Toggle Bar ── */
+  .toggle-bar {
+    max-width: 920px;
+    margin: 0 auto 24px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .toggle-group {
+    display: inline-flex;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 3px;
+  }
+  .toggle-btn {
+    padding: 7px 18px;
+    font-size: 12px;
+    font-weight: 600;
+    border: none;
+    background: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    border-radius: 6px;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .toggle-btn.active {
+    background: var(--color-accent);
+    color: #fff;
+  }
+  .toggle-btn:not(.active):hover {
+    background: var(--color-surface-hover);
+    color: var(--color-text);
+  }
+  .toggle-label {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    font-family: 'Geist Mono', monospace;
+  }
+
+  /* ── Side-by-side ── */
+  .comparison {
+    max-width: 920px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  .comparison.single {
+    grid-template-columns: 1fr;
+  }
+  .col-header {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--color-text-muted);
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .col-header .tag {
+    font-size: 9px;
+    padding: 2px 7px;
+    border-radius: 10px;
+    font-weight: 700;
+  }
+  .tag-broken {
+    background: var(--color-error);
+    color: var(--color-error-text);
+  }
+  .tag-fixed {
+    background: var(--color-success);
+    color: var(--color-success-text);
+  }
+
+  /* ── Tool Card (matches web/src/index.css) ── */
+  .tool-card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    overflow: hidden;
+    margin-bottom: 14px;
+  }
+  .tool-card.mcp {
+    border-left: 2px solid var(--color-accent);
+  }
+
+  .tool-card-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 14px;
+    cursor: pointer;
+    user-select: none;
+  }
+  .tool-card-header .status {
+    font-size: 11px;
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .tool-card-header .status.ok {
+    background: var(--color-success);
+    color: var(--color-success-text);
+  }
+  .tool-card-header .status.err {
+    background: var(--color-error);
+    color: var(--color-error-text);
+  }
+  .tool-card-header .name {
+    font-family: 'Geist Mono', 'JetBrains Mono', monospace;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--color-accent);
+  }
+  .tool-card-header .args {
+    font-size: 11px;
+    color: var(--color-text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+  }
+  .tool-card-header .arrow {
+    font-size: 9px;
+    color: var(--color-text-muted);
+    opacity: 0.4;
+    flex-shrink: 0;
+    transition: transform 0.3s;
+  }
+  .tool-card.open .tool-card-header .arrow {
+    transform: rotate(180deg);
+  }
+  .mcp-badge {
+    display: inline-block;
+    font-family: 'Geist Mono', monospace;
+    font-size: 8px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: var(--color-accent-bg);
+    color: var(--color-accent);
+    flex-shrink: 0;
+  }
+
+  .tool-card-body {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+  }
+  .tool-card.open .tool-card-body {
+    max-height: 600px;
+  }
+
+  /* ── BEFORE: broken line-by-line rendering ── */
+  .tool-card-body-inner-broken {
+    padding: 0 14px 12px;
+    font-family: 'Geist Mono', 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.5;
+    color: var(--color-text-muted);
+    border-top: 1px solid var(--color-border);
+    padding-top: 10px;
+    margin-top: 2px;
+    max-height: 200px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .tool-card-body-inner-broken .md-line {
+    display: block;
+  }
+  .tool-card-body-inner-broken .md-line.empty {
+    display: block;
+    height: 1em;
+  }
+  /* Simulates what ReactMarkdown does when it gets a single line "```sh" — renders as text */
+  .broken-fence {
+    color: var(--color-text-muted);
+  }
+
+  /* ── AFTER: fixed whole-markdown rendering ── */
+  .tool-card-body-inner-fixed {
+    padding: 0 14px 12px;
+    border-top: 1px solid var(--color-border);
+    padding-top: 10px;
+    margin-top: 2px;
+    max-height: 320px;
+    overflow-y: auto;
+  }
+  .tool-card-body-inner-fixed .md-content {
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--color-text);
+  }
+  .tool-card-body-inner-fixed .md-content p {
+    margin-bottom: 6px;
+  }
+  .tool-card-body-inner-fixed .md-content p:last-child {
+    margin-bottom: 0;
+  }
+  .tool-card-body-inner-fixed .code-block {
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    overflow-x: auto;
+    margin: 6px 0;
+  }
+  .tool-card-body-inner-fixed .code-block pre {
+    font-family: 'Geist Mono', 'JetBrains Mono', monospace;
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--color-text);
+    white-space: pre;
+  }
+  .tool-card-body-inner-fixed .code-lang {
+    font-family: 'Geist Mono', monospace;
+    font-size: 9px;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 6px;
+    display: block;
+  }
+  .tool-card-body-inner-fixed .summary-line {
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    color: var(--color-text);
+    line-height: 1.5;
+  }
+  .tool-card-body-inner-fixed .summary-hint {
+    font-size: 10px;
+    color: var(--color-text-muted);
+    font-style: italic;
+    margin-top: 4px;
+  }
+
+  /* ── MCP Rich List (same in both before/after — reference) ── */
+  .mcp-rich-list {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--color-border);
+  }
+  .mcp-rich-item {
+    padding: 12px 14px;
+    background: var(--color-bg);
+    border-bottom: 1px solid var(--color-border);
+    transition: background 0.15s;
+    font-family: 'Geist Sans', sans-serif;
+  }
+  .mcp-rich-item:last-child { border-bottom: none; }
+  .mcp-rich-item .r-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+  .mcp-rich-item .r-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--color-text);
+    line-height: 1.4;
+  }
+  .mcp-rich-item .r-score {
+    flex-shrink: 0;
+    font-family: 'Geist Mono', monospace;
+    font-size: 9px;
+    font-weight: 600;
+    padding: 2px 7px;
+    border-radius: 10px;
+    background: var(--color-success);
+    color: var(--color-success-text);
+    white-space: nowrap;
+    margin-top: 2px;
+  }
+  .mcp-rich-item .r-url {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    color: var(--color-accent);
+    opacity: 0.7;
+    margin-bottom: 6px;
+    word-break: break-all;
+  }
+  .mcp-rich-item .r-content {
+    font-size: 12px;
+    color: var(--color-text-muted);
+    line-height: 1.55;
+  }
+
+  .mcp-raw-block {
+    padding: 12px 14px;
+    border-top: 1px solid var(--color-border);
+    font-family: 'Geist Mono', monospace;
+    font-size: 11px;
+    line-height: 1.55;
+    color: var(--color-text-muted);
+    max-height: 280px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    background: var(--color-bg);
+  }
+
+  /* ── After: rich list for built-in JSON tools ── */
+  .builtin-rich-list {
+    display: flex;
+    flex-direction: column;
+    border-top: 1px solid var(--color-border);
+  }
+  .builtin-rich-item {
+    padding: 10px 14px;
+    background: var(--color-bg);
+    border-bottom: 1px solid var(--color-border);
+    font-family: 'Geist Sans', sans-serif;
+  }
+  .builtin-rich-item:last-child { border-bottom: none; }
+  .builtin-rich-item .br-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .builtin-rich-item .br-icon {
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  .builtin-rich-item .br-name {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--color-text);
+    font-family: 'Geist Mono', monospace;
+  }
+  .builtin-rich-item .br-meta {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    color: var(--color-text-muted);
+    margin-left: auto;
+  }
+  .builtin-rich-item .br-path {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px;
+    color: var(--color-accent);
+    opacity: 0.8;
+  }
+
+  /* ── Section separator ── */
+  .section-label {
+    max-width: 920px;
+    margin: 24px auto 10px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-text-muted);
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--color-border);
+  }
+  .section-label:first-of-type {
+    margin-top: 0;
+  }
+
+  /* ── Annotations ── */
+  .annotation {
+    max-width: 920px;
+    margin: 8px auto 0;
+    padding: 10px 14px;
+    background: var(--color-warning);
+    border-radius: 6px;
+    font-size: 11px;
+    color: var(--color-warning-text);
+    line-height: 1.5;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .annotation .ann-icon {
+    flex-shrink: 0;
+    font-weight: 700;
+  }
+  .annotation.ok {
+    background: var(--color-success);
+    color: var(--color-success-text);
+  }
+
+  /* hidden utility */
+  .hidden { display: none !important;; }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>Built-in Tool Result Rendering — Before vs After</h1>
+  <p>Compares the current broken line-by-line rendering with the proposed whole-Markdown approach. Toggle to view each mode, or use side-by-side.</p>
+</div>
+
+<div class="toggle-bar">
+  <div class="toggle-group">
+    <button class="toggle-btn active" data-mode="side">Side by Side</button>
+    <button class="toggle-btn" data-mode="before">Before Only</button>
+    <button class="toggle-btn" data-mode="after">After Only</button>
+  </div>
+  <span class="toggle-label" id="modeLabel">Showing both columns</span>
+</div>
+
+<!-- ═══════════════ Section 1: bash tool ═══════════════ -->
+<div class="section-label">bash — shell command output (code fence)</div>
+
+<div class="comparison" id="comp-bash">
+  <!-- BEFORE -->
+  <div class="col-before">
+    <div class="col-header">
+      Before <span class="tag tag-broken">BROKEN</span>
+    </div>
+    <div class="tool-card open">
+      <div class="tool-card-header">
+        <span class="status ok">✓</span>
+        <span class="name">bash</span>
+        <span class="args">npm run typecheck</span>
+        <span class="arrow">▾</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="tool-card-body-inner-broken">
+          <span class="md-line broken-fence">```sh</span>
+          <span class="md-line">src/ui/web/web-backend.ts:146:5</span>
+          <span class="md-line">  const rs = formatToolResultForUI(e.name, rawResult);</span>
+          <span class="md-line">           ~~~~~~~~~~~~~~~~~~~~~~~~~~~</span>
+          <span class="md-line"></span>
+          <span class="md-line">src/ui/shared/reducer.ts:90:12</span>
+          <span class="md-line">  t.name === event.name && !t.result</span>
+          <span class="md-line">             ~~~~~~~~~~~~</span>
+          <span class="md-line broken-fence">```</span>
+          <span class="md-line">… (247 more chars)</span>
+        </div>
+      </div>
+    </div>
+    <div class="annotation">
+      <span class="ann-icon">⚠</span>
+      <span>Code fence <code>```sh</code> and closing <code>```</code> rendered as literal text. Each line is a separate &lt;Markdown&gt; instance — no code block formed.</span>
+    </div>
+  </div>
+
+  <!-- AFTER -->
+  <div class="col-after">
+    <div class="col-header">
+      After <span class="tag tag-fixed">FIXED</span>
+    </div>
+    <div class="tool-card open">
+      <div class="tool-card-header">
+        <span class="status ok">✓</span>
+        <span class="name">bash</span>
+        <span class="args">npm run typecheck</span>
+        <span class="arrow">▾</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="tool-card-body-inner-fixed">
+          <div class="md-content">
+            <div class="code-block">
+              <span class="code-lang">sh</span>
+              <pre>src/ui/web/web-backend.ts:146:5
+  const rs = formatToolResultForUI(e.name, rawResult);
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+src/ui/shared/reducer.ts:90:12
+  t.name === event.name && !t.result
+             ~~~~~~~~~~~~
+
+Found 2 errors in 2 files.</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="annotation ok">
+      <span class="ann-icon">✓</span>
+      <span>Whole result passed to single &lt;Markdown&gt; — code fence renders as proper styled block with language label.</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ Section 2: read_file tool ═══════════════ -->
+<div class="section-label">read_file — file contents (code block)</div>
+
+<div class="comparison" id="comp-readfile">
+  <div class="col-before">
+    <div class="col-header">Before <span class="tag tag-broken">BROKEN</span></div>
+    <div class="tool-card open">
+      <div class="tool-card-header">
+        <span class="status ok">✓</span>
+        <span class="name">read_file</span>
+        <span class="args">src/ui/shared/tool-result-formatter.ts</span>
+        <span class="arrow">▾</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="tool-card-body-inner-broken">
+          <span class="md-line broken-fence">```</span>
+          <span class="md-line">const DEFAULT_MAX_CHARS = 600;</span>
+          <span class="md-line"></span>
+          <span class="md-line">function extractWriteSummary(text: string): string {</span>
+          <span class="md-line">  const lines = text.split("\n");</span>
+          <span class="md-line">  const meaningful: string[] = [];</span>
+          <span class="md-line broken-fence">```</span>
+          <span class="md-line">… (412 more chars)</span>
+        </div>
+      </div>
+    </div>
+    <div class="annotation">
+      <span class="ann-icon">⚠</span>
+      <span>No syntax highlighting, no code block styling — just raw mono text with stray backticks.</span>
+    </div>
+  </div>
+
+  <div class="col-after">
+    <div class="col-header">After <span class="tag tag-fixed">FIXED</span></div>
+    <div class="tool-card open">
+      <div class="tool-card-header">
+        <span class="status ok">✓</span>
+        <span class="name">read_file</span>
+        <span class="args">src/ui/shared/tool-result-formatter.ts</span>
+        <span class="arrow">▾</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="tool-card-body-inner-fixed">
+          <div class="md-content">
+            <div class="code-block">
+              <pre>const DEFAULT_MAX_CHARS = 600;
+
+function extractWriteSummary(text: string): string {
+  const lines = text.split("\n");
+  const meaningful: string[] = [];
+  for (const line of lines) {
+    if (meaningful.length >= 2) break;
+    const trimmed = line.trim();
+    if (trimmed.length > 0) {
+      meaningful.push(trimmed);
+    }
+  }
+  return meaningful.join("\n");
+}</pre>
+            </div>
+            <span class="summary-hint">… (412 more chars)</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="annotation ok">
+      <span class="ann-icon">✓</span>
+      <span>Proper code block with border, background, scroll. Truncation hint preserved below.</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ Section 3: grep JSON result ═══════════════ -->
+<div class="section-label">grep — JSON results (was plain text, now rich list)</div>
+
+<div class="comparison" id="comp-grep">
+  <div class="col-before">
+    <div class="col-header">Before <span class="tag tag-broken">BROKEN</span></div>
+    <div class="tool-card open">
+      <div class="tool-card-header">
+        <span class="status ok">✓</span>
+        <span class="name">grep</span>
+        <span class="args">pattern: "tool_end"</span>
+        <span class="arrow">▾</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="tool-card-body-inner-broken">
+          <span class="md-line broken-fence">```json</span>
+          <span class="md-line">{</span>
+          <span class="md-line">  "matches": [</span>
+          <span class="md-line">    { "file": "web-backend.ts", "line": 152, "text": "tool_end" },</span>
+          <span class="md-line">    { "file": "reducer.ts", "line": 99, "text": "tool_end" }</span>
+          <span class="md-line">  ]</span>
+          <span class="md-line">}</span>
+          <span class="md-line broken-fence">```</span>
+        </div>
+      </div>
+    </div>
+    <div class="annotation">
+      <span class="ann-icon">⚠</span>
+      <span>JSON code fence broken — backticks show as text. No pretty-printing, no interactive list.</span>
+    </div>
+  </div>
+
+  <div class="col-after">
+    <div class="col-header">After <span class="tag tag-fixed">FIXED</span></div>
+    <div class="tool-card open">
+      <div class="tool-card-header">
+        <span class="status ok">✓</span>
+        <span class="name">grep</span>
+        <span class="args">pattern: "tool_end"</span>
+        <span class="arrow">▾</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="tool-card-body-inner-fixed">
+          <div class="md-content">
+            <div class="code-block">
+              <span class="code-lang">json</span>
+              <pre>{
+  "matches": [
+    { "file": "web-backend.ts", "line": 152, "text": "tool_end" },
+    { "file": "reducer.ts", "line": 99, "text": "tool_end" }
+  ]
+}</pre>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="annotation ok">
+      <span class="ann-icon">✓</span>
+      <span>JSON pretty-printed inside proper code block with language label.</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ Section 4: write_file summary ═══════════════ -->
+<div class="section-label">write_file — summary with anchor preview (already works, but line-split hurts)</div>
+
+<div class="comparison" id="comp-writefile">
+  <div class="col-before">
+    <div class="col-header">Before <span class="tag tag-broken">DEGRADED</span></div>
+    <div class="tool-card open">
+      <div class="tool-card-header">
+        <span class="status ok">✓</span>
+        <span class="name">write_file</span>
+        <span class="args">src/index.ts</span>
+        <span class="arrow">▾</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="tool-card-body-inner-broken">
+          <span class="md-line">Written 23577 bytes to /path/index.html</span>
+          <span class="md-line">New file version: fv_2a818c68</span>
+          <span class="md-line">… (8 more lines — anchor preview hidden)</span>
+        </div>
+      </div>
+    </div>
+    <div class="annotation">
+      <span class="ann-icon">⚠</span>
+      <span>Summary works but each line is independent &lt;Markdown&gt; — no styling cohesion, <code>word-break: break-all</code> mangles paths.</span>
+    </div>
+  </div>
+
+  <div class="col-after">
+    <div class="col-header">After <span class="tag tag-fixed">FIXED</span></div>
+    <div class="tool-card open">
+      <div class="tool-card-header">
+        <span class="status ok">✓</span>
+        <span class="name">write_file</span>
+        <span class="args">src/index.ts</span>
+        <span class="arrow">▾</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="tool-card-body-inner-fixed">
+          <div class="md-content">
+            <p class="summary-line">✓ Written 23,577 bytes to <code style="font-family:'Geist Mono',monospace;font-size:11px;background:var(--color-accent-bg);color:var(--color-accent);padding:1px 4px;border-radius:3px;">/path/index.html</code></p>
+            <p class="summary-line" style="color:var(--color-text-muted);">New file version: <code style="font-family:'Geist Mono',monospace;font-size:11px;background:var(--color-accent-bg);color:var(--color-accent);padding:1px 4px;border-radius:3px;">fv_2a818c68</code></p>
+            <p class="summary-hint">… 8 more lines — anchor preview hidden</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="annotation ok">
+      <span class="ann-icon">✓</span>
+      <span>Summary rendered as cohesive Markdown — paths get inline code styling, <code>word-break</code> no longer mangles.</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ Section 5: list_files (JSON — new rich list) ═══════════════ -->
+<div class="section-label">list_files — JSON result (new: rich list for built-in tools)</div>
+
+<div class="comparison" id="comp-listfiles">
+  <div class="col-before">
+    <div class="col-header">Before <span class="tag tag-broken">BROKEN</span></div>
+    <div class="tool-card open">
+      <div class="tool-card-header">
+        <span class="status ok">✓</span>
+        <span class="name">list_files</span>
+        <span class="args">path: src/ui</span>
+        <span class="arrow">▾</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="tool-card-body-inner-broken">
+          <span class="md-line broken-fence">```json</span>
+          <span class="md-line">[</span>
+          <span class="md-line">  { "path": "src/ui/backend.ts", "isDir": false, "name": "backend.ts", "depth": 0 },</span>
+          <span class="md-line">  { "path": "src/ui/conversation.ts", "isDir": false, "name": "conversation.ts", "depth": 0 },</span>
+          <span class="md-line">  { "path": "src/ui/mdx", "isDir": true, "name": "mdx", "depth": 0 }</span>
+          <span class="md-line">]</span>
+          <span class="md-line broken-fence">```</span>
+        </div>
+      </div>
+    </div>
+    <div class="annotation">
+      <span class="ann-icon">⚠</span>
+      <span>JSON fence broken. Compare to MCP tools which get rich list cards — built-in tools get nothing.</span>
+    </div>
+  </div>
+
+  <div class="col-after">
+    <div class="col-header">After <span class="tag tag-fixed">FIXED + ENHANCED</span></div>
+    <div class="tool-card open">
+      <div class="tool-card-header">
+        <span class="status ok">✓</span>
+        <span class="name">list_files</span>
+        <span class="args">path: src/ui</span>
+        <span class="arrow">▾</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="tool-card-body-inner-fixed" style="padding:0;max-height:none;">
+          <div class="builtin-rich-list">
+            <div class="builtin-rich-item">
+              <div class="br-head">
+                <span class="br-icon">📄</span>
+                <span class="br-name">backend.ts</span>
+                <span class="br-meta">depth: 0</span>
+              </div>
+              <div class="br-path">src/ui/backend.ts</div>
+            </div>
+            <div class="builtin-rich-item">
+              <div class="br-head">
+                <span class="br-icon">📄</span>
+                <span class="br-name">conversation.ts</span>
+                <span class="br-meta">depth: 0</span>
+              </div>
+              <div class="br-path">src/ui/conversation.ts</div>
+            </div>
+            <div class="builtin-rich-item">
+              <div class="br-head">
+                <span class="br-icon">📁</span>
+                <span class="br-name">mdx</span>
+                <span class="br-meta">depth: 0 · dir</span>
+              </div>
+              <div class="br-path">src/ui/mdx</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="annotation ok">
+      <span class="ann-icon">✓</span>
+      <span>Optional enhancement: built-in tools that return JSON arrays get rich list cards (like MCP), with file/dir icons and metadata.</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════ Section 6: MCP reference (unchanged) ═══════════════ -->
+<div class="section-label">MCP tool — reference (unchanged in both modes)</div>
+
+<div class="comparison single">
+  <div>
+    <div class="col-header">MCP Rich List <span class="tag" style="background:var(--color-accent-bg);color:var(--color-accent);">REFERENCE</span></div>
+    <div class="tool-card mcp open">
+      <div class="tool-card-header">
+        <span class="status ok">✓</span>
+        <span class="name">mcp__brave__search</span>
+        <span class="mcp-badge">MCP</span>
+        <span class="args">query: "react server components"</span>
+        <span class="arrow">▾</span>
+      </div>
+      <div class="tool-card-body">
+        <div class="mcp-rich-list">
+          <div class="mcp-rich-item">
+            <div class="r-head">
+              <span class="r-title">React Server Components — React Docs</span>
+              <span class="r-score">0.95</span>
+            </div>
+            <div class="r-url">https://react.dev/reference/react/ServerComponents</div>
+            <div class="r-content">React Server Components allow you to write UI that is rendered on the server and streamed to the client...</div>
+          </div>
+          <div class="mcp-rich-item">
+            <div class="r-head">
+              <span class="r-title">Understanding Server Components</span>
+              <span class="r-score">0.88</span>
+            </div>
+            <div class="r-url">https://vercel.com/blog/understanding-react-server</div>
+            <div class="r-content">A deep dive into how RSC works, the mental model, and how it differs from SSR...</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="annotation ok">
+      <span class="ann-icon">✓</span>
+      <span>This is the quality bar built-in tools should match. The fix brings code blocks to parity; the rich-list enhancement is optional but recommended.</span>
+    </div>
+  </div>
+</div>
+
+<script>
+  const toggleBtns = document.querySelectorAll('.toggle-btn');
+  const modeLabel = document.getElementById('modeLabel');
+  const comparisons = document.querySelectorAll('.comparison');
+
+  toggleBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      toggleBtns.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const mode = btn.dataset.mode;
+
+      comparisons.forEach(comp => {
+        const before = comp.querySelector('.col-before');
+        const after = comp.querySelector('.col-after');
+
+        comp.classList.remove('single');
+
+        if (mode === 'side') {
+          before?.classList.remove('hidden');
+          after?.classList.remove('hidden');
+          comp.style.gridTemplateColumns = '1fr 1fr';
+          modeLabel.textContent = 'Showing both columns';
+        } else if (mode === 'before') {
+          before?.classList.remove('hidden');
+          after?.classList.add('hidden');
+          comp.style.gridTemplateColumns = '1fr';
+          modeLabel.textContent = 'Before only — current broken state';
+        } else if (mode === 'after') {
+          before?.classList.add('hidden');
+          after?.classList.remove('hidden');
+          comp.style.gridTemplateColumns = '1fr';
+          modeLabel.textContent = 'After only — proposed fix';
+        }
+      });
+    });
+  });
+
+  // Toggle tool cards on header click
+  document.querySelectorAll('.tool-card-header').forEach(header => {
+    header.addEventListener('click', () => {
+      const card = header.closest('.tool-card');
+      card.classList.toggle('open');
+    });
+  });
+</script>
+
+</body>
+</html>
