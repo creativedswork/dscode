@@ -1,7 +1,5 @@
-## Purpose
+## MODIFIED Requirements
 
-Enable Web UI users to drag files and directories from their OS file manager directly onto the chat input area, with file metadata displayed as chips and paths inserted as @ references into the message text.
-## Requirements
 ### Requirement: Web UI prompt accepts drag-and-drop files
 The Web UI `MessageInput` component SHALL accept files and directories dragged from the OS file manager onto the textarea or its surrounding input area. Non-image files SHALL be read as raw bytes (via `readAsArrayBuffer()`), encoded as base64, and uploaded to the server if they are within size limits. Dropped files that exceed size limits SHALL produce a toast notification.
 
@@ -143,4 +141,3 @@ The help text in `commands.ts` SHALL accurately describe available image input m
 - **WHEN** the `/?` or `/help` command is issued
 - **THEN** the image/vision section SHALL NOT claim "In Web UI: drag & drop, paste, or click to upload images" if drag-and-drop or click-to-upload are not fully implemented
 - **AND** the text SHALL describe only currently supported methods: pasting images via Ctrl+V
-
