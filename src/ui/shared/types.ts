@@ -163,7 +163,7 @@ export interface PermOption {
 // ── Wire protocol ──
 
 export type ClientCommand =
-  | { type: "chat"; text: string; images?: ImageAttachment[]; clipboardImages?: ImageAttachment[]; fileRefs?: string[] }
+  | { type: "chat"; text: string; images?: ImageAttachment[]; clipboardImages?: ImageAttachment[]; fileRefs?: string[]; uploadedFiles?: { name: string; content: string }[] }
   | { type: "abort" }
   | { type: "permission"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; persistRule?: boolean; toolNamePattern?: string; fuzzyMode?: number; sessionGrantPattern?: string }
   | { type: "permission_response"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; denyReason?: string; toolNamePattern?: string }

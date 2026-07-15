@@ -203,14 +203,14 @@ export function App() {
 
   const { connected, send } = useWebSocket(handleEvent);
 
-  const handleSend = useCallback((text: string, images?: ImageAttachment[], fileRefs?: string[]) => {
-    if (!text.trim() && (!images || images.length === 0)) return;
+  const handleSend = useCallback((text: string, images?: ImageAttachment[], fileRefs?: string[], uploadedFiles?: { name: string; content: string }[]) => {
+    if (!text.trim() && (!images || images.length === 0) && (!uploadedFiles || uploadedFiles.length === 0)) return;
     turnStartRef.current = Date.now();
     setProcessing(true);
     if (viewMode === "dashboard") {
       send({ type: "artifact", action: "update", instruction: text });
     } else {
-      send({ type: "chat", text, images: images?.length ? images : undefined, fileRefs: fileRefs?.length ? fileRefs : undefined });
+      send({ type: "chat", text, images: images?.length ? images : undefined, fileRefs: fileRefs?.length ? fileRefs : undefined, uploadedFiles: uploadedFiles?.length ? uploadedFiles : undefined });
     }
   }, [send, viewMode]);
 
