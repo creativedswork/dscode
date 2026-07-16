@@ -61,6 +61,8 @@ export class Harness implements HarnessAPI {
   private shuttingDown = false;
   private turnIndex = 0;
   private visionAbortController: AbortController | null = null;
+  private autoSaveTimer: NodeJS.Timeout | undefined;
+  private lastSavedMessageCount: number = 0;
 
   constructor(config: HarnessConfig, logger: Logger, debug?: boolean) {
     this.logger = logger;
@@ -242,6 +244,7 @@ export class Harness implements HarnessAPI {
       if (!lastAssistantMsg || lastAssistantMsg.stopReason !== "error") {
         // Success — save and return
         this.sessionManager.trySaveSession(this.agent);
+        this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
 
         return;
       }
@@ -258,6 +261,7 @@ export class Harness implements HarnessAPI {
         });
         this.events.emit({ type: "ui:error", text: `Model error: ${errorMsg}` });
         this.events.emit({ type: "turn:error", error: errorMsg, attempt: attempt + 1, maxRetries });        this.sessionManager.trySaveSession(this.agent);
+        this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
 
         return;
       }
@@ -274,6 +278,7 @@ export class Harness implements HarnessAPI {
         this.events.emit({ type: "ui:error", text: `Model error: ${errorMsg}` });
         this.events.emit({ type: "turn:error", error: errorMsg, attempt: attempt + 1, maxRetries });        this.events.emit({ type: "ui:error", text: "✗ All retries exhausted" });
         this.sessionManager.trySaveSession(this.agent);
+        this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
         return;
       }
 
@@ -294,6 +299,25 @@ export class Harness implements HarnessAPI {
    */
   saveSessionNow(): void {
     this.sessionManager.trySaveSession(this.agent);
+    this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
+  }
+
+  /**
+   * Start periodic auto-save (every 15s) during agent execution.
+   * Only saves when new messages have been added since last save.
+   */
+  private startAutoSave(): void {
+    this.autoSaveTimer = setInterval(() => {
+      if (this.agent?.state?.messages) {
+        const currentCount = (this.agent.state.messages as any[]).length;
+        if (currentCount !== this.lastSavedMessageCount) {
+          this.logger.info("AutoSave", `Periodic auto-save (${currentCount} messages, was ${this.lastSavedMessageCount})`);
+          this.sessionManager.trySaveSession(this.agent);
+          this.lastSavedMessageCount = currentCount;
+        }
+      }
+    }, 15_000);
+    this.autoSaveTimer.unref();
   }
 
   private findLastUserMessageIndex(messages: any[]): number {
@@ -513,6 +537,7 @@ export class Harness implements HarnessAPI {
       }));
     }
     this.sessionManager.trySaveSession(this.agent);
+    this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
     // Restore images into agent state for the UI to render
     const restoredImgs: ImageContent[] = [];
     for (const ref of cachedRefs) {
@@ -581,6 +606,9 @@ export class Harness implements HarnessAPI {
         this.toolRegistry.initialize(this.makeSkillTool());
         this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
       }
+
+      // Start periodic auto-save (15s interval) after MCP/agent initialization
+      this.startAutoSave();
 
       if (!this.config.apiKey) {
         this.events.emit({ type: "ui:info", text: [
@@ -659,6 +687,7 @@ export class Harness implements HarnessAPI {
 
     // Save current session before switching
     this.sessionManager.trySaveSession(this.agent);
+    this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
 
     // Change working directory
     process.chdir(resolvedPath);
@@ -724,10 +753,16 @@ export class Harness implements HarnessAPI {
   }
 
   private async shutdown(): Promise<void> {
+    // Clear auto-save timer before final save
+    if (this.autoSaveTimer) {
+      clearInterval(this.autoSaveTimer);
+      this.autoSaveTimer = undefined;
+    }
     // Save session FIRST, before any other shutdown steps.
     // This ensures data is persisted even if later steps fail.
     // Also save regardless of shuttingDown flag — this is the last chance to persist.
     this.sessionManager.trySaveSession(this.agent);
+    this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
 
     if (this.shuttingDown) return;
     this.shuttingDown = true;
@@ -1022,6 +1057,14 @@ __DEFERRED_HINT__`;
   private bindEvents(): void {
     this.agent.subscribe((event) => {
       switch (event.type) {
+        case "message_end": {
+          if ((event as any).message?.role === "user") {
+            this.logger.info("PreTurnSave", `Saving session pre-turn (${(this.agent.state.messages as any[]).length} messages)`);
+            this.sessionManager.trySaveSession(this.agent);
+            this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
+          }
+          break;
+        }
         case "message_update": {
           const ev = event.assistantMessageEvent;
           if (!ev) break;
@@ -1067,6 +1110,7 @@ __DEFERRED_HINT__`;
           // Session is saved by promptAndSave after retries are resolved.
           // This save is a safety net for non-promptAndSave code paths.
           this.sessionManager.trySaveSession(this.agent);
+          this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
         }
         if (event.type === "agent_start") {
           this.events.emit({ type: "turn:streaming:start" });
@@ -1074,6 +1118,7 @@ __DEFERRED_HINT__`;
         if (event.type === "turn_end") {
           // Save session before broadcasting so sidebar gets fresh metadata
           this.sessionManager.trySaveSession(this.agent);
+          this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
           const turnEndMsg = event.message as AssistantMessage;
           const rawUsage = turnEndMsg?.usage;
           this.events.emit({ type: "turn:end", stopReason: turnEndMsg?.stopReason, usage: rawUsage ? { input: rawUsage.input, output: rawUsage.output, cacheRead: rawUsage.cacheRead, cacheWrite: rawUsage.cacheWrite, total: rawUsage.totalTokens, cost: { total: rawUsage.cost.total } } : undefined });
@@ -1089,6 +1134,7 @@ __DEFERRED_HINT__`;
         // If the event handler fails, still try to save session
         this.logger.error("AgentEvent", String(err));
         this.sessionManager.trySaveSession(this.agent);
+        this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
       }
     });
   }
