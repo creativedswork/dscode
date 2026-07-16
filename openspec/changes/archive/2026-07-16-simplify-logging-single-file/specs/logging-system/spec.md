@@ -2,18 +2,7 @@
 
 File-based logging system with agent context injection, writing to a single unified log file.
 
-
-## Requirements
-### Requirement: Logger Constructor
-
-`Logger` 构造函数 SHALL 接受 `{ type: string, id: string }` 参数，表示 Agent 类型和运行时 ID。
-
-每次调用 `debug/info/warn/error` 时，该 agent 身份信息 SHALL 自动附加到日志行中。
-
-#### Scenario: Logger created with agent context
-
-- **WHEN** 调用 `new Logger({ type: "harness", id: "rt_a1b2" })`
-- **THEN** 后续每条日志行 SHALL 包含 `[harness/rt_a1b2]`
+## MODIFIED Requirements
 
 ### Requirement: Log Channels
 
@@ -29,18 +18,6 @@ API 从 `logger.info(channel, tag, msg)` 简化为 `logger.info(tag, msg)`。
 - **AND** 调用 `logger.error("Save", "trySaveSession failed")`
 - **THEN** 两条日志 SHALL 均写入 `~/.dscode/logs/dscode.log`
 - **AND** 两条日志 SHALL 按时间顺序排列
-
-### Requirement: Log Levels
-
-Logger SHALL 支持四个 level：`debug`、`info`、`warn`、`error`，优先级依次升高。
-
-Logger SHALL 接受可选的 `level` 参数（构造时或运行时设置），低于该 level 的日志 SHALL 被丢弃。默认 level 为 `debug`（记录所有）。
-
-#### Scenario: Level filtering
-
-- **WHEN** Logger level 设置为 `info`
-- **THEN** `logger.debug(...)` SHALL 不产生任何输出
-- **AND** `logger.info/warn/error(...)` SHALL 正常输出
 
 ### Requirement: File-Only Output
 
@@ -97,6 +74,8 @@ Logger SHALL 提供 `clear()` 方法（无参数），清空整个日志文件�
 - **THEN** `~/.dscode/logs/dscode.log` 文件内容 SHALL 被清空
 - **AND** 后续日志 SHALL 从文件开头开始写入
 
+## ADDED Requirements
+
 ### Requirement: Tag Naming Convention
 
 `tag` SHALL 为 PascalCase 常量字符串（如 `EventBus`、`SessionManager`、`Phase0`）。
@@ -117,4 +96,3 @@ tag SHALL NOT 为动态变量或包含空格、连字符、下划线。
 - **OR** tag 为 `stepName`（动态变量）
 - **OR** tag 为 `"save session"`（含空格）
 - **THEN** 这些 SHALL NOT 使用；应改为 `"WebBackend"`、固定常量、`"SaveSession"` 等 PascalCase 形式
-
