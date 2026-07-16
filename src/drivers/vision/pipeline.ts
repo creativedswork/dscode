@@ -2,10 +2,8 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import { ImageCache } from "./cache.js";
 import { ocrImages } from "./ocr.js";
 import { resolveVisionModel, describeImagesViaVisionModel } from "./client.js";
-import { Logger } from "../../utils/logger.js";
 import type { VisionConfig, ImageRef, ProcessResult, ProcessOptions, ProgressFn } from "./types.js";
 
-const _plog = new Logger({ type: "harness", id: process.env.DSCODE_RUNTIME_ID ?? "pipeline" });
 
 export interface ImagePipelineConfig {
   visionConfig?: VisionConfig;
@@ -62,7 +60,6 @@ export class ImagePipeline {
 
     // Try vision model
     const vision = resolveVisionModel(this.visionConfig, this.fallbackApiKey, this.onWarning);
-    _plog.info("tool", "image-pipeline", `vision resolved: ${vision ? `${vision.model.provider}/${vision.model.id}` : "null — falling to OCR"}, images=${normalizedImages.length}, img[0].dataLen=${normalizedImages[0]?.data?.length ?? 0}, mime=${normalizedImages[0]?.mimeType ?? "?"}`);
     if (vision) {
       try {
         onProgress?.({ phase: "describing", cachedRefs });
@@ -81,13 +78,11 @@ export class ImagePipeline {
           throw err; // re-throw abort immediately, no fallback
         }
         const errMsg = err instanceof Error ? err.message : String(err);
-        _plog.warn("tool", "image-pipeline", `vision FAILED: ${errMsg}. img[0].dataLen=${normalizedImages[0]?.data?.length ?? 0}, mime=${normalizedImages[0]?.mimeType ?? "?"}, preview=${normalizedImages[0]?.data?.slice(0, 80) ?? "?"}`);
         this.onWarning(`Vision model failed: ${errMsg}. Falling back to OCR.`);
       }
     }
 
     // OCR fallback
-    _plog.info("tool", "image-pipeline", `entering OCR fallback, images=${normalizedImages.length}`);
     if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
     try {
       onProgress?.({ phase: "ocr", cachedRefs });

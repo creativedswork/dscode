@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { Logger } from "../../utils/logger.js";
+import { createHash } from "node:crypto";
 import { readFile, writeFile, stat } from "node:fs/promises";
 import { resolve } from "node:path";
 
@@ -191,7 +191,7 @@ export const editTool: AgentTool<typeof editParams> = {
       };
     }
     if (file_path && !path) {
-      _editLogger.warn('tool', 'Edit', 'file_path is deprecated, use path instead');
+      _editLogger.warn('Edit', 'file_path is deprecated, use path instead');
     }
     const resolved = resolve(effectivePath);
 

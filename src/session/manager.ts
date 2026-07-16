@@ -331,7 +331,7 @@ export class SessionManager {
     try {
       this.saveSession(agent, pendingPermission);
     } catch (err) {
-      this.logger.error("session", "Save", `trySaveSession failed: ${String(err)}`);
+      this.logger.error("Save", `trySaveSession failed: ${String(err)}`);
     }
   }
 

@@ -75,7 +75,7 @@ export function loadRuleStore(projectPath: string, logger?: Logger): RuleStore {
       updatedAt: parsed.updatedAt ?? Date.now(),
     };
   } catch (err) {
-    if (logger) logger.warn("analysis", "RuleStore", `Failed to load rules.json, starting fresh: ${(err as Error).message}`);
+    if (logger) logger.warn("RuleStore", `Failed to load rules.json, starting fresh: ${(err as Error).message}`);
     return createEmptyStore(projectPath);
   }
 }
@@ -87,7 +87,7 @@ export function saveRuleStore(store: RuleStore, logger?: Logger): void {
     store.updatedAt = Date.now();
     writeFileSync(path, JSON.stringify(store, null, 2), "utf8");
   } catch (err) {
-    if (logger) logger.error("analysis", "RuleStore", `Failed to save rules.json: ${(err as Error).message}`);
+    if (logger) logger.error("RuleStore", `Failed to save rules.json: ${(err as Error).message}`);
   }
 }
 
@@ -176,7 +176,7 @@ export async function semanticMerge(
           rawOutput = await callMergeLLM(RULE_MERGE_SYSTEM, prompt + "\n\n⚠ Output PURE JSON array only.", harness);
           continue;
         }
-        if (logger) logger.warn("analysis", "RuleStore", "No JSON in merge LLM response, adding all as new");
+        if (logger) logger.warn("RuleStore", "No JSON in merge LLM response, adding all as new");
         break;
       }
 
@@ -194,10 +194,10 @@ export async function semanticMerge(
         );
         continue;
       }
-      if (logger) logger.warn("analysis", "RuleStore", `Merge validation failed: ${parsed.errors.join("; ")}`);
+      if (logger) logger.warn("RuleStore", `Merge validation failed: ${parsed.errors.join("; ")}`);
     }
   } catch (err) {
-    if (logger) logger.warn("analysis", "RuleStore", `Semantic merge LLM call failed, adding all as new: ${(err as Error).message}`);
+    if (logger) logger.warn("RuleStore", `Semantic merge LLM call failed, adding all as new: ${(err as Error).message}`);
   }
 
   // Apply merge decisions

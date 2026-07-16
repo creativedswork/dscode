@@ -146,11 +146,11 @@ async function executeStep1(
     const prev = result[i];
     const next = result[i + 1];
     if (prev.stepEnd >= next.stepStart) {
-      if (logger) logger.warn("analysis", "Step1", `Fixing overlap: ${prev.id} (${prev.stepStart}-${prev.stepEnd}) overlaps ${next.id} (${next.stepStart}-${next.stepEnd}), truncating ${prev.id}.stepEnd to ${next.stepStart - 1}`);
+      if (logger) logger.warn("Step1", `Fixing overlap: ${prev.id} (${prev.stepStart}-${prev.stepEnd}) overlaps ${next.id} (${next.stepStart}-${next.stepEnd}), truncating ${prev.id}.stepEnd to ${next.stepStart - 1}`);
       prev.stepEnd = next.stepStart - 1;
     }
     if (prev.stepEnd + 1 < next.stepStart) {
-      if (logger) logger.warn("analysis", "Step1", `Filling gap: gap ${prev.stepEnd + 1}-${next.stepStart - 1} between ${prev.id} and ${next.id}, extending ${prev.id}.stepEnd to ${next.stepStart - 1}`);
+      if (logger) logger.warn("Step1", `Filling gap: gap ${prev.stepEnd + 1}-${next.stepStart - 1} between ${prev.id} and ${next.id}, extending ${prev.id}.stepEnd to ${next.stepStart - 1}`);
       prev.stepEnd = next.stepStart - 1;
     }
   }
@@ -223,17 +223,17 @@ async function executeStep3(
       const prompt = buildStep3SingleSubtaskPrompt(subtask, steps, subtasks);
       const flows = await callAndValidate(harness, prompt, validateStepDataFlows, 4096, `Step 3 / ${subtask.id}`);
       allFlows.push(...flows);
-      if (logger) logger.info("analysis", "Step3", `Subtask ${subtask.id}: ${flows.length} data flows extracted`);
+      if (logger) logger.info("Step3", `Subtask ${subtask.id}: ${flows.length} data flows extracted`);
     } catch (err) {
-      if (logger) logger.warn("analysis", "Step3", `Subtask ${subtask.id}: ${err instanceof Error ? err.message : String(err)}`);
+      if (logger) logger.warn("Step3", `Subtask ${subtask.id}: ${err instanceof Error ? err.message : String(err)}`);
       failedSubtasks++;
     }
   }
 
   if (failedSubtasks > 0) {
-    if (logger) logger.warn("analysis", "Step3", `${failedSubtasks}/${subtasks.length} subtasks failed to produce data flows`);
+    if (logger) logger.warn("Step3", `${failedSubtasks}/${subtasks.length} subtasks failed to produce data flows`);
   }
-  if (logger) logger.info("analysis", "Step3", `Subtask summary: ${allFlows.length} total data flows from ${subtasks.length - failedSubtasks}/${subtasks.length} subtasks`);
+  if (logger) logger.info("Step3", `Subtask summary: ${allFlows.length} total data flows from ${subtasks.length - failedSubtasks}/${subtasks.length} subtasks`);
   return { agents, dataFlows: allFlows };
 }
 

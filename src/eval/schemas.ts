@@ -243,11 +243,11 @@ export function safeJsonParse<T>(
     parsed = JSON.parse(json);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (logger) logger.warn("analysis", stepName, `JSON parse: ${msg}`);
+    if (logger) logger.warn(stepName, `JSON parse: ${msg}`);
   }
   const result = validator(parsed);
   if (!result.ok) {
-    if (logger) logger.warn("analysis", stepName, `validation: ${result.errors.join("; ")}`);
+    if (logger) logger.warn(stepName, `validation: ${result.errors.join("; ")}`);
     // Return partial results if available
     if (result.partial !== undefined) return result.partial;
     return null;

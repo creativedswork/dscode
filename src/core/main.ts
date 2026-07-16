@@ -33,13 +33,13 @@ function emergencySaveSession(): void {
 }
 
 process.on("unhandledRejection", (reason) => {
-  harnessLogger.error("lifecycle", "UnhandledRejection", String(reason));
+  harnessLogger.error("UnhandledRejection", String(reason));
   emergencySaveSession();
 });
 
 process.on("uncaughtException", (err) => {
   const msg = err instanceof Error ? err.message : String(err);
-  harnessLogger.error("lifecycle", "UncaughtException", msg);
+  harnessLogger.error("UncaughtException", msg);
   emergencySaveSession();
   // Give I/O a brief moment to flush, then exit
   setTimeout(() => {
@@ -53,18 +53,18 @@ let sigintCount = 0;
 process.on("SIGINT", () => {
   sigintCount++;
   if (sigintCount === 1) {
-    harnessLogger.info("lifecycle", "SIGINT", "Shutting down... (press Ctrl+C again to force quit)");
+    harnessLogger.info("SIGINT", "Shutting down... (press Ctrl+C again to force quit)");
     emergencySaveSession();
     // Let the normal shutdown flow handle the rest
   } else {
-    harnessLogger.info("lifecycle", "SIGINT", "Force quitting...");
+    harnessLogger.info("SIGINT", "Force quitting...");
     emergencySaveSession();
     process.exit(0);
   }
 });
 
 process.on("SIGTERM", () => {
-  harnessLogger.info("lifecycle", "SIGTERM", "Received SIGTERM, shutting down...");
+  harnessLogger.info("SIGTERM", "Received SIGTERM, shutting down...");
   emergencySaveSession();
   process.exit(0);
 });
@@ -158,7 +158,7 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
-  harnessLogger.error("lifecycle", "FatalStartup", err instanceof Error ? err.message : String(err));
+  harnessLogger.error("FatalStartup", err instanceof Error ? err.message : String(err));
   emergencySaveSession();
   process.exit(1);
 });

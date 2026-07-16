@@ -1,6 +1,6 @@
 ## Purpose
 
-File-based logging system with channel-based routing and agent context injection.
+File-based logging system with agent context injection, writing to a single unified log file.
 
 ## Requirements
 
@@ -15,18 +15,18 @@ File-based logging system with channel-based routing and agent context injection
 - **WHEN** 调用 `new Logger({ type: "harness", id: "rt_a1b2" })`
 - **THEN** 后续每条日志行 SHALL 包含 `[harness/rt_a1b2]`
 
-### Requirement: Log Channels
+### Requirement: Single Log File
 
-Logger SHALL 支持四个 channel：`lifecycle`、`session`、`tool`、`analysis`。
+Logger SHALL 将所有日志写入单一文件 `~/.dscode/logs/dscode.log`。
 
-channel 作为 `debug/info/warn/error` 方法的第一个参数传递。
+LogChannel 概念已移除——tag（如 `EventBus`、`SIGINT`、`FocusPipeline`）提供足够粒度，`grep` 用于按 tag 过滤。
 
-#### Scenario: Write to specific channel
+#### Scenario: All logs go to one file
 
-- **WHEN** 调用 `logger.info("analysis", "Phase0", "Library: 42 files")`
-- **THEN** 日志 SHALL 被写入 `~/.dscode/logs/analysis.log`
-- **AND** 调用 `logger.error("session", "Save", "failed")`
-- **THEN** 日志 SHALL 被写入 `~/.dscode/logs/session.log`
+- **WHEN** 调用 `logger.info("Phase0", "Library: 42 files")`
+- **AND** 调用 `logger.error("Save", "trySaveSession failed")`
+- **THEN** 两条日志 SHALL 均写入 `~/.dscode/logs/dscode.log`
+- **AND** 两条日志 SHALL 按时间顺序排列
 
 ### Requirement: Log Levels
 
@@ -42,7 +42,7 @@ Logger SHALL 接受可选的 `level` 参数（构造时或运行时设置），�
 
 ### Requirement: File-Only Output
 
-Logger SHALL 将所有日志写入 `~/.dscode/logs/<channel>.log` 文件。
+Logger SHALL 将所有日志写入 `~/.dscode/logs/dscode.log` 文件。
 
 Logger SHALL NOT 向终端（stdout/stderr）输出任何内容。
 
@@ -53,9 +53,9 @@ Logger SHALL NOT 向终端（stdout/stderr）输出任何内容。
 #### Scenario: Directory auto-creation
 
 - **WHEN** `~/.dscode/logs/` 不存在
-- **AND** 调用 `logger.info("lifecycle", "Start", "process started")`
+- **AND** 调用 `logger.info("Start", "process started")`
 - **THEN** 系统 SHALL 创建 `~/.dscode/logs/` 目录
-- **AND** 写入 `~/.dscode/logs/lifecycle.log`
+- **AND** 写入 `~/.dscode/logs/dscode.log`
 
 #### Scenario: Write failure is silent
 
@@ -68,28 +68,50 @@ Logger SHALL NOT 向终端（stdout/stderr）输出任何内容。
 每条日志 SHALL 为一行，格式：
 
 ```
-[YYYY-MM-DD HH:MM:SS] [LEVEL] [channel] [agent_type/agent_id] [tag] message
+[YYYY-MM-DD HH:MM:SS] [LEVEL] [agent_type/agent_id] [tag] message
 ```
 
 - `timestamp`：UTC+8 本地时间，精确到秒
 - `LEVEL`：大写（`DEBUG`、`INFO`、`WARN`、`ERROR`）
-- `channel`：小写 channel 名称
 - `agent_type/agent_id`：Logger 构造时注入
 - `tag`：语义标签，由调用方传入
 - `message`：自由文本
 
+注意：与原格式相比，移除了 `[channel]` 字段——channel 信息已由 tag 充分覆盖。
+
 #### Scenario: Formatted log line
 
-- **WHEN** 调用 `logger.info("analysis", "Phase0", "Library: 42 files")`
+- **WHEN** 调用 `logger.info("Phase0", "Library: 42 files")`
 - **AND** Logger 的 agent context 为 `{ type: "harness", id: "rt_a1b2" }`
-- **THEN** 写入的行格式 SHALL 匹配 `[2026-06-16 ...] [INFO] [analysis] [harness/rt_a1b2] [Phase0] Library: 42 files`
+- **THEN** 写入的行格式 SHALL 匹配 `[2026-07-16 ...] [INFO] [harness/rt_a1b2] [Phase0] Library: 42 files`
 
-### Requirement: Channel Clear
+### Requirement: Tag Naming Convention
 
-Logger SHALL 提供 `clear(channel)` 方法，清空指定 channel 的日志文件。
+`tag` SHALL 为 PascalCase 常量字符串（如 `EventBus`、`SessionManager`、`Phase0`）。
 
-#### Scenario: Clear analysis log
+tag SHALL NOT 为动态变量或包含空格、连字符、下划线。
 
-- **WHEN** eval 命令开始时调用 `logger.clear("analysis")`
-- **THEN** `~/.dscode/logs/analysis.log` 文件内容 SHALL 被清空
+同一文件内的所有日志调用 SHALL 使用一致的命名风格。
+
+#### Scenario: Valid tags
+
+- **WHEN** 调用 `logger.info("EventBus", "handler error")`
+- **OR** 调用 `logger.error("McpReload", "config reload failed")`
+- **THEN** 这些 SHALL 被视为有效 tag
+
+#### Scenario: Invalid tags
+
+- **WHEN** tag 为 `"web-backend"`（kebab-case）
+- **OR** tag 为 `stepName`（动态变量）
+- **OR** tag 为 `"save session"`（含空格）
+- **THEN** 这些 SHALL NOT 使用；应改为 `"WebBackend"`、固定常量、`"SaveSession"` 等 PascalCase 形式
+
+### Requirement: Clear Log
+
+Logger SHALL 提供 `clear()` 方法（无参数），清空整个日志文件。
+
+#### Scenario: Clear log file
+
+- **WHEN** 调用 `logger.clear()`
+- **THEN** `~/.dscode/logs/dscode.log` 文件内容 SHALL 被清空
 - **AND** 后续日志 SHALL 从文件开头开始写入

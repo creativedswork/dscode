@@ -187,7 +187,7 @@ export async function attributeWithLLM(
     recoveryArcs,
   );
 
-  if (logger) logger.info("analysis", "RuleAttribution", `Prompt size: ${prompt.length} chars, graph ${graphSnapshot ? `${graphSnapshot.dataFlows.length} dataFlows, ${graphSnapshot.subtasks.length} subtasks` : 'none'}`);
+  if (logger) logger.info("RuleAttribution", `Prompt size: ${prompt.length} chars, graph ${graphSnapshot ? `${graphSnapshot.dataFlows.length} dataFlows, ${graphSnapshot.subtasks.length} subtasks` : 'none'}`);
   // LLM call with retry
   let rawOutput: string;
   let rulesOutput: HarnessRuleOutput[] = [];
@@ -195,7 +195,7 @@ export async function attributeWithLLM(
   try {
     rawOutput = await callLLM(RULE_ATTRIBUTION_SYSTEM, prompt, harness, 16384);
   } catch (err) {
-    if (logger) logger.warn("analysis", "RuleAttribution", `LLM call failed: ${(err as Error).message}`);
+    if (logger) logger.warn("RuleAttribution", `LLM call failed: ${(err as Error).message}`);
     return [];
   }
 
@@ -209,11 +209,11 @@ export async function attributeWithLLM(
           rawOutput = await callLLM(RULE_ATTRIBUTION_SYSTEM, retryPrompt, harness, 16384);
           continue;
         } catch {
-          if (logger) logger.warn("analysis", "RuleAttribution", "Retry LLM call failed");
+          if (logger) logger.warn("RuleAttribution", "Retry LLM call failed");
           return [];
         }
       }
-      if (logger) logger.warn("analysis", "RuleAttribution", "No JSON found in LLM response after retry");
+      if (logger) logger.warn("RuleAttribution", "No JSON found in LLM response after retry");
       return [];
     }
 
@@ -247,7 +247,7 @@ export async function attributeWithLLM(
         rawOutput = await callLLM(RULE_ATTRIBUTION_SYSTEM, retryPrompt, harness, 16384);
         continue;
       } catch {
-        if (logger) logger.warn("analysis", "RuleAttribution", "Validation retry failed");
+        if (logger) logger.warn("RuleAttribution", "Validation retry failed");
         break;
       }
     }
@@ -263,11 +263,11 @@ export async function attributeWithLLM(
           rawOutput = await callLLM(RULE_ATTRIBUTION_SYSTEM, retryPrompt, harness, 16384);
           continue;
         } catch {
-          if (logger) logger.warn("analysis", "RuleAttribution", "Retry LLM call failed");
+          if (logger) logger.warn("RuleAttribution", "Retry LLM call failed");
           return [];
         }
       }
-      if (logger) logger.warn("analysis", "RuleAttribution", "No JSON found in LLM response after retry");
+      if (logger) logger.warn("RuleAttribution", "No JSON found in LLM response after retry");
       return [];
     }
 
@@ -283,14 +283,14 @@ export async function attributeWithLLM(
         rawOutput = await callLLM(RULE_ATTRIBUTION_SYSTEM, retryPrompt, harness, 16384);
         continue;
       } catch {
-        if (logger) logger.warn("analysis", "RuleAttribution", "Validation retry failed");
+        if (logger) logger.warn("RuleAttribution", "Validation retry failed");
         return [];
       }
     }
   }
-  if (logger) logger.info("analysis", "RuleAttribution", `Generated ${rulesOutput.length} rules`);
+  if (logger) logger.info("RuleAttribution", `Generated ${rulesOutput.length} rules`);
   if (rulesOutput.length === 0) {
-    if (logger) logger.info("analysis", "RuleAttribution", `Raw LLM response (first 500): ${rawOutput.slice(0, 500)}`);
+    if (logger) logger.info("RuleAttribution", `Raw LLM response (first 500): ${rawOutput.slice(0, 500)}`);
   }
 
   // Convert HarnessRuleOutput → HarnessRule

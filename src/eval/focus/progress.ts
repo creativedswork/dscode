@@ -88,7 +88,7 @@ export class ProgressDisplay {
       this.logProgressBar();
     }
     if (this.logger) {
-      this.logger.info("analysis", "Progress", label);
+      this.logger.info("Progress", label);
     }
   }
 
@@ -142,7 +142,7 @@ export class ProgressDisplay {
     this.emitWebEvent("phaseDone", { phaseIndex, summary, durationMs });
     if (summary) {
       if (this.onLog) this.onLog(`✓ ${summary}`);
-      if (this.logger) this.logger.info("analysis", "Progress", `Phase ${phaseIndex} done: ${summary}`);
+      if (this.logger) this.logger.info("Progress", `Phase ${phaseIndex} done: ${summary}`);
     }
     this.logProgressBar();
   }
@@ -171,7 +171,7 @@ export class ProgressDisplay {
       this.logProgressBar();
     }
     if (this.logger) {
-      this.logger.info("analysis", "Progress", msg);
+      this.logger.info("Progress", msg);
     }
   }
 

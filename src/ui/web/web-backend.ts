@@ -588,7 +588,7 @@ export class WebUiBackend implements UiBackend {
               mimeType: img.mimeType,
             }) as ImageContent);
             this.pendingImages = [];
-            this.harness.logger.info("tool", "web-backend", `promptWithImages: textLen=${text.length}, images=${imageContents.length}, img[0].dataLen=${imageContents[0]?.data?.length ?? 0}, mime=${imageContents[0]?.mimeType ?? "?"}`);
+            this.harness.logger.info("WebBackend", `promptWithImages: textLen=${text.length}, images=${imageContents.length}, img[0].dataLen=${imageContents[0]?.data?.length ?? 0}, mime=${imageContents[0]?.mimeType ?? "?"}`);
             await this.harness.promptWithImages(text, imageContents);
           } else {
             this.pendingImages = [];
@@ -623,7 +623,7 @@ export class WebUiBackend implements UiBackend {
             };
             // Save immediately with truncation so deny/abort messages
             // that follow won't persist to disk.
-            this.harness.logger.info("session", "WebBackend", "saving pendingPermission to metadata, then denying");
+            this.harness.logger.info("WebBackend", "saving pendingPermission to metadata, then denying");
             sm.saveSession(this.harness.agent, meta.pendingPermission);
           }
           this.permissionResolve({ decision: "deny" });
@@ -1151,15 +1151,15 @@ export class WebUiBackend implements UiBackend {
           const meta = sessionManager.getCurrentMetadata();
           if (meta?.pendingPermission) {
             pendingPermission = meta.pendingPermission;
-            this.harness.logger.info("session", "WebBackend", "using pendingPermission from metadata");
+            this.harness.logger.info("WebBackend", "using pendingPermission from metadata");
           }
         }
         this.harness.abort();
         if (pendingPermission) {
-          this.harness.logger.info("session", "WebBackend", `saving with pendingPermission: ${JSON.stringify(pendingPermission)}`);
+          this.harness.logger.info("WebBackend", `saving with pendingPermission: ${JSON.stringify(pendingPermission)}`);
           sessionManager.saveSession(agent, pendingPermission);
         } else {
-          this.harness.logger.info("session", "WebBackend", "saving without pendingPermission");
+          this.harness.logger.info("WebBackend", "saving without pendingPermission");
           this.harness.saveSessionNow();
         }
         const result = await sessionManager.loadSession(match.id, agent);

@@ -226,9 +226,9 @@ export class PromptBudgetGuard {
     const level = this.tierReached >= 2 ? "warn" : "info";
     const msg = `[BudgetGuard] Tier ${this.tierReached}: trimmed from ${this.originalChars} to ${this.trimmedChars} chars`;
     if (level === "warn") {
-      this.logger.warn("analysis", "BudgetGuard", msg);
+      this.logger.warn("BudgetGuard", msg);
     } else {
-      this.logger.info("analysis", "BudgetGuard", msg);
+      this.logger.info("BudgetGuard", msg);
     }
   }
 }

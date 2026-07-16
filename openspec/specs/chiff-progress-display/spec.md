@@ -66,20 +66,20 @@ When all phases complete, the system SHALL display a summary showing:
 
 `ProgressDisplay` SHALL 接受可选的 `logger: Logger` 参数，用于将进度事件写入日志文件。
 
-`onPhaseStart`、`onPhaseDone`、`onPhaseProgress`、`showCompletion` SHALL 在 logger 可用时通过 `logger.info("analysis", tag, msg)` 写入对应事件。
+`onPhaseStart`、`onPhaseDone`、`onPhaseProgress`、`showCompletion` SHALL 在 logger 可用时通过 `logger.info(tag, msg)` 写入对应事件。
 
 #### Scenario: Phase start logged to file
 
 - **WHEN** `ProgressDisplay` 以 `{ onLog, logger }` 实例化
 - **AND** `onPhaseStart(0)` 被调用
-- **THEN** logger SHALL 写入 `logger.info("analysis", "Phase0", "start")`
+- **THEN** logger SHALL 写入 `logger.info("Phase0", "start")`
 
 #### Scenario: Phase done logged to file
 
 - **WHEN** `onPhaseDone(1, "识别到 3 个 attention zones", 3200)` 被调用
-- **THEN** logger SHALL 写入 `logger.info("analysis", "Phase1", "done: 识别到 3 个 attention zones (3200ms)")`
+- **THEN** logger SHALL 写入 `logger.info("Phase1", "done: 识别到 3 个 attention zones (3200ms)")`
 
 #### Scenario: Completion logged to file
 
 - **WHEN** `showCompletion({ totalDurationMs: 120000, totalLLMCalls: 8, keyFindings: "根因: ..." })` 被调用
-- **THEN** logger SHALL 写入 `logger.info("analysis", "Complete", "120.0s · 8 LLM calls · 根因: ...")`
+- **THEN** logger SHALL 写入 `logger.info("Complete", "120.0s · 8 LLM calls · 根因: ...")`

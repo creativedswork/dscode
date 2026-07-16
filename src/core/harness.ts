@@ -162,7 +162,7 @@ export class Harness implements HarnessAPI {
           await self.dumpDebugPrompt();
           return self.contextManager.transform(msgs, signal) as Promise<AgentMessage[]>;
         } catch (err) {
-          this.logger.error("tool", "TransformContext", String(err));
+          this.logger.error("TransformContext", String(err));
           // Return original messages to keep the agent loop running
           return msgs as unknown as Promise<AgentMessage[]>;
         }
@@ -189,7 +189,7 @@ export class Harness implements HarnessAPI {
               }
             }
         } catch (err) {
-          this.logger.error("tool", "AfterToolCall", String(err));
+          this.logger.error("AfterToolCall", String(err));
         }
         // If signal is aborted, terminate the agent loop immediately
         if (_signal?.aborted) {
@@ -707,7 +707,7 @@ export class Harness implements HarnessAPI {
       (this.ui as any).setMcpManager?.(this.mcpManager);
       (this.ui as any).pushMcpState?.();
     } catch (err) {
-      this.logger.error("tool", "McpReload", String(err));
+      this.logger.error("McpReload", String(err));
       // Non-fatal: continue with updated path even if MCP reload fails
     }
 
@@ -741,14 +741,14 @@ export class Harness implements HarnessAPI {
       try {
         await this.appHostManager.shutdown();
       } catch (err) {
-        this.logger.error("tool", "AppHostShutdown", String(err));
+        this.logger.error("AppHostShutdown", String(err));
       }
     }
     if (this.mcpManager) {
       try {
         await this.mcpManager.shutdown();
       } catch (err) {
-        this.logger.error("tool", "McpShutdown", String(err));
+        this.logger.error("McpShutdown", String(err));
       }
     }
   }
@@ -1087,7 +1087,7 @@ __DEFERRED_HINT__`;
         }
       } catch (err) {
         // If the event handler fails, still try to save session
-        this.logger.error("tool", "AgentEvent", String(err));
+        this.logger.error("AgentEvent", String(err));
         this.sessionManager.trySaveSession(this.agent);
       }
     });
