@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<!--
+  Change: web-thinking-timer
+  Generated: 2026-07-18
+  Purpose: ThinkingBlock 计时与活性指示的变体对比原型
+  Variants: A=实时计时 / B=冻结总结 / C=停滞检测
+-->
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Thinking Timer — Prototype</title>
+<style>
+  /* ── Design tokens (from web/src/index.css) ── */
+  :root {
+    --color-bg: #f8f7f5;
+    --color-surface: #f3f2ef;
+    --color-surface-hover: #ebe9e5;
+    --color-border: #e6e4e0;
+    --color-text: #2d2a26;
+    --color-text-muted: #8a8580;
+    --color-accent: #ca8a04;
+    --color-accent-hover: #a07004;
+    --color-accent-bg: rgba(202, 138, 4, 0.12);
+    --color-success: #edf4ed;
+    --color-success-text: #347539;
+    --color-error: #fdebec;
+    --color-error-text: #9f2f2d;
+    --color-warning: #fbf3db;
+    --color-warning-text: #956400;
+    --color-user-bubble: #ca8a04;
+    --color-user-bubble-text: #ffffff;
+    --font-mono: 'Geist Mono', 'JetBrains Mono', 'SF Mono', monospace;
+    --font-sans: 'Geist Sans', 'Inter', system-ui, -apple-system, sans-serif;
+  }
+  .dark {
+    --color-bg: #1e1c19;
+    --color-surface: #282622;
+    --color-surface-hover: #322e2a;
+    --color-border: #3a3732;
+    --color-text: #e8e4dd;
+    --color-text-muted: #8a8580;
+    --color-accent: #d49708;
+    --color-accent-hover: #e5a50a;
+    --color-accent-bg: rgba(212, 151, 8, 0.15);
+    --color-success: #1a2e1a;
+    --color-success-text: #5ca860;
+    --color-error: #3a1a1a;
+    --color-error-text: #e05553;
+    --color-warning: #3a2e10;
+    --color-warning-text: #d4a017;
+    --color-user-bubble: #d49708;
+    --color-user-bubble-text: #1e1c19;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    padding: 40px 20px 80px;
+    transition: background-color 0.3s ease, color 0.3s ease;
+  }
+  .page { max-width: 680px; margin: 0 auto; }
+
+  /* ── Proto chrome ── */
+  .proto-header { margin-bottom: 32px; display: flex; justify-content: space-between; align-items: flex-start; }
+  .proto-header .eyebrow {
+    font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--color-accent); margin-bottom: 8px;
+  }
+  .proto-header h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.3px; margin-bottom: 4px; }
+  .proto-header .sub { font-size: 13px; color: var(--color-text-muted); }
+
+  .theme-toggle {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    padding: 6px 12px; border: 1px solid var(--color-border); border-radius: 6px;
+    background: var(--color-surface); color: var(--color-text-muted); cursor: pointer;
+  }
+  .theme-toggle:hover { border-color: var(--color-accent); color: var(--color-accent); }
+
+  .section-title {
+    font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--color-text-muted); margin: 40px 0 6px;
+  }
+  .section-desc { font-size: 12px; color: var(--color-text-muted); margin-bottom: 16px; line-height: 1.6; }
+  .section-desc code {
+    font-family: var(--font-mono); font-size: 11px;
+    background: var(--color-surface-hover); padding: 1px 5px; border-radius: 4px;
+  }
+
+  /* ── Controls ── */
+  .controls { display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+  .state-btn {
+    font-family: var(--font-mono); font-size: 11px; font-weight: 600;
+    padding: 6px 14px; border: 1px solid var(--color-border); border-radius: 6px;
+    background: var(--color-surface); color: var(--color-text-muted);
+    cursor: pointer; transition: all 0.15s;
+  }
+  .state-btn:hover { border-color: var(--color-accent); color: var(--color-accent); }
+  .state-btn.active { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+  .state-btn.primary { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+  .state-btn.primary:hover { background: var(--color-accent-hover); }
+  .control-sep { width: 1px; height: 20px; background: var(--color-border); margin: 0 6px; }
+  .toggle-label { font-size: 11px; color: var(--color-text-muted); display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+
+  /* ── Chat mock frame ── */
+  .chat-frame {
+    border: 1px solid var(--color-border); border-radius: 12px;
+    background: var(--color-bg); padding: 16px;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+
+  .user-bubble-row { display: flex; justify-content: flex-end; }
+  .user-bubble {
+    max-width: 85%; padding: 10px 16px; border-radius: 12px;
+    background: var(--color-user-bubble); color: var(--color-user-bubble-text);
+    font-size: 14px; line-height: 1.5;
+  }
+
+  .assistant-msg .meta {
+    font-size: 11px; color: var(--color-text-muted); margin-bottom: 6px;
+    font-family: var(--font-mono);
+  }
+  .text-response { font-size: 14px; line-height: 1.7; min-height: 0; }
+  .text-response:empty { display: none; }
+
+  /* ── WaitingBubble (existing, for context) ── */
+  .waiting-bubble {
+    display: flex; justify-content: flex-start;
+  }
+  .waiting-inner {
+    padding: 12px 16px; border-radius: 12px;
+    border: 1px solid var(--color-border); background: var(--color-surface);
+    display: flex; align-items: center; gap: 12px;
+  }
+  .waiting-dots { display: flex; gap: 4px; }
+  .waiting-dots span {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--color-accent);
+    animation: bounce 1s infinite;
+  }
+  .waiting-dots span:nth-child(2) { animation-delay: 150ms; }
+  .waiting-dots span:nth-child(3) { animation-delay: 300ms; }
+  @keyframes bounce {
+    0%, 60%, 100% { transform: translateY(0); }
+    30% { transform: translateY(-4px); }
+  }
+  .waiting-text { font-size: 14px; color: var(--color-text-muted); }
+  .waiting-time { font-size: 12px; color: var(--color-text-muted); font-variant-numeric: tabular-nums; }
+
+  /* ── Thinking block (faithful copy of web/src/index.css) ── */
+  .thinking {
+    font-size: 13px; color: var(--color-text-muted); font-style: italic;
+    line-height: 1.55; padding-left: 12px;
+    border-left: 2px solid var(--color-border);
+    transition: border-color 0.3s;
+    margin-bottom: 10px;
+  }
+  .thinking:hover { border-left-color: var(--color-accent); }
+  .thinking .label {
+    font-size: 10px; font-style: normal; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--color-text-muted); margin-bottom: 4px;
+    display: flex; align-items: center; gap: 6px;
+    cursor: pointer; user-select: none;
+  }
+  .thinking .label .dot {
+    width: 5px; height: 5px; border-radius: 50%;
+    background: var(--color-accent); opacity: 0.6; flex-shrink: 0;
+  }
+  .thinking-body {
+    max-height: 500px; overflow: hidden;
+    transition: max-height 0.3s ease, opacity 0.3s ease;
+    white-space: pre-wrap;
+  }
+  .thinking.collapsed .thinking-body { max-height: 0; opacity: 0; }
+
+  /* ── NEW: timer & liveness additions ── */
+  /* streaming: dot pulses */
+  .thinking.streaming .label .dot {
+    animation: dot-pulse 1.2s ease-in-out infinite;
+    opacity: 1;
+  }
+  @keyframes dot-pulse {
+    0%, 100% { opacity: 0.35; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.25); }
+  }
+  /* elapsed number */
+  .thinking .label .elapsed {
+    font-family: var(--font-mono); font-variant-numeric: tabular-nums;
+    font-weight: 500; letter-spacing: 0;
+    text-transform: none;
+  }
+  /* stalled state */
+  .thinking.stalled { border-left-color: var(--color-warning-text); }
+  .thinking.stalled .label .dot {
+    background: var(--color-warning-text);
+    animation: dot-pulse 2s ease-in-out infinite;
+  }
+  .thinking .label .stall-note {
+    color: var(--color-warning-text);
+    font-family: var(--font-mono); font-weight: 500;
+    text-transform: none; letter-spacing: 0;
+  }
+  /* done state: dot static, slightly dimmer */
+  .thinking.done .label .dot { opacity: 0.35; animation: none; }
+
+  /* ── Variant annotation ── */
+  .variant { margin-bottom: 28px; }
+  .variant-tag {
+    font-family: var(--font-mono); font-size: 10px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--color-accent); margin-bottom: 6px;
+  }
+  .variant-note { font-size: 12px; color: var(--color-text-muted); margin-bottom: 10px; line-height: 1.6; }
+  .variant-note code {
+    font-family: var(--font-mono); font-size: 11px;
+    background: var(--color-surface-hover); padding: 1px 5px; border-radius: 4px;
+  }
+  .variant-frame {
+    border: 1px dashed var(--color-border); border-radius: 8px; padding: 14px 16px;
+  }
+
+  /* ── Decision list ── */
+  .decisions { font-size: 13px; line-height: 1.9; color: var(--color-text); }
+  .decisions li { margin-left: 18px; }
+  .decisions code {
+    font-family: var(--font-mono); font-size: 11px;
+    background: var(--color-surface-hover); padding: 1px 5px; border-radius: 4px;
+  }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="proto-header">
+    <div>
+      <div class="eyebrow">Prototype · web-thinking-timer · 2026-07-18</div>
+      <h1>Thinking 计时与活性指示</h1>
+      <div class="sub">解决"思考时不知道卡住还是正在进行"——A 实时计时 / B 冻结总结 / C 停滞检测</div>
+    </div>
+    <button class="theme-toggle" onclick="document.documentElement.classList.toggle('dark')">◐ theme</button>
+  </div>
+
+  <!-- ═══════════════ LIVE SIMULATION ═══════════════ -->
+  <div class="section-title">Live Simulation · 完整生命周期</div>
+  <div class="section-desc">
+    点 <b>▶ play</b> 模拟一轮真实对话：Waiting（已有计时）→ Thinking 流式（计时跳动）→ 思考结束定格 <code>Thought for Xs</code> 并折叠 → 正文流出。
+    勾选 <b>simulate stall</b> 可在思考中途模拟 delta 中断，展示停滞检测。
+  </div>
+  <div class="controls">
+    <button class="state-btn primary" id="btn-play" onclick="play()">▶ play</button>
+    <button class="state-btn" onclick="resetSim()">↺ reset</button>
+    <div class="control-sep"></div>
+    <button class="state-btn" data-jump="waiting" onclick="jumpTo('waiting')">waiting</button>
+    <button class="state-btn" data-jump="thinking" onclick="jumpTo('thinking')">thinking</button>
+    <button class="state-btn" data-jump="stalled" onclick="jumpTo('stalled')">stalled</button>
+    <button class="state-btn" data-jump="done" onclick="jumpTo('done')">done</button>
+    <div class="control-sep"></div>
+    <label class="toggle-label"><input type="checkbox" id="stall-toggle"> simulate stall</label>
+  </div>
+
+  <div class="chat-frame">
+    <div class="user-bubble-row">
+      <div class="user-bubble">webui 在 Thinking 时没有计时，不知道是卡住了还是正在进行</div>
+    </div>
+
+    <div class="assistant-msg">
+      <div class="meta">dscode · 10:24:31</div>
+
+      <!-- live thinking block -->
+      <div class="thinking" id="sim-thinking" style="display:none">
+        <div class="label" onclick="toggleSimCollapse()">
+          <span class="dot"></span>
+          <span id="sim-label-text">Thinking</span>
+          <span class="elapsed" id="sim-elapsed"></span>
+          <span class="stall-note" id="sim-stall" style="display:none"></span>
+        </div>
+        <div class="thinking-body" id="sim-thinking-body"></div>
+      </div>
+
+      <div class="text-response" id="sim-response"></div>
+    </div>
+
+    <!-- waiting bubble -->
+    <div class="waiting-bubble" id="sim-waiting" style="display:none">
+      <div class="waiting-inner">
+        <div class="waiting-dots"><span></span><span></span><span></span></div>
+        <span class="waiting-text">Waiting...</span>
+        <span class="waiting-time" id="sim-waiting-time">(0s)</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ VARIANTS ═══════════════ -->
+  <div class="section-title">Variants · 变体对比</div>
+  <div class="section-desc">以下是各状态的静态定格。计时数字使用 <code>tabular-nums</code> 等宽数字，避免跳动时布局抖动。</div>
+
+  <!-- A: live elapsed -->
+  <div class="variant">
+    <div class="variant-tag">A · 实时计时（streaming）</div>
+    <div class="variant-note">
+      label 右侧追加 <b>本次思考</b>的已耗时长 <code>· 12s</code>，圆点脉冲。
+      计时从第一个 <code>thinking_delta</code> 到达开始（前端记录 <code>thinkingStartedAt</code>），<b>不复用</b> session 累计的 <code>sessionTime</code>。
+    </div>
+    <div class="variant-frame">
+      <div class="thinking streaming">
+        <div class="label">
+          <span class="dot"></span>
+          <span>Thinking</span>
+          <span class="elapsed">· 12s</span>
+        </div>
+        <div class="thinking-body">The ThinkingBlock already receives sessionTime but never renders it. But that's cumulative session time — I need per-thinking elapsed instead. I'll record thinkingStartedAt in the reducer when the first thinking_delta arrives…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- A2: live elapsed, long time -->
+  <div class="variant">
+    <div class="variant-tag">A′ · 长时间格式</div>
+    <div class="variant-note">超过 60s 复用现有 <code>formatTime()</code> 规则：<code>2m 5s</code>。与 WaitingBubble 完全一致。</div>
+    <div class="variant-frame">
+      <div class="thinking streaming">
+        <div class="label">
+          <span class="dot"></span>
+          <span>Thinking</span>
+          <span class="elapsed">· 2m 5s</span>
+        </div>
+        <div class="thinking-body">Still reasoning through the migration path. The reducer needs a new field on UIMessage, and ThinkingBlock needs a local 1s tick driven by the existing session_time broadcast…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- C: stalled -->
+  <div class="variant">
+    <div class="variant-tag">C · 停滞检测（stall detection）</div>
+    <div class="variant-note">
+      计时仍在走，但 <b>距上一个 delta 超过阈值</b>（演示用 3s，实际建议 15s）时：左边框与圆点变为 warning 色，追加 <code>· no output for 18s</code>。
+      这才是"卡住 vs 进行中"的诚实信号——session_time 永远跳动，无法证明 token 在流动。
+    </div>
+    <div class="variant-frame">
+      <div class="thinking streaming stalled">
+        <div class="label">
+          <span class="dot"></span>
+          <span>Thinking</span>
+          <span class="elapsed">· 47s</span>
+          <span class="stall-note">· no output for 18s</span>
+        </div>
+        <div class="thinking-body">Comparing the two approaches. Option A reuses sessionTime which is zero-backend-change but semantically wrong for long sessions. Option B tracks thinkingStartedAt in the frontend reducer…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- B: done, collapsed -->
+  <div class="variant">
+    <div class="variant-tag">B · 冻结总结（done · collapsed）</div>
+    <div class="variant-note">
+      思考结束（首个 <code>text_delta</code> / <code>tool_start</code> 或 <code>assistant_end</code>）时定格：
+      label 变为 <code>Thought for 23s</code>，圆点静止，正文自动折叠（现有行为）。点击 label 可展开回看。
+    </div>
+    <div class="variant-frame">
+      <div class="thinking done collapsed">
+        <div class="label">
+          <span class="dot"></span>
+          <span>Thought for 23s</span>
+        </div>
+        <div class="thinking-body">（已折叠的思考内容）</div>
+      </div>
+      <div style="font-size:14px;line-height:1.7;font-style:normal;color:var(--color-text)">
+        找到原因了：<code style="font-family:var(--font-mono);font-size:12px;background:var(--color-surface-hover);padding:1px 5px;border-radius:4px">ThinkingBlock</code> 接收了 sessionTime 但从未渲染……
+      </div>
+    </div>
+  </div>
+
+  <!-- B2: done, expanded -->
+  <div class="variant">
+    <div class="variant-tag">B′ · 冻结总结（done · expanded）</div>
+    <div class="variant-note">用户手动展开后，定格时长保留在 label 上，不再跳动。</div>
+    <div class="variant-frame">
+      <div class="thinking done">
+        <div class="label">
+          <span class="dot"></span>
+          <span>Thought for 23s</span>
+        </div>
+        <div class="thinking-body">The ThinkingBlock already receives sessionTime but never renders it. But that's cumulative session time — I need per-thinking elapsed instead. I'll record thinkingStartedAt in the reducer when the first thinking_delta arrives…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════ DECISIONS ═══════════════ -->
+  <div class="section-title">Open Questions · 待确认决策</div>
+  <div class="section-desc">原型确认后，这些决策将捕获到 change 的 design.md：</div>
+  <ul class="decisions">
+    <li><b>计时语义</b>：用前端记录的 <code>thinkingStartedAt</code>（每次思考独立计时），而非 session 累计的 <code>sessionTime</code>。</li>
+    <li><b>tick 来源</b>：复用后端 1s 的 <code>session_time</code> 广播作为重渲染触发，还是组件内本地 <code>setInterval</code>？（前者零额外定时器，后者更解耦）</li>
+    <li><b>停滞阈值</b>：演示用 3s，实际建议 15s？是否需要 <code>thinking_stall</code> 专用事件，还是前端纯基于 delta 时间戳计算？</li>
+    <li><b>定格文案</b>：<code>Thought for 23s</code>（Claude Code 风格）vs 保留 <code>Thinking · 23s</code> 仅停止跳动？</li>
+    <li><b>多段思考</b>：一轮中 thinking → text → 再 thinking（工具结果后）时，每段独立计时还是累加？</li>
+    <li><b>WaitingBubble</b> 目前显示的其实也是 session 累计时间——是否顺手修正为本轮等待时长？（可拆成独立 change）</li>
+  </ul>
+
+</div>
+
+<script>
+  // ── Sample content ──
+  const THINKING_TEXT =
+    "The user says the WebUI shows no timer while thinking, so they can't tell stuck from working. " +
+    "Let me trace the data flow: WaitingBubble has a timer via sessionTime, but it disappears once streaming starts. " +
+    "ThinkingBlock receives sessionTime but never renders it — half-finished plumbing. " +
+    "But sessionTime is cumulative session active time, not per-thinking elapsed. " +
+    "I should record thinkingStartedAt when the first thinking_delta arrives, tick locally, " +
+    "and freeze as 'Thought for Xs' when thinking ends. For stall detection, track time since last delta…";
+  const RESPONSE_TEXT =
+    "找到原因了：ThinkingBlock 接收了 sessionTime 但从未渲染（半成品 plumbing）。不过直接复用它有语义问题——那是 session 累计活跃时间，不是本次思考耗时。我会在 reducer 里记录 thinkingStartedAt，流式期间实时计时，结束后定格为 \"Thought for Xs\"，并加上基于 delta 间隔的停滞检测。";
+
+  // ── Elements ──
+  const elWaiting = document.getElementById('sim-waiting');
+  const elWaitingTime = document.getElementById('sim-waiting-time');
+  const elThinking = document.getElementById('sim-thinking');
+  const elLabelText = document.getElementById('sim-label-text');
+  const elElapsed = document.getElementById('sim-elapsed');
+  const elStall = document.getElementById('sim-stall');
+  const elBody = document.getElementById('sim-thinking-body');
+  const elResponse = document.getElementById('sim-response');
+  const elStallToggle = document.getElementById('stall-toggle');
+
+  // ── State ──
+  let timers = [];
+  let simCollapsed = false;
+
+  function fmt(s) {
+    if (s < 60) return s + 's';
+    return Math.floor(s / 60) + 'm ' + (s % 60) + 's';
+  }
+  function clearAll() { timers.forEach(t => { clearInterval(t); clearTimeout(t); }); timers = []; }
+  function later(fn, ms) { const t = setTimeout(fn, ms); timers.push(t); return t; }
+  function every(fn, ms) { const t = setInterval(fn, ms); timers.push(t); return t; }
+
+  function resetSim() {
+    clearAll();
+    simCollapsed = false;
+    elWaiting.style.display = 'none';
+    elThinking.style.display = 'none';
+    elThinking.className = 'thinking';
+    elLabelText.textContent = 'Thinking';
+    elElapsed.textContent = '';
+    elStall.style.display = 'none';
+    elBody.textContent = '';
+    elResponse.textContent = '';
+    document.querySelectorAll('[data-jump]').forEach(b => b.classList.remove('active'));
+  }
+
+  function toggleSimCollapse() {
+    simCollapsed = !simCollapsed;
+    elThinking.classList.toggle('collapsed', simCollapsed);
+  }
+
+  // ── Typewriter that supports pause (for stall simulation) ──
+  function typeInto(el, text, opts) {
+    // opts: { chunkMs, onTick, shouldPause, onDone }
+    let i = 0;
+    every(() => {
+      if (opts.shouldPause && opts.shouldPause()) return;
+      const n = 1 + Math.floor(Math.random() * 3);
+      i = Math.min(i + n, text.length);
+      el.textContent = text.slice(0, i);
+      if (opts.onTick) opts.onTick();
+      if (i >= text.length) {
+        clearAll(); // stop all intervals for this phase; timeouts already fired
+        if (opts.onDone) opts.onDone();
+      }
+    }, opts.chunkMs || 40);
+  }
+
+  // ── Full lifecycle simulation ──
+  function play() {
+    resetSim();
+    const stallWanted = elStallToggle.checked;
+
+    // Phase 1: waiting (1.5s)
+    elWaiting.style.display = 'flex';
+    let waitS = 0;
+    elWaitingTime.textContent = '(0s)';
+    every(() => { waitS++; elWaitingTime.textContent = '(' + fmt(waitS) + ')'; }, 1000);
+
+    later(() => {
+      // Phase 2: thinking
+      elWaiting.style.display = 'none';
+      elThinking.style.display = 'block';
+      elThinking.classList.add('streaming');
+
+      let thinkS = 0;
+      let lastDeltaS = 0;   // seconds since last delta
+      let stalled = false;
+      // stall plan: pause deltas between t=4s and t=8s
+      const stallStart = 4, stallEnd = 8, STALL_THRESHOLD = 3;
+
+      every(() => {
+        thinkS++;
+        lastDeltaS++;
+        elElapsed.textContent = '· ' + fmt(thinkS);
+        if (stallWanted && !stalled && lastDeltaS >= STALL_THRESHOLD) {
+          stalled = true;
+          elThinking.classList.add('stalled');
+          elStall.style.display = 'inline';
+        }
+        if (stalled) {
+          elStall.textContent = '· no output for ' + fmt(lastDeltaS);
+        }
+      }, 1000);
+
+      typeInto(elBody, THINKING_TEXT, {
+        chunkMs: 45,
+        shouldPause: () => stallWanted && thinkS >= stallStart && thinkS < stallEnd,
+        onTick: () => {
+          lastDeltaS = 0;
+          if (stalled) {
+            stalled = false;
+            elThinking.classList.remove('stalled');
+            elStall.style.display = 'none';
+          }
+        },
+        onDone: () => {
+          // Phase 3: freeze + collapse + response
+          elThinking.classList.remove('streaming', 'stalled');
+          elThinking.classList.add('done', 'collapsed');
+          simCollapsed = true;
+          elLabelText.textContent = 'Thought for ' + fmt(thinkS);
+          elElapsed.textContent = '';
+          elStall.style.display = 'none';
+          later(() => typeInto(elResponse, RESPONSE_TEXT, { chunkMs: 18 }), 350);
+        }
+      });
+    }, 1500);
+  }
+
+  // ── Static state jumps ──
+  function jumpTo(state) {
+    resetSim();
+    document.querySelector('[data-jump="' + state + '"]').classList.add('active');
+    elThinking.style.display = 'block';
+    elBody.textContent = THINKING_TEXT;
+
+    if (state === 'waiting') {
+      elThinking.style.display = 'none';
+      elWaiting.style.display = 'flex';
+      let s = 3;
+      elWaitingTime.textContent = '(3s)';
+      every(() => { s++; elWaitingTime.textContent = '(' + fmt(s) + ')'; }, 1000);
+    } else if (state === 'thinking') {
+      elThinking.classList.add('streaming');
+      let s = 12;
+      elElapsed.textContent = '· 12s';
+      every(() => { s++; elElapsed.textContent = '· ' + fmt(s); }, 1000);
+    } else if (state === 'stalled') {
+      elThinking.classList.add('streaming', 'stalled');
+      let s = 47, d = 18;
+      elElapsed.textContent = '· 47s';
+      elStall.style.display = 'inline';
+      elStall.textContent = '· no output for 18s';
+      every(() => {
+        s++; d++;
+        elElapsed.textContent = '· ' + fmt(s);
+        elStall.textContent = '· no output for ' + fmt(d);
+      }, 1000);
+    } else if (state === 'done') {
+      elThinking.classList.add('done', 'collapsed');
+      simCollapsed = true;
+      elLabelText.textContent = 'Thought for 23s';
+      elResponse.textContent = RESPONSE_TEXT;
+    }
+  }
+</script>
+</body>
+</html>
