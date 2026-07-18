@@ -7,6 +7,7 @@ import { getEnvApiKey } from "../models/index.js";
 export const PROVIDER_ENV_VARS: Record<string, string> = {
   deepseek: "DEEPSEEK_API_KEY",
   "kimi-coding": "KIMI_API_KEY",
+  "kimi": "KIMI_API_KEY",
   openai: "OPENAI_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
   google: "GEMINI_API_KEY",
@@ -15,6 +16,7 @@ export const PROVIDER_ENV_VARS: Record<string, string> = {
   openrouter: "OPENROUTER_API_KEY",
   mistral: "MISTRAL_API_KEY",
   qwen: "DASHSCOPE_API_KEY",
+  "moonshotai-cn": "MOONSHOT_API_KEY",
 };
 
 import type { HarnessConfig, ThinkingLevel } from "./types.js";
@@ -303,7 +305,7 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
   const userCommandsDir = join(configDir, "commands");
   const projectCommandsDir = join(projectPath, ".dscode", "commands");
   const defaultThinkingLevel: ThinkingLevel = getThinkingLevel(provider, modelId);
-  const validThinkingLevels = new Set(["off", "minimal", "low", "medium", "high", "xhigh"]);
+  const validThinkingLevels = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
   const rawThinkingLevel = process.env.AGENT_THINKING_LEVEL ?? userConfig.thinkingLevel ?? merged.thinkingLevel;
   const thinkingLevel: ThinkingLevel = rawThinkingLevel !== undefined && validThinkingLevels.has(rawThinkingLevel as string)
     ? (rawThinkingLevel as ThinkingLevel)

@@ -13,7 +13,7 @@ export type {
 
 // --- Config ---
 
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 export type CompactionStrategy = "drop-oldest" | "sliding-window" | "summarize-prefix";
 
 export interface HarnessConfig {

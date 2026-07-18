@@ -46,9 +46,9 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "^0.80.3",
-    "@earendil-works/pi-ai": "^0.80.3",
-    "@earendil-works/pi-tui": "^0.74.0",
+    "@earendil-works/pi-agent-core": "^0.80.10",
+    "@earendil-works/pi-ai": "^0.80.10",
+    "@earendil-works/pi-tui": "^0.80.10",
     "chalk": "^5.5.0",
     "jpeg-js": "^0.4.4",
     "pngjs": "^7.0.0",
