@@ -114,7 +114,7 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
     <div ref={(el) => { (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = el; if (containerRef) { (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el; } }} onScroll={handleChatScroll} className={"flex-1 overflow-y-auto min-h-0 px-4 py-4 space-y-4" + (scrollLocked ? " overflow-hidden pointer-events-none" : "")}>
       {messages.map((msg) => (
         <ErrorBoundary key={msg.id} fallback={<FallbackBubble message={msg} />}>
-          {msg.role === "user" ? <UserBubble message={msg} /> : <AssistantMessage message={msg} sessionTime={sessionTime} />}
+          {msg.role === "user" ? <UserBubble message={msg} /> : <AssistantMessage message={msg} />}
         </ErrorBoundary>
       ))}
 
@@ -404,7 +404,7 @@ function UserBubble({ message }: { message: UIMessage }) {
   );
 }
 
-function AssistantMessage({ message, sessionTime }: { message: UIMessage; sessionTime: number }) {
+function AssistantMessage({ message }: { message: UIMessage }) {
   const safeContent = typeof message.content === "string" ? message.content : "";
 
   return (
@@ -412,7 +412,12 @@ function AssistantMessage({ message, sessionTime }: { message: UIMessage; sessio
       <div className="meta">dscode{message.createdAt ? ` · ${new Date(message.createdAt).toLocaleTimeString()}` : ""}</div>
 
       {message.thinking && (
-        <ThinkingBlock thinking={message.thinking} isStreaming={message.isStreaming} sessionTime={sessionTime} />
+        <ThinkingBlock
+          thinking={message.thinking}
+          isStreaming={message.isStreaming}
+          thinkingStartedAt={message.thinkingStartedAt}
+          thinkingUpdatedAt={message.thinkingUpdatedAt}
+        />
       )}
 
       {message.images && message.images.length > 0 && (
@@ -460,19 +465,74 @@ function AssistantMessage({ message, sessionTime }: { message: UIMessage; sessio
   );
 }
 
-function ThinkingBlock({ thinking, isStreaming, sessionTime }: { thinking: string; isStreaming?: boolean; sessionTime: number }) {
+const STALL_THRESHOLD_MS = 15000;
+
+function ThinkingBlock({
+  thinking,
+  isStreaming,
+  thinkingStartedAt,
+  thinkingUpdatedAt,
+}: {
+  thinking: string;
+  isStreaming?: boolean;
+  thinkingStartedAt?: number;
+  thinkingUpdatedAt?: number;
+}) {
   const [collapsed, setCollapsed] = useState(!isStreaming);
+  const [tick, setTick] = useState(0);
+  const lastLiveElapsedRef = useRef<number | null>(null);
 
   // auto-expand when streaming starts
   useEffect(() => {
     if (isStreaming) setCollapsed(false);
   }, [isStreaming]);
 
+  // local 1s tick during streaming for live timer and stall detection
+  useEffect(() => {
+    if (!isStreaming) return;
+    const id = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [isStreaming]);
+
+  // compute live elapsed from per-thinking anchor
+  const liveElapsed = (isStreaming && thinkingStartedAt != null)
+    ? Math.round((Date.now() - thinkingStartedAt) / 1000)
+    : null;
+
+  // track last live elapsed for freeze-on-completion
+  if (liveElapsed != null) {
+    lastLiveElapsedRef.current = liveElapsed;
+  }
+
+  // freeze when thinking segment ends (thinkingStartedAt cleared by reducer)
+  const isFrozen = !!thinking && thinkingStartedAt == null;
+  const frozenElapsed = isFrozen ? lastLiveElapsedRef.current : null;
+  const displayElapsed = isFrozen ? frozenElapsed : liveElapsed;
+  const isDone = isFrozen && frozenElapsed != null;
+
+  // stall detection: no delta for >15s during live streaming
+  const isStalled = isStreaming && thinkingStartedAt != null && thinkingUpdatedAt != null
+    && (Date.now() - thinkingUpdatedAt) > STALL_THRESHOLD_MS;
+  const stallSeconds = isStalled
+    ? Math.round((Date.now() - (thinkingUpdatedAt ?? Date.now())) / 1000)
+    : 0;
+
+  const isLiveStreaming = isStreaming && thinkingStartedAt != null;
+
   return (
-    <div className={`thinking${collapsed ? " collapsed" : ""}`} data-collider="thinking-block">
+    <div
+      className={`thinking${collapsed ? " collapsed" : ""}${isStalled ? " stalled" : ""}${isDone ? " done" : ""}${isLiveStreaming ? " streaming" : ""}`}
+      data-collider="thinking-block"
+    >
       <div className="label" onClick={() => setCollapsed(!collapsed)}>
         <span className="dot" />
-        Thinking
+        {isDone
+          ? `Thought for ${formatTime(frozenElapsed!)}`
+          : isLiveStreaming && displayElapsed != null
+            ? <>Thinking <span className="elapsed">· {formatTime(displayElapsed)}</span></>
+            : "Thinking"
+        }
+        {isStalled && <span className="stall-note"> · no output for {formatTime(stallSeconds)}</span>}
       </div>
       <div className="thinking-body">{thinking}</div>
     </div>

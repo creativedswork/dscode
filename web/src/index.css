@@ -243,6 +243,43 @@
     user-select: none;
   }
 
+
+  /* ── Thinking timer & liveness ── */
+  @keyframes dot-pulse {
+    0%, 100% { opacity: 0.35; transform: scale(1); }
+    50% { opacity: 1; transform: scale(1.25); }
+  }
+  .thinking.streaming .label .dot {
+    animation: dot-pulse 1.2s ease-in-out infinite;
+    opacity: 1;
+  }
+  .thinking .label .elapsed {
+    font-family: 'Geist Mono', 'JetBrains Mono', monospace;
+    font-variant-numeric: tabular-nums;
+    font-weight: 500;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .thinking.stalled {
+    border-left-color: var(--color-warning-text);
+  }
+  .thinking.stalled .label .dot {
+    background: var(--color-warning-text);
+    animation: dot-pulse 2s ease-in-out infinite;
+    opacity: 1;
+  }
+  .thinking.stalled .label .stall-note {
+    color: var(--color-warning-text);
+    font-family: 'Geist Mono', 'JetBrains Mono', monospace;
+    font-weight: 400;
+    letter-spacing: 0;
+    text-transform: none;
+  }
+  .thinking.done .label .dot {
+    animation: none;
+    opacity: 0.35;
+  }
+
   /* ── Tool Card ── */
   .tool-card {
     background: var(--color-surface);
@@ -730,6 +767,20 @@
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up,
+  .animate-slide-in {
+    animation: none;
+  }
+  .thinking.streaming .label .dot,
+  .thinking.stalled .label .dot {
+    animation: none;
+    opacity: 0.6;
+  }
+  * {
+    transition: none !important;
+  }
+}
 @media (prefers-reduced-motion: reduce) {
   .animate-fade-up,
   .animate-slide-in {
