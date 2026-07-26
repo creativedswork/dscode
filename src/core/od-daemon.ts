@@ -18,11 +18,11 @@ export function resolveOdCommand(odDir: string, port: number): { cmd: string; ar
   // 1. Prefer project-local `od` command (avoids collision with Unix od)
   const odPath = findProjectOd(odDir);
   if (odPath) {
-    return { cmd: odPath, args: ["--port", String(port)], cwd: expandedDir };
+    return { cmd: odPath, args: ["--port", String(port), "--no-open"], cwd: expandedDir };
   }
 
   // 2. Fall back to pnpm workspace script
-  return { cmd: "pnpm", args: ["tools-dev", "run", "web", "--", "--port", String(port)], cwd: expandedDir };
+  return { cmd: "pnpm", args: ["tools-dev", "run", "web", "--", "--port", String(port), "--no-open"], cwd: expandedDir };
 }
 
 // ── Daemon Spawn ──
@@ -44,7 +44,7 @@ export async function waitForOdDaemon(port: number, timeoutMs = 30000): Promise<
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/health`);
+      const res = await fetch(`http://127.0.0.1:${port}/api/projects`);
       if (res.status === 200) {
         console.log(`Open Design daemon ready on port ${port}`);
         return true;
