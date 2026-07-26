@@ -17,11 +17,11 @@
     "LICENSE"
   ],
   "scripts": {
-    "start": "tsx src/core/main.ts",
+    "start": "tsx --env-file=.env src/core/main.ts",
     "build": "node scripts/build.mjs",
     "build:web": "cd web && npm run build",
     "ci:check": "npm run lockfile:check && rm -rf dist node_modules web/node_modules && npm ci && cd web && npm install && cd .. && npm run build && echo \"\n✅ CI check passed\"",
-    "dev:web": "tsx src/core/main.ts --web & cd web && npm run dev",
+    "dev:web": "tsx --env-file=.env src/core/main.ts --web & cd web && npm run dev",
     "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

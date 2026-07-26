@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 import { loadConfig, PROVIDER_ENV_VARS } from "./config.js";
 import { Harness } from "./harness.js";
 import { Logger } from "../utils/logger.js";
+import { ensureOdMcpEntry, expandTilde, startOdDaemon, waitForOdDaemon, registerOdCleanup } from "./od-daemon.js";
 
 // ── Runtime ID ──
 
@@ -89,18 +90,21 @@ function readCliVersion(): string {
   return "unknown";
 }
 
-function parseArgs(): { web: boolean; webPort: number; debug: boolean; cwd?: string } {
+function parseArgs(): { web: boolean; webPort: number; debug: boolean; cwd?: string; withOd: boolean } {
   const args = process.argv.slice(2);
   let web = false;
   let webPort = 3000;
   let debug = false;
   let cwd: string | undefined;
+  let withOd = false;
 
   for (let i = 0; i < args.length; i++) {
     if (args[i] === "--web") {
       web = true;
     } else if (args[i] === "--debug") {
       debug = true;
+    } else if (args[i] === "--with-od") {
+      withOd = true;
     } else if (args[i] === "--web-port" && i + 1 < args.length) {
       webPort = parseInt(args[++i], 10);
       if (isNaN(webPort) || webPort < 1 || webPort > 65535) {
@@ -111,7 +115,7 @@ function parseArgs(): { web: boolean; webPort: number; debug: boolean; cwd?: str
     }
   }
 
-  return { web, webPort, debug, cwd };
+  return { web, webPort, debug, cwd, withOd };
 }
 
 async function main(): Promise<void> {
@@ -120,8 +124,71 @@ async function main(): Promise<void> {
     return;
   }
 
-  const { web, webPort, debug, cwd } = parseArgs();
+  const { web, webPort, debug, cwd, withOd } = parseArgs();
   const projectRoot = process.cwd();  // capture before loadConfig may chdir
+
+  // ── Open Design daemon auto-start ──
+  if (withOd) {
+    const odDir = process.env.OPEN_DESIGN_DIR;
+    const odPort = parseInt(process.env.OD_PORT ?? "7456", 10);
+
+    if (!odDir) {
+      console.warn("OPEN_DESIGN_DIR is not set. Create a .env file from .env.example");
+    } else {
+      // Step 1: ensure ~/.mcp.json has the open-design MCP entry
+      ensureOdMcpEntry(odDir, odPort);
+
+      // Step 1.5: quick health check — skip spawn if daemon already running
+      const alreadyAlive = await waitForOdDaemon(odPort, 2000);
+
+      if (!alreadyAlive) {
+        // Step 2: spawn the daemon child process
+        try {
+          const odChild = startOdDaemon(odDir, odPort);
+
+          // Step 3: register cleanup handler for graceful shutdown
+          registerOdCleanup(odChild);
+
+          // Step 4: monitor child process exit
+          odChild.on("exit", (code, signal) => {
+            if (signal) {
+              harnessLogger.info("ODDaemon", `Open Design daemon killed by signal ${signal}`);
+            } else if (code !== 0 && code !== null) {
+              harnessLogger.info("ODDaemon", `Open Design daemon exited with code ${code}`);
+            }
+          });
+
+          // Handle spawn errors (e.g., command not found, directory missing)
+          odChild.on("error", (err) => {
+            if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+              const expandedDir = expandTilde(odDir);
+              if (!existsSync(expandedDir)) {
+                console.warn(
+                  `Open Design directory not found: ${expandedDir}. Check OPEN_DESIGN_DIR in .env`,
+                );
+              } else {
+                console.warn(
+                  `Cannot start Open Design daemon: command not found. ` +
+                  `Install pnpm (https://pnpm.io/installation) or run \`cd ${expandedDir} && pnpm link --global\` for the global od command.`,
+                );
+              }
+            } else {
+              harnessLogger.warn("ODDaemon", `Open Design daemon error: ${err.message}`);
+            }
+          });
+
+          // Step 5: wait for daemon health check
+          await waitForOdDaemon(odPort);
+        } catch (e) {
+          harnessLogger.warn(
+            "ODDaemon",
+            `Failed to start Open Design daemon: ${e instanceof Error ? e.message : String(e)}`,
+          );
+        }
+      }
+    }
+  }
+
   const config = loadConfig(cwd);
 
   if (config.apiKey) {
