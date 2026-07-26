@@ -149,33 +149,71 @@ async function main(): Promise<void> {
           // Step 3: register cleanup handler for graceful shutdown
           registerOdCleanup(odChild);
 
-          // Step 4: monitor child process exit
-          odChild.on("exit", (code, signal) => {
-            if (signal) {
-              harnessLogger.info("ODDaemon", `Open Design daemon killed by signal ${signal}`);
-            } else if (code !== 0 && code !== null) {
-              harnessLogger.info("ODDaemon", `Open Design daemon exited with code ${code}`);
-            }
-          });
+          // Step 4: monitor child process exit with auto-restart
+          let odRestartCount = 0;
+          let lastRestartTime = 0;
 
-          // Handle spawn errors (e.g., command not found, directory missing)
-          odChild.on("error", (err) => {
-            if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-              const expandedDir = expandTilde(odDir);
-              if (!existsSync(expandedDir)) {
-                console.warn(
-                  `Open Design directory not found: ${expandedDir}. Check OPEN_DESIGN_DIR in .env`,
-                );
-              } else {
-                console.warn(
-                  `Cannot start Open Design daemon: command not found. ` +
-                  `Install pnpm (https://pnpm.io/installation) or run \`cd ${expandedDir} && pnpm link --global\` for the global od command.`,
-                );
+          const attachExitHandler = (child: ReturnType<typeof startOdDaemon>) => {
+            child.on("exit", (code, signal) => {
+              if (signal) {
+                harnessLogger.info("ODDaemon", `Open Design daemon killed by signal ${signal}`);
+              } else if (code !== 0 && code !== null) {
+                harnessLogger.info("ODDaemon", `Open Design daemon exited with code ${code}`);
               }
-            } else {
-              harnessLogger.warn("ODDaemon", `Open Design daemon error: ${err.message}`);
-            }
-          });
+
+              // Auto-restart if daemon exited unexpectedly
+              if (code !== 0 && code !== null && withOd) {
+                const now = Date.now();
+                // Guard against restart loops: give up after 3 rapid restarts (< 5s apart)
+                if (now - lastRestartTime < 5000) {
+                  odRestartCount++;
+                } else {
+                  odRestartCount = 1;
+                }
+                lastRestartTime = now;
+
+                if (odRestartCount > 3) {
+                  harnessLogger.warn("ODDaemon", "Open Design daemon restart loop detected (3 rapid restarts), giving up");
+                  return;
+                }
+
+                harnessLogger.info("ODDaemon", `Restarting Open Design daemon (attempt ${odRestartCount})...`);
+                try {
+                  const newChild = startOdDaemon(odDir, odPort);
+                  registerOdCleanup(newChild);
+                  attachExitHandler(newChild);
+                  void waitForOdDaemon(odPort).then((healthy) => {
+                    if (healthy) {
+                      harnessLogger.info("ODDaemon", "Open Design daemon restarted successfully");
+                    }
+                  });
+                } catch (e) {
+                  harnessLogger.warn("ODDaemon", `Failed to restart Open Design daemon: ${e instanceof Error ? e.message : String(e)}`);
+                }
+              }
+            });
+
+            child.on("error", (err) => {
+              if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+                const expandedDir = expandTilde(odDir);
+                if (!existsSync(expandedDir)) {
+                  console.warn(
+                    `Open Design directory not found: ${expandedDir}. Check OPEN_DESIGN_DIR in .env`,
+                  );
+                } else {
+                  console.warn(
+                    `Cannot start Open Design daemon: command not found. ` +
+                    `Install pnpm (https://pnpm.io/installation) or run \`cd ${expandedDir} && pnpm link --global\` for the global od command.`,
+                  );
+                }
+              } else {
+                harnessLogger.warn("ODDaemon", `Open Design daemon error: ${err.message}`);
+              }
+            });
+          };
+
+          attachExitHandler(odChild);
+
 
           // Step 5: wait for daemon health check
           await waitForOdDaemon(odPort);

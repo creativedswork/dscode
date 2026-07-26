@@ -326,6 +326,7 @@ export class MCPClient {
       if (this.closing) return;
       if (!this.closed) {
         this.closed = true;
+        this.emit({ type: "disconnected", serverName: this.config.name, reason: `MCP server "${this.config.name}" exited with code ${code}` });
         setImmediate(() => {
           const stderr = stderrBuf.trim().slice(0, 500);
           const detail = stderr ? `: ${stderr}` : "";
@@ -334,6 +335,14 @@ export class MCPClient {
       }
     });
 
+    this.process.on("error", (err) => {
+      if (this.closing) return;
+      if (!this.closed) {
+        this.closed = true;
+        this.emit({ type: "disconnected", serverName: this.config.name, reason: `MCP server "${this.config.name}" error: ${err.message}` });
+        this.rejectAllPending(new Error(`MCP server "${this.config.name}" error: ${err.message}`));
+      }
+    });
     this.process.on("error", (err) => {
       if (this.closing) return;
       if (!this.closed) {
@@ -416,12 +425,19 @@ export class MCPClient {
           res.on("end", () => {
             if (!this.closed) {
               this.closed = true;
+              this.emit({ type: "disconnected", serverName: this.config.name, reason: `MCP server "${this.config.name}" SSE connection closed` });
               this.rejectAllPending(new Error(`MCP server "${this.config.name}" SSE connection closed`));
             }
           });
 
           res.on("error", (err) => {
-            reject(new Error(`MCP server "${this.config.name}" SSE error: ${err.message}`));
+            if (!this.closed) {
+              this.closed = true;
+              this.emit({ type: "disconnected", serverName: this.config.name, reason: `MCP server "${this.config.name}" SSE error: ${err.message}` });
+              this.rejectAllPending(new Error(`MCP server "${this.config.name}" SSE error: ${err.message}`));
+            } else {
+              reject(new Error(`MCP server "${this.config.name}" SSE error: ${err.message}`));
+            }
           });
         },
       );
@@ -687,7 +703,7 @@ export class MCPClient {
       }
 
       if (this.resolvedTransport === "streamable-http") {
-        this.sendHttpMessage(this.config.url!, { jsonrpc: "2.0", id, method, params: finalParams }, true, true)
+        this.sendHttpWithSessionRecovery(this.config.url!, { jsonrpc: "2.0", id, method, params: finalParams }, id)
           .then((response) => {
             const entry = this.pending.get(id);
             if (!entry) return;
@@ -900,6 +916,42 @@ export class MCPClient {
       headers["MCP-Session-Id"] = this.sessionId;
     }
     return headers;
+  }
+
+
+  private async sendHttpWithSessionRecovery(url: string, payload: any, id: string | number): Promise<HttpResponseData> {
+    const response = await this.sendHttpMessage(url, payload, true, true);
+
+    // Handle session rotation: update sessionId from response
+    const newSessionId = this.getHeader(response.headers, "mcp-session-id");
+    if (newSessionId && newSessionId !== this.sessionId) {
+      this.sessionId = newSessionId;
+    }
+
+    // Check for session expiry: 404/410 without Mcp-Session-Id header
+    const isSessionExpired = (response.statusCode === 404 || response.statusCode === 410) &&
+      !this.getHeader(response.headers, "mcp-session-id");
+
+    if (isSessionExpired && !this.closed) {
+      // Transparent session recovery: re-initialize and retry once
+      try {
+        await this.connectStreamableHttp();
+        const retryResponse = await this.sendHttpMessage(url, payload, true, true);
+        // Handle session rotation on retry
+        const retrySessionId = this.getHeader(retryResponse.headers, "mcp-session-id");
+        if (retrySessionId) {
+          this.sessionId = retrySessionId;
+        }
+        return retryResponse;
+      } catch (reinitErr: any) {
+        // Re-initialize itself failed — emit disconnected
+        this.closed = true;
+        this.emit({ type: "disconnected", serverName: this.config.name, reason: `MCP session recovery failed: ${reinitErr.message}` });
+        throw reinitErr;
+      }
+    }
+
+    return response;
   }
 
   private async sendHttpMessage(url: string, payload: unknown, isRequest: boolean, includeContentType: boolean): Promise<HttpResponseData> {

@@ -5,31 +5,30 @@ import { join } from "node:path";
 
 // ── Command Resolution ──
 
-function findCommand(cmd: string): string | null {
-  const pathDirs = (process.env.PATH ?? "").split(":").filter(Boolean);
-  for (const dir of pathDirs) {
-    const fullPath = join(dir, cmd);
-    if (existsSync(fullPath)) return fullPath;
-  }
+function findProjectOd(odDir: string): string | null {
+  const expandedDir = expandTilde(odDir);
+  const odPath = join(expandedDir, "node_modules", ".bin", "od");
+  if (existsSync(odPath)) return odPath;
   return null;
 }
 
-export function resolveOdCommand(odDir: string): { cmd: string; args: string[]; cwd: string } {
+export function resolveOdCommand(odDir: string, port: number): { cmd: string; args: string[]; cwd: string } {
   const expandedDir = expandTilde(odDir);
 
-  // 1. Prefer global `od` command if available
-  if (findCommand("od")) {
-    return { cmd: "od", args: [], cwd: expandedDir };
+  // 1. Prefer project-local `od` command (avoids collision with Unix od)
+  const odPath = findProjectOd(odDir);
+  if (odPath) {
+    return { cmd: odPath, args: ["--port", String(port)], cwd: expandedDir };
   }
 
   // 2. Fall back to pnpm workspace script
-  return { cmd: "pnpm", args: ["tools-dev", "run", "web"], cwd: expandedDir };
+  return { cmd: "pnpm", args: ["tools-dev", "run", "web", "--", "--port", String(port)], cwd: expandedDir };
 }
 
 // ── Daemon Spawn ──
 
 export function startOdDaemon(odDir: string, odPort: number): ChildProcess {
-  const { cmd, args, cwd } = resolveOdCommand(odDir);
+  const { cmd, args, cwd } = resolveOdCommand(odDir, odPort);
   const child = spawn(cmd, args, {
     cwd,
     stdio: "ignore",

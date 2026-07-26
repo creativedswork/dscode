@@ -34,7 +34,7 @@ export interface McpToolInfo {
 export interface McpServerInfo {
   name: string;
   description: string;
-  status: "connected" | "connecting" | "error" | "disconnected";
+  status: "connected" | "connecting" | "reconnecting" | "error" | "disconnected";
   error?: string;
   toolCount: number;
   tools: McpToolInfo[];
