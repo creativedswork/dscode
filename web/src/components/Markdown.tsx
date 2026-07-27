@@ -1,19 +1,27 @@
+import React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 interface MarkdownProps {
   children: string;
   className?: string;
+  isStreaming?: boolean;
 }
 
-export function Markdown({ children, className = "" }: MarkdownProps) {
+export function Markdown({ children, className = "", isStreaming = false }: MarkdownProps) {
+  // During streaming, skip collider wrapper spans — they're only needed for
+  // completed messages (TransitionCanvas cascade animation).
+  const wrapCollider = (collider: string, inner: React.ReactNode) => {
+    if (isStreaming) return <>{inner}</>;
+    return <span data-collider={collider}>{inner}</span>;
+  };
+
   return (
     <div className={`prose prose-sm max-w-none break-words ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
           pre: ({ children }) => {
-            // Wrap code block lines with data-collider for cascade animation
             const codeEl = children as React.ReactElement | undefined;
             const codeContent = codeEl?.props?.children;
             const wrappedChildren = typeof codeContent === 'string'
@@ -23,9 +31,7 @@ export function Markdown({ children, className = "" }: MarkdownProps) {
                 })
               : children;
             return (
-              <pre
-                className="md-pre-base p-3 overflow-x-auto text-xs my-1"
-              >
+              <pre className="md-pre-base p-3 overflow-x-auto text-xs my-1">
                 {wrappedChildren}
               </pre>
             );
@@ -54,6 +60,13 @@ export function Markdown({ children, className = "" }: MarkdownProps) {
               </code>
             );
           },
+          p: ({ children }) => <p>{wrapCollider("text-line", children)}</p>,
+          li: ({ children }) => <li>{wrapCollider("text-line", children)}</li>,
+          blockquote: ({ children }) => <blockquote>{wrapCollider("text-line", children)}</blockquote>,
+          h1: ({ children }) => <h1>{wrapCollider("text-line", children)}</h1>,
+          h2: ({ children }) => <h2>{wrapCollider("text-line", children)}</h2>,
+          h3: ({ children }) => <h3>{wrapCollider("text-line", children)}</h3>,
+          h4: ({ children }) => <h4>{wrapCollider("text-line", children)}</h4>,
           table: ({ children }) => (
             <div className="overflow-x-auto my-2">
               <table
@@ -73,7 +86,7 @@ export function Markdown({ children, className = "" }: MarkdownProps) {
                 backgroundColor: "var(--color-surface)",
               }}
             >
-              {children}
+              {wrapCollider("text-line", children)}
             </th>
           ),
           td: ({ children }) => (
@@ -82,7 +95,7 @@ export function Markdown({ children, className = "" }: MarkdownProps) {
               className="px-3 py-1.5"
               style={{ border: "1px solid var(--color-border)" }}
             >
-              {children}
+              {wrapCollider("text-line", children)}
             </td>
           ),
           a: ({ href, children }) => (

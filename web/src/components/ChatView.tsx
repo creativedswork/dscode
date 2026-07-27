@@ -356,11 +356,7 @@ function UserBubble({ message }: { message: UIMessage }) {
         )}
 
         {safeContent ? (
-          safeContent.split('\n').map((line, i) => (
-            <span key={i} data-collider="text-line">
-              {line ? <Markdown className="text-sm leading-relaxed">{line}</Markdown> : <br />}
-            </span>
-          ))
+          <Markdown className="text-sm leading-relaxed">{safeContent}</Markdown>
         ) : (
           message.isStreaming && !message.thinking && (!message.images || message.images.length === 0) ? (
             <span className="inline-block w-2 h-4 animate-pulse rounded-sm" style={{ backgroundColor: "var(--color-accent)" }} />
@@ -444,11 +440,7 @@ function AssistantMessage({ message }: { message: UIMessage }) {
 
       <div className="text-response">
         {safeContent ? (
-          safeContent.split('\n').map((line, i) => (
-            <span key={i} data-collider="text-line">
-              {line ? <Markdown className="text-sm leading-relaxed">{line}</Markdown> : <br />}
-            </span>
-          ))
+          <Markdown isStreaming={message.isStreaming} className="text-sm leading-relaxed">{safeContent}</Markdown>
         ) : (
           message.isStreaming && !message.thinking && (!message.images || message.images.length === 0) ? (
             <span className="inline-block w-2 h-4 animate-pulse rounded-sm" style={{ backgroundColor: "var(--color-accent)" }} />

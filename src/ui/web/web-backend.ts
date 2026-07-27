@@ -1593,6 +1593,8 @@ Modify the HTML to fulfill the user's request. Output the complete modified HTML
 
       // Strip markdown code fences that LLMs sometimes emit despite instructions
       fullHtml = this.stripArtifactFences(fullHtml);
+      // DEBUG: write artifact output for inspection
+      try { writeFileSync(join(this.config.projectPath, "_artifact_debug.html"), fullHtml, "utf-8"); } catch {}
       this.lastArtifactHtml = fullHtml;
       client.send({ type: "artifact_end" });
     } catch (err) {
