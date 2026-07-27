@@ -4,8 +4,8 @@
 
 <p align="center">
   <strong>
-    MCP-first coding agent for digital studios.<br />
-    Powering creative work across Blender, game engines, and production tools.
+    A digital studio for content-driven creation.<br />
+    Code, write, design, and build — with an AI that thinks like a maker.
   </strong>
 </p>
 
@@ -24,20 +24,11 @@
 
 ## See it in action
 
-<table align="center">
-<tr>
-<td align="center" width="50%">
-  <video src="https://github.com/user-attachments/assets/b92aedab-93cc-4188-976a-0fcae614c04d" controls width="100%"></video>
-  <br /><sub><b>Web UI</b> — streaming chat, tool calls, permission dialogs</sub>
-</td>
-<td align="center" width="50%">
-  <video src="https://github.com/user-attachments/assets/79790daa-d6f3-4d43-8306-e1d93561600c" controls width="100%"></video>
-  <br /><sub><b>Terminal UI</b> — real-time streaming, slash commands, inline rendering</sub>
-</td>
-</tr>
+<p align="center">
+  <img src="docs/assets/work-main-ui.png" alt="dscode — editorial workshop" width="800" />
+</p>
 
-
-> **Tip:** Videos play inline — click to watch demos directly in GitHub.
+> dscode's editorial workshop — a creative space for code, design, and conversation.
 
 ## What makes dscode different
 
@@ -74,11 +65,11 @@ Too many MCP servers? Context explosion is a real problem when every tool schema
 </td>
 <td width="50%" valign="top">
 
-### 🐋 DeepSeek V4 Pro — Recommended
+### 🎨 Editorial Workshop
 
-dscode is purpose-built for DeepSeek V4 Pro — our recommended model for digital creation. Its reasoning depth handles complex multi-tool workflows ("model this in Blender, render in PlayCanvas, document the result") without losing context. A **vision model fallback pipeline** transparently routes screenshots and reference images to vision-capable models. Prompt caching is tuned to maintain **97–99% cache hit rates** via `prompt_cache_key` affinity and prefix-stable message construction. Every optimization is measured against DeepSeek's API behavior.
+dscode is not a chatbot with a dark theme. It's a **digital studio** — a creative workspace with editorial typography, generous whitespace, and a warm, tool-like aesthetic. The interface is designed for makers: phase-labeled message groups, serif structural labels, sidebar detail panels, and a Dashboard that's a mode of Chat, not a separate page. Every pixel earns its place.
 
-**DeepSeek V4 Pro. For when your toolchain needs more than autocomplete.**
+**A creative space. Not just a chat window.**
 
 </td>
 </tr>

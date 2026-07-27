@@ -134,6 +134,24 @@ function formatContextPercent(estimated: number, contextWindow: number): string 
 function formatCost(total: number): string {
   if (total >= 0.01) return `$${total.toFixed(4)}`;
   return `¢${(total * 100).toFixed(2)}`;
+
+}
+/**
+ * Scan editor text for a [file:xxx] marker at the given cursor position.
+ * Returns the display path inside the marker, or undefined if cursor is not on any marker.
+ */
+function findFileMarkerAt(text: string, cursorLine: number, cursorCol: number): string | undefined {
+  const lines = text.split('\n');
+  if (cursorLine < 0 || cursorLine >= lines.length) return undefined;
+  const line = lines[cursorLine];
+  const re = /\[file:([^\]]+)\]/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(line)) !== null) {
+    if (cursorCol >= m.index && cursorCol <= m.index + m[0].length) {
+      return m[1];
+    }
+  }
+  return undefined;
 }
 
 export class TuiApp {
@@ -182,6 +200,8 @@ export class TuiApp {
   private drainedSubmitImages: ImageContent[] | null = null;
   // Pre-drained files: captured in input listener before Editor's onChange("") clears them
   private drainedSubmitFiles: string[] | null = null;
+  // Absolute path shown when cursor is on a [file:xxx] placeholder
+  private hoveredFilePath: string | null = null;
   private lastPasteTime = 0;
   // ── Kitty protocol multi-chunk buffer ──
   // Kitty transmits large images in chunks. Accumulate base64 payloads here
@@ -265,6 +285,16 @@ export class TuiApp {
         }
       }
 
+
+      // ── Cursor-position-based absolute path reveal for [file:xxx] placeholders ──
+      const cursor = this.editor.getCursor();
+      const editorText = this.editor.getText();
+      const hoveredDisplayPath = findFileMarkerAt(editorText, cursor.line, cursor.col);
+      if (hoveredDisplayPath) {
+        this.hoveredFilePath = this.fileTracker.getAbsPath(hoveredDisplayPath) ?? null;
+      } else {
+        this.hoveredFilePath = null;
+      }
       this.updateAttachmentBar();
     };
 
@@ -646,10 +676,12 @@ export class TuiApp {
       ? ` +${this.attachmentScrollOffset} more`
       : "";
     const hintLine = c.dim(`Ctrl+Shift+\u2190 \u2192 scroll${scrollHint} \u00b7 Esc clear all`);
-    this.imageStatus.setText(`${chipsLine}\n${hintLine}`);
+    const hoverLine = this.hoveredFilePath
+      ? c.dim(`\nPath: ${this.hoveredFilePath}`)
+      : "";
+    this.imageStatus.setText(`${chipsLine}${hoverLine}\n${hintLine}`);
     this.tui.requestRender(true);
   }
-
   openMcpBrowser(): void {
     if (!this.deps.mcpManager) {
       this.addInfo("No MCP servers configured.");
@@ -1331,15 +1363,14 @@ export class TuiApp {
     if (hasFiles) {
       const imageRefs = fileRefs.filter(f => isImagePath(f));
       const nonImageRefs = fileRefs.filter(f => !isImagePath(f));
-      // Non-image files: inject path references only
-      if (nonImageRefs.length > 0) {
-        const pathLines = nonImageRefs.map(f => `- \`${f}\``).join('\n');
-        text = text ? `${text}\n\n📁 Attached files:\n${pathLines}` : `📁 Attached files:\n${pathLines}`;
-      }
+      // Non-image files: collect for path injection
+      const promptFilePaths: string[] = nonImageRefs.length > 0 ? [...nonImageRefs] : [];
       // Image files: resolve with @path dedup
       if (imageRefs.length > 0) {
         const dedupedImageRefs = imageRefs.filter(f => !atPathAbsPaths.has(f));
         if (dedupedImageRefs.length > 0) {
+          // Inject image absolute paths into prompt alongside non-image paths
+          promptFilePaths.push(...dedupedImageRefs);
           const refsResolved = resolveFileRefs(this.deps.config.projectPath, dedupedImageRefs, this.deps.config.atFile ?? {});
           if (refsResolved.warnings.length > 0) {
             for (const warn of refsResolved.warnings) {
@@ -1356,8 +1387,12 @@ export class TuiApp {
           }
         }
       }
+      // Inject all file paths in one block (non-image + image, deduped)
+      if (promptFilePaths.length > 0) {
+        const pathLines = promptFilePaths.map(f => `- \`${f}\``).join('\n');
+        text = text ? `${text}\n\n📁 Attached files:\n${pathLines}` : `📁 Attached files:\n${pathLines}`;
+      }
     }
-    if (images && images.length > 0 && !resolveModel(this.deps.config.provider, this.deps.config.modelId).input.includes("image"))
       this.conversation.addInfo(
         c.dim(`${resolveModel(this.deps.config.provider, this.deps.config.modelId).name} does not support image input natively — using vision model or OCR.`),
       );

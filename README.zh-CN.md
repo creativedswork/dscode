@@ -4,8 +4,8 @@
 
 <p align="center">
   <strong>
-    面向数字工作室的 MCP-first 编程 Agent。<br />
-    连接 Blender、游戏引擎和创作工具 —— 不只是代码助手。
+    内容驱动的数字创作工作室。<br />
+    编程、写作、设计、构建 —— 与一个像创作者一样思考的 AI。
   </strong>
 </p>
 
@@ -22,22 +22,11 @@
 
 ---
 
-## 效果演示
+<p align="center">
+  <img src="docs/assets/work-main-ui.png" alt="dscode — editorial workshop" width="800" />
+</p>
 
-<table align="center">
-<tr>
-<td align="center" width="50%">
-  <video src="https://github.com/user-attachments/assets/b92aedab-93cc-4188-976a-0fcae614c04d" controls width="100%"></video>
-  <br /><sub><b>Web UI</b> — 流式对话、工具调用、权限确认</sub>
-</td>
-<td align="center" width="50%">
-  <video src="https://github.com/user-attachments/assets/79790daa-d6f3-4d43-8306-e1d93561600c" controls width="100%"></video>
-  <br /><sub><b>Terminal UI</b> — 实时流式、斜杠命令、内联渲染</sub>
-</td>
-</tr>
-</table>
-
-> **提示：** 视频可直接在 GitHub 内播放——点击即可观看演示。
+> dscode 编辑工作室 —— 一个融合代码、设计与对话的创作空间。
 
 ---
 
@@ -76,11 +65,11 @@ MCP Server 太多导致上下文爆炸？dscode 内置 `search_tools` 驱动—�
 </td>
 <td width="50%" valign="top">
 
-### 🐋 DeepSeek V4 Pro — 首选推荐
+### 🎨 编辑工作室
 
-dscode 专为 DeepSeek V4 Pro 打造 —— 我们首推的数字创作模型。它的推理深度能处理复杂的多工具工作流（「先在 Blender 建模，再在 PlayCanvas 渲染，然后写文档总结」），不会丢失上下文。**视觉模型 fallback 链路**透明地将截图和参考图路由到 vision 模型。Prompt Cache 通过 `prompt_cache_key` 亲和与前缀稳定的消息构建，维持 **97–99% 的缓存命中率**。每一项优化都针对 DeepSeek API 行为调校。
+dscode 不是一个带有暗色主题的聊天机器人。它是一个**数字工作室** —— 具有编辑级排版、宽敞留白和温暖工具感美学的创作空间。界面为创作者设计：阶段标签消息组、衬线结构标签、侧边栏详情面板，Dashboard 是 Chat 的一种模式而非独立页面。每个像素都有存在的理由。
 
-**DeepSeek V4 Pro。当你的工具链需要的不仅是代码补全。**
+**创作空间。不只是聊天窗口。**
 
 </td>
 </tr>
@@ -91,7 +80,6 @@ dscode 专为 DeepSeek V4 Pro 打造 —— 我们首推的数字创作模型。
 ## 能力一览
 
 <table>
-<tr>
 <td width="33%" valign="top">
   <strong>🖥 终端 + Web 双界面</strong><br />
   <sub>完整 TUI：流式输出、thinking、工具调用，逐轮 token 用量与成本统计。现代 React Web 界面，通过 WebSocket 实现功能完全一致。</sub>
