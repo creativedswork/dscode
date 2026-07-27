@@ -56,54 +56,21 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
 
   if (messages.length === 0 && !permissionPrompt) {
     return (
-      <div className="flex-1 flex items-center justify-center p-8">
-      <div
-        data-collider="message-card"
-          className="text-center max-w-md p-8"
-          style={{
-            borderRadius: "12px",
-            border: "1px solid var(--color-border)",
-            backgroundColor: "var(--color-surface)",
-          }}
-        >
-          <h2 className="text-2xl font-bold mb-3" style={{ color: "var(--color-accent)" }}>
-            DSCode Web
-          </h2>
-          <p className="text-sm leading-relaxed mb-6" style={{ color: "var(--color-text-muted)" }}>
-            DeepSeek-native AI coding agent. Ask me to write code, run commands,
-            search files, or manage your project — all from the browser.
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center" style={{ maxWidth: "520px", padding: "0 var(--space-xl)" }}>
+          <div style={{ width: "64px", height: "64px", borderRadius: "50%", backgroundColor: "var(--color-accent-bg)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 28px" }}>
+            <span style={{ width: "22px", height: "22px", borderRadius: "3px", transform: "rotate(45deg)", background: "var(--color-accent)" }} />
+          </div>
+          <h1 style={{ fontSize: "28px", fontWeight: 300, lineHeight: 1.3, color: "var(--color-text)", fontFamily: "var(--font-display)", marginBottom: "12px" }}>
+            What would you like to{" "}<span style={{ fontWeight: 600 }}>create</span>{" "}today?
+          </h1>
+          <p style={{ fontSize: "14px", color: "var(--color-text-muted)", lineHeight: 1.6, marginBottom: "28px" }}>
+            dscode is a digital studio for content-driven creation —{" "}code, write, design, and build with an AI that thinks like a maker.
           </p>
-          <div className="space-y-2 text-xs" style={{ color: "var(--color-text-muted)" }}>
-            <p>
-              Type{" "}
-              <code
-                className="px-1.5 py-0.5 rounded"
-                style={{
-                  backgroundColor: "var(--color-surface-hover)",
-                  color: "var(--color-accent)",
-                  fontFamily: "Geist Mono, JetBrains Mono, monospace",
-                  fontSize: "0.75rem",
-                }}
-              >
-                /help
-              </code>{" "}
-              for available commands
-            </p>
-            <p>
-              Press{" "}
-              <code
-                className="px-1.5 py-0.5 rounded"
-                style={{
-                  backgroundColor: "var(--color-surface-hover)",
-                  color: "var(--color-accent)",
-                  fontFamily: "Geist Mono, JetBrains Mono, monospace",
-                  fontSize: "0.75rem",
-                }}
-              >
-                /
-              </code>{" "}
-              to see slash commands
-            </p>
+          <div className="flex flex-wrap justify-center gap-2">
+            {["Write code", "Refactor systems", "Design interfaces", "Analyze data", "Run commands"].map((cap) => (
+              <span key={cap} style={{ fontSize: "12px", padding: "6px 14px", borderRadius: "20px", border: "1px solid var(--color-border)", backgroundColor: "var(--color-surface)", color: "var(--color-text-muted)" }}>{cap}</span>
+            ))}
           </div>
         </div>
       </div>
@@ -114,7 +81,7 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
     <div ref={(el) => { (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = el; if (containerRef) { (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el; } }} onScroll={handleChatScroll} className={"flex-1 overflow-y-auto min-h-0 px-4 py-4 space-y-4" + (scrollLocked ? " overflow-hidden pointer-events-none" : "")}>
       {messages.map((msg) => (
         <ErrorBoundary key={msg.id} fallback={<FallbackBubble message={msg} />}>
-          {msg.role === "user" ? <UserBubble message={msg} /> : <AssistantMessage message={msg} sessionTime={sessionTime} />}
+          {msg.role === "user" ? <UserBubble message={msg} /> : <AssistantMessage message={msg} />}
         </ErrorBoundary>
       ))}
 
@@ -389,11 +356,7 @@ function UserBubble({ message }: { message: UIMessage }) {
         )}
 
         {safeContent ? (
-          safeContent.split('\n').map((line, i) => (
-            <span key={i} data-collider="text-line">
-              {line ? <Markdown className="text-sm leading-relaxed">{line}</Markdown> : <br />}
-            </span>
-          ))
+          <Markdown className="text-sm leading-relaxed">{safeContent}</Markdown>
         ) : (
           message.isStreaming && !message.thinking && (!message.images || message.images.length === 0) ? (
             <span className="inline-block w-2 h-4 animate-pulse rounded-sm" style={{ backgroundColor: "var(--color-accent)" }} />
@@ -404,15 +367,48 @@ function UserBubble({ message }: { message: UIMessage }) {
   );
 }
 
-function AssistantMessage({ message, sessionTime }: { message: UIMessage; sessionTime: number }) {
+function AssistantMessage({ message }: { message: UIMessage }) {
   const safeContent = typeof message.content === "string" ? message.content : "";
+  const hasThinking = !!message.thinking;
+  const hasTools = !!(message.tools && message.tools.length > 0);
+  const hasResponse = safeContent.length > 0 || message.isStreaming;
+  const isSimpleResponse = !hasThinking && !hasTools;
 
   return (
     <div className="assistant-msg">
       <div className="meta">dscode{message.createdAt ? ` · ${new Date(message.createdAt).toLocaleTimeString()}` : ""}</div>
 
-      {message.thinking && (
-        <ThinkingBlock thinking={message.thinking} isStreaming={message.isStreaming} sessionTime={sessionTime} />
+      {hasThinking && (
+        <>
+          {!isSimpleResponse && (
+<div className="phase-label" data-collider="phase-label">
+              <span className={`phase-dot ${message.isStreaming && message.thinking ? "active" : "done"}`} />
+              <span className="phase-text">Thinking</span>
+            </div>
+          )}
+          <ThinkingBlock
+            thinking={message.thinking!}
+            isStreaming={message.isStreaming}
+            thinkingStartedAt={message.thinkingStartedAt}
+            thinkingUpdatedAt={message.thinkingUpdatedAt}
+          />
+        </>
+      )}
+
+      {hasTools && (
+        <>
+          {!isSimpleResponse && (
+<div className="phase-label" data-collider="phase-label">
+              <span className={`phase-dot ${message.isStreaming ? "active" : "done"}`} />
+              <span className="phase-text">Executing</span>
+            </div>
+          )}
+          <div className="space-y-2">
+            {message.tools!.map((tool, i) => (
+              <ToolCard key={`${tool.name}-${i}`} tool={tool} thinking={message.thinking} />
+            ))}
+          </div>
+        </>
       )}
 
       {message.images && message.images.length > 0 && (
@@ -435,21 +431,16 @@ function AssistantMessage({ message, sessionTime }: { message: UIMessage; sessio
         </div>
       )}
 
-      {message.tools && message.tools.length > 0 && (
-        <div className="space-y-2">
-          {message.tools.map((tool, i) => (
-            <ToolCard key={`${tool.name}-${i}`} tool={tool} thinking={message.thinking} />
-          ))}
+      {(hasResponse || (hasTools && message.isStreaming)) && (
+<div className="phase-label" data-collider="phase-label">
+          <span className={`phase-dot ${message.isStreaming && !message.thinking ? "active" : "done"}`} />
+          <span className="phase-text">Response</span>
         </div>
       )}
 
       <div className="text-response">
         {safeContent ? (
-          safeContent.split('\n').map((line, i) => (
-            <span key={i} data-collider="text-line">
-              {line ? <Markdown className="text-sm leading-relaxed">{line}</Markdown> : <br />}
-            </span>
-          ))
+          <Markdown isStreaming={message.isStreaming} className="text-sm leading-relaxed">{safeContent}</Markdown>
         ) : (
           message.isStreaming && !message.thinking && (!message.images || message.images.length === 0) ? (
             <span className="inline-block w-2 h-4 animate-pulse rounded-sm" style={{ backgroundColor: "var(--color-accent)" }} />
@@ -460,19 +451,74 @@ function AssistantMessage({ message, sessionTime }: { message: UIMessage; sessio
   );
 }
 
-function ThinkingBlock({ thinking, isStreaming, sessionTime }: { thinking: string; isStreaming?: boolean; sessionTime: number }) {
+const STALL_THRESHOLD_MS = 15000;
+
+function ThinkingBlock({
+  thinking,
+  isStreaming,
+  thinkingStartedAt,
+  thinkingUpdatedAt,
+}: {
+  thinking: string;
+  isStreaming?: boolean;
+  thinkingStartedAt?: number;
+  thinkingUpdatedAt?: number;
+}) {
   const [collapsed, setCollapsed] = useState(!isStreaming);
+  const [tick, setTick] = useState(0);
+  const lastLiveElapsedRef = useRef<number | null>(null);
 
   // auto-expand when streaming starts
   useEffect(() => {
     if (isStreaming) setCollapsed(false);
   }, [isStreaming]);
 
+  // local 1s tick during streaming for live timer and stall detection
+  useEffect(() => {
+    if (!isStreaming) return;
+    const id = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(id);
+  }, [isStreaming]);
+
+  // compute live elapsed from per-thinking anchor
+  const liveElapsed = (isStreaming && thinkingStartedAt != null)
+    ? Math.round((Date.now() - thinkingStartedAt) / 1000)
+    : null;
+
+  // track last live elapsed for freeze-on-completion
+  if (liveElapsed != null) {
+    lastLiveElapsedRef.current = liveElapsed;
+  }
+
+  // freeze when thinking segment ends (thinkingStartedAt cleared by reducer)
+  const isFrozen = !!thinking && thinkingStartedAt == null;
+  const frozenElapsed = isFrozen ? lastLiveElapsedRef.current : null;
+  const displayElapsed = isFrozen ? frozenElapsed : liveElapsed;
+  const isDone = isFrozen && frozenElapsed != null;
+
+  // stall detection: no delta for >15s during live streaming
+  const isStalled = isStreaming && thinkingStartedAt != null && thinkingUpdatedAt != null
+    && (Date.now() - thinkingUpdatedAt) > STALL_THRESHOLD_MS;
+  const stallSeconds = isStalled
+    ? Math.round((Date.now() - (thinkingUpdatedAt ?? Date.now())) / 1000)
+    : 0;
+
+  const isLiveStreaming = isStreaming && thinkingStartedAt != null;
+
   return (
-    <div className={`thinking${collapsed ? " collapsed" : ""}`} data-collider="thinking-block">
+    <div
+      className={`thinking${collapsed ? " collapsed" : ""}${isStalled ? " stalled" : ""}${isDone ? " done" : ""}${isLiveStreaming ? " streaming" : ""}`}
+      data-collider="thinking-block"
+    >
       <div className="label" onClick={() => setCollapsed(!collapsed)}>
         <span className="dot" />
-        Thinking
+        {isDone
+          ? `Thought for ${formatTime(frozenElapsed!)}`
+          : isLiveStreaming && displayElapsed != null
+            ? <>Thinking <span className="elapsed">· {formatTime(displayElapsed)}</span></>
+            : "Thinking"
+        }
+        {isStalled && <span className="stall-note"> · no output for {formatTime(stallSeconds)}</span>}
       </div>
       <div className="thinking-body">{thinking}</div>
     </div>

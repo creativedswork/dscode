@@ -10,6 +10,8 @@ import type {
   MCPToolContent,
   MCPToolDefinition,
   MCPToolResult,
+  ErrorClass,
+  MCPTransport,
 } from "./types.js";
 import { mcpDriverName, mcpToolName } from "./names.js";
 import type { ToolUiInfo, McpUiResourceCsp, McpUiResourcePermissions } from "./app/types.js";
@@ -206,6 +208,35 @@ function normalizeHtmlMimeType(mimeType: string | undefined): string {
     .join(";");
 }
 
+function classifyError(err: Error, transport: MCPTransport, statusCode?: number): ErrorClass {
+  const msg = err.message ?? "";
+
+  // ECONNREFUSED, ETIMEDOUT → transient
+  if (/ECONNREFUSED|ETIMEDOUT/i.test(msg)) return "transient";
+
+  // HTTP status codes
+  if (statusCode !== undefined) {
+    if (statusCode === 502 || statusCode === 503 || statusCode === 504) return "transient";
+    if (statusCode === 401 || statusCode === 403) return "permanent";
+    if (statusCode === 404 || statusCode === 410) return "session_expired";
+  }
+
+  // ENOTFOUND / unresolvable host → permanent
+  if (/ENOTFOUND/i.test(msg)) return "permanent";
+
+  // Process exit → transient (for stdio)
+  if (transport === "stdio" && /exited/i.test(msg)) return "transient";
+
+  // SSE closed unexpectedly → transient
+  if (transport === "sse" && /connection closed/i.test(msg)) return "transient";
+
+  // Invalid config → permanent
+  if (/invalid|no command|no url/i.test(msg)) return "permanent";
+
+  // Default: treat unknown errors as transient (safer to retry)
+  return "transient";
+}
+
 export class MCPManager {
   private clients = new Map<string, MCPClient>();
   private states = new Map<string, MCPServerState>();
@@ -352,42 +383,85 @@ export class MCPManager {
       this.driverRegistry.unregister(mcpDriverName(name));
     }
 
-    state.status = "connecting";
+    state.status = "reconnecting";
 
-    try {
-      const client = new MCPClient(cfg);
-      client.onEvent((event) => this.handleClientEvent(event));
-      await client.connect();
-      this.clients.set(name, client);
+    const client = new MCPClient(cfg);
+    client.onEvent((event) => this.handleClientEvent(event));
+    await client.connect();
+    this.clients.set(name, client);
 
-      const tools = await client.listTools();
-      this.registerDriver(name, tools);
+    const tools = await client.listTools();
+    this.registerDriver(name, tools);
 
-      state.status = "connected";
-      state.error = undefined;
-      state.toolCount = tools.length;
-      state.negotiatedProtocolVersion = client.getNegotiatedProtocolVersion() ?? undefined;
-      state.resolvedTransport = client.getResolvedTransport();
-      state.compatibilityMode = client.getCompatibilityMode();
-      state.refreshState = "idle";
-      state.refreshError = undefined;
-      state.lastRefreshAt = Date.now();
-      return true;
+    state.status = "connected";
+    state.error = undefined;
+    state.toolCount = tools.length;
+    state.negotiatedProtocolVersion = client.getNegotiatedProtocolVersion() ?? undefined;
+    state.resolvedTransport = client.getResolvedTransport();
+    state.compatibilityMode = client.getCompatibilityMode();
+    state.refreshState = "idle";
+    state.refreshError = undefined;
+    state.lastRefreshAt = Date.now();
+    return true;
+  }
+
+  private reconnectTimers = new Map<string, NodeJS.Timeout>();
+
+  private scheduleReconnect(name: string, attempt: number): void {
+    const state = this.states.get(name);
+    if (!state) return;
+
+    // Guard: skip if user explicitly disconnected
+    if (state.status === "disconnected") return;
+
+    // Guard: max retries exhausted
+    if (attempt >= 10) {
+      state.status = "error";
+      state.error = "Reconnect attempts exhausted";
+      state.refreshState = "error";
+      state.refreshError = "Reconnect attempts exhausted";
+      this.emit({ type: "tools_refresh_failed", serverName: name, error: "Reconnect attempts exhausted" });
+      return;
+    }
+
+    state.status = "reconnecting";
+
+    const delay = Math.min(30000, 1000 * Math.pow(2, attempt)) + Math.random() * 500;
+
+    const timer = setTimeout(async () => {
+      this.reconnectTimers.delete(name);
+
+      try {
+        await this.reconnectServer(name);
+        // Success
+        state.refreshState = "idle";
+        state.refreshError = undefined;
+        this.emit({ type: "tools_refreshed", serverName: name, toolCount: state.toolCount });
       } catch (err: any) {
-        const state = this.states.get(name)!;
-        // Only attempt reconnect if the server was in a state where
-        // we expect connectivity — not if the user explicitly disconnected.
-        if (state.status === "connected" || state.status === "error") {
-          await this.reconnectServer(name);
-        } else {
+        const cfg = this.configs.find((c) => c.name === name);
+        const errorClass = classifyError(err, cfg?.transport ?? "stdio");
+
+        if (errorClass === "permanent" || errorClass === "session_expired") {
+          // For session_expired, reset counter and try fresh
+          if (errorClass === "session_expired") {
+            this.scheduleReconnect(name, 0);
+            return;
+          }
           state.status = "error";
           state.error = err.message ?? "Unknown error";
           state.refreshState = "error";
           state.refreshError = err.message ?? "Unknown error";
+          state.toolCount = 0;
+          this.emit({ type: "tools_refresh_failed", serverName: name, error: err.message ?? "Unknown error" });
+          return;
         }
-      state.toolCount = 0;
-      return false;
-    }
+
+        // Transient error: schedule next attempt
+        this.scheduleReconnect(name, attempt + 1);
+      }
+    }, delay);
+
+    this.reconnectTimers.set(name, timer);
   }
 
 
@@ -407,7 +481,7 @@ export class MCPManager {
         // Only attempt reconnect if the server was in a state where
         // we expect connectivity — not if the user explicitly disconnected.
         if (state.status === "connected" || state.status === "error") {
-          await this.reconnectServer(name);
+          this.scheduleReconnect(name, 0);
         } else {
           state.status = "error";
           state.error = err.message ?? "Unknown error";
@@ -437,6 +511,12 @@ export class MCPManager {
     );
 
     this.clients.clear();
+
+    // Cancel all pending reconnect timers
+    for (const timer of this.reconnectTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.reconnectTimers.clear();
   }
 
   async connectServer(name: string): Promise<void> {
@@ -635,6 +715,10 @@ export class MCPManager {
       }
       if (event.type === "resources_list_changed") {
         state.lastRefreshAt = Date.now();
+      }
+      if (event.type === "disconnected") {
+        state.status = "reconnecting";
+        this.scheduleReconnect(event.serverName, 0);
       }
     }
 

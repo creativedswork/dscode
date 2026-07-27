@@ -34,7 +34,7 @@ export interface McpToolInfo {
 export interface McpServerInfo {
   name: string;
   description: string;
-  status: "connected" | "connecting" | "error" | "disconnected";
+  status: "connected" | "connecting" | "reconnecting" | "error" | "disconnected";
   error?: string;
   toolCount: number;
   tools: McpToolInfo[];
@@ -142,6 +142,9 @@ export interface UIMessage {
   isStreaming?: boolean;
   images?: (ImageAttachment | ImageRef)[];
   createdAt?: number; // epoch ms
+  thinkingStartedAt?: number; // epoch ms — first thinking_delta of the current segment; cleared when the segment ends
+  thinkingUpdatedAt?: number; // epoch ms — last thinking_delta (stall detection)
+  thinkingFinalMs?: number; // frozen elapsed of the last completed thinking segment
 }
 // ── Permissions ──
 

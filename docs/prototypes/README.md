@@ -14,3 +14,4 @@
 ## 文件
 
 - `mcp-toolcard-execution-view-prototype.html` — Session 00MRIZMZQJ，MCP 工具执行视图的原型设计
+- `markdown-line-split-fix.html` — 修复 content.split('\n') 破坏多行 Markdown 结构的原型

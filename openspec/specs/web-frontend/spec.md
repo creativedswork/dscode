@@ -36,15 +36,15 @@ The frontend SHALL use exactly one icon library (Phosphor Icons Bold weight reco
 - **THEN** it uses the chosen icon library with consistent `strokeWidth`
 
 ### Requirement: Processing timer driven by turn start anchor
-The frontend SHALL compute elapsed processing time from the `turnStartRef` anchor, set by `handleSend` and the `loader { state: "show" }` event, not from the `processing` state flag. The timer SHALL update every animation frame while the anchor is non-zero and reset to 0 when the turn ends.
+The frontend SHALL compute elapsed processing time from the `turnStartRef` anchor, set by `handleSend` and the `loader { state: "show" }` event, not from the `processing` state flag. The timer SHALL update every animation frame while the anchor is non-zero and reset to 0 when the turn ends. The thinking segment timer is an exception: it SHALL be driven by a per-thinking anchor (`thinkingStartedAt`) recorded at the first `thinking_delta` of each thinking segment, not by `turnStartRef`, so that the displayed elapsed time reflects the current thinking segment rather than the whole turn.
 
 #### Scenario: Timer starts on user submit
 - **WHEN** the user sends a message (via Send button or Enter key)
 - **THEN** `turnStartRef.current` is set to `Date.now()` in `handleSend` and the elapsed timer begins incrementing from 0s
 
 #### Scenario: Timer increments during thinking
-- **WHEN** the model sends `thinking_delta` events and `turnStartRef.current > 0`
-- **THEN** the `ThinkingBlock` summary displays `Thinking... (Xs)` where X increments approximately every second
+- **WHEN** the model sends `thinking_delta` events for a thinking segment
+- **THEN** the `ThinkingBlock` label displays `Thinking · Xs` where X is the elapsed time since that segment's first `thinking_delta`, incrementing approximately every second
 
 #### Scenario: Timer increments during waiting
 - **WHEN** `processing` is true but no streaming message has arrived yet (hasStreaming is false)
@@ -146,25 +146,38 @@ The frontend SHALL include a `TransitionCanvas` component that renders a full-vi
 - **THEN** the device pixel ratio SHALL be capped at `Math.min(window.devicePixelRatio, 2)`
 
 ### Requirement: data-collider DOM attributes
-ChatView and its sub-components SHALL mark collidable elements with `data-collider` attributes to enable live DOM-based collision detection during the cascade transition animation.
+
+ChatView and its sub-components SHALL mark collidable elements with `data-collider` attributes to enable live DOM-based collision detection during the cascade transition animation. Text line collider spans SHALL be injected by Markdown.tsx via DOM post-processing after a single Markdown render, rather than by ChatView splitting content by newlines into separate Markdown instances.
 
 #### Scenario: text-line marking
-- **WHEN** Markdown.tsx renders a text paragraph
-- **THEN** each visible line SHALL be wrapped in a `<span data-collider="text-line">` element with no additional styling or layout shift
+
+- **WHEN** Markdown.tsx renders a completed message's text content
+- **THEN** each visible text line inside paragraph-level elements (`<p>`, `<li>`, `<blockquote>`, `<th>`, `<td>`, `<h1>`–`<h4>`) SHALL be wrapped in a `<span data-collider="text-line">` element with no additional styling or layout shift
+- **AND** the wrapping SHALL be performed via DOM post-processing after the single Markdown render completes
 
 #### Scenario: code-line marking
-- **WHEN** Markdown.tsx renders a code block
-- **THEN** each line SHALL have the attribute `data-collider="code-line"`
+
+- **WHEN** Markdown.tsx renders a code block in a completed message
+- **THEN** each line within the `<pre><code>` block SHALL have the attribute `data-collider="code-line"`
+- **AND** the code block SHALL be rendered as a single contiguous Markdown block (not split by newlines before parsing)
 
 #### Scenario: tool-card marking
+
 - **WHEN** ToolCard.tsx renders a tool call card
 - **THEN** the card container SHALL have the attribute `data-collider="tool-card"`
 - **AND** the tool header SHALL have the attribute `data-collider="tool-header"`
 - **AND** tool result lines SHALL have the attribute `data-collider="tool-result-line"`
 
 #### Scenario: message-card marking
+
 - **WHEN** ChatView renders a user or assistant message bubble
 - **THEN** the bubble container SHALL have the attribute `data-collider="message-card"`
+
+#### Scenario: ChatView renders single Markdown per message
+
+- **WHEN** ChatView renders a user or assistant message with text content
+- **THEN** the entire content string SHALL be passed to a single `<Markdown>` component instance
+- **AND** the content SHALL NOT be split by newlines before being passed to Markdown
 
 ### Requirement: CSS destruction animation keyframes
 The frontend stylesheet SHALL include CSS `@keyframes` for text-line scatter and code-line corruption animations, triggered during the cascade transition by TransitionCanvas DOM manipulation.
@@ -494,4 +507,140 @@ The frontend SHALL display the real creation time of each chat message in the me
 - **WHEN** the ChatView renders any message bubble (`UserBubble` or `AssistantMessage`)
 - **THEN** no hardcoded time string (such as `"09:41"`) SHALL appear anywhere in the meta line
 - **AND** all time values SHALL derive from `message.createdAt`
+
+### Requirement: Thinking block live elapsed indicator
+While a thinking segment is streaming, the `ThinkingBlock` label SHALL display the segment's elapsed time (`Thinking · Xs`) driven by a per-thinking anchor recorded in the conversation reducer. The reducer SHALL record `thinkingStartedAt` on the first `thinking_delta` of a segment and `thinkingUpdatedAt` on every `thinking_delta`; both fields are optional, non-persisted, and absent from the wire protocol. The elapsed display SHALL use the shared `formatTime()` convention (`12s`, `2m 5s`) with `tabular-nums` to prevent layout shift, and SHALL tick via a component-local 1s interval rather than the backend `session_time` broadcast. The label dot SHALL pulse (opacity/scale keyframes) while streaming; the pulse animation SHALL be disabled under `prefers-reduced-motion`. When a `text_delta` or `tool_start` arrives for the message, the reducer SHALL clear `thinkingStartedAt` so a subsequent thinking segment restarts its own elapsed time.
+
+#### Scenario: Elapsed starts on first thinking delta
+- **WHEN** the reducer processes a `thinking_delta` for a message with no active `thinkingStartedAt`
+- **THEN** it records `thinkingStartedAt` and `thinkingUpdatedAt` as the current time, and the label begins displaying `Thinking · 0s`
+
+#### Scenario: Elapsed ticks while streaming
+- **WHEN** the thinking segment is streaming
+- **THEN** the label elapsed time increments approximately every second using `formatTime()` formatting and `tabular-nums`
+
+#### Scenario: Dot pulses while streaming
+- **WHEN** the thinking segment is streaming and `prefers-reduced-motion` is not set
+- **THEN** the label dot animates a pulse; under `prefers-reduced-motion` the dot remains static
+
+#### Scenario: New segment restarts elapsed
+- **WHEN** a `text_delta` or `tool_start` arrives after a thinking segment, and a later `thinking_delta` begins a new segment
+- **THEN** the reducer records a fresh `thinkingStartedAt` and the label elapsed restarts from 0s for the new segment
+
+#### Scenario: Historical messages without anchor
+- **WHEN** a message is reconstructed from history (e.g. `ready` event) without `thinkingStartedAt`
+- **THEN** the label renders without a live ticking timer (static or frozen display only)
+
+### Requirement: Thinking block frozen summary on completion
+When a thinking segment ends (the message receives its first `text_delta` or `tool_start` after thinking, or the turn ends), the `ThinkingBlock` label SHALL switch from the live timer to a frozen summary `Thought for Xs` showing the segment's final elapsed time. The frozen summary SHALL remain visible in the collapsed state, the dot SHALL render static, and the elapsed value SHALL NOT continue incrementing.
+
+#### Scenario: Freeze on first text delta
+- **WHEN** a message with a streaming thinking segment receives its first `text_delta`
+- **THEN** the label switches to `Thought for Xs` with the final segment elapsed time and stops incrementing
+
+#### Scenario: Freeze on tool start
+- **WHEN** a message with a streaming thinking segment receives a `tool_start` before any text
+- **THEN** the label switches to `Thought for Xs` with the final segment elapsed time
+
+#### Scenario: Frozen summary visible when collapsed
+- **WHEN** the thinking block auto-collapses after streaming ends
+- **THEN** the collapsed label still reads `Thought for Xs` and can be expanded by clicking
+
+### Requirement: Thinking stall detection
+While a thinking segment is streaming, the frontend SHALL compare the current time against the segment's `thinkingUpdatedAt` on each timer tick. When no `thinking_delta` has arrived for more than 15 seconds, the thinking block SHALL enter a stalled state: the left border and label dot change to the warning color, and the label appends `no output for Xs` (time since last delta) in the warning color. When a new `thinking_delta` arrives, the stalled state SHALL clear automatically and the normal streaming display resumes. Stall detection SHALL be computed entirely on the frontend from delta timestamps, with no backend events or protocol changes.
+
+#### Scenario: Stall warning after threshold
+- **WHEN** a streaming thinking segment receives no `thinking_delta` for more than 15 seconds
+- **THEN** the block shows warning-colored border and dot, and the label appends `no output for Xs`
+
+#### Scenario: Stall clears on resume
+- **WHEN** a `thinking_delta` arrives while the block is in the stalled state
+- **THEN** the stalled styling and `no output for Xs` note are removed and normal streaming display resumes
+
+#### Scenario: No stall state after completion
+- **WHEN** the thinking segment has ended (frozen summary displayed)
+- **THEN** stall detection no longer applies and the frozen label remains unchanged
+
+### Requirement: Phase labels annotated for TransitionCanvas cascade
+Each `.phase-label` element within `AssistantMessage` SHALL carry a `data-collider="phase-label"` attribute so that `TransitionCanvas.buildRowList()` discovers and destroys them during the chat-to-dashboard cascade animation. The three phase labels — Thinking, Executing, and Response — SHALL each include this attribute on their outermost `<div>`.
+
+#### Scenario: Phase labels destroyed during cascade
+- **WHEN** the user triggers a chat-to-dashboard transition (Dashboard button click)
+- **THEN** the cascade animation destroys all Thinking, Executing, and Response phase labels alongside text lines and tool cards, leaving no UI residue
+
+#### Scenario: Phase labels absent from DOM after cascade
+- **WHEN** the cascade animation completes and the dashboard view is active
+- **THEN** no `.phase-label` elements from the chat view remain visible in the DOM
+
+### Requirement: Warm design language → Editorial workshop design language
+
+**Replaces**: "Warm design language" requirement.
+
+All frontend components SHALL use the editorial workshop design system as defined in the `editorial-workshop-layout` spec. The app shell SHALL use the 38px topbar, 220px sidebar with expandable panels, and phase-labeled message groups.
+
+#### Scenario: Color token adoption
+- **WHEN** any component renders a background, text, border, or accent color
+- **THEN** it uses `var(--color-*)` references with the updated accent value `#b87503`
+
+#### Scenario: Typography adoption
+- **WHEN** a component renders text
+- **THEN** UI chrome, labels, and body text use Geist Sans; code blocks and technical identifiers use Geist Mono
+- **AND** the empty state title SHALL use serif display font at 28px weight 400, phase labels SHALL be 10px weight 600 uppercase
+- **AND** panel titles and session names SHALL use serif display font
+
+#### Scenario: Shape adoption
+- **WHEN** a message bubble, card, input, or button renders
+- **THEN** it follows the editorial workshop radius scale: 20px for input containers, 16px for bubbles, 10px for cards/panels, 6px for buttons and small elements
+
+### Requirement: Sidebar restructured
+
+The sidebar SHALL NOT contain a "Views" section. The sidebar SHALL use 15px icons for all navigation items (Sessions, MCP, Skills, Settings).
+
+#### Scenario: Sidebar nav items
+- **WHEN** the sidebar renders
+- **THEN** all nav item SVG icons SHALL be 15px × 15px
+- **AND** the Settings gear icon SHALL be 15px × 15px
+
+### Requirement: Dashboard mode switcher in topbar
+
+**Replaces**: The existing ViewModeSwitcher `<select>` dropdown.
+
+The Chat↔Dashboard mode toggle SHALL be a pill-style button group in the topbar center, not a `<select>` dropdown. It SHALL only be visible when messages exist. Switching to Dashboard SHALL trigger a transition overlay.
+
+#### Scenario: Mode switcher visible with messages
+- **WHEN** the current session has at least one message
+- **THEN** the Chat↔Dashboard pill switcher SHALL be visible in the topbar center
+
+#### Scenario: Mode switcher hidden on empty
+- **WHEN** the current session has zero messages
+- **THEN** the Chat↔Dashboard pill switcher SHALL be hidden
+
+### Requirement: Empty state editorial welcome
+
+**Replaces**: The current empty state (400px card with "DSCode Web" heading and `/help` instructions).
+
+The empty state SHALL be a full-viewport editorial layout: a diamond brand mark, a large title "What would you like to **create** today?", a subtitle, and capability pills.
+
+#### Scenario: Empty state display
+- **WHEN** no messages exist and no processing is active
+- **THEN** the editorial empty state SHALL be displayed centered in the main content area
+- **AND** the mode switcher SHALL be hidden
+
+### Requirement: Editorial workshop design language
+
+All frontend components SHALL use the editorial workshop design system. The app shell SHALL use the 38px topbar, 220px sidebar with resizable expandable detail panels (default 320px), and phase-labeled message groups at 11px.
+
+#### Scenario: Typography adoption
+- **WHEN** a component renders text
+- **THEN** UI chrome, labels, and body text use Geist Sans; code blocks and technical identifiers use Geist Mono
+- **AND** section labels (Create, Capabilities) SHALL be 11px weight 600 uppercase with 0.08em letter-spacing
+- **AND** panel titles SHALL use serif display font at 15px weight 500
+- **AND** phase labels SHALL be 11px weight 600 uppercase
+- **AND** the empty state title SHALL use serif display font at 28px weight 300
+
+#### Scenario: Detail panel resizable
+- **WHEN** a detail panel (Sessions, MCP, Skills, Settings) renders
+- **THEN** it SHALL use the `useResizablePanel` hook with default 320px, min 240px, max 480px
+- **AND** a resize handle SHALL appear on the panel's right edge
+- **AND** the width SHALL be persisted to localStorage under `dscode-detail-panel-width`
 

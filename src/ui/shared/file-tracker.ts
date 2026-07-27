@@ -38,6 +38,14 @@ export class FileTracker {
     return [...this.entries.values()];
   }
 
+  /** Reverse lookup: return the absolute path for a given display path, or undefined. */
+  getAbsPath(displayPath: string): string | undefined {
+    for (const [absPath, dp] of this.entries) {
+      if (dp === displayPath) return absPath;
+    }
+    return undefined;
+  }
+
   /** Clear all tracked files. */
   clear(): void {
     this.entries.clear();

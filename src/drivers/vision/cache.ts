@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { Logger } from "../../utils/logger.js";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
@@ -22,7 +22,7 @@ async function getSharp(): Promise<typeof import("sharp") | null> {
     return sharpInstance;
   } catch {
     sharpAvailable = false;
-    _cacheLogger.warn("tool", "ImageCache", "sharp not available, images will be stored uncompressed");
+    _cacheLogger.warn("ImageCache", "sharp not available, images will be stored uncompressed");
     return null;
   }
 }
@@ -81,7 +81,7 @@ export class ImageCache {
         await pipeline.png().toFile(filepath);
         return { type: "image_ref", hash: filename, mimeType: "image/png" };
       } catch (err) {
-        _cacheLogger.warn("tool", "ImageCache", `sharp processing failed, storing original: ${String(err)}`);
+        _cacheLogger.warn("ImageCache", `sharp processing failed, storing original: ${String(err)}`);
         // Fall through to fallback
       }
     }

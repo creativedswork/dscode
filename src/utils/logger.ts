@@ -1,7 +1,7 @@
 // ── Logger ──
 // Structured file-based logging for dscode.
-// Each Agent instance creates one Logger; channel is specified per-write.
-// All logs go to ~/.dscode/logs/<channel>.log — zero terminal output.
+// Each Agent instance creates one Logger.
+// All logs go to ~/.dscode/logs/dscode.log — zero terminal output.
 
 import { appendFileSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -10,7 +10,6 @@ import { homedir } from "node:os";
 // ── Types ──
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
-export type LogChannel = "lifecycle" | "session" | "tool" | "analysis";
 
 const LEVEL_RANK: Record<LogLevel, number> = {
   debug: 0,
@@ -40,26 +39,26 @@ export class Logger {
 
   // ── Public API ──
 
-  debug(channel: LogChannel, tag: string, message: string): void {
-    this.write("debug", channel, tag, message);
+  debug(tag: string, message: string): void {
+    this.write("debug", tag, message);
   }
 
-  info(channel: LogChannel, tag: string, message: string): void {
-    this.write("info", channel, tag, message);
+  info(tag: string, message: string): void {
+    this.write("info", tag, message);
   }
 
-  warn(channel: LogChannel, tag: string, message: string): void {
-    this.write("warn", channel, tag, message);
+  warn(tag: string, message: string): void {
+    this.write("warn", tag, message);
   }
 
-  error(channel: LogChannel, tag: string, message: string): void {
-    this.write("error", channel, tag, message);
+  error(tag: string, message: string): void {
+    this.write("error", tag, message);
   }
 
-  clear(channel: LogChannel): void {
+  clear(): void {
     try {
       ensureDir();
-      writeFileSync(channelPath(channel), "", "utf-8");
+      writeFileSync(filePath(), "", "utf-8");
     } catch {
       // best-effort, suppress
     }
@@ -67,13 +66,13 @@ export class Logger {
 
   // ── Internal ──
 
-  private write(level: LogLevel, channel: LogChannel, tag: string, message: string): void {
+  private write(level: LogLevel, tag: string, message: string): void {
     if (LEVEL_RANK[level] < this.minLevel) return;
 
-    const line = formatLine(level, channel, this.type, this.id, tag, message);
+    const line = formatLine(level, this.type, this.id, tag, message);
     try {
       ensureDir();
-      appendFileSync(channelPath(channel), line + "\n", "utf8");
+      appendFileSync(filePath(), line + "\n", "utf8");
     } catch {
       // All I/O errors silently suppressed — log writing is best-effort
     }
@@ -84,14 +83,13 @@ export class Logger {
 
 function formatLine(
   level: LogLevel,
-  channel: string,
   agentType: string,
   agentId: string,
   tag: string,
   message: string,
 ): string {
   const ts = new Date().toISOString().replace("T", " ").slice(0, 19);
-  return `[${ts}] [${level.toUpperCase()}] [${channel}] [${agentType}/${agentId}] [${tag}] ${message}`;
+  return `[${ts}] [${level.toUpperCase()}] [${agentType}/${agentId}] [${tag}] ${message}`;
 }
 
 const LOG_DIR = join(homedir(), ".dscode", "logs");
@@ -102,6 +100,6 @@ function ensureDir(): void {
   }
 }
 
-function channelPath(channel: string): string {
-  return join(LOG_DIR, `${channel}.log`);
+function filePath(): string {
+  return join(LOG_DIR, "dscode.log");
 }

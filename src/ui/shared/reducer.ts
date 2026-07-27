@@ -61,13 +61,19 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
       return prev;
 
     case "thinking_delta":
-      return updateLastOrCreate(prev, (msg) => ({
-        thinking: (msg.thinking ?? "") + event.delta,
-      }));
+      return updateLastOrCreate(prev, (msg) => {
+        const now = Date.now();
+        return {
+          thinking: (msg.thinking ?? "") + event.delta,
+          thinkingStartedAt: msg.thinkingStartedAt ?? now,
+          thinkingUpdatedAt: now,
+        };
+      });
 
     case "text_delta":
       return updateLastOrCreate(prev, (msg) => ({
         content: msg.content + event.delta,
+        thinkingStartedAt: undefined,
       }));
 
     case "tool_start":
@@ -82,7 +88,7 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
             images: [],
           },
         ];
-        return { tools };
+        return { tools, thinkingStartedAt: undefined };
       });
 
     case "tool_progress": {

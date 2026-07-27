@@ -97,7 +97,7 @@ export async function runFocusPipeline(
 
   const pipelineStart = Date.now();
   let totalLLMCalls = 0;
-  if (logger) logger.info("analysis", "FocusPipeline", `Start: ${steps.length} steps, session ${sessionId.slice(0, 8)}`);
+  if (logger) logger.info("FocusPipeline", `Start: ${steps.length} steps, session ${sessionId.slice(0, 8)}`);
 
   const progress = new ProgressDisplay({ onLog, logger });
 
@@ -114,7 +114,7 @@ export async function runFocusPipeline(
   const workspacePath = createWorkspace(sessionId);
   const { fileCount } = writeLibrary(skeleton, steps, ruleResult, "SCAN", workspacePath);
   cleanOldWorkspaces(10);
-  if (logger) logger.info("analysis", "Phase0", `Library: ${fileCount} files → ${workspacePath}`);
+  if (logger) logger.info("Phase0", `Library: ${fileCount} files → ${workspacePath}`);
 
   progress.onPhaseDone(0, `写入 ${fileCount} 个文件`, Date.now() - pipelineStart);
   await yieldTui();
@@ -129,7 +129,7 @@ export async function runFocusPipeline(
   const scanSummary = scanResult.noIssuesDetected
     ? "未检测到问题"
     : `识别到 ${scanResult.zones.length} 个 attention zones: ${scanResult.zones.map((z) => z.id).join(", ")}`;
-  if (logger) logger.info("analysis", "SCAN", scanSummary);
+  if (logger) logger.info("SCAN", scanSummary);
 
   progress.onPhaseDone(1, scanSummary, Date.now() - pipelineStart);
   await yieldTui();
@@ -140,7 +140,7 @@ export async function runFocusPipeline(
       data, steps, sessionStats.stats, sessionStats.metadata,
       null, null, harness, sessionStats.metadata.sessionId, Date.now(), logger,
     );
-    if (logger) logger.info("analysis", "FocusPipeline", "Early exit: no issues detected");
+    if (logger) logger.info("FocusPipeline", "Early exit: no issues detected");
     return { ...sessionStats, phases: [], deviations: [], rootCauses: [], rules, timeline: [], causalGraph: null, attribution: null, rulesApplied: [] };
   }
 
@@ -162,7 +162,7 @@ export async function runFocusPipeline(
       zoneAnalyses.push({ zoneId: zone.id, subtasks: [], subtaskEdges: [], agentNodes: [], agentEdges: [], stepDataFlows: [], candidates: [], topCandidate: null, zoneGraphComplete: false });
     }
   }
-  if (logger) logger.info("analysis", "ZOOM", `${zoneAnalyses.length} zones, ${zoneAnalyses.filter((z) => z.zoneGraphComplete).length} complete`);
+  if (logger) logger.info("ZOOM", `${zoneAnalyses.length} zones, ${zoneAnalyses.filter((z) => z.zoneGraphComplete).length} complete`);
 
   progress.onPhaseDone(2, `${zoneAnalyses.length} zones 分析完成`, Date.now() - pipelineStart);
   await yieldTui();
@@ -179,7 +179,7 @@ export async function runFocusPipeline(
   const synthSummary = attribution.mistakeStep > 0
     ? `根因: ${attribution.mistakeAgent}@Step ${attribution.mistakeStep}`
     : "归因完成";
-  if (logger) logger.info("analysis", "SYNTH", synthSummary);
+  if (logger) logger.info("SYNTH", synthSummary);
 
   progress.onPhaseDone(3, synthSummary, Date.now() - pipelineStart);
   await yieldTui();
@@ -199,7 +199,7 @@ export async function runFocusPipeline(
     } : null,
     harness, sessionStats.metadata.sessionId, Date.now(),
   );
-  if (logger) logger.info("analysis", "Phase4", `${rules.length} rules extracted`);
+  if (logger) logger.info("Phase4", `${rules.length} rules extracted`);
 
   progress.onPhaseDone(4, `${rules.length} 条规则`, Date.now() - pipelineStart);
 
@@ -208,7 +208,7 @@ export async function runFocusPipeline(
   const keyFindings = attribution.mistakeStep > 0
     ? `根因: ${attribution.mistakeAgent}@Step ${attribution.mistakeStep}`
     : "未检测到明确根因";
-  if (logger) logger.info("analysis", "FocusPipeline", `Done: ${(totalDuration / 1000).toFixed(1)}s, ${totalLLMCalls} LLM calls, ${keyFindings}`);
+  if (logger) logger.info("FocusPipeline", `Done: ${(totalDuration / 1000).toFixed(1)}s, ${totalLLMCalls} LLM calls, ${keyFindings}`);
 
   progress.showCompletion({ totalDurationMs: totalDuration, totalLLMCalls, keyFindings });
   progress.dispose();

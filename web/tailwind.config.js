@@ -27,6 +27,7 @@ export default {
       fontFamily: {
         mono: ["Geist Mono", "JetBrains Mono", "Fira Code", "monospace"],
         sans: ["Geist Sans", "system-ui", "sans-serif"],
+        display: ["var(--font-display)", "serif"],
       },
       borderRadius: {
         card: "8px",

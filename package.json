@@ -1,6 +1,6 @@
 {
   "name": "@creative-dswork/dscode",
-  "version": "0.2.5",
+  "version": "0.2.7",
   "type": "module",
   "description": "DeepSeek-native terminal AI agent for digital work — DeepSeek model harness analogous to Claude Code for Claude models.",
   "bin": {
@@ -17,11 +17,11 @@
     "LICENSE"
   ],
   "scripts": {
-    "start": "tsx src/core/main.ts",
+    "start": "tsx --env-file=.env src/core/main.ts",
     "build": "node scripts/build.mjs",
     "build:web": "cd web && npm run build",
     "ci:check": "npm run lockfile:check && rm -rf dist node_modules web/node_modules && npm ci && cd web && npm install && cd .. && npm run build && echo \"\n✅ CI check passed\"",
-    "dev:web": "tsx src/core/main.ts --web & cd web && npm run dev",
+    "dev:web": "tsx --env-file=.env src/core/main.ts --web & cd web && npm run dev",
     "prepublishOnly": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
@@ -46,9 +46,9 @@
     "node": ">=20.0.0"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "^0.80.3",
-    "@earendil-works/pi-ai": "^0.80.3",
-    "@earendil-works/pi-tui": "^0.74.0",
+    "@earendil-works/pi-agent-core": "^0.80.10",
+    "@earendil-works/pi-ai": "^0.80.10",
+    "@earendil-works/pi-tui": "^0.80.10",
     "chalk": "^5.5.0",
     "jpeg-js": "^0.4.4",
     "pngjs": "^7.0.0",

@@ -69,15 +69,15 @@ SHALL 对 `onLog` 调用施加节流（默认 500ms 间隔）：距上次调用�
 
 `runEval` 的 catch 块 SHALL 通过 Logger 写入完整错误信息到 `~/.dscode/logs/analysis.log`（使用 `Logger` 实例的 `error("analysis", "Pipeline", ...)`）。
 
-若 `err` 为 `Error` 实例且包含 `stack`，SHALL 额外写入 `logger.error("analysis", "Pipeline", "stack:\n<stack>")`。
+若 `err` 为 `Error` 实例且包含 `stack`，SHALL 额外写入 `logger.error("Pipeline", "stack:\n<stack>")`。
 
 SHALL 仍然调用 `ui.addError(...)` 在 TUI 显示错误摘要。
 
 #### Scenario: Pipeline crash logged to file
 
 - **WHEN** `runCausalGraphPipeline` 或 `runFocusPipeline` 抛出异常
-- **THEN** 系统 SHALL 调用 `logger.error("analysis", "Pipeline", "crash: <message>")`
-- **AND** 若 `err.stack` 存在 SHALL 调用 `logger.error("analysis", "Pipeline", "stack:\n<stack>")`
+- **THEN** 系统 SHALL 调用 `logger.error("Pipeline", "crash: <message>")`
+- **AND** 若 `err.stack` 存在 SHALL 调用 `logger.error("Pipeline", "stack:\n<stack>")`
 #### Scenario: Web mode with no terminal
 
 - **WHEN** `ProgressDisplay` 以 `{ disableTerminal: true }` 实例化

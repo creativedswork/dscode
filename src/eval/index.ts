@@ -63,7 +63,7 @@ export async function runEval(
       }
     }
 
-    evalLogger.clear("analysis");
+    evalLogger.clear();
     (ui as any).addInfo(`正在分析 session ${resolvedId.slice(0, 8)}...`);
 
     // onLog pushes to TUI only — no terminal output
@@ -102,9 +102,9 @@ export async function runEval(
       `Error rate: ${result.stats.errorRate}${attributionInfo} | Rules: ${rulesTriggered}`,
     );
   } catch (err) {
-    evalLogger.error("analysis", "Pipeline", `crash: ${err instanceof Error ? err.message : String(err)}`);
+    evalLogger.error("Pipeline", `crash: ${err instanceof Error ? err.message : String(err)}`);
     if (err instanceof Error && err.stack) {
-      evalLogger.error("analysis", "Pipeline", `stack:\n${err.stack}`);
+      evalLogger.error("Pipeline", `stack:\n${err.stack}`);
     }
     (ui as any).addError(`eval: ${err instanceof Error ? err.message : String(err)}`);
   }

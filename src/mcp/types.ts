@@ -200,11 +200,12 @@ export type MCPClientEvent =
   | { type: "tools_refresh_failed"; serverName: string; error: string }
   | { type: "resources_list_changed"; serverName: string }
   | { type: "transport"; serverName: string; transport: MCPTransport; compatibilityMode: MCPCompatibilityMode }
+  | { type: "disconnected"; serverName: string; reason: string }
   | { type: "protocol"; serverName: string; protocolVersion: string; compatibilityMode: MCPCompatibilityMode };
 
 // --- MCP Server Status ---
 
-export type MCPServerStatus = "disconnected" | "connecting" | "connected" | "error";
+export type MCPServerStatus = "disconnected" | "connecting" | "connected" | "reconnecting" | "error";
 
 export interface MCPServerState {
   config: MCPServerConfig;
@@ -218,3 +219,7 @@ export interface MCPServerState {
   refreshState?: MCPRefreshState;
   refreshError?: string;
 }
+
+// --- Error Classification ---
+
+export type ErrorClass = "transient" | "session_expired" | "permanent";

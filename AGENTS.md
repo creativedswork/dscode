@@ -15,7 +15,7 @@
 
 ## Web 前端
 
-修改 Web UI 前必读 `openspec/specs/web-frontend/spec.md` 和 taste-skill，禁止引入第三方设计体系。
+修改 Web UI 前必读 `openspec/specs/web-frontend/spec.md`。设计分两层：**视觉方向**参考 Open Design 项目（`mcp__open-design__*`），**实现质量**由 taste-skill（`design-taste-frontend`）保证——前者回答「长什么样」，后者防止 AI 生成千篇一律的 slop。禁止引入第三方组件库（Material UI、Ant Design 等），必须使用 `web/src/index.css` 的 `--color-*` token。Open Design 的视觉决策需经 explore→propose 流程沉淀为 change 的 design.md + prototype 后方可实施。
 
 ## 运行
 
@@ -80,25 +80,29 @@ Commands and skills may coexist in three locations: `.dscode/`, `.clinerules/`, 
 
 ### Logger API
 
-日志写入 `~/.dscode/logs/<channel>.log`，支持 channel：`lifecycle | session | tool | analysis`。
+日志写入 `~/.dscode/logs/dscode.log`，所有 channel 合并为单一文件。
 
 | 位置 | 调用方式 |
 |------|---------|
-| `tui-app.ts` / `web-backend.ts` | `this.deps.logger.info("tool", "diag-tag", \`msg...\`)` |
-| `commands.ts` | `ctx.harness.logger.info("tool", "diag-tag", \`msg...\`)` |
-| `harness.ts` | `this.logger.info("tool", "diag-tag", \`msg...\`)` |
+| `tui-app.ts` / `web-backend.ts` | `this.deps.logger.info("diag-tag", \`msg...\`)` |
+| `commands.ts` | `ctx.harness.logger.info("diag-tag", \`msg...\`)` |
+| `harness.ts` | `this.logger.info("diag-tag", \`msg...\`)` |
+
+
+tag 必须使用 PascalCase 常量字符串（如 `EventBus`、`SessionManager`、`Phase0`），禁止 kebab-case / snake_case / 动态变量。
+同一文件内的所有日志调用必须使用一致的命名风格。
 
 ### 操作流程
 
 ```bash
 # 1. 清空旧日志
-> ~/.dscode/logs/tool.log
+> ~/.dscode/logs/dscode.log
 
 # 2. 启动并触发目标行为
 npm start
 
 # 3. 查看
-cat ~/.dscode/logs/tool.log | grep diag-tag
+cat ~/.dscode/logs/dscode.log | grep diag-tag
 ```
 
 ### 注意事项

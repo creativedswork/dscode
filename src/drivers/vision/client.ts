@@ -1,7 +1,7 @@
+import { Logger } from "../../utils/logger.js";
 import type { Api, Context, ImageContent, Model } from "@earendil-works/pi-ai";
 import { streamSimple, getEnvApiKey } from "../../models/index.js";
 import { resolveModel } from "../../models/index.js";
-import { Logger } from "../../utils/logger.js";
 import type { VisionConfig } from "./types.js";
 
 const _clog = new Logger({ type: "harness", id: process.env.DSCODE_RUNTIME_ID ?? "vision-client" });
@@ -83,7 +83,7 @@ export async function describeImagesViaVisionModel(
       throw err; // re-throw so pipeline can distinguish abort from failure
     }
     const errMsg = err instanceof Error ? err.message : String(err);
-    _clog.warn("tool", "vision-client", `describeImages FAILED: ${errMsg}. images=${images.length}, totalBase64=${images.reduce((s, i) => s + (i.data?.length ?? 0), 0)}, img[0].mime=${images[0]?.mimeType ?? "?"}`);
+    _clog.warn("vision-client", `describeImages FAILED: ${errMsg}. images=${images.length}, totalBase64=${images.reduce((s, i) => s + (i.data?.length ?? 0), 0)}, img[0].mime=${images[0]?.mimeType ?? "?"}`);
     throw err;
   }
 }

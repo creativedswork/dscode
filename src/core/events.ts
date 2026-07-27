@@ -87,7 +87,7 @@ export class HarnessEventBus {
       try {
         handler(event);
       } catch (err) {
-        this.logger.error("tool", "EventBus", `handler error for "${event.type}": ${String(err)}`);
+        this.logger.error("EventBus", `handler error for "${event.type}": ${String(err)}`);
       }
     }
   }

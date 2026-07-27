@@ -2,6 +2,7 @@ import { builtinModels } from "@earendil-works/pi-ai/providers/all";
 import type { Api, AssistantMessage, AssistantMessageEventStream, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { createProvider, lazyApi, envApiKeyAuth } from "@earendil-works/pi-ai";
 import { DASHSCOPE_BASE, QWEN_MODELS } from "./qwen.js";
+import { KIMI_BASE_URL, KIMI_MODELS } from "./kimi.js";
 import type { ThinkingLevel } from "../core/types.js";
 
 type ModelFactory = (modelId: string) => Model<Api>;
@@ -20,6 +21,17 @@ const qwenProvider = createProvider({
   models: Object.entries(QWEN_MODELS).map(([id, def]) => ({ id, name: `Qwen: ${id}`, ...def })) as Model<"openai-completions">[],
   api: lazyApi(() => import("@earendil-works/pi-ai/api/openai-completions")),
 });
+
+// Register kimi as a pi-ai custom provider (platform.kimi.com → Moonshot API)
+const kimiProvider = createProvider({
+  id: "kimi",
+  name: "Kimi (Moonshot)",
+  baseUrl: KIMI_BASE_URL,
+  auth: { apiKey: envApiKeyAuth("Kimi API key", ["KIMI_API_KEY", "MOONSHOT_API_KEY"]) },
+  models: Object.entries(KIMI_MODELS).map(([id, def]) => ({ id, name: `Kimi ${id}`, ...def })) as Model<"openai-completions">[],
+  api: lazyApi(() => import("@earendil-works/pi-ai/api/openai-completions")),
+});
+models.setProvider(kimiProvider);
 models.setProvider(qwenProvider);
 
 export function registerProvider(
@@ -75,8 +87,15 @@ export function resolveModel(provider: string, modelId: string): Model<Api> {
 export function getThinkingLevel(provider: string, modelId: string): ThinkingLevel {
   try {
     const model = resolveModel(provider, modelId);
-    if (model.reasoning) return "high";
-    return "off";
+    if (!model.reasoning) return "off";
+    // Check thinkingLevelMap for constrained level support
+    if (model.thinkingLevelMap) {
+      const supportedLevels = Object.entries(model.thinkingLevelMap)
+        .filter(([, v]) => v !== null) as [string, string][];
+      if (supportedLevels.length === 0) return "off";
+      if (supportedLevels.length === 1 && supportedLevels[0][0] === "max") return "max";
+    }
+    return "high";
   } catch {
     // model not found — fall through to heuristic
   }
@@ -86,7 +105,7 @@ export function getThinkingLevel(provider: string, modelId: string): ThinkingLev
   return "off";
 }
 
-// --- Stream / complete wrappers (delegating to Models instance) ---
+
 
 export function streamSimple(
   model: Model<Api>,
@@ -125,6 +144,7 @@ const API_KEY_ENV_VARS: Record<string, string> = {
   openrouter: "OPENROUTER_API_KEY",
   "vercel-ai-gateway": "AI_GATEWAY_API_KEY",
   zai: "ZAI_API_KEY",
+  "kimi": "KIMI_API_KEY",
   "zai-coding-cn": "ZAI_CODING_CN_API_KEY",
   mistral: "MISTRAL_API_KEY",
   minimax: "MINIMAX_API_KEY",
