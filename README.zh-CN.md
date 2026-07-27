@@ -103,8 +103,8 @@ dscode 不是一个带有暗色主题的聊天机器人。它是一个**数字�
   <sub>自动路由到 vision 模型。tesseract OCR 回退（中英文）。支持拖拽、粘贴、@文件 引入图片。</sub>
 </td>
 <td width="33%" valign="top">
-  <strong>🔧 内置驱动</strong><br />
-  <sub><code>read_file</code>、<code>write_file</code>、<code>edit</code>（hash-anchor）、<code>bash</code>、<code>grep</code>、<code>glob</code>。MCP 工具通过 <code>search_tools</code> 按需发现。</sub>
+  <strong>🔧 Open Design</strong><br />
+  <sub>AI 驱动的视觉设计工作台，支持前端生成、图片转代码、设计系统管理。通过 MCP 集成。</sub>
 </td>
 </tr>
 <tr>
@@ -295,26 +295,45 @@ dscode 使用两层 `settings.json`，项目级配置覆盖用户级配置：
 ---
 
 
-## Harness 设计哲学
+## Open Design
 
-我们在 Harness 设计上遵循**奥卡姆剃刀原则**。dscode 不会预设意图理解模块、Plan 模式或复杂的 agent 编排层——直到系统提示词确实不够用。大多数 coding agent 在一开始就堆叠了推理规划、反思循环和多 agent 协调，而我们选择等模型真正需要时再添加。
+dscode 集成了 **[Open Design](https://github.com/wangcan26/open-design)** —— 一个 AI 驱动的视觉设计工作台，将前端生成能力直接带入你的工作流。可以把它理解为 Figma 与 AI 的结合：通过自然语言生成设计 token、组件和完整布局，支持实时预览与迭代。
 
-这不意味着 Harness 很简陋。它意味着每一块功能都经过了必要性论证。
+### Open Design 为 dscode 提供的能力
 
-一个我们深入投入的例子：**edit 工具**。基于 [@_can1357 的 hash-anchor 协议](https://x.com/_can1357/status/2021828033640911196)，我们的 `edit` 工具用**内容寻址的锚点系统**替代了脆弱的行号和正则匹配（详见 [spec](openspec/specs/edit-tool/spec.md)）：
+- **视觉设计工作台** — 在 dscode 内直接创建、编辑和迭代前端设计
+- **图片转代码** — 从设计稿生成可用于生产的 HTML/CSS
+- **设计系统管理** — 跨项目维护一致的 design token、字体层级和色彩体系
+- **多文件 Artifact 生成** — 产出结构化的完整前端项目文件树
 
-- **三级自适应消歧** — 歧义哈希静默解析：6 位 → 8 位 → 上下文增强（三行窗口）匹配，全部失败才显式拒绝
-- **Occurrence + line-hint 双重消歧** — `occurrence: 3` 选取第 N 次出现；`line` 字段自动选最近候选，仅等距时拒绝
-- **Proximity 范围消歧** — 范围端点一侧唯一时，另一侧自动在正确方向找最近候选项
-- **低熵过滤** — `}` 等行被拒绝作为锚点，工具返回最多 6 个相邻 `[high]` 锚点作为替代建议
-- **原子批量 + 重叠检测** — 6 种操作类型一次调用，全部成功或全部回滚。批量内重叠区间自动检测拒绝
-- **Checkpoint + 安全回滚** — 编辑前保存快照。编辑后安全检查（重复行、括号平衡、孤儿 `else`）失败则自动回滚
-- **结构化失效区间** — `anchors_valid_through` + `must_refresh_from_line` 精确告知模型哪些锚点仍有效，支持链式编辑无需重读
-- **Localized diff + 新锚点** — 编辑成功返回带全新 6 位 hash 的 diff，模型可立即继续编辑
+### 安装
 
-**dscode 开发 dscode。** 正是这个 edit 工具——配合我们的 spec-driven 工作流——让 dscode 实现了自我开发。从 hash-anchor 协议到 checkpoint 系统，每一个功能都由 dscode + DeepSeek V4 Pro 编写，通过 MCP 工具编辑自己的源码树。这不是 demo。这就是我们交付项目的方式。
+```bash
+git clone https://github.com/wangcan26/open-design.git
+cd open-design
+npm install
+```
 
-这就是我们投入的 Harness 工作：不是加更多 AI，而是让 AI 的工具更可靠。
+然后在 `~/.dscode/settings.json` 中配置 MCP 服务器：
+
+```jsonc
+{
+  "mcpServers": {
+    "open-design": {
+      "command": "npx",
+      "args": [
+        "tsx",
+        "/path/to/open-design/apps/daemon/src/cli.ts",
+        "mcp",
+        "--daemon-url",
+        "http://127.0.0.1:7456"
+      ]
+    }
+  }
+}
+```
+
+> **注意：** Open Design 对 dscode 的集成目前位于 `add-dscode-agent` 分支，尚未向上游提交 PR。该集成提供了 dscode 专属的 installer 目标和 agent 配置。关注进展请访问 [github.com/wangcan26/open-design](https://github.com/wangcan26/open-design)。
 
 ---
 

@@ -104,8 +104,8 @@ dscode is not a chatbot with a dark theme. It's a **digital studio** — a creat
   <sub>Auto-routing to vision-capable models. tesseract OCR fallback (ENG + CHI). Drag, paste, or @-file images.</sub>
 </td>
 <td width="33%" valign="top">
-  <strong>🔧 Built-in Drivers</strong><br />
-  <sub><code>read_file</code>, <code>write_file</code>, <code>edit</code> (hash-anchor), <code>bash</code>, <code>grep</code>, <code>glob</code>. MCP tools discovered on-demand via <code>search_tools</code>.</sub>
+  <strong>🔧 Open Design</strong><br />
+  <sub>AI-driven visual design workspace with frontend generation, image-to-code, and design-system management. Integrated via MCP.</sub>
 </td>
 </tr>
 <tr>
@@ -294,26 +294,45 @@ All settings can also be set via environment variables for CI / containers:
 ---
 
 
-## Harness Philosophy
+## Open Design
 
-We follow **Occam's razor** in harness design. dscode does not pre-build intent understanding modules, plan modes, or elaborate agentic scaffolding until the system prompt proves insufficient. Most coding agents pile on pre-turn planning, reflection loops, and multi-agent orchestration upfront — we wait until the model demands it.
+dscode integrates **[Open Design](https://github.com/wangcan26/open-design)** — a visual design workspace that brings AI-driven frontend generation directly into your workflow. Think of it as Figma meets AI: design tokens, components, and entire layouts generated through natural language, with real-time preview and iteration.
 
-That doesn't mean the harness is bare. It means every piece earns its place.
+### What Open Design does for dscode
 
-One example where we went deeper: the **edit tool**. Based on [@_can1357's hash-anchor protocol](https://x.com/_can1357/status/2021828033640911196), our `edit` tool replaces fragile line-number and regex-based editing with a **content-addressable anchor system** ([spec](openspec/specs/edit-tool/spec.md)):
+- **Visual design workspace** — create, edit, and iterate on frontend designs without leaving dscode
+- **Image-to-code** — generate production-ready HTML/CSS from design mockups
+- **Design system management** — maintain consistent design tokens, typography scales, and color palettes across projects
+- **Multi-file artifact generation** — produce complete frontend projects with structured file trees
 
-- **Three-level adaptive resolution** — ambiguous 6-char hashes are resolved silently through 8-char → context-augmented (3-line window) matching before rejection
-- **Occurrence + line-hint disambiguation** — `occurrence: 3` picks the Nth match; `line` field auto-selects the closest candidate, rejecting only when equidistant
-- **Proximity-based range resolution** — for range endpoints, if one side is unique the other automatically resolves to the nearest candidate in the correct direction
-- **Low-entropy filtering** — lines like `}` are rejected as anchors; the tool returns up to 6 neighboring `[high]` anchors as alternatives
-- **Atomic batch + overlap detection** — 6 operation types in one call, all-or-nothing. Overlapping ranges within a batch are detected and rejected
-- **Checkpoint + safety rollback** — file checkpointed before edit. Post-edit sanity checks (duplicate lines, delimiter balance, orphan `else`) roll back suspicious changes
-- **Structured invalidation scope** — `anchors_valid_through` and `must_refresh_from_line` tell the model exactly which anchors survive, enabling chained edits without re-reading
-- **Localized diff with live anchors** — successful edits return a diff with fresh 6-char hashes, so the model can continue editing immediately
+### Installation
 
-**dscode builds dscode.** This edit tool — combined with our spec-driven workflow — is what enabled dscode to develop itself. Every feature, from the hash-anchor protocol to the checkpoint system, was implemented by dscode running on DeepSeek V4 Pro, editing its own source tree through MCP-driven tools. It's not a demo. It's how this project ships.
+```bash
+git clone https://github.com/wangcan26/open-design.git
+cd open-design
+npm install
+```
 
-This is the kind of harness work we invest in: not adding more AI, but making the AI's tools dependable.
+Then configure the MCP server in `~/.dscode/settings.json`:
+
+```jsonc
+{
+  "mcpServers": {
+    "open-design": {
+      "command": "npx",
+      "args": [
+        "tsx",
+        "/path/to/open-design/apps/daemon/src/cli.ts",
+        "mcp",
+        "--daemon-url",
+        "http://127.0.0.1:7456"
+      ]
+    }
+  }
+}
+```
+
+> **Note:** Open Design's dscode integration currently lives on the `add-dscode-agent` branch and has not yet been submitted as a PR to upstream. The integration provides dscode-specific installer targets and agent configuration. Track the progress at [github.com/wangcan26/open-design](https://github.com/wangcan26/open-design).
 
 ---
 
