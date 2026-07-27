@@ -5,13 +5,13 @@ import { useWebSocket } from "../hooks/useWebSocket";
 import { ChatView } from "./ChatView";
 import { MessageInput } from "./MessageInput";
 import { Sidebar } from "./Sidebar";
+import type { DetailPanel } from "./Sidebar";
 import { ToastContainer, useToasts } from "./Toast";
 import { CommandPanel } from "./CommandPanel";
 import { ContextWindowBar } from "./ContextWindowBar";
-import { ViewModeSwitcher } from "./ViewModeSwitcher";
 import { ArtifactContainer } from "./ArtifactContainer";
 import { TransitionCanvas } from "./TransitionCanvas";
-import { List, Sun, Moon } from "@phosphor-icons/react";
+import { List, Sun, Moon, Chat, ChartBar } from "@phosphor-icons/react";
 
 const SLASH_COMMANDS = [
   { name: "help", description: "Show available commands" },
@@ -67,7 +67,7 @@ export function App() {
   const [model, setModel] = useState("");
   const [permissionPrompt, setPermissionPrompt] = useState<{ toolName: string; preview: string; fuzzyPattern?: string | null; fuzzyArgDesc?: string | null; llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[] } | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<"sessions" | "mcp" | "settings">("sessions");
+  const [activePanel, setActivePanel] = useState<DetailPanel>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [mcpServers, setMcpServers] = useState<McpServerInfo[]>([]);
@@ -171,7 +171,7 @@ export function App() {
       case "session_time": { const csid = currentSessionIdRef.current; if (csid) { setSessions((prev) => prev.map((s) => s.id === csid ? { ...s, totalActiveMs: event.totalActiveMs } : s)); } break; }
         break;
       case "mcp_state": setMcpServers(event.servers); break;
-      case "mcp_open_browser": setSidebarOpen(true); setSidebarTab("mcp"); break;
+      case "mcp_open_browser": setSidebarOpen(true); setActivePanel("mcp"); break;
       case "model": setModel(event.name); break;
       case "context_window": setContextWindow(event); break;
       case "config": setConfig(event.data); break;
@@ -300,32 +300,53 @@ export function App() {
 
   return (
     <div className="h-screen flex flex-col" style={{ backgroundColor: "var(--color-bg)" }}>
-      <header className="flex items-center px-4 py-2 shrink-0" style={{ backgroundColor: "var(--color-surface)", borderBottom: "1px solid var(--color-border)" }}>
-        <div className="flex items-center gap-3">
-          <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-2 rounded-btn hover:brightness-95 transition-[filter] duration-200 md:hidden" style={{ backgroundColor: "var(--color-surface-hover)" }} aria-label="Toggle sidebar">
-            <List size={20} weight="bold" style={{ color: "var(--color-text)" }} />
+      <header
+        className="flex items-center px-4 shrink-0 gap-3"
+        style={{
+          height: "var(--topbar-h)",
+          backgroundColor: "var(--color-surface)",
+          borderBottom: "1px solid var(--color-border)",
+        }}
+      >
+        <div className="flex items-center gap-2.5 min-w-0">
+          <button onClick={() => setSidebarOpen(!sidebarOpen)} className="p-1 rounded-btn hover:brightness-95 transition-[filter] duration-200 md:hidden" style={{ backgroundColor: "var(--color-surface-hover)" }} aria-label="Toggle sidebar">
+            <List size={18} weight="bold" style={{ color: "var(--color-text)" }} />
           </button>
-          <h1 className="font-bold text-lg" style={{ color: "var(--color-accent)" }}>DSCode</h1>
-          {model && <span className="text-sm hidden sm:inline" style={{ color: "var(--color-text-muted)" }}>{model}</span>}
+          <span style={{ width: "8px", height: "8px", borderRadius: "1.5px", transform: "rotate(45deg)", background: "var(--color-accent)", flexShrink: 0 }} />
+          <span className="text-sm font-medium truncate hidden sm:inline" style={{ color: "var(--color-text)", fontFamily: "var(--font-display)" }}>
+            {viewMode === "dashboard" && currentSessionId
+              ? `dashboard · ${sessions.find((s) => s.id === currentSessionId)?.title || "Session"}`
+              : "DSCode"}
+          </span>
         </div>
-        <div className="flex-1 flex justify-center hidden md:flex">
-          <ContextWindowBar data={contextWindow} />
+        <div className="flex-1 flex items-center justify-center gap-3">
+          {messages.length > 0 && (
+            <div className="flex items-center shrink-0" style={{ borderRadius: "8px", backgroundColor: "var(--color-surface-hover)", padding: "2px" }}>
+              <button onClick={() => handleViewModeChange("chat")} className="flex items-center gap-1 text-xs font-medium transition-colors" style={{ padding: "3px 10px", borderRadius: "6px", color: viewMode === "chat" ? "var(--color-text)" : "var(--color-text-muted)", backgroundColor: viewMode === "chat" ? "var(--color-surface)" : "transparent" }}>
+                <Chat size={12} weight="bold" /> Chat
+              </button>
+              <button onClick={() => handleViewModeChange("dashboard")} className="flex items-center gap-1 text-xs font-medium transition-colors" style={{ padding: "3px 10px", borderRadius: "6px", color: viewMode === "dashboard" ? "var(--color-text)" : "var(--color-text-muted)", backgroundColor: viewMode === "dashboard" ? "var(--color-surface)" : "transparent" }}>
+                <ChartBar size={12} weight="bold" /> Dashboard
+              </button>
+            </div>
+          )}
+          <div className="hidden md:flex"><ContextWindowBar data={contextWindow} /></div>
         </div>
-        <div className="flex items-center gap-3">
-          <ViewModeSwitcher viewMode={viewMode} onChange={handleViewModeChange} disabled={messages.length === 0} />
-          <button onClick={toggleTheme} className="p-2 rounded-btn hover:brightness-95 transition-[filter] duration-200" style={{ backgroundColor: "var(--color-surface-hover)" }} aria-label="Toggle theme">
-            {theme === "light" ? <Moon size={18} weight="bold" style={{ color: "var(--color-text)" }} /> : <Sun size={18} weight="bold" style={{ color: "var(--color-text)" }} />}
+        <div className="flex items-center gap-2">
+          <button onClick={toggleTheme} className="p-1.5 rounded-btn hover:brightness-95 transition-[filter] duration-200" style={{ backgroundColor: "var(--color-surface-hover)" }} aria-label="Toggle theme">
+            {theme === "light" ? <Moon size={16} weight="bold" style={{ color: "var(--color-text)" }} /> : <Sun size={16} weight="bold" style={{ color: "var(--color-text)" }} />}
           </button>
-          <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1" style={{ borderRadius: "8px", backgroundColor: connected ? "var(--color-success)" : "var(--color-error)", color: connected ? "var(--color-success-text)" : "var(--color-error-text)" }}>
+          <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-0.5" style={{ borderRadius: "8px", backgroundColor: connected ? "var(--color-success)" : "var(--color-error)", color: connected ? "var(--color-success-text)" : "var(--color-error-text)" }}>
             <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: connected ? "var(--color-success-text)" : "var(--color-error-text)" }} />
             {connected ? "Connected" : "Reconnecting..."}
           </span>
         </div>
       </header>
       <div className="flex flex-1 overflow-hidden">
-        <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)} activeTab={sidebarTab} onTabChange={setSidebarTab}
+        <Sidebar open={sidebarOpen} onClose={() => setSidebarOpen(false)}
+          activePanel={activePanel} onPanelChange={setActivePanel}
           sessions={sessions} currentSessionId={currentSessionId} mcpServers={mcpServers} config={config}
-          onSessionAction={handleSessionAction} onMcpAction={handleMcpAction} onMcpServerAction={handleMcpAction}
+          onSessionAction={handleSessionAction} onMcpAction={handleMcpAction}
           onConfigChange={handleConfigChange} isProcessing={processing} onNewSession={handleNewSession}
           onCacheAction={handleCacheAction} cacheSize={cacheSize} cacheClearing={cacheClearing} />
         <main className="flex-1 flex flex-col min-w-0">

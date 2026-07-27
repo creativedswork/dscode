@@ -56,54 +56,21 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
 
   if (messages.length === 0 && !permissionPrompt) {
     return (
-      <div className="flex-1 flex items-center justify-center p-8">
-      <div
-        data-collider="message-card"
-          className="text-center max-w-md p-8"
-          style={{
-            borderRadius: "12px",
-            border: "1px solid var(--color-border)",
-            backgroundColor: "var(--color-surface)",
-          }}
-        >
-          <h2 className="text-2xl font-bold mb-3" style={{ color: "var(--color-accent)" }}>
-            DSCode Web
-          </h2>
-          <p className="text-sm leading-relaxed mb-6" style={{ color: "var(--color-text-muted)" }}>
-            DeepSeek-native AI coding agent. Ask me to write code, run commands,
-            search files, or manage your project — all from the browser.
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-center" style={{ maxWidth: "520px", padding: "0 var(--space-xl)" }}>
+          <div style={{ width: "64px", height: "64px", borderRadius: "50%", backgroundColor: "var(--color-accent-bg)", display: "flex", alignItems: "center", justifyContent: "center", margin: "0 auto 28px" }}>
+            <span style={{ width: "22px", height: "22px", borderRadius: "3px", transform: "rotate(45deg)", background: "var(--color-accent)" }} />
+          </div>
+          <h1 style={{ fontSize: "28px", fontWeight: 300, lineHeight: 1.3, color: "var(--color-text)", fontFamily: "var(--font-display)", marginBottom: "12px" }}>
+            What would you like to{" "}<span style={{ fontWeight: 600 }}>create</span>{" "}today?
+          </h1>
+          <p style={{ fontSize: "14px", color: "var(--color-text-muted)", lineHeight: 1.6, marginBottom: "28px" }}>
+            dscode is a digital studio for content-driven creation —{" "}code, write, design, and build with an AI that thinks like a maker.
           </p>
-          <div className="space-y-2 text-xs" style={{ color: "var(--color-text-muted)" }}>
-            <p>
-              Type{" "}
-              <code
-                className="px-1.5 py-0.5 rounded"
-                style={{
-                  backgroundColor: "var(--color-surface-hover)",
-                  color: "var(--color-accent)",
-                  fontFamily: "Geist Mono, JetBrains Mono, monospace",
-                  fontSize: "0.75rem",
-                }}
-              >
-                /help
-              </code>{" "}
-              for available commands
-            </p>
-            <p>
-              Press{" "}
-              <code
-                className="px-1.5 py-0.5 rounded"
-                style={{
-                  backgroundColor: "var(--color-surface-hover)",
-                  color: "var(--color-accent)",
-                  fontFamily: "Geist Mono, JetBrains Mono, monospace",
-                  fontSize: "0.75rem",
-                }}
-              >
-                /
-              </code>{" "}
-              to see slash commands
-            </p>
+          <div className="flex flex-wrap justify-center gap-2">
+            {["Write code", "Refactor systems", "Design interfaces", "Analyze data", "Run commands"].map((cap) => (
+              <span key={cap} style={{ fontSize: "12px", padding: "6px 14px", borderRadius: "20px", border: "1px solid var(--color-border)", backgroundColor: "var(--color-surface)", color: "var(--color-text-muted)" }}>{cap}</span>
+            ))}
           </div>
         </div>
       </div>
@@ -406,18 +373,46 @@ function UserBubble({ message }: { message: UIMessage }) {
 
 function AssistantMessage({ message }: { message: UIMessage }) {
   const safeContent = typeof message.content === "string" ? message.content : "";
+  const hasThinking = !!message.thinking;
+  const hasTools = !!(message.tools && message.tools.length > 0);
+  const hasResponse = safeContent.length > 0 || message.isStreaming;
+  const isSimpleResponse = !hasThinking && !hasTools;
 
   return (
     <div className="assistant-msg">
       <div className="meta">dscode{message.createdAt ? ` · ${new Date(message.createdAt).toLocaleTimeString()}` : ""}</div>
 
-      {message.thinking && (
-        <ThinkingBlock
-          thinking={message.thinking}
-          isStreaming={message.isStreaming}
-          thinkingStartedAt={message.thinkingStartedAt}
-          thinkingUpdatedAt={message.thinkingUpdatedAt}
-        />
+      {hasThinking && (
+        <>
+          {!isSimpleResponse && (
+            <div className="phase-label">
+              <span className={`phase-dot ${message.isStreaming && message.thinking ? "active" : "done"}`} />
+              <span className="phase-text">Thinking</span>
+            </div>
+          )}
+          <ThinkingBlock
+            thinking={message.thinking!}
+            isStreaming={message.isStreaming}
+            thinkingStartedAt={message.thinkingStartedAt}
+            thinkingUpdatedAt={message.thinkingUpdatedAt}
+          />
+        </>
+      )}
+
+      {hasTools && (
+        <>
+          {!isSimpleResponse && (
+            <div className="phase-label">
+              <span className={`phase-dot ${message.isStreaming ? "active" : "done"}`} />
+              <span className="phase-text">Executing</span>
+            </div>
+          )}
+          <div className="space-y-2">
+            {message.tools!.map((tool, i) => (
+              <ToolCard key={`${tool.name}-${i}`} tool={tool} thinking={message.thinking} />
+            ))}
+          </div>
+        </>
       )}
 
       {message.images && message.images.length > 0 && (
@@ -440,11 +435,10 @@ function AssistantMessage({ message }: { message: UIMessage }) {
         </div>
       )}
 
-      {message.tools && message.tools.length > 0 && (
-        <div className="space-y-2">
-          {message.tools.map((tool, i) => (
-            <ToolCard key={`${tool.name}-${i}`} tool={tool} thinking={message.thinking} />
-          ))}
+      {(hasResponse || (hasTools && message.isStreaming)) && (
+        <div className="phase-label">
+          <span className={`phase-dot ${message.isStreaming && !message.thinking ? "active" : "done"}`} />
+          <span className="phase-text">Response</span>
         </div>
       )}
 

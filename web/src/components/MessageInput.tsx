@@ -730,7 +730,7 @@ export function MessageInput({
             processing
               ? "Processing... (Esc to stop)"
               : viewMode === "dashboard"
-              ? "Describe how to modify the dashboard..."
+              ? "Ask about this dashboard\u2026"
               : "Type a message... (@file, Tab for multi-file, Enter to send)"
           }
           disabled={processing}
@@ -769,7 +769,9 @@ export function MessageInput({
         DSCode Web &middot;{" "}
         {processing
           ? "Press Stop or Esc to abort"
-          : "Type @ for files, Tab to add more, Enter to send, Ctrl+V for images"}
+          : viewMode === "dashboard"
+            ? "Dashboard mode \u2014 ask follow-up questions about this session"
+            : "Type @ for files, Tab to add more, Enter to send, Ctrl+V for images"}
       </div>
     </div>
   );
