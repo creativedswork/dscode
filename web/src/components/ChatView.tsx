@@ -385,7 +385,7 @@ function AssistantMessage({ message }: { message: UIMessage }) {
       {hasThinking && (
         <>
           {!isSimpleResponse && (
-            <div className="phase-label">
+<div className="phase-label" data-collider="phase-label">
               <span className={`phase-dot ${message.isStreaming && message.thinking ? "active" : "done"}`} />
               <span className="phase-text">Thinking</span>
             </div>
@@ -402,7 +402,7 @@ function AssistantMessage({ message }: { message: UIMessage }) {
       {hasTools && (
         <>
           {!isSimpleResponse && (
-            <div className="phase-label">
+<div className="phase-label" data-collider="phase-label">
               <span className={`phase-dot ${message.isStreaming ? "active" : "done"}`} />
               <span className="phase-text">Executing</span>
             </div>
@@ -436,7 +436,7 @@ function AssistantMessage({ message }: { message: UIMessage }) {
       )}
 
       {(hasResponse || (hasTools && message.isStreaming)) && (
-        <div className="phase-label">
+<div className="phase-label" data-collider="phase-label">
           <span className={`phase-dot ${message.isStreaming && !message.thinking ? "active" : "done"}`} />
           <span className="phase-text">Response</span>
         </div>
