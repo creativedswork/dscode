@@ -58,6 +58,12 @@ export function Sidebar({
   const { width, panelRef, handleProps } = useResizablePanel({
     storageKey: "dscode-sidebar-width",
   });
+  const { width: detailWidth, panelRef: detailPanelRef, handleProps: detailHandleProps } = useResizablePanel({
+    storageKey: "dscode-detail-panel-width",
+    defaultWidth: 320,
+    minWidth: 240,
+    maxWidth: 480,
+  });
 
   const togglePanel = (panel: DetailPanel) => {
     onPanelChange(activePanel === panel ? null : panel);
@@ -106,7 +112,7 @@ export function Sidebar({
           {/* Create section */}
           <div>
             <div
-              className="text-[10px] font-semibold uppercase tracking-wider mb-1.5 px-1"
+              className="text-[11px] font-semibold uppercase tracking-widest mb-1.5 px-1"
               style={{ color: "var(--color-text-muted)" }}
             >
               Create
@@ -122,7 +128,7 @@ export function Sidebar({
               <Chats size={15} weight={activePanel === "sessions" ? "bold" : "regular"} />
               <span className="flex-1 text-left">Sessions</span>
               {sessions.length > 0 && (
-                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: "var(--color-surface-hover)", color: "var(--color-text-muted)" }}>
+                <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: "var(--color-surface-hover)", color: "var(--color-text-muted)" }}>
                   {sessions.length}
                 </span>
               )}
@@ -132,7 +138,7 @@ export function Sidebar({
           {/* Capabilities section */}
           <div>
             <div
-              className="text-[10px] font-semibold uppercase tracking-wider mb-1.5 px-1"
+              className="text-[11px] font-semibold uppercase tracking-widest mb-1.5 px-1"
               style={{ color: "var(--color-text-muted)" }}
             >
               Capabilities
@@ -148,7 +154,7 @@ export function Sidebar({
               <Plug size={15} weight={activePanel === "mcp" ? "bold" : "regular"} />
               <span className="flex-1 text-left">MCP</span>
               {mcpServers.length > 0 && (
-                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: "var(--color-surface-hover)", color: "var(--color-text-muted)" }}>
+                <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: "var(--color-surface-hover)", color: "var(--color-text-muted)" }}>
                   {mcpServers.length}
                 </span>
               )}
@@ -163,7 +169,7 @@ export function Sidebar({
             >
               <Star size={15} weight={activePanel === "skills" ? "bold" : "regular"} />
               <span className="flex-1 text-left">Skills</span>
-              <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: "var(--color-surface-hover)", color: "var(--color-text-muted)" }}>
+              <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: "var(--color-surface-hover)", color: "var(--color-text-muted)" }}>
                 {installedSkillCount}
               </span>
             </button>
@@ -191,21 +197,23 @@ export function Sidebar({
         <div className="resize-handle hidden md:block" {...handleProps} />
       </aside>
 
-      {/* Detail panel (280px) */}
+      {/* Detail panel (resizable, default 320px) */}
       {activePanel && (
         <aside
-          className="hidden md:flex flex-col shrink-0"
+          ref={detailPanelRef as React.RefObject<HTMLElement>}
+          className="hidden md:flex flex-col"
           style={{
-            width: "280px",
-            minWidth: "280px",
+            width: `${detailWidth}px`,
+            minWidth: `${detailWidth}px`,
             backgroundColor: "var(--color-surface)",
             borderRight: "1px solid var(--color-border)",
+            position: "relative",
           }}
         >
           <div className="flex items-center justify-between px-4 py-2.5 shrink-0" style={{ borderBottom: "1px solid var(--color-border)" }}>
             <span
-              className="text-[13px] font-medium"
-              style={{ fontFamily: "var(--font-display)", color: "var(--color-text)" }}
+              className="font-medium"
+              style={{ fontFamily: "var(--font-display)", fontSize: "15px", color: "var(--color-text)" }}
             >
               {activePanel === "sessions" ? "Sessions" : activePanel === "mcp" ? "MCP Servers" : activePanel === "skills" ? "Skills" : "Settings"}
             </span>
@@ -246,6 +254,7 @@ export function Sidebar({
               />
             )}
           </div>
+          <div className="resize-handle" {...detailHandleProps} />
         </aside>
       )}
     </>
@@ -304,7 +313,7 @@ function DetailSessionsPanel({
               >
                 <button onClick={() => { if (!isDisabled) onAction("load", s.id); }} className="flex-1 text-left min-w-0">
                   <div className="text-sm truncate" style={{ color: "var(--color-text)", fontFamily: "var(--font-display)" }}>{s.title}</div>
-                  <div className="text-[10px] mt-0.5" style={{ color: "var(--color-text-muted)" }}>{formatDuration(s.totalActiveMs)} &middot; {s.messageCount} msgs</div>
+                  <div className="text-[11px] mt-0.5" style={{ color: "var(--color-text-muted)" }}>{formatDuration(s.totalActiveMs)} &middot; {s.messageCount} msgs</div>
                 </button>
                 {isActive && isProcessing && <Spinner size={14} weight="bold" style={{ color: "var(--color-accent)", opacity: 0.6, animation: "spin 1s linear infinite" }} />}
                 <button onClick={() => { if (!isDisabled && !isProcessing) onAction("delete", s.id); }} className="opacity-0 group-hover:opacity-100 p-1 rounded transition-all" style={{ color: "var(--color-error-text)" }} title="Delete"><Trash size={14} weight="bold" /></button>
@@ -346,7 +355,7 @@ function DetailMcpPanel({
                 <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: s.status === "connected" ? "var(--color-success-text)" : s.status === "connecting" ? "#f59e0b" : s.status === "error" ? "var(--color-error-text)" : "var(--color-text-muted)" }} />
                 <div className="min-w-0 flex-1">
                   <div className="text-sm truncate" style={{ color: "var(--color-text)" }}>{s.name}</div>
-                  <div className="text-[10px]" style={{ color: "var(--color-text-muted)" }}>{s.toolCount} tools &middot; {s.status}</div>
+                  <div className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>{s.toolCount} tools &middot; {s.status}</div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                   <div
@@ -385,7 +394,7 @@ function DetailSkillsPanel() {
   return (
     <div className="space-y-3">
       <div>
-        <div className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--color-text-muted)" }}>Installed</div>
+        <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--color-text-muted)" }}>Installed</div>
         <div className="space-y-2">
           {[
             { name: "game-engine", desc: "Build web-based games with HTML5 Canvas & WebGL", tags: ["game", "canvas"] },
@@ -397,8 +406,8 @@ function DetailSkillsPanel() {
             <div key={skill.name} className="skill-card">
               <div className="skill-icon installed">S</div>
               <div className="flex-1 min-w-0">
-                <div className="text-xs font-semibold" style={{ color: "var(--color-text)" }}>{skill.name}</div>
-                <div className="text-[10px] mt-0.5" style={{ color: "var(--color-text-muted)" }}>{skill.desc}</div>
+                <div style={{ color: "var(--color-text)", fontSize: "13px", fontWeight: 600 }}>{skill.name}</div>
+                <div className="text-[11px] mt-0.5" style={{ color: "var(--color-text-muted)" }}>{skill.desc}</div>
                 <div>{skill.tags.map((t) => <span key={t} className="skill-tag">{t}</span>)}</div>
               </div>
             </div>
@@ -406,7 +415,7 @@ function DetailSkillsPanel() {
         </div>
       </div>
       <div>
-        <div className="text-[10px] font-semibold uppercase tracking-wider mb-2 mt-4" style={{ color: "var(--color-text-muted)" }}>Available</div>
+        <div className="text-[11px] font-semibold uppercase tracking-wider mb-2 mt-4" style={{ color: "var(--color-text-muted)" }}>Available</div>
         <div className="space-y-2">
           {[
             { name: "web-game-design", desc: "Design principles for browser games", tags: ["game", "design"] },
@@ -415,8 +424,8 @@ function DetailSkillsPanel() {
             <div key={skill.name} className="skill-card">
               <div className="skill-icon available">A</div>
               <div className="flex-1 min-w-0">
-                <div className="text-xs font-semibold" style={{ color: "var(--color-text)" }}>{skill.name}</div>
-                <div className="text-[10px] mt-0.5" style={{ color: "var(--color-text-muted)" }}>{skill.desc}</div>
+                <div style={{ color: "var(--color-text)", fontSize: "13px", fontWeight: 600 }}>{skill.name}</div>
+                <div className="text-[11px] mt-0.5" style={{ color: "var(--color-text-muted)" }}>{skill.desc}</div>
                 <div>{skill.tags.map((t) => <span key={t} className="skill-tag">{t}</span>)}</div>
               </div>
               <button className="skill-action install">Install</button>
@@ -426,9 +435,12 @@ function DetailSkillsPanel() {
       </div>
       <div className="market-banner">
         <PuzzlePiece size={18} style={{ color: "var(--color-text-muted)" }} />
-        <div className="text-xs font-medium" style={{ color: "var(--color-text)" }}>Skill Marketplace</div>
-        <div className="text-[10px]" style={{ color: "var(--color-text-muted)" }}>Discover and install community skills</div>
-        <button className="market-btn">Browse Marketplace</button>
+        <div style={{ color: "var(--color-text)", fontSize: "13px", fontWeight: 500 }}>Skill Marketplace</div>
+        <div className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>Discover and install community skills</div>
+        <div className="market-tooltip-wrapper" style={{ position: "relative" }}>
+          <button className="market-btn" disabled>Browse Marketplace</button>
+          <div className="market-tooltip">Coming soon — marketplace integration planned</div>
+        </div>
       </div>
     </div>
   );
@@ -472,11 +484,11 @@ function DetailSettingsPanel({
   return (
     <div className="space-y-4">
       <div>
-        <div className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--color-text-muted)" }}>Appearance</div>
+        <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--color-text-muted)" }}>Appearance</div>
         <div className="settings-card text-xs" style={{ color: "var(--color-text-muted)" }}>Theme: Use the topbar sun/moon toggle. System preference is auto-detected.</div>
       </div>
       <div>
-        <div className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--color-text-muted)" }}>Model</div>
+        <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--color-text-muted)" }}>Model</div>
         <div className="space-y-2">
           <div><label className="text-xs mb-1 block" style={{ color: "var(--color-text-muted)" }}>Provider</label><select value={providerInput} onChange={(e) => { setProviderInput(e.target.value); onChange("set_provider", e.target.value); }} style={sel}>{config.providers.map((p) => <option key={p} value={p}>{p}</option>)}</select></div>
           <div><label className="text-xs mb-1 block" style={{ color: "var(--color-text-muted)" }}>Model</label><select value={modelInput} onChange={(e) => { setModelInput(e.target.value); onChange("set_model", e.target.value); }} style={sel}>{config.models.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></div>
@@ -484,16 +496,16 @@ function DetailSettingsPanel({
         </div>
       </div>
       <div>
-        <div className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--color-text-muted)" }}>API Key</div>
+        <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--color-text-muted)" }}>API Key</div>
         <div className="flex gap-2"><input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="input text-xs flex-1" placeholder={config.apiKey || "sk-..."} /><button onClick={() => { if (apiKey) onChange("set_key", apiKey); setApiKey(""); }} className="btn-primary text-xs px-3">Set</button></div>
       </div>
       <div>
-        <div className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--color-text-muted)" }}>Project Path</div>
+        <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--color-text-muted)" }}>Project Path</div>
         <div className="flex gap-2"><input type="text" value={projectPath} onChange={(e) => setProjectPath(e.target.value)} className="input text-xs flex-1" placeholder={config.projectPath} /><button onClick={() => { if (projectPath) onChange("set_project_path", projectPath.trim()); }} className="btn-primary text-xs px-3">Set</button></div>
       </div>
       {config.vision != null || showVisionForm ? (
         <div className="pt-2 space-y-3" style={{ borderTop: "1px solid var(--color-border)" }}>
-          <div className="flex items-center justify-between"><span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: "var(--color-text-muted)" }}>Vision</span>{!showVisionForm && <button onClick={() => onChange("set_vision_delete", "")} className="text-xs px-2 py-1 rounded" style={{ color: "var(--color-error-text)" }}><Trash size={12} weight="bold" /></button>}</div>
+          <div className="flex items-center justify-between"><span className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: "var(--color-text-muted)" }}>Vision</span>{!showVisionForm && <button onClick={() => onChange("set_vision_delete", "")} className="text-xs px-2 py-1 rounded" style={{ color: "var(--color-error-text)" }}><Trash size={12} weight="bold" /></button>}</div>
           {(showVisionForm || config.vision) && (<><div><label className="text-xs mb-1 block" style={{ color: "var(--color-text-muted)" }}>Provider</label><select value={config.vision?.provider ?? ""} onChange={(e) => onChange("set_vision_provider", e.target.value)} style={sel}><option value="">Select...</option>{config.visionProviders.map((p) => <option key={p} value={p}>{p}</option>)}</select></div><div><label className="text-xs mb-1 block" style={{ color: "var(--color-text-muted)" }}>Model</label><select value={config.vision?.model ?? ""} onChange={(e) => onChange("set_vision_model", e.target.value)} style={sel}><option value="">Select...</option>{config.visionModels.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}</select></div><div><label className="text-xs mb-1 block" style={{ color: "var(--color-text-muted)" }}>API Key</label><div className="flex gap-2"><input type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} className="input text-xs flex-1" placeholder={config.vision?.key ? "••••••••" : "Enter vision API key"} /><button onClick={() => { if (apiKey) onChange("set_vision_key", apiKey); setApiKey(""); }} className="btn-primary text-xs px-3">Set</button></div></div></>)}
           {!config.vision && showVisionForm && <button onClick={() => setShowVisionForm(false)} className="text-xs" style={{ color: "var(--color-text-muted)" }}>Cancel</button>}
         </div>
@@ -501,12 +513,12 @@ function DetailSettingsPanel({
         <button onClick={() => setShowVisionForm(true)} className="w-full text-left px-3 py-1.5 text-sm rounded-lg transition-colors flex items-center gap-2" onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "var(--color-surface-hover)"; }} onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.backgroundColor = "transparent"; }}><Plus size={14} weight="bold" style={{ color: "var(--color-accent)" }} /><span style={{ color: "var(--color-accent)" }}>Add Vision Model</span></button>
       )}
       <div className="pt-2" style={{ borderTop: "1px solid var(--color-border)" }}>
-        <div className="text-[10px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--color-text-muted)" }}>Cache</div>
+        <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--color-text-muted)" }}>Cache</div>
         <div className="settings-card">
           <div className="flex items-center justify-between">
             <div>
               <div style={{ fontFamily: "'Geist Mono', monospace", fontSize: "16px", fontWeight: 700, color: "var(--color-text)" }}>{cacheSize == null || cacheClearing ? "..." : cacheSize.totalBytes === 0 ? "0 B" : cacheSize.totalBytes < 1024 ? `${cacheSize.totalBytes} B` : cacheSize.totalBytes < 1024 * 1024 ? `${(cacheSize.totalBytes / 1024).toFixed(1)} KB` : `${(cacheSize.totalBytes / (1024 * 1024)).toFixed(1)} MB`}</div>
-              <div className="text-[10px]" style={{ color: "var(--color-text-muted)" }}>{cacheSize == null || cacheClearing ? "calculating..." : cacheSize.totalBytes === 0 ? "no cached files" : `${cacheSize.fileCount} files · ${cacheSize.sessionCount} sessions`}</div>
+              <div className="text-[11px]" style={{ color: "var(--color-text-muted)" }}>{cacheSize == null || cacheClearing ? "calculating..." : cacheSize.totalBytes === 0 ? "no cached files" : `${cacheSize.fileCount} files · ${cacheSize.sessionCount} sessions`}</div>
             </div>
           </div>
         </div>
