@@ -14,5 +14,6 @@ export type {
   FileListItem,
   ConversationMessage,
   ToolCallEntry,
+  SkillInfo,
   ContextWindowData,
 } from "../../ui/shared/types.js";

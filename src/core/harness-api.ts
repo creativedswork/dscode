@@ -44,4 +44,5 @@ export interface HarnessAPI {
   promptAndSave(text: string, images?: ImageContent[]): Promise<void>;
   saveSessionNow(): void;
   abort(): void;
+  rebuildSystemPrompt(): void;
 }

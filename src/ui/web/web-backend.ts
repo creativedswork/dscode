@@ -10,7 +10,7 @@ import { getAllProviders, getAllModels, getVisionModels, getVisionProviders, res
 import type { UiBackend } from "../backend.js";
 import type { HarnessConfig, PermissionPromptResult } from "../../core/types.js";
 import type { ConfigWatch } from "../../core/config-watch.js";
-import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig, normalizeTransport, normalizeProtocolVersion, loadScopedSettings, projectSettingsPath } from "../../core/config.js";
+import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig, normalizeTransport, normalizeProtocolVersion, loadScopedSettings, projectSettingsPath, saveProjectSettings } from "../../core/config.js";
 import { executeSlashCommand, getSlashCommandAutocomplete, resolveCustomCommand } from "../commands.js";
 import { deriveFuzzyPattern, deriveFuzzyArgPattern, describeFuzzyArgPattern } from "../../permissions/fuzzy.js";
 import { prefetchLlmSuggestions, getLlmSuggestions } from "../../permissions/fuzzy-llm.js";
@@ -33,6 +33,7 @@ import type {
   McpServerInfo,
   McpAppInfo,
   ToolCallEntry,
+  SkillInfo,
 } from "./protocol.js";
 import type { ImageAttachment } from "./protocol.js";
 
@@ -425,6 +426,21 @@ export class WebUiBackend implements UiBackend {
     this.broadcast({ type: "mcp_state", servers });
   }
 
+  pushSkillState(client?: WebSocketClient): void {
+    const sm = this.harness.skillManager;
+    if (!sm) return;
+    const all = sm.listAll();
+    const skills = all.map(({ skill, active }) => ({
+      name: skill.name,
+      description: skill.description,
+      active,
+      source: skill.source,
+      toolsCount: "tools" in skill ? skill.tools?.length ?? 0 : 0,
+    }));
+    const event = { type: "skill_state" as const, skills };
+    this.wsServer.broadcast(event);
+  }
+
   openMcpBrowser(): void {
     // Signal the frontend to open the MCP panel
     this.pushMcpState();
@@ -455,6 +471,7 @@ export class WebUiBackend implements UiBackend {
     if (this.mcpManager) {
       this.pushMcpState();
     }
+    this.pushSkillState(client);
   }
 
   private handleDisconnect(): void {
@@ -754,6 +771,10 @@ export class WebUiBackend implements UiBackend {
       }
       case "mcp": {
         this.handleMcp(client, cmd);
+        break;
+      }
+      case "skill": {
+        await this.handleSkill(client, cmd);
         break;
       }
     }
@@ -1307,6 +1328,52 @@ export class WebUiBackend implements UiBackend {
       }
     }
   }
+
+  private async handleSkill(
+    client: WebSocketClient,
+    cmd: ClientCommand & { type: "skill"; action: "toggle"; name: string },
+  ): Promise<void> {
+    const sm = this.harness.skillManager;
+    if (!sm) {
+      client.send({ type: "error", text: "No skill manager available." });
+      return;
+    }
+    try {
+      const isActive = sm.isActive(cmd.name);
+      if (isActive) {
+        sm.deactivate(cmd.name);
+      } else {
+        sm.activate(cmd.name, this.harness.driverRegistry);
+      }
+      this.pushSkillState();
+
+      // Persist to project settings
+      try {
+        const settings = loadScopedSettings(projectSettingsPath(this.config.projectPath));
+        const current: string[] = (settings.disabledSkills as string[]) ?? [];
+        if (isActive) {
+          // Deactivating — add to disabledSkills
+          if (!current.includes(cmd.name)) {
+            saveProjectSettings(this.config.projectPath, { disabledSkills: [...current, cmd.name] });
+          }
+        } else {
+          // Activating — remove from disabledSkills
+          const updated = current.filter((n) => n !== cmd.name);
+          if (updated.length !== current.length) {
+            saveProjectSettings(this.config.projectPath, { disabledSkills: updated });
+          }
+        }
+      } catch {
+        // Non-fatal: toggle still works in-memory even if settings save fails
+      }
+
+      client.send({ type: "info", display: "toast", text: `Skill "${cmd.name}" ${isActive ? "deactivated" : "activated"}.` });
+    } catch (err: any) {
+      this.pushSkillState();
+      client.send({ type: "error", text: `Skill toggle failed: ${err.message}` });
+    }
+  }
+
 
   // ── Private: Helpers ──
 

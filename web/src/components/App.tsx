@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { UIMessage, ServerEvent, ConfigData, SessionInfo, McpServerInfo, ImageAttachment, FileListItem, ContextWindowData } from "../types";
+import type { UIMessage, ServerEvent, ConfigData, SessionInfo, McpServerInfo, SkillInfo, ImageAttachment, FileListItem, ContextWindowData } from "../types";
 import { conversationReducer } from "@dscode/shared/reducer";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { ChatView } from "./ChatView";
@@ -81,6 +81,7 @@ export function App() {
   const [artifactLoading, setArtifactLoading] = useState(false);
   const [cacheSize, setCacheSize] = useState<{ totalBytes: number; fileCount: number; sessionCount: number } | null>(null);
   const [cacheClearing, setCacheClearing] = useState(false);
+  const [skills, setSkills] = useState<SkillInfo[]>([]);
 
   const [transitionPhase, setTransitionPhase] = useState<"idle" | "animating">("idle");
   const { toasts, addToast, removeToast } = useToasts();
@@ -170,6 +171,7 @@ export function App() {
       case "sessions": { setSessions((p) => sessionsEqual(p, event.data) ? p : event.data); setCurrentSessionId(event.currentSessionId ?? null); if (event.currentSessionId) { const cs = event.data.find((s: SessionInfo) => s.id === event.currentSessionId); if (cs?.pendingPermission && !permissionPromptRef.current) { setPermissionPrompt({ toolName: cs.pendingPermission.toolName, preview: cs.pendingPermission.preview, fuzzyPattern: cs.pendingPermission.fuzzyPattern ?? null }); } } break; }
       case "session_time": { const csid = currentSessionIdRef.current; if (csid) { setSessions((prev) => prev.map((s) => s.id === csid ? { ...s, totalActiveMs: event.totalActiveMs } : s)); } break; }
         break;
+      case "skill_state": setSkills(event.skills); break;
       case "mcp_state": setMcpServers(event.servers); break;
       case "mcp_open_browser": setSidebarOpen(true); setActivePanel("mcp"); break;
       case "model": setModel(event.name); break;
@@ -242,6 +244,7 @@ export function App() {
     if (action === "clear") setCacheClearing(true);
     send({ type: "cache", action } as any);
   }, [send]);
+  const handleToggleSkill = useCallback((name: string) => send({ type: "skill", action: "toggle", name } as any), [send]);
   const handleSessionAction = useCallback((action: "list" | "save" | "load" | "delete", id?: string) => send({ type: "session", action, id }), [send]);
   const handleMcpAction = useCallback((action: "list" | "refresh" | "connect" | "disconnect", serverName?: string) => send({ type: "mcp", action, serverName } as any), [send]);
   const handleNewSession = useCallback(() => send({ type: "slash", command: "/reset" }), [send]);
@@ -348,7 +351,8 @@ export function App() {
           sessions={sessions} currentSessionId={currentSessionId} mcpServers={mcpServers} config={config}
           onSessionAction={handleSessionAction} onMcpAction={handleMcpAction}
           onConfigChange={handleConfigChange} isProcessing={processing} onNewSession={handleNewSession}
-          onCacheAction={handleCacheAction} cacheSize={cacheSize} cacheClearing={cacheClearing} />
+          onCacheAction={handleCacheAction} cacheSize={cacheSize} cacheClearing={cacheClearing}
+          skills={skills} onToggleSkill={handleToggleSkill} />
         <main className="flex-1 flex flex-col min-w-0">
           <div className="flex-1 flex flex-col min-h-0" style={{ position: "relative" }}>
           {transitionPhase === "animating" && (

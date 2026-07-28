@@ -220,6 +220,7 @@ const COMMANDS: SlashCommandDef[] = [
       // Clear agent state and UI
       ctx.harness.agent.reset();
       (ctx.ui as any).clearConversationView();
+      ctx.harness.rebuildSystemPrompt();
     },
   },
   {

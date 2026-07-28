@@ -94,6 +94,22 @@ export class Harness implements HarnessAPI {
   }
 
   async initialize(): Promise<void> {
+    const disabled = new Set(this.config.disabledSkills ?? []);
+    for (const name of this.skillManager.listAllSkillNames()) {
+      if (disabled.has(name)) continue;
+      try {
+        this.skillManager.activate(name, this.driverRegistry);
+      } catch {
+      }
+    }
+
+    for (const name of this.config.skills) {
+      if (disabled.has(name)) continue;
+      try {
+        this.skillManager.activate(name, this.driverRegistry);
+      } catch {
+      }
+    }
     for (const name of this.skillManager.listAllSkillNames()) {
       try {
         this.skillManager.activate(name, this.driverRegistry);
@@ -647,6 +663,7 @@ export class Harness implements HarnessAPI {
     if (oldModelId && modelId !== oldModelId) {
       this.agent.reset();
       this.events.emit({ type: "ui:conversation:clear" });
+      this.rebuildSystemPrompt();
     }
   }
 
@@ -671,6 +688,7 @@ export class Harness implements HarnessAPI {
 
     this.agent.reset();
     this.events.emit({ type: "ui:conversation:clear" });
+    this.rebuildSystemPrompt();
   }
   setThinking(level: string): void {
     this.configStore.setThinkingLevel(level as any);
@@ -787,6 +805,14 @@ export class Harness implements HarnessAPI {
       }
     }
   }
+
+  rebuildSystemPrompt(): void {
+    const memories = this.memoryManager.getRelevantMemories();
+    const skillSection = this.skillManager.getSystemPromptSection();
+    this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection, this.commandManager.getSystemPromptSection());
+    this.agent.state.systemPrompt = this.baseSystemPrompt.replace("__DEFERRED_HINT__", this.toolRegistry.buildDeferredToolsHint());
+  }
+
 
   private buildSystemPrompt(memories: string, skillSection: string, commandsSection: string): string {
     let prompt = `# Identity

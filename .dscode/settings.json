@@ -5,5 +5,8 @@
       "overwrite_file",
       "write_file"
     ]
-  }
+  },
+  "disabledSkills": [
+    "game-engine"
+  ]
 }

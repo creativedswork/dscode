@@ -16,6 +16,7 @@ export type {
   ContextWindowData,
   ServerEvent,
   FileListItem,
+  SkillInfo,
   UIMessage,
   PermissionPrompt,
   PermOption,

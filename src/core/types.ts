@@ -34,6 +34,7 @@ export interface HarnessConfig {
   memory: MemoryConfig;
   permissions: PermissionsConfig;
   skills: string[];
+  disabledSkills: string[];
   mcp: MCPServerConfig[];
   appHost: AppHostConfig;
   agentsMdContent?: string;

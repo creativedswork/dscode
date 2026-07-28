@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect } from "react";
 import { useResizablePanel } from "../hooks/useResizablePanel";
-import type { SessionInfo, McpServerInfo, ConfigData } from "../types";
+import type { SessionInfo, McpServerInfo, ConfigData, SkillInfo } from "../types";
 import {
   X, Trash, CaretDown, CaretRight, Plus, Spinner,
   Gear, Chats, Plug, Star, PuzzlePiece,
@@ -25,6 +25,8 @@ interface SidebarProps {
   cacheClearing?: boolean;
   activePanel: DetailPanel;
   onPanelChange: (panel: DetailPanel) => void;
+  skills: SkillInfo[];
+  onToggleSkill: (name: string) => void;
 }
 
 function formatDuration(ms: number): string {
@@ -54,6 +56,8 @@ export function Sidebar({
   cacheClearing,
   activePanel,
   onPanelChange,
+  skills,
+  onToggleSkill,
 }: SidebarProps) {
   const { width, panelRef, handleProps } = useResizablePanel({
     storageKey: "dscode-sidebar-width",
@@ -68,8 +72,8 @@ export function Sidebar({
   const togglePanel = (panel: DetailPanel) => {
     onPanelChange(activePanel === panel ? null : panel);
   };
+  const activeSkillCount = skills.filter(s => s.active).length;
 
-  const installedSkillCount = 5; // placeholder
 
   return (
     <>
@@ -170,7 +174,7 @@ export function Sidebar({
               <Star size={15} weight={activePanel === "skills" ? "bold" : "regular"} />
               <span className="flex-1 text-left">Skills</span>
               <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full" style={{ backgroundColor: "var(--color-surface-hover)", color: "var(--color-text-muted)" }}>
-                {installedSkillCount}
+                {activeSkillCount}
               </span>
             </button>
           </div>
@@ -242,7 +246,7 @@ export function Sidebar({
               />
             )}
             {activePanel === "skills" && (
-              <DetailSkillsPanel />
+              <DetailSkillsPanel skills={skills} onToggle={onToggleSkill} />
             )}
             {activePanel === "settings" && (
               <DetailSettingsPanel
@@ -390,49 +394,83 @@ function DetailMcpPanel({
 
 /* ── Detail Panel: Skills ── */
 
-function DetailSkillsPanel() {
+function DetailSkillsPanel({ skills, onToggle }: { skills: SkillInfo[]; onToggle: (name: string) => void }) {
+  if (!skills || skills.length === 0) {
+    return (
+      <div className="space-y-3">
+        <p className="text-xs text-center py-8" style={{ color: "var(--color-text-muted)" }}>Loading skills…</p>
+      </div>
+    );
+  }
+
+  const activeSkills = skills.filter(s => s.active);
+  const inactiveSkills = skills.filter(s => !s.active);
+
   return (
     <div className="space-y-3">
+      {/* Active */}
       <div>
-        <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--color-text-muted)" }}>Installed</div>
+        <div className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: "var(--color-text-muted)" }}>Active</div>
         <div className="space-y-2">
-          {[
-            { name: "game-engine", desc: "Build web-based games with HTML5 Canvas & WebGL", tags: ["game", "canvas"] },
-            { name: "brandkit", desc: "Premium brand-kit image generation", tags: ["design", "brand"] },
-            { name: "html-output", desc: "Rich self-contained HTML for specs", tags: ["html", "docs"] },
-            { name: "minimalist-ui", desc: "Clean editorial interfaces", tags: ["design", "ui"] },
-            { name: "design-taste-frontend", desc: "Anti-slop frontend skill", tags: ["design", "frontend"] },
-          ].map((skill) => (
+          {activeSkills.map((skill) => (
             <div key={skill.name} className="skill-card">
-              <div className="skill-icon installed">S</div>
+              <div className="skill-icon active">{skill.name.charAt(0).toUpperCase()}</div>
               <div className="flex-1 min-w-0">
                 <div style={{ color: "var(--color-text)", fontSize: "13px", fontWeight: 600 }}>{skill.name}</div>
-                <div className="text-[11px] mt-0.5" style={{ color: "var(--color-text-muted)" }}>{skill.desc}</div>
-                <div>{skill.tags.map((t) => <span key={t} className="skill-tag">{t}</span>)}</div>
+                <div className="text-[11px] mt-0.5" style={{ color: "var(--color-text-muted)" }}>{skill.description}</div>
+                <div className="flex gap-1.5 mt-1">
+                  <span className="skill-tag accent">{skill.toolsCount} tools</span>
+                  <span className="skill-tag">{skill.source}</span>
+                </div>
+              </div>
+              <div
+                role="button" tabIndex={0}
+                onClick={() => onToggle(skill.name)}
+                onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onToggle(skill.name); } }}
+                className="flex-shrink-0 toggle-on"
+                style={{ position: "relative", width: "36px", height: "22px", borderRadius: "11px", border: "none", cursor: "pointer", backgroundColor: "var(--color-accent)", transition: "background-color 250ms ease" }}
+              >
+                <span style={{ position: "absolute", top: "3px", left: "18px", width: "16px", height: "16px", borderRadius: "50%", backgroundColor: "#ffffff", boxShadow: "0 1px 2px rgba(0,0,0,0.12)", transition: "left 200ms cubic-bezier(0.34, 1.56, 0.64, 1)" }} />
               </div>
             </div>
           ))}
         </div>
       </div>
+
+      {/* Inactive */}
       <div>
-        <div className="text-[11px] font-semibold uppercase tracking-wider mb-2 mt-4" style={{ color: "var(--color-text-muted)" }}>Available</div>
+        <div className="text-[11px] font-semibold uppercase tracking-wider mb-2 mt-4" style={{ color: "var(--color-text-muted)" }}>Inactive</div>
         <div className="space-y-2">
-          {[
-            { name: "web-game-design", desc: "Design principles for browser games", tags: ["game", "design"] },
-            { name: "image-to-code", desc: "Convert design images to code", tags: ["code", "design"] },
-          ].map((skill) => (
-            <div key={skill.name} className="skill-card">
-              <div className="skill-icon available">A</div>
-              <div className="flex-1 min-w-0">
-                <div style={{ color: "var(--color-text)", fontSize: "13px", fontWeight: 600 }}>{skill.name}</div>
-                <div className="text-[11px] mt-0.5" style={{ color: "var(--color-text-muted)" }}>{skill.desc}</div>
-                <div>{skill.tags.map((t) => <span key={t} className="skill-tag">{t}</span>)}</div>
+          {inactiveSkills.length === 0 ? (
+            <p className="text-xs py-4" style={{ color: "var(--color-text-muted)" }}>All skills are active</p>
+          ) : (
+            inactiveSkills.map((skill) => (
+              <div key={skill.name} className="skill-card inactive-card">
+                <div className="skill-icon inactive">{skill.name.charAt(0).toUpperCase()}</div>
+                <div className="flex-1 min-w-0">
+                  <div style={{ color: "var(--color-text)", fontSize: "13px", fontWeight: 600 }}>{skill.name}</div>
+                  <div className="text-[11px] mt-0.5" style={{ color: "var(--color-text-muted)" }}>{skill.description}</div>
+                  <div className="flex gap-1.5 mt-1">
+                    <span className="skill-tag muted">{skill.toolsCount} tools</span>
+                    <span className="skill-tag">{skill.source}</span>
+                  </div>
+                </div>
+                <div
+                  role="button" tabIndex={0}
+                  onClick={() => onToggle(skill.name)}
+                  onKeyDown={(ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); onToggle(skill.name); } }}
+                  className="flex-shrink-0 toggle-off"
+                  style={{ position: "relative", width: "36px", height: "22px", borderRadius: "11px", border: "1px solid var(--color-border)", cursor: "pointer", backgroundColor: "var(--color-surface)", transition: "background-color 250ms ease, border-color 250ms ease" }}
+                >
+                  <span style={{ position: "absolute", top: "3px", left: "2px", width: "16px", height: "16px", borderRadius: "50%", backgroundColor: "var(--color-text-muted)", boxShadow: "0 1px 2px rgba(0,0,0,0.12)", transition: "left 200ms cubic-bezier(0.34, 1.56, 0.64, 1)" }} />
+                </div>
               </div>
-              <button className="skill-action install">Install</button>
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </div>
+
+      {/* Marketplace banner (unchanged) */}
       <div className="market-banner">
         <PuzzlePiece size={18} style={{ color: "var(--color-text-muted)" }} />
         <div style={{ color: "var(--color-text)", fontSize: "13px", fontWeight: 500 }}>Skill Marketplace</div>

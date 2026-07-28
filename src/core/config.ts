@@ -299,6 +299,9 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
   const userSkills = ((userSettings.skills as string[]) ?? []);
   const projectSkills = ((projectSettings.skills as string[]) ?? []);
   const skills = [...new Set([...userSkills, ...projectSkills])];
+  const userDisabledSkills = ((userSettings.disabledSkills as string[]) ?? []);
+  const projectDisabledSkills = ((projectSettings.disabledSkills as string[]) ?? []);
+  const disabledSkills = [...new Set([...userDisabledSkills, ...projectDisabledSkills])];
 
   const userSkillsDir = join(configDir, "skills");
   const projectSkillsDir = join(projectPath, ".dscode", "skills");
@@ -368,6 +371,7 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
       denyPatterns,
     },
     skills,
+    disabledSkills,
     mcp,
     appHost: { enabled: true },
     atFile: {

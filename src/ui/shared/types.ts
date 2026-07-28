@@ -31,6 +31,16 @@ export interface McpToolInfo {
   state: "loaded" | "discoverable";
 }
 
+// ── Skills ──
+
+export interface SkillInfo {
+  name: string;
+  description: string;
+  active: boolean;
+  source: "user" | "project";
+  toolsCount: number;
+}
+
 export interface McpServerInfo {
   name: string;
   description: string;
@@ -177,6 +187,8 @@ export type ClientCommand =
   | { type: "config"; action: "set_thinking"; value: string }
   | { type: "config"; action: "set_key"; value: string }
   | { type: "config"; action: "set_provider"; value: string }
+
+  | { type: "skill"; action: "toggle"; name: string }
   | { type: "config"; action: "set_vision_provider"; value: string }
   | { type: "config"; action: "set_vision_model"; value: string }
   | { type: "config"; action: "set_vision_key"; value: string }
@@ -210,6 +222,8 @@ export type ServerEvent =
   | { type: "config"; data: ConfigData }
   | { type: "sessions"; data: SessionInfo[]; currentSessionId?: string; isProcessing?: boolean }
   | { type: "mcp_state"; servers: McpServerInfo[] }
+
+  | { type: "skill_state"; skills: SkillInfo[] }
   | { type: "model"; name: string }
   | { type: "slash_result"; text: string }
   | { type: "mcp_app"; app: McpAppInfo }
