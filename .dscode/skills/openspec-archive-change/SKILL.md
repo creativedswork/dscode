@@ -65,6 +65,19 @@ Archive a completed change in the experimental workflow.
 
    If user chooses sync, use Task tool (subagent_type: "general-purpose", prompt: "Use Skill tool to invoke openspec-sync-specs for change '<name>'. Delta spec analysis: <include the analyzed delta spec summary>"). Proceed to archive regardless of choice.
 
+4.5 **If schema is `spec-driven-plus`, ensure consolidate is done**
+
+   If the schema is `spec-driven-plus`, check if `consolidate.md` exists in the change directory.
+   If not, generate it before proceeding:
+   ```bash
+   openspec instructions consolidate --change "<name>" --json
+   ```
+   Read the consolidate template, scan related archived changes, and create `consolidate.md`.
+
+   **Skip if:**
+   - Schema is not `spec-driven-plus`
+   - consolidate.md already exists
+
 5. **Perform the archive**
 
    Create the archive directory if it doesn't exist:

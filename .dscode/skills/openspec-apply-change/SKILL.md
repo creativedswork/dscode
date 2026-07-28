@@ -79,6 +79,16 @@ Implement tasks from an OpenSpec change.
    - Error or blocker encountered → report and wait for guidance
    - User interrupts
 
+   After all tasks are complete and the schema is `spec-driven-plus`, check for the consolidate artifact:
+   ```bash
+   openspec instructions consolidate --change "<name>" --json
+   ```
+   If the instructions indicate consolidate is pending (not already done), read the consolidate template, scan related archived changes, and generate `consolidate.md` before proceeding to completion.
+
+   **Skip if:**
+   - Schema is not `spec-driven-plus` (only this schema has consolidate)
+   - consolidate.md already exists and is complete
+
 7. **On completion or pause, show status**
 
    Display:
@@ -105,7 +115,7 @@ Working on task 4/7: <task description>
 
 ```
 ## Implementation Complete
-
+All tasks complete! Run `/opsx:archive` to archive this change.
 **Change:** <change-name>
 **Schema:** <schema-name>
 **Progress:** 7/7 tasks complete ✓
