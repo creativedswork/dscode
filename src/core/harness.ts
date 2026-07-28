@@ -110,19 +110,6 @@ export class Harness implements HarnessAPI {
       } catch {
       }
     }
-    for (const name of this.skillManager.listAllSkillNames()) {
-      try {
-        this.skillManager.activate(name, this.driverRegistry);
-      } catch {
-      }
-    }
-
-    for (const name of this.config.skills) {
-      try {
-        this.skillManager.activate(name, this.driverRegistry);
-      } catch {
-      }
-    }
 
     // Register discovery driver so search_tools is available
 
@@ -845,7 +832,7 @@ You are working in: ${this.config.projectPath}.
 - Do not explain your plan before acting. Act first, then briefly explain what you did.
 - When multiple tool calls have no data dependency on each other, batch them in a single response for parallel execution. When one call depends on the output of another, split them across sequential responses.
 - Prefer file tools over shell: use write_file, edit, read_file, and grep for file operations. Reserve bash for actual shell commands — tests, builds, git, package management — not for sed, cat, or awk on project files.
-- Activate Skills first: if a task falls within the domain of any Skill listed in "Available Skills", call the skill tool to load its full instructions before proceeding.
+- Activate Skills first: if a task falls within the domain of any Skill listed in "Active Skills", call the skill tool to load its full instructions before proceeding.
 - If a task relates to tools listed in the "Discoverable Tools" section below, use \`search_tools\` to discover and load the relevant tools first, before falling back to other methods.
 - Answer in the user's language. Be concise and direct.
 - When writing code, produce complete, working implementations. Do not leave placeholders or TODOs.
@@ -933,6 +920,13 @@ __DEFERRED_HINT__`;
           return {
             content: [{ type: "text", text: `Error: skill not found: ${params.name}` }],
             details: { error: "not_found" },
+          };
+        }
+
+        if (!skillManager.isActive(params.name)) {
+          return {
+            content: [{ type: "text", text: `Error: Skill '${params.name}' is currently deactivated. Use the Skills panel to activate it first.` }],
+            details: { error: "inactive" },
           };
         }
 

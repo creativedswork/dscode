@@ -122,12 +122,12 @@ export class SkillManager {
   getSystemPromptSection(): string {
     const sections: string[] = [];
 
-    // List all available skills (both active and inactive) so the model knows what's available
-    if (this.manifests.size > 0) {
+    // List only active skills — inactive skills are hidden from the model
+    const activeManifests = this.listManifests().filter((m) => this.activeSkills.has(m.name));
+    if (activeManifests.length > 0) {
       const lines = ["## Available Skills"];
-      for (const [, manifest] of this.manifests) {
-        const status = this.activeSkills.has(manifest.name) ? "active" : "inactive";
-        lines.push(`- ${manifest.name} (${status}): ${manifest.description}`);
+      for (const manifest of activeManifests) {
+        lines.push(`- ${manifest.name}: ${manifest.description}`);
       }
       sections.push(lines.join("\n"));
     }
