@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "entries": {
+    "agent:vision": {
+      "source": "agents/vision.md",
+      "path": "agents/vision.md",
+      "mediaType": "text/markdown",
+      "required": true
+    },
+    "mcp:sandbox": {
+      "source": "mcp/sandbox.html",
+      "path": "mcp/sandbox.html",
+      "mediaType": "text/html",
+      "required": true
+    },
+    "mdx:runtime": {
+      "source": "mdx/mdx-runtime.js",
+      "path": "mdx/mdx-runtime.js",
+      "mediaType": "text/javascript",
+      "required": true
+    }
+  }
+}

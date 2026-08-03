@@ -1,4 +1,4 @@
-import type { DisplayMessage, ImageRef, VisionMessage } from "./types.js";
+import type { AgentSessionMessage, DisplayMessage } from "./types.js";
 import { ImageCache } from "../utils/image-cache.js";
 import { formatToolResultForUI } from "../ui/shared/tool-result-formatter.js";
 
@@ -60,10 +60,10 @@ function extractToolResultText(blocks: any[], toolName: string): string {
 // ── Main ──
 
 /**
- * Rebuild display-ready messages from raw agent messages and vision message logs.
+ * Rebuild display-ready messages from raw Main Agent messages and child Agent logs.
  *
  * - agent.state.messages → the model's actual input (may contain <image_description>)
- * - visionMessages → links ImageRef to messages by messageIndex
+ * - agentMessages → links child Agent attachments to messages by messageIndex
  *
  * The display layer strips machine-generated descriptions and restores original images
  * from cache, so the user sees their own text + images instead of text descriptions.
@@ -75,12 +75,13 @@ function extractToolResultText(blocks: any[], toolName: string): string {
  */
 export function rebuildDisplayMessages(
   messages: any[],
-  visionMessages: VisionMessage[],
+  agentMessages: AgentSessionMessage[],
 ): DisplayMessage[] {
-  // Build a lookup: messageIndex → VisionMessage
-  const visionMap = new Map<number, VisionMessage>();
-  for (const vm of visionMessages) {
-    visionMap.set(vm.messageIndex, vm);
+  const agentMap = new Map<number, AgentSessionMessage>();
+  for (const message of agentMessages) {
+    if (message.messageIndex !== undefined) {
+      agentMap.set(message.messageIndex, message);
+    }
   }
 
   // Pass 1: sequential scan — extract tool calls, match results, collect output indices
@@ -161,7 +162,7 @@ export function rebuildDisplayMessages(
   for (let i = 0; i < messages.length; i++) {
     if (!output.has(i)) continue;
     const m = messages[i];
-    const vm = visionMap.get(i);
+    const agentMessage = agentMap.get(i);
 
     // Content
     let content = extractText(m.content);
@@ -169,12 +170,14 @@ export function rebuildDisplayMessages(
     // Images
     let images: DisplayMessage["images"] = undefined;
 
-    if (vm) {
-      // Vision-associated message: strip <image_description>, restore images from cache
-      content = content.replace(/<image_description>[\s\S]*?<\/image_description>/g, "").trim();
+    if (agentMessage) {
+      content = agentMessage.input.prompt;
 
       const restored: { data: string; mimeType: string }[] = [];
-      for (const ref of vm.images) {
+      const imageRefs = agentMessage.input.attachments
+        ?.filter((attachment) => attachment.type === "image")
+        .map((attachment) => attachment.data) ?? [];
+      for (const ref of imageRefs) {
         const cached = ImageCache.getSync(ref);
         if (cached) {
           restored.push({ data: cached.data, mimeType: cached.mimeType });

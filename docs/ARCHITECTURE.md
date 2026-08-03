@@ -13,9 +13,47 @@ dscode 是一个基于 `@mariozechner/pi-agent-core` + `@mariozechner/pi-ai` 构
 | 工具（Drivers） | 设备驱动接口 |
 | MCP Server | USB 外部设备 |
 | Skill | 用户态程序（SKILL.md = 文件描述符） |
-| Sub Agent | 进程 |
+| Harness | Kernel |
+| Main Agent | PID 1 / init |
+| AgentApplication | Application / Executable |
+| Main Agent / SubAgent | 进程 |
+| Session | TTY |
 
 dscode 不服务传统"代码感知"场景（那是 Cursor / Claude Code 的领地），而是面向**数字创作**——通过 MCP 连接 Blender、浏览器、文档、表格等创作工具，让模型探索和操控各类数字环境。
+
+## Agent 进程模型
+
+所有 Agent 都是进程。Main Agent 是当前应用的 PID 1，SubAgent 是由
+`AgentSupervisor` 启动和管理的子进程。Session 只承担用户会话与消息持久化，
+不作为 SubAgent 的执行载体。
+
+SubAgent 不创建独立 Session。父 Session 的 `agentMessages` 保存
+`role: "subagent"` 的轻量关联记录，完整 transcript、Application snapshot 和
+退出结果保存在独立的 `agent-processes` 目录。旧 Session 的 `visionMessages`
+仅在加载时兼容迁移。
+
+AgentApplication 使用 Markdown 配置：
+
+```text
+resources/agents/vision.md        # 当前唯一随发行版本提供的 Agent.md
+~/.dscode/agents/*.md             # 用户级
+<project>/.dscode/agents/*.md     # 项目级
+~/.claude/agents/*.md             # Claude Code 用户级兼容
+<project>/.claude/agents/*.md     # Claude Code 项目级兼容
+```
+
+运行中的进程保存到：
+
+```text
+~/.dscode/data/agent-processes/by-project/<project>/<agentId>.json
+```
+
+所有 AgentProcess 通过 `PiAgentRuntimeAdapter` 持有独立 Pi Agent。Application
+只能配置 Prompt、模型和 capability，不能选择内部 Runtime。
+
+进程通过 `spawn_agent`、`list_agents`、`wait_agent`、`terminate_agent`、
+`kill_agent` 和 `send_agent_message` 管理。后台写进程必须使用 Git Worktree，
+相对路径和 Checkpoint 通过 AsyncLocalStorage 中的 AgentContext 隔离。
 
 ## 分层架构
 
@@ -88,7 +126,8 @@ agent.prompt(input)
 
 ### 职责
 
-将对话状态（消息历史 + 元数据 + compactedPrefix）持久化到磁盘，支持恢复。
+将对话状态（Main Agent 消息历史 + SubAgent 关联记录 + 元数据 +
+compactedPrefix）持久化到磁盘，支持恢复。
 
 ### 数据模型
 
@@ -102,6 +141,8 @@ agent.prompt(input)
 - **ID**: ULID（时间可排序，26 字符）
 - **写入**: 原子写入（tmp → rename）
 - **标题**: 首条用户消息截 60 字符
+- **SubAgent**: Session v3 使用 `agentMessages` 关联 Agent Process，不将其
+  transcript 混入 Main Agent 的 `messages`
 
 ### SessionManager
 
@@ -192,7 +233,7 @@ Driver 是工具提供者，分为 builtin 和 MCP 两类：
 | `shell` | builtin | `bash` |
 | `search` | builtin | `grep`, `glob` |
 | `edit` | builtin | `edit`（基于 hash anchor 的文件编辑） |
-| `vision` | builtin | `ImagePipeline`（vision → OCR → fallback 图像处理链） |
+| `vision` | builtin | 图片 Attachment 缓存与 OCR fallback |
 | `discovery` | builtin | `search_tools`（延迟工具发现） |
 | `<mcp-server>` | mcp | MCP Server 提供的工具，命名空间: `mcp_<server>_<tool>` |
 
@@ -216,16 +257,15 @@ Skill 不直接提供工具，而是声明**允许使用的 Driver 工具白名�
 3. LLM 需要时调用 `search_tools` 工具按关键词或 `select:` 精确匹配
 4. 匹配到的工具被标记为 `discovered`，下一轮请求中携带完整 schema
 
-### Vision Driver（图像处理管道）
+### Vision Agent 与 OCR fallback
 
-Vision 驱动（`src/drivers/vision/`）提供统一的 `ImagePipeline`，负责图像预处理链：vision 模型描述 → OCR 降级 → 文本占位符兜底。
+非原生多模态路径由 `AgentSupervisor` 启动 `vision.md` 对应的普通 Pi Agent。
+任务描述作为 prompt，图片作为通用 Attachment；Vision Agent 不加载工具或 Skills。
 
-1. 压缩并缓存所有图像（`ImageCache`）
-2. 若配置了 vision 模型，调用获取描述
-3. vision 失败或返回空结果 → 降级到 OCR（tesseract.js）
-4. 两者都失败 → 返回 `[Image(s) could not be processed]` 占位符
-
-`ImagePipeline` 支持 `AbortSignal`，可在图像预处理阶段取消。`Harness.promptWithImages()` 将用户上传的图像通过 `ImagePipeline.process()` 处理；MCP 工具结果中的图像同样通过此管道处理。
+图片先通过 `ImageCache` 压缩并转换为 ImageRef。Pi Agent 模型不可用、调用失败或
+返回空结果时，Supervisor 根据 Application fallback 配置在同一 agentId 下调用
+`OcrFallbackHandler`。取消信号贯穿模型与 OCR。原生支持图片且未配置独立 Vision
+模型时仍直接交给 Main Agent；旧 `ImagePipeline` 仅保留为 agents disabled 回滚路径。
 
 ### Checkpoint 系统
 
@@ -237,7 +277,8 @@ Vision 驱动（`src/drivers/vision/`）提供统一的 `ImagePipeline`，负责
 - **isDirty / listDirty** — 查询未提交的 checkpoint
 - **baseCommit** — 初始化时捕获 git HEAD 作为变更基线
 
-`Harness.initialize()` 初始化 CheckpointManager，使用当前 session ID 隔离不同会话的 checkpoint。
+`Harness.initialize()` 初始化 Main Agent CheckpointManager。SubAgent 通过
+AgentContext 的 agentId、parentSessionId 和 cwd 使用独立 Checkpoint namespace。
 
 ---
 
@@ -307,10 +348,10 @@ Web 模式下的前端是独立 Vite + React 项目（`web/`），通过 WebSock
 `Harness` 类（`src/core/harness.ts`）实现 `HarnessAPI` 接口（`src/core/harness-api.ts`），是进程级 host，负责：
 
 1. 加载配置（config.json + settings.json + env），创建 `ConfigWatch` 统一可观测配置层
-2. 实例化各模块：SessionManager, ContextManager, MemoryManager, DriverRegistry, ToolRegistry, SkillManager, PermissionManager, MCPManager, ImagePipeline
+2. 实例化 AgentApplicationRegistry、AgentSupervisor、SessionManager、ContextManager、MemoryManager、DriverRegistry、ToolRegistry、PermissionManager 和 ImagePipeline
 3. 初始化 CheckpointManager（编辑安全网）
 4. 构建 system prompt = base + skills instructions + memories + AGENTS.md + deferred tools hint
-5. 创建 Agent（注入 hooks: transformContext, beforeToolCall, afterToolCall）
+5. 将 Main Agent 注册为 PID 1，并注册普通 Agent 与 Pipeline Runtime Factory
 6. 绑定事件（UI 渲染、token 校准、session 自动保存）
 7. 启动 UI（TUI REPL 或 Web server）
 8. 优雅关闭（保存 session, 提取 memory, 关闭 checkpoint 系统）
@@ -339,7 +380,7 @@ base prompt
 
 `HarnessAPI`（`src/core/harness-api.ts`）定义 Harness 的公共 API 表面，TUI 和 Web 后端通过该接口消费 Agent 能力，不依赖 Harness 的内部实现细节：
 
-- **readonly 访问器**: agent, sessionManager, memoryManager, driverRegistry, toolRegistry, skillManager, permissionManager, contextManager, mcpManager, config, configStore, imagePipeline
+- **readonly 访问器**: agent, agentSupervisor, applicationRegistry, sessionManager, memoryManager, driverRegistry, toolRegistry, skillManager, permissionManager, contextManager, mcpManager, config, configStore, imagePipeline
 - **mutation 方法**: `setModel()`, `setThinking()`, `setProvider()`, `updateProjectPath()`, `abort()`
 - **执行方法**: `promptWithImages()`, `promptAndSave()`
 
@@ -349,6 +390,11 @@ base prompt
 
 ```
 src/
+├── agents/         # Agent Application、进程、Runtime 与进程工具
+│   ├── application/      # YAML loader、compiler、registry、memory
+│   ├── process/          # AgentSupervisor、Context、Fallback、Store、Worktree
+│   ├── runtimes/         # PiAgentRuntimeAdapter、OCR fallback
+│   └── tools/            # spawn/list/wait/signal/IPC
 ├── core/           # 入口 + Harness 组装 + 配置 + 共享类型
 │   ├── main.ts
 │   ├── harness.ts
@@ -394,6 +440,9 @@ src/
 
 web/                # Web 前端（独立 Vite + React 项目）
 ```
+
+产品发行资源位于顶层 `resources/`；构建后统一进入
+`release/package/dist/resources/`，并由带 SHA-256 的 manifest 管理。
 
 ### 运行时数据
 

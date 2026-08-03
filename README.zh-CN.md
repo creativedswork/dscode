@@ -90,7 +90,7 @@ dscode 不是一个带有暗色主题的聊天机器人。它是一个**数字�
 </td>
 <td width="33%" valign="top">
   <strong>🛡 Agent Harness</strong><br />
-  <sub>权限控制、上下文压缩（1M token 窗口）、会话持久化、跨会话记忆、指数退避重试。</sub>
+  <sub>OS 风格 Agent 进程、Agent.md 应用配置、前后台执行、进程控制、Worktree 隔离、权限和持久化。</sub>
 </td>
 </tr>
 <tr>
@@ -100,7 +100,7 @@ dscode 不是一个带有暗色主题的聊天机器人。它是一个**数字�
 </td>
 <td width="33%" valign="top">
   <strong>👁 Vision Pipeline</strong><br />
-  <sub>自动路由到 vision 模型。tesseract OCR 回退（中英文）。支持拖拽、粘贴、@文件 引入图片。</sub>
+  <sub>由 vision.md 配置的 Pipeline SubAgent，支持原生多模态路由、OCR 回退、进度和取消。</sub>
 </td>
 <td width="33%" valign="top">
   <strong>🔧 Open Design</strong><br />
@@ -288,6 +288,8 @@ dscode 使用两层 `settings.json`，项目级配置覆盖用户级配置：
 | `DSCODE_CONFIG_HOME` | 自定义配置目录（默认：`~/.dscode`） |
 | `DSCODE_DATA_HOME` | 自定义数据目录 |
 | `DSCODE_PROJECT_PATH` | 项目目录 |
+| `DSCODE_AGENTS_ENABLED` | Agent 进程工具开关，设为 `false` 回退单 Agent |
+| `DSCODE_MANAGED_AGENTS_DIR` | 最高优先级的受管 Agent Application 目录 |
 | `DSCODE_RETRY_MAX_RETRIES` | 重试最大次数 |
 | `DSCODE_RETRY_BASE_DELAY_MS` | 重试基础延迟 |
 | `DSCODE_RETRY_MAX_DELAY_MS` | 重试最大延迟 |
@@ -350,7 +352,8 @@ dscode 目前是单人 SDD 开发项目，暂不接受直接的代码贡献（Pu
 | 文档 | 内容 |
 |------|------|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 完整架构：Agent as OS、6 层设计、Driver/Skill 模型、源码树 |
-| [ROADMAP.md](docs/ROADMAP.md) | 路线图：Sub-Agent 系统、System Prompt 模块化、Diff-based 编辑 |
+| [AGENT_APPLICATIONS.md](docs/AGENT_APPLICATIONS.md) | Agent.md 目录、字段、Claude Code 兼容和进程工具 |
+| [ROADMAP.md](docs/ROADMAP.md) | Agent 进程扩展、评测和编辑能力路线图 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南：理念对齐、OpenSpec SDD 流程、编码规范 |
 | [STYLE.md](docs/STYLE.md) | TypeScript 编码风格：命名、导入、模块结构、错误处理 |
 

@@ -91,7 +91,7 @@ dscode is not a chatbot with a dark theme. It's a **digital studio** — a creat
 </td>
 <td width="33%" valign="top">
   <strong>🛡 Agent Harness</strong><br />
-  <sub>Permission control, context compression (1M token window), session persistence, cross-session memory, retry with exponential backoff.</sub>
+  <sub>OS-style Agent processes with Agent.md Applications, foreground/background execution, process control, Worktree isolation, permissions, and persistence.</sub>
 </td>
 </tr>
 <tr>
@@ -101,7 +101,7 @@ dscode is not a chatbot with a dark theme. It's a **digital studio** — a creat
 </td>
 <td width="33%" valign="top">
   <strong>👁 Vision Pipeline</strong><br />
-  <sub>Auto-routing to vision-capable models. tesseract OCR fallback (ENG + CHI). Drag, paste, or @-file images.</sub>
+  <sub>Bundled vision.md Pipeline SubAgent with native multimodal routing, tesseract OCR fallback (ENG + CHI), progress, and cancellation.</sub>
 </td>
 <td width="33%" valign="top">
   <strong>🔧 Open Design</strong><br />
@@ -234,6 +234,13 @@ dscode uses two levels of `settings.json`, merged with project settings overridi
   // --- Skills ---
   "skills": ["brandkit", "minimalist-ui"],
 
+  // --- Agent Applications ---
+  "agents": { "enabled": true },
+  "agentModelAliases": {
+    "haiku": "deepseek/deepseek-v4-flash",
+    "sonnet": "deepseek/deepseek-v4-pro"
+  },
+
   // --- Retry ---
   // Controls how dscode retries failed API calls (rate limits, timeouts, server errors).
   // Uses exponential backoff: starts at baseDelayMs, doubles each retry, capped at maxDelayMs.
@@ -287,6 +294,8 @@ All settings can also be set via environment variables for CI / containers:
 | `DSCODE_CONFIG_HOME` | Custom config directory (default: `~/.dscode`) |
 | `DSCODE_DATA_HOME` | Custom data directory |
 | `DSCODE_PROJECT_PATH` | Project directory |
+| `DSCODE_AGENTS_ENABLED` | Enable Agent process tools (`false` restores single-Agent behavior) |
+| `DSCODE_MANAGED_AGENTS_DIR` | Highest-priority managed Agent Application directory |
 | `DSCODE_RETRY_MAX_RETRIES` | Retry max retries |
 | `DSCODE_RETRY_BASE_DELAY_MS` | Retry base delay |
 | `DSCODE_RETRY_MAX_DELAY_MS` | Retry max delay |
@@ -349,7 +358,8 @@ We welcome bug reports, feature ideas, and technical discussions via **[GitHub I
 | Document | What's inside |
 |----------|---------------|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Full architecture: Agent as OS, 6-layer design, Driver/Skill model, source tree |
-| [ROADMAP.md](docs/ROADMAP.md) | What's next: Sub-Agent system, System Prompt modularization, Diff-based editing |
+| [AGENT_APPLICATIONS.md](docs/AGENT_APPLICATIONS.md) | Agent.md directories, fields, Claude Code compatibility, process tools |
+| [ROADMAP.md](docs/ROADMAP.md) | Planned Agent process extensions, evaluations, and editing improvements |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute: philosophy alignment, OpenSpec SDD workflow, coding conventions |
 | [STYLE.md](docs/STYLE.md) | TypeScript coding style: naming, imports, module structure, error handling |
 

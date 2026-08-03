@@ -19,7 +19,7 @@ import { MCPClient } from "./client.js";
 import type { DriverRegistry } from "../drivers/registry.js";
 import type { Driver } from "../core/types.js";
 import { ImageCache } from "../utils/image-cache.js";
-import type { ImagePipeline } from "../drivers/vision/pipeline.js";
+import type { ProcessOptions, ProcessResult } from "../drivers/vision/types.js";
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 
 function extractToolResultPreview(result: unknown): string {
@@ -244,7 +244,11 @@ export class MCPManager {
   private uiToolMap = new Map<string, ToolUiInfo>();
   private eventListeners = new Set<(event: MCPClientEvent) => void>();
   private driverRegistry?: DriverRegistry;
-  public imagePipeline?: ImagePipeline;
+  public processImages?: (
+    images: ImageContent[],
+    text: string,
+    options?: ProcessOptions,
+  ) => Promise<ProcessResult>;
 
   constructor(private configs: MCPServerConfig[]) {
     for (const cfg of configs) {
@@ -617,7 +621,7 @@ export class MCPManager {
           const hasImages = Array.isArray(result?.content) &&
             result.content.some((c: any) => c.type === "image" && c.data);
 
-          if (hasImages && this.imagePipeline) {
+          if (hasImages && this.processImages) {
             const rawContent = result.content as MCPToolContent[];
             const textBlocks = rawContent
               .filter((c) => c.type === "text" && c.text)
@@ -626,8 +630,8 @@ export class MCPManager {
               .filter((c) => c.type === "image" && c.data)
               .map((c) => ({ type: "image" as const, data: (c as any).data, mimeType: (c as any).mimeType ?? "image/png" } as ImageContent));
 
-            // Unified image processing via ImagePipeline
-            const pipeResult = await this.imagePipeline.process(imageBlocks, "", {
+            const pipeResult = await this.processImages(imageBlocks, "", {
+              signal,
               onProgress: (info: { phase: string; cachedRefs: any[] }) => {
                 if (onUpdate && info.cachedRefs.length > 0) {
                   onUpdate({

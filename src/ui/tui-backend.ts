@@ -30,6 +30,12 @@ export class TuiBackend implements UiBackend {
     deps.events.on("ui:focus:editor", () => { this.tui.focusEditor(); });
     deps.events.on("processing:start", () => { this.tui.setProcessing(true); });
     deps.events.on("processing:stop", () => { this.tui.setProcessing(false); });
+    deps.events.on("agent:exit", (e) => {
+      const agentProcess = deps.agentSupervisor.get(e.result.agentId);
+      if (agentProcess?.attachment === "background") {
+        this.tui.addInfo(`Agent ${e.result.agentId} ${e.result.state}`);
+      }
+    });
   }
 
   // ── Lifecycle ──

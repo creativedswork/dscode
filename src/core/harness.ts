@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve, join } from "node:path";
-import { Agent } from "@earendil-works/pi-agent-core";
+import { Agent as PiAgentRuntime } from "@earendil-works/pi-agent-core";
 import type { AfterToolCallContext, AfterToolCallResult, AgentMessage, AgentTool, BeforeToolCallContext } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 import type { Api, AssistantMessage, Context, ImageContent, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
@@ -24,19 +24,54 @@ import { inferLayout } from "../ui/mdx/inference.js";
 import { TuiBackend } from "../ui/tui-backend.js";
 import type { UiBackend } from "../ui/backend.js";
 import type { HarnessAPI } from "./harness-api.js";
-import { resolveModel, getThinkingLevel, getAllModels } from "../models/index.js";
+import { resolveModel, getThinkingLevel, getAllModels, getEnvApiKey } from "../models/index.js";
 import { ImagePipeline } from "../drivers/vision/pipeline.js";
-import { resolveVisionModel, describeImagesViaVisionModel } from "../drivers/vision/client.js";
+import type { ProcessOptions, ProcessResult, ProgressInfo } from "../drivers/vision/types.js";
 import { ImageCache } from "../utils/image-cache.js";
-import type { ImageRef, VisionMessage } from "./types.js";
+import type { AgentSessionMessage, ImageRef, VisionMessage } from "./types.js";
 import { initCheckpointSystem, shutdownCheckpointSystem } from "../checkpoint/index.js";
 import { ConfigWatch } from "./config-watch.js";
 import { recordInvalidation, consumePendingNotices } from "../context/anchor-invalidation.js";
 import { HarnessEventBus } from "./events.js";
 import type { Logger } from "../utils/logger.js";
+import { AgentApplicationRegistry } from "../agents/application/registry.js";
+import type { AgentApplicationSnapshot } from "../agents/application/types.js";
+import { loadAgentMemory } from "../agents/application/memory.js";
+import { AgentProcessRuntimeFactory } from "../agents/runtimes/factory.js";
+import { PiAgentRuntimeAdapter } from "../agents/runtimes/pi-agent-runtime.js";
+import {
+  AgentRuntimeFailure,
+  FailedAgentRuntime,
+  type AgentProcessRuntime,
+} from "../agents/runtimes/runtime.js";
+import {
+  OcrFallbackHandler,
+  type VisionAgentOutput,
+} from "../agents/runtimes/ocr-fallback.js";
+import { resolveVisionApplicationConfig } from "../agents/runtimes/vision-model.js";
+import { AgentProcessStore } from "../agents/process/store.js";
+import { AgentSupervisor } from "../agents/process/supervisor.js";
+import { AgentFallbackRegistry } from "../agents/process/fallback.js";
+import { createMainAgentContext } from "../agents/process/context.js";
+import type { AgentContext as ProcessAgentContext } from "../agents/process/types.js";
+import { checkAgentCapability } from "../agents/process/capability.js";
+import {
+  AGENT_PROCESS_TOOL_NAMES,
+  makeAgentProcessTools,
+} from "../agents/tools/process-tools.js";
+
+const MAIN_PROCESS_APPLICATION: AgentApplicationSnapshot = Object.freeze({
+  name: "main",
+  description: "Primary dscode process",
+  systemPrompt: "",
+  permissionMode: "default",
+  source: { kind: "internal", path: "src/core/harness.ts" } as const,
+  digest: "0".repeat(64),
+  registryGeneration: 0,
+});
 
 export class Harness implements HarnessAPI {
-  agent!: Agent;
+  private piAgentRuntime!: PiAgentRuntime;
   sessionManager: SessionManager;
   contextManager: ContextManager;
   memoryManager: MemoryManager;
@@ -52,6 +87,11 @@ export class Harness implements HarnessAPI {
   readonly logger: Logger;
   readonly events: HarnessEventBus;
   imagePipeline: ImagePipeline;
+  applicationRegistry: AgentApplicationRegistry;
+  agentSupervisor!: AgentSupervisor;
+  private runtimeFactory!: AgentProcessRuntimeFactory;
+  private processStore: AgentProcessStore;
+  private mainAgentId = "";
   private ui!: UiBackend;
   private baseSystemPrompt = "";
   private debug = false;
@@ -60,9 +100,14 @@ export class Harness implements HarnessAPI {
   private mcpEventUnsubscribe?: () => void;
   private shuttingDown = false;
   private turnIndex = 0;
-  private visionAbortController: AbortController | null = null;
+  private activeVisionAgentId: string | null = null;
+  private activeVisionAbortController: AbortController | null = null;
   private autoSaveTimer: NodeJS.Timeout | undefined;
   private lastSavedMessageCount: number = 0;
+
+  get agent(): PiAgentRuntime {
+    return this.piAgentRuntime;
+  }
 
   constructor(config: HarnessConfig, logger: Logger, debug?: boolean) {
     this.logger = logger;
@@ -70,6 +115,12 @@ export class Harness implements HarnessAPI {
     this.debug = debug ?? false;
     this.config = this.configStore.get() as HarnessConfig;
     this.events = new HarnessEventBus(logger);
+    this.applicationRegistry = new AgentApplicationRegistry({
+      projectPath: config.projectPath,
+      configDir: config.configDir,
+      managedDir: config.managedAgentsDir,
+    });
+    this.processStore = new AgentProcessStore(config.dataDir, config.projectPath);
     this.sessionManager = new SessionManager(config.dataDir, config.projectPath, logger);
     this.contextManager = new ContextManager(config.context);
     this.sessionManager.bindEvents(this.events);
@@ -94,6 +145,11 @@ export class Harness implements HarnessAPI {
   }
 
   async initialize(): Promise<void> {
+    await this.applicationRegistry.load();
+    for (const diagnostic of this.applicationRegistry.getDiagnostics()) {
+      this.logger.warn("AgentApplication", `${diagnostic.source.path}: ${diagnostic.message}`);
+    }
+
     const disabled = new Set(this.config.disabledSkills ?? []);
     for (const name of this.skillManager.listAllSkillNames()) {
       if (disabled.has(name)) continue;
@@ -134,7 +190,7 @@ export class Harness implements HarnessAPI {
     const maxTokens = this.config.maxTokens;
     const apiKey = this.config.apiKey;
     const self = this;
-    this.agent = new Agent({
+    this.piAgentRuntime = new PiAgentRuntime({
       initialState: {
         systemPrompt,
         model,
@@ -151,6 +207,22 @@ export class Harness implements HarnessAPI {
       }),
       transformContext: async (msgs: AgentMessage[], signal?: AbortSignal) => {
         try {
+          const activeSessionId = self.sessionManager.getCurrentSessionId();
+          const notifications = activeSessionId
+            ? self.agentSupervisor?.consumeNotifications(activeSessionId) ?? []
+            : [];
+          if (notifications.length > 0) {
+            msgs.unshift({
+              role: "user",
+              content: [
+                "<agent_notifications>",
+                ...notifications.map((notice) =>
+                  `${notice.agentId} ${notice.state}: ${(notice.output ?? notice.error ?? "").slice(0, 4000)}`,
+                ),
+                "</agent_notifications>",
+              ].join("\n"),
+            } as AgentMessage);
+          }
           // S2b: Inject anchor invalidation notices into conversation (NOT system prompt)
           const invalidationNotice = consumePendingNotices();
           if (invalidationNotice) {
@@ -204,7 +276,62 @@ export class Harness implements HarnessAPI {
       },    });
 
     this.bindEvents();
-    this.sessionManager.createSession(this.config.provider, this.config.modelId);
+    const session = this.sessionManager.createSession(this.config.provider, this.config.modelId);
+    this.runtimeFactory = new AgentProcessRuntimeFactory(
+      (application, context, agentId) => this.createSubagentRuntime(application, context, agentId),
+    );
+    const fallbackRegistry = new AgentFallbackRegistry();
+    fallbackRegistry.register(new OcrFallbackHandler(this.events));
+    this.agentSupervisor = new AgentSupervisor(
+      this.applicationRegistry,
+      (application, context, agentId) => this.runtimeFactory.create(application, context, agentId),
+      this.processStore,
+      this.events,
+      this.logger,
+      () => [
+        ...this.driverRegistry.getAllTools().map((tool) => tool.name),
+        "skill",
+        ...AGENT_PROCESS_TOOL_NAMES,
+      ],
+      1,
+      fallbackRegistry,
+    );
+    this.events.on("agent:exit", (event) => {
+      this.recordSubagentExit(event.result.agentId);
+    });
+    const mainContext = createMainAgentContext(
+      this.config.projectPath,
+      session.id,
+      [
+        ...this.driverRegistry.getAllTools().map((tool) => tool.name),
+        "skill",
+        ...AGENT_PROCESS_TOOL_NAMES,
+      ],
+      this.config.permissions.denyPatterns,
+    );
+    const mainProcess = this.agentSupervisor.registerMain(
+      MAIN_PROCESS_APPLICATION,
+      new PiAgentRuntimeAdapter(this.agent),
+      mainContext,
+    );
+    this.mainAgentId = mainProcess.agentId;
+    const updateMainSession = (sessionId: string) => {
+      void this.agentSupervisor.updateParentSession(
+        this.mainAgentId,
+        sessionId,
+        this.config.projectPath,
+      );
+    };
+    this.events.on("session:loaded", (event) => updateMainSession(event.id));
+    this.events.on("session:created", (event) => updateMainSession(event.id));
+    if (this.config.agents.enabled) {
+      this.driverRegistry.register({
+        name: "agent-process",
+        description: "Agent process creation, inspection, waiting, signalling, and IPC",
+        tools: makeAgentProcessTools(this.agentSupervisor, this.mainAgentId),
+        source: "builtin",
+      });
+    }
     await this.dumpDebugPrompt();
   }
 
@@ -330,6 +457,82 @@ export class Harness implements HarnessAPI {
     return -1;
   }
 
+  private recordSubagentExit(agentId: string): void {
+    const agentProcess = this.agentSupervisor.get(agentId);
+    if (!agentProcess || agentProcess.role !== "subagent" || !agentProcess.exit) return;
+    const runtimeMessages = agentProcess.runtimeSnapshot?.messages ?? [];
+    const userMessage = runtimeMessages.find(
+      (message: any) => message?.role === "user",
+    ) as any;
+    const content = userMessage?.content;
+    const prompt = typeof content === "string"
+      ? content
+      : Array.isArray(content)
+        ? content
+            .filter((block: any) => block?.type === "text")
+            .map((block: any) => block.text)
+            .join("\n")
+        : "";
+    const message: AgentSessionMessage = {
+      role: "subagent",
+      agentId,
+      parentAgentId: agentProcess.parentAgentId,
+      application: agentProcess.application.name,
+      state: agentProcess.exit.state,
+      input: { prompt },
+      output: {
+        text: agentProcess.exit.output,
+        error: agentProcess.exit.error,
+      },
+      createdAt: agentProcess.createdAt,
+      startedAt: agentProcess.startedAt,
+      endedAt: agentProcess.exit.endedAt,
+    };
+    try {
+      this.sessionManager.upsertAgentMessage(agentProcess.parentSessionId, message);
+      if (this.sessionManager.getCurrentSessionId() === agentProcess.parentSessionId) {
+        this.sessionManager.trySaveSession(this.agent);
+      }
+    } catch (error) {
+      this.logger.error("AgentSession", `Failed to persist ${agentId}: ${String(error)}`);
+    }
+  }
+
+  private linkVisionAgentMessage(
+    parentSessionId: string,
+    result: ProcessResult,
+    prompt: string,
+    messageIndex: number,
+  ): boolean {
+    if (!result.agentId) return false;
+    const agentProcess = this.agentSupervisor.get(result.agentId);
+    if (!agentProcess?.exit) return false;
+    this.sessionManager.upsertAgentMessage(parentSessionId, {
+      role: "subagent",
+      agentId: result.agentId,
+      parentAgentId: agentProcess.parentAgentId,
+      application: agentProcess.application.name,
+      state: agentProcess.exit.state,
+      input: {
+        prompt,
+        attachments: result.cachedRefs.map((data) => ({
+          type: "image" as const,
+          data,
+        })),
+      },
+      output: {
+        text: agentProcess.exit.output,
+        source: result.source,
+        error: agentProcess.exit.error,
+      },
+      messageIndex,
+      createdAt: agentProcess.createdAt,
+      startedAt: agentProcess.startedAt,
+      endedAt: agentProcess.exit.endedAt,
+    });
+    return true;
+  }
+
   private findLastAssistantMessage(messages: any[]): any | null {
     for (let i = messages.length - 1; i >= 0; i--) {
       if (messages[i]?.role === "assistant") return messages[i];
@@ -419,30 +622,318 @@ export class Harness implements HarnessAPI {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  /** @deprecated Use ImagePipeline instead. Kept for backward compat with MCPManager until task 4. */
-  private resolveVisionModel(): { model: Model<Api>; apiKey: string } | null {
-    return resolveVisionModel(
-      this.config.vision,
-      this.config.apiKey,
-      (msg) => this.events.emit({ type: "ui:warning", text: msg }),
+  private createSubagentRuntime(
+    application: AgentApplicationSnapshot,
+    context: ProcessAgentContext,
+    agentId: string,
+  ): AgentProcessRuntime {
+    let modelSelection: { model: Model<Api>; apiKey?: string };
+    try {
+      modelSelection = this.resolveApplicationModel(application);
+    } catch (error) {
+      if (
+        error instanceof AgentRuntimeFailure
+        && application.fallback?.some((fallback) => fallback.on.includes(error.code))
+      ) {
+        return new FailedAgentRuntime(error);
+      }
+      throw error;
+    }
+    const model = modelSelection.model;
+    const childContextManager = new ContextManager(this.config.context);
+    childContextManager.updateModel(model.contextWindow, model.maxTokens);
+    const processTools = makeAgentProcessTools(this.agentSupervisor, agentId);
+    const toolsByName = new Map<string, AgentTool<any>>();
+    for (const tool of [
+      ...this.driverRegistry.getAllTools(),
+      this.makeSkillTool(),
+      ...processTools,
+    ]) {
+      toolsByName.set(tool.name, tool);
+    }
+    const allowed = new Set(context.allowedTools);
+    const tools = [...toolsByName.values()].filter((tool) => allowed.has(tool.name));
+    const acceptEditRules = application.permissionMode === "acceptEdits"
+      ? ["write_file", "overwrite_file", "edit", "edit_undo"].map((tool) => ({
+          tool,
+          decision: "allow" as const,
+          priority: 100,
+        }))
+      : [];
+    const childPermissions = new PermissionManager(
+      {
+        ...this.config.permissions,
+        rules: [...acceptEditRules, ...this.config.permissions.rules],
+        defaultDecision: application.permissionMode === "bypassPermissions"
+          ? "allow"
+          : context.attachment === "background"
+          ? "deny"
+          : this.config.permissions.defaultDecision,
+      },
+      (toolName, preview, args) => this.ui.getPromptPermission()(toolName, preview, args),
+      context.cwd,
     );
+    const backgroundPermissions = new PermissionManager(
+      {
+        ...this.config.permissions,
+        rules: [...acceptEditRules, ...this.config.permissions.rules],
+        defaultDecision: application.permissionMode === "bypassPermissions"
+          ? "allow"
+          : "deny",
+      },
+      () => Promise.resolve({
+        decision: "deny",
+        denyReason: "Background Agent processes cannot open permission prompts",
+      }),
+      context.cwd,
+    );
+    const thinkingLevel = typeof application.effort === "number"
+      ? application.effort <= 0
+        ? "off"
+        : application.effort <= 0.33
+          ? "low"
+          : application.effort <= 0.66
+            ? "medium"
+            : "high"
+      : typeof application.effort === "string"
+        && ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(application.effort)
+        ? application.effort as HarnessConfig["thinkingLevel"]
+        : this.config.thinkingLevel;
+    const applicationMemory = loadAgentMemory(
+      application,
+      this.config.configDir,
+      context.worktree?.repositoryRoot ?? this.config.projectPath,
+    );
+    const applicationSkills = this.buildApplicationSkills(application);
+    const child = new PiAgentRuntime({
+      initialState: {
+        systemPrompt: [
+          application.systemPrompt,
+          `# Runtime Context\n\nAgent ID: ${agentId}\nParent session: ${context.parentSessionId}\nWorking directory: ${context.cwd}`,
+          applicationSkills,
+          applicationMemory,
+        ].filter(Boolean).join("\n\n"),
+        model,
+        tools,
+        thinkingLevel,
+      },
+      streamFn: (runtimeModel: Model<Api>, runtimeContext: Context, options?: SimpleStreamOptions) =>
+        streamSimple(runtimeModel, runtimeContext, {
+          ...options,
+          apiKey: options?.apiKey ?? modelSelection.apiKey,
+          maxTokens: this.config.maxTokens,
+          timeoutMs: 120_000,
+          maxRetries: this.config.retry.maxRetries,
+          maxRetryDelayMs: this.config.retry.maxDelayMs,
+        }),
+      transformContext: (messages, signal) =>
+        childContextManager.transform(messages, signal) as Promise<AgentMessage[]>,
+      beforeToolCall: async (toolContext, signal) => {
+        const currentContext = this.agentSupervisor.get(agentId)?.context ?? context;
+        const capability = checkAgentCapability(
+          currentContext,
+          toolContext.toolCall.name,
+          toolContext.args,
+        );
+        const permissions = currentContext.attachment === "background"
+          ? backgroundPermissions
+          : childPermissions;
+        return capability ?? await permissions.check(toolContext, signal);
+      },
+      afterToolCall: async (_toolContext, signal) =>
+        signal?.aborted ? { terminate: true } : undefined,
+    });
+    if (application.maxTurns) {
+      let turns = 0;
+      child.subscribe((event) => {
+        if (event.type === "turn_end" && ++turns >= application.maxTurns!) {
+          child.abort();
+        }
+      });
+    }
+    return new PiAgentRuntimeAdapter(child);
   }
 
-  /** @deprecated Use ImagePipeline instead. Kept for backward compat with MCPManager until task 4. */
-  private async describeImagesViaVisionModel(
+  private buildApplicationSkills(application: AgentApplicationSnapshot): string {
+    if (!application.skills?.length) return "";
+    const sections = application.skills.map((name) => {
+      const manifest = this.skillManager.getManifest(name);
+      if (!manifest) throw new Error(`Unknown Skill in ${application.name}: ${name}`);
+      return [
+        `## Skill: ${manifest.name}`,
+        manifest.description,
+        manifest.instructions ?? "",
+      ].filter(Boolean).join("\n\n");
+    });
+    return ["# Application Skills", ...sections].join("\n\n");
+  }
+
+  private resolveApplicationModel(
+    application: AgentApplicationSnapshot,
+  ): { model: Model<Api>; apiKey?: string } {
+    let configured = application.model;
+    if (configured && ["haiku", "sonnet", "opus"].includes(configured)) {
+      configured = this.config.agentModelAliases?.[
+        configured as "haiku" | "sonnet" | "opus"
+      ];
+    }
+    if (!configured || configured === "inherit") {
+      return {
+        model: this.resolveSubagentModel(this.config.provider, this.config.modelId),
+        apiKey: this.config.apiKey,
+      };
+    }
+    if (configured === "vision") {
+      const vision = resolveVisionApplicationConfig(application, this.config);
+      if (!vision?.provider || !vision.model) {
+        throw new AgentRuntimeFailure(
+          "model_unavailable",
+          "Vision model is not configured",
+        );
+      }
+      return {
+        model: this.resolveSubagentModel(vision.provider, vision.model),
+        apiKey: vision.key ?? getEnvApiKey(vision.provider),
+      };
+    }
+    const separator = configured.indexOf("/");
+    if (separator > 0) {
+      const provider = configured.slice(0, separator);
+      return {
+        model: this.resolveSubagentModel(provider, configured.slice(separator + 1)),
+        apiKey: provider === this.config.provider
+          ? this.config.apiKey
+          : provider === this.config.vision?.provider
+          ? this.config.vision.key ?? getEnvApiKey(provider)
+          : getEnvApiKey(provider),
+      };
+    }
+    return {
+      model: this.resolveSubagentModel(this.config.provider, configured),
+      apiKey: this.config.apiKey,
+    };
+  }
+
+  private resolveSubagentModel(provider: string, modelId: string): Model<Api> {
+    try {
+      return resolveModel(provider, modelId);
+    } catch (error) {
+      throw new AgentRuntimeFailure(
+        "model_unavailable",
+        error instanceof Error ? error.message : String(error),
+        { cause: error },
+      );
+    }
+  }
+
+  private async processImagesWithVisionAgent(
     images: ImageContent[],
-    visionModel: Model<Api>,
-    apiKey: string,
-  ): Promise<string> {
-    return describeImagesViaVisionModel(images, visionModel, apiKey);
+    text: string,
+    options?: ProcessOptions,
+    trackActive = false,
+  ): Promise<ProcessResult> {
+    const visionApplication = this.applicationRegistry.require("vision");
+    const visionConfig = resolveVisionApplicationConfig(visionApplication, this.config);
+    if (!this.config.agents.enabled) {
+      const controller = trackActive ? new AbortController() : undefined;
+      const onAbort = () => controller?.abort();
+      options?.signal?.addEventListener("abort", onAbort, { once: true });
+      if (options?.signal?.aborted) controller?.abort();
+      if (trackActive) this.activeVisionAbortController = controller ?? null;
+      try {
+        return await this.imagePipeline.process(images, text, {
+          ...options,
+          signal: controller?.signal ?? options?.signal,
+          systemPrompt: visionApplication.systemPrompt,
+          visionPrompt: text || "Describe the provided images accurately.",
+          visionConfig,
+        });
+      } finally {
+        options?.signal?.removeEventListener("abort", onAbort);
+        if (trackActive) this.activeVisionAbortController = null;
+      }
+    }
+    const sessionId = this.sessionManager.getCurrentSessionId();
+    if (!sessionId) throw new Error("Cannot launch Vision Agent without an active session");
+    await this.agentSupervisor.updateParentSession(this.mainAgentId, sessionId);
+    options?.onProgress?.({ phase: "compressing", cachedRefs: [] });
+    const cachedRefs = await Promise.all(images.map((image) => ImageCache.put(image)));
+    options?.onProgress?.({ phase: "compressing", cachedRefs });
+    let visionAgentId = "";
+    const unsubscribe = this.events.on("agent:progress", (event) => {
+      if (event.agentId !== visionAgentId) return;
+      const progress = event.details as ProgressInfo | undefined;
+      if (progress) options?.onProgress?.(progress);
+    });
+    try {
+      const spawned = await this.agentSupervisor.spawn({
+        application: "vision",
+        parentAgentId: this.mainAgentId,
+        input: {
+          prompt: text,
+          attachments: cachedRefs.map((data) => ({ type: "image" as const, data })),
+        },
+        attachment: "foreground",
+        signal: options?.signal,
+        onSpawn: (agentId) => {
+          visionAgentId = agentId;
+          if (trackActive) this.activeVisionAgentId = agentId;
+          this.events.emit({
+            type: "agent:progress",
+            agentId,
+            phase: "describing",
+            message: `describing: ${cachedRefs.length} image(s) cached`,
+            details: { phase: "describing", cachedRefs },
+          });
+        },
+      });
+      const exit = spawned.result;
+      if (!exit) throw new Error("Foreground Vision Agent returned without an exit result");
+      if (exit.state === "terminated" || exit.state === "killed") {
+        throw new DOMException("The operation was aborted", "AbortError");
+      }
+      if (exit.state === "failed") throw new Error(exit.error ?? "Vision Agent failed");
+      const fallback = exit.details as VisionAgentOutput | undefined;
+      if (fallback?.executionSource === "ocr") {
+        for (const warning of fallback.warnings ?? []) options?.onWarning?.(warning);
+        return {
+          agentId: visionAgentId,
+          source: fallback.source,
+          enrichedText: fallback.enrichedText,
+          cachedRefs: fallback.cachedRefs,
+        };
+      }
+      const description = exit.output ?? "";
+      this.events.emit({
+        type: "agent:progress",
+        agentId: visionAgentId,
+        phase: "done",
+        message: `done: ${cachedRefs.length} image(s) cached`,
+        details: { phase: "done", cachedRefs },
+      });
+      const enrichedText = text
+        ? `${text}\n\n<image_description>\n${description}\n</image_description>`
+        : `<image_description>\n${description}\n</image_description>`;
+      return {
+        agentId: visionAgentId,
+        source: "vision",
+        enrichedText,
+        cachedRefs,
+      };
+    } finally {
+      unsubscribe();
+      if (trackActive && this.activeVisionAgentId === visionAgentId) {
+        this.activeVisionAgentId = null;
+      }
+    }
   }
-
 
   async promptWithImages(text: string, images: ImageContent[]): Promise<void> {
     const turnIdx = this.turnIndex++;
 
-    // Check if main model supports images natively (no vision model configured)
-    const hasVisionConfig = !!(this.config.vision?.provider && this.config.vision?.model);
+    const visionApplication = this.applicationRegistry.require("vision");
+    const visionConfig = resolveVisionApplicationConfig(visionApplication, this.config);
+    const hasVisionConfig = !!(visionConfig?.provider && visionConfig.model);
     if (!hasVisionConfig) {
       const mainModel = resolveModel(this.config.provider, this.config.modelId);
       if (mainModel.input.includes("image")) {
@@ -454,70 +945,65 @@ export class Harness implements HarnessAPI {
     this.events.emit({ type: "processing:start" });
     this.events.emit({ type: "ui:info", text: `Analyzing ${images.length} image(s)...` });
 
-    // Create abort controller for vision/OCR pre-processing
-    this.visionAbortController = new AbortController();
-
+    const parentSessionId = this.sessionManager.getCurrentSessionId();
+    if (!parentSessionId) throw new Error("Cannot launch Vision Agent without an active session");
     try {
-      const result = await this.imagePipeline.process(images, text, {
-        signal: this.visionAbortController.signal,
-      });
-
+      const result = await this.processImagesWithVisionAgent(images, text, undefined, true);
+      let mainPrompt = result.enrichedText;
       if (result.source === "vision") {
         this.events.emit({ type: "ui:info", text: `Image analysis complete, sending to main model...` });
-        await this.promptAndSave(result.enrichedText);
+      } else if (result.source === "ocr") {
+        this.events.emit({ type: "ui:info", text: `OCR complete, sending to main model...` });
+      } else if (result.source === "none") {
+        mainPrompt = text
+          ? `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`
+          : "(用户附带了一张图片，但图片中没有可识别的文字内容)";
+      }
+      await this.promptAndSave(mainPrompt);
 
-        // Record vision model call
-        const msgs = this.agent.state.messages as any[];
-        const msgId = this.findLastUserMessageIndex(msgs);
+      const messages = this.agent.state.messages as any[];
+      const messageIndex = this.findLastUserMessageIndex(messages);
+      const linked = this.linkVisionAgentMessage(
+        parentSessionId,
+        result,
+        text,
+        messageIndex,
+      );
+      if (!linked && result.source === "vision") {
         const vMsg: VisionMessage = {
           turnIndex: turnIdx,
-          messageIndex: msgId,
+          messageIndex,
           images: result.cachedRefs,
-          prompt: "请详细描述这张图片的内容，包括文字、布局和视觉元素。",
+          prompt: text,
           description: result.enrichedText
             .replace(text ? `${text}\n\n<image_description>\n` : `<image_description>\n`, "")
             .replace("\n</image_description>", ""),
-          modelProvider: this.config.vision?.provider ?? "",
-          modelId: this.config.vision?.model ?? "",
+          modelProvider: visionConfig?.provider ?? "",
+          modelId: visionConfig?.model ?? "",
           timestamp: Date.now(),
         };
-        this.sessionManager.setVisionMessages([...this.sessionManager.visionMessages, vMsg]);
-
-        // Restore user message with original text + cached image refs
+        this.sessionManager.appendVisionMessage(parentSessionId, vMsg);
+      }
+      if (linked || result.source === "vision") {
         this.restoreUserMessageImages(text, result.cachedRefs);
-        return;
       }
-
-      if (result.source === "ocr") {
-        this.events.emit({ type: "ui:info", text: `OCR complete, sending to main model...` });
-        await this.promptAndSave(result.enrichedText);
-        return;
-      }
-
-      if (result.source === "none") {
-        const noText = text
-          ? `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`
-          : "(用户附带了一张图片，但图片中没有可识别的文字内容)";
-        await this.promptAndSave(noText);
-        return;
-      }
-
-      // source === "error"
-      await this.promptAndSave(result.enrichedText);
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
         this.events.emit({ type: "processing:stop" });
         return;
       }
-      throw err;
-    } finally {
-      this.visionAbortController = null;
+      throw error;
     }
   }
 
   /** Abort any in-progress vision/OCR processing AND the current agent run. */
   abort(): void {
-    this.visionAbortController?.abort();
+    this.activeVisionAbortController?.abort();
+    if (this.activeVisionAgentId) {
+      void this.agentSupervisor.terminate(this.activeVisionAgentId).catch((error) => {
+        this.logger.error("VisionAgent", `Failed to terminate: ${String(error)}`);
+      });
+    }
     this.events.emit({ type: "turn:abort", reason: this.shuttingDown ? "system" : "user" });
     this.agent.abort();
   }
@@ -574,7 +1060,8 @@ export class Harness implements HarnessAPI {
       if (this.config.mcp.length > 0) {
         this.events.emit({ type: "ui:info", text: `Connecting ${this.config.mcp.length} MCP server(s)...` });
         this.mcpManager = new MCPManager(this.config.mcp);
-        this.mcpManager.imagePipeline = this.imagePipeline;
+        this.mcpManager.processImages = (images, text, options) =>
+          this.processImagesWithVisionAgent(images, text, options);
         // mcpManager is directly accessible via harness.mcpManager
         await this.mcpManager.initialize();
         this.mcpEventUnsubscribe = this.mcpManager.onEvent((event) => this.handleMcpEvent(event));
@@ -700,6 +1187,12 @@ export class Harness implements HarnessAPI {
     this.configStore.setProjectPath(resolvedPath);
     this.sessionManager.updateProjectPath(this.config.dataDir, resolvedPath);
     this.memoryManager.updateProjectPath(this.config.dataDir, resolvedPath);
+    this.processStore.updateProjectPath(resolvedPath);
+    await this.applicationRegistry.updateProjectPath(resolvedPath);
+    const sessionId = this.sessionManager.getCurrentSessionId();
+    if (sessionId) {
+      await this.agentSupervisor.updateParentSession(this.mainAgentId, sessionId, resolvedPath);
+    }
 
     // Reload skills from new project directory
     const projectSkillsDir = join(resolvedPath, ".dscode", "skills");
@@ -714,7 +1207,8 @@ export class Harness implements HarnessAPI {
       if (mcpServers.length > 0) {
         this.configStore.setMcpServers(mcpServers);
         this.mcpManager = new MCPManager(mcpServers);
-        this.mcpManager.imagePipeline = this.imagePipeline;
+        this.mcpManager.processImages = (images, text, options) =>
+          this.processImagesWithVisionAgent(images, text, options);
         await this.mcpManager.initialize();
         await this.mcpManager.registerDrivers(this.driverRegistry);
 
@@ -774,6 +1268,16 @@ export class Harness implements HarnessAPI {
 
     this.mcpEventUnsubscribe?.();
     this.mcpEventUnsubscribe = undefined;
+    try {
+      await this.agentSupervisor.shutdown();
+    } catch (err) {
+      this.logger.error("AgentSupervisorShutdown", String(err));
+    }
+    try {
+      await this.imagePipeline.shutdown();
+    } catch (err) {
+      this.logger.error("VisionShutdown", String(err));
+    }
     // 4.2: Clean up checkpoint directories for this session
     try { shutdownCheckpointSystem(); } catch {}
 
@@ -799,7 +1303,6 @@ export class Harness implements HarnessAPI {
     this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection, this.commandManager.getSystemPromptSection());
     this.agent.state.systemPrompt = this.baseSystemPrompt.replace("__DEFERRED_HINT__", this.toolRegistry.buildDeferredToolsHint());
   }
-
 
   private buildSystemPrompt(memories: string, skillSection: string, commandsSection: string): string {
     let prompt = `# Identity

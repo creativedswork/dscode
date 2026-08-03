@@ -5,6 +5,8 @@ import type { MCPServerConfig } from "../mcp/types.js";
 export type {
   ImageRef,
   VisionMessage,
+  AgentSessionAttachment,
+  AgentSessionMessage,
   SessionMetadata,
   PendingPermission,
   SerializedSession,
@@ -37,9 +39,12 @@ export interface HarnessConfig {
   disabledSkills: string[];
   mcp: MCPServerConfig[];
   appHost: AppHostConfig;
+  agents: { enabled: boolean };
+  managedAgentsDir?: string;
   agentsMdContent?: string;
   atFile?: AtFileConfig;
   vision?: VisionConfig;
+  agentModelAliases?: Partial<Record<"haiku" | "sonnet" | "opus", string>>;
   retry: RetryConfig;
 }
 

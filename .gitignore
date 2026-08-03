@@ -1,9 +1,9 @@
 node_modules/
 dist/
 dist-standalone/
+release/
 .env
 .env.local
 .DS_Store
 *.log
 dump/
-

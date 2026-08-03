@@ -1,7 +1,7 @@
 import { Logger } from "../../utils/logger.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, stat } from "node:fs/promises";
-import { resolve } from "node:path";
+import { resolveAgentPath } from "../../agents/process/context.js";
 
 async function fileExists(path: string): Promise<boolean> {
   try {
@@ -193,7 +193,7 @@ export const editTool: AgentTool<typeof editParams> = {
     if (file_path && !path) {
       _editLogger.warn('Edit', 'file_path is deprecated, use path instead');
     }
-    const resolved = resolve(effectivePath);
+    const resolved = resolveAgentPath(effectivePath);
 
     if (!(await fileExists(resolved))) {
       return {

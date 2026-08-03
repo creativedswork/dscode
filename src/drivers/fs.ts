@@ -1,5 +1,5 @@
 import { readFile, writeFile, stat, readdir, mkdir } from "node:fs/promises";
-import { join, resolve, dirname } from "node:path";
+import { join, dirname } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
@@ -12,6 +12,7 @@ import {
   classifyLinesWithFrequency,
 } from "./edit/hash.js";
 import { getCheckpointManager, getFileWriteTracker, getSnapshotStore } from "../checkpoint/index.js";
+import { resolveAgentPath } from "../agents/process/context.js";
 
 async function fileExists(path: string): Promise<boolean> {
   try {
@@ -39,7 +40,7 @@ export const readFileTool: AgentTool<typeof readFileParams> = {
     "Quality annotations: [high] = good for edit targeting, [med] = usable but repeated, [low] = avoid as primary anchor.",
   parameters: readFileParams,
   execute: async (_id, { path, offset, limit, hashes }) => {
-    const resolved = resolve(path);
+    const resolved = resolveAgentPath(path);
     if (!(await fileExists(resolved))) {
       return {
         content: [{ type: "text", text: `Error: file not found: ${resolved}` }],
@@ -147,7 +148,7 @@ export const listFilesTool: AgentTool<typeof listFilesParams> = {
   description: "List files and directories at a given path.",
   parameters: listFilesParams,
   execute: async (_id, { path, recursive, maxDepth }) => {
-    const resolved = resolve(path);
+    const resolved = resolveAgentPath(path);
     if (!(await fileExists(resolved))) {
       return {
         content: [{ type: "text", text: `Error: directory not found: ${resolved}` }],
@@ -197,7 +198,7 @@ export const writeFileTool: AgentTool<typeof writeFileParams> = {
     "Prefer using the edit tool for partial modifications to existing files — whole-file rewrite is an explicit, high-risk operation.",
   parameters: writeFileParams,
   execute: async (_id, { path, content, expected_file_version }) => {
-    const resolved = resolve(path);
+    const resolved = resolveAgentPath(path);
     const alreadyExists = await fileExists(resolved);
 
     if (alreadyExists && expected_file_version) {
@@ -330,7 +331,7 @@ export const overwriteFileTool: AgentTool<typeof overwriteFileParams> = {
     "For new files, use write_file without expected_file_version.",
   parameters: overwriteFileParams,
   execute: async (_id, { path, content, expected_file_version }) => {
-    const resolved = resolve(path);
+    const resolved = resolveAgentPath(path);
 
     if (!(await fileExists(resolved))) {
       return {

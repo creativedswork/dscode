@@ -3,6 +3,7 @@ import type { McpServerInfo } from "../ui/shared/types.js";
 import type { AppInstance } from "../mcp/app/types.js";
 import type { ConfigData } from "../ui/shared/types.js";
 import type { Logger } from "../utils/logger.js";
+import type { AgentExitResult, AgentProcessState } from "../agents/process/types.js";
 
 // ── HarnessEvent discriminated union ──
 
@@ -27,6 +28,13 @@ export type HarnessEvent =
   // Processing state
   | { type: "processing:start" }
   | { type: "processing:stop" }
+
+  // Agent process lifecycle
+  | { type: "agent:spawned"; agentId: string; parentAgentId?: string; application: string; attachment: "foreground" | "background" }
+  | { type: "agent:state"; agentId: string; previous: AgentProcessState; state: AgentProcessState }
+  | { type: "agent:progress"; agentId: string; phase: string; progress?: number; total?: number; message?: string; details?: unknown }
+  | { type: "agent:output"; agentId: string; text: string }
+  | { type: "agent:exit"; result: AgentExitResult }
 
   // Session lifecycle
   | { type: "session:created"; id: string }

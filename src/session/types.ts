@@ -23,6 +23,32 @@ export interface VisionMessage {
   tokensUsed?: number;
 }
 
+export type AgentSessionAttachment =
+  | { type: "image"; data: ImageRef }
+  | { type: "file"; uri: string }
+  | { type: "text"; text: string };
+
+export interface AgentSessionMessage {
+  role: "subagent";
+  agentId: string;
+  parentAgentId?: string;
+  application: string;
+  state: "completed" | "failed" | "terminated" | "killed";
+  input: {
+    prompt: string;
+    attachments?: AgentSessionAttachment[];
+  };
+  output?: {
+    text?: string;
+    source?: string;
+    error?: string;
+  };
+  messageIndex?: number;
+  createdAt: number;
+  startedAt?: number;
+  endedAt: number;
+}
+
 // --- Session ---
 
 export interface PendingPermission {
@@ -50,9 +76,11 @@ export interface SessionMetadata {
 }
 
 export interface SerializedSession {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   metadata: SessionMetadata;
   messages: unknown[];
+  agentMessages?: AgentSessionMessage[];
+  /** Read-only compatibility with sessions written before generic SubAgents. */
   visionMessages?: VisionMessage[];
   compactedPrefix?: string;
 }

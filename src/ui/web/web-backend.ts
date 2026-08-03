@@ -1,16 +1,14 @@
 import { createServer, request as httpRequest } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync } from "node:fs";
-import { join, extname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, extname } from "node:path";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { Api, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { streamSimple } from "../../models/index.js";
 import { getAllProviders, getAllModels, getVisionModels, getVisionProviders, resolveModel } from "../../models/index.js";
 import type { UiBackend } from "../backend.js";
 import type { HarnessConfig, PermissionPromptResult } from "../../core/types.js";
 import type { ConfigWatch } from "../../core/config-watch.js";
-import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig, normalizeTransport, normalizeProtocolVersion, loadScopedSettings, projectSettingsPath, saveProjectSettings } from "../../core/config.js";
+import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig, loadScopedSettings, projectSettingsPath, saveProjectSettings } from "../../core/config.js";
 import { executeSlashCommand, getSlashCommandAutocomplete, resolveCustomCommand } from "../commands.js";
 import { deriveFuzzyPattern, deriveFuzzyArgPattern, describeFuzzyArgPattern } from "../../permissions/fuzzy.js";
 import { prefetchLlmSuggestions, getLlmSuggestions } from "../../permissions/fuzzy-llm.js";
@@ -23,6 +21,7 @@ import { buildMcpServers } from "../mcp-browser.js";
 import { resolveAtFileRefs, resolveFileRefs, listProjectFiles, isImagePath } from "../../utils/at-file-resolver.js";
 import { rebuildDisplayMessages } from "../../session/display.js";
 import { formatToolResultForUI } from "../shared/tool-result-formatter.js";
+import { resolveBuiltResource } from "../../resources/runtime.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
 import type {
   ClientCommand,
@@ -67,7 +66,6 @@ export class WebUiBackend implements UiBackend {
   private harness: HarnessAPI;
   private config: HarnessConfig;
   private configStore: ConfigWatch;
-  private projectRoot: string;
   private httpServer: ReturnType<typeof createServer>;
   private wsServer: WsServer;
   private currentClient: WebSocketClient | null = null;
@@ -114,7 +112,6 @@ export class WebUiBackend implements UiBackend {
     this.port = options.port;
     this.harness = options.harness;
     this.configStore = options.configStore;
-    this.projectRoot = options.projectRoot ?? process.cwd();
     this.config = options.config;
 
     this.wsServer = new WsServer();
@@ -170,6 +167,12 @@ export class WebUiBackend implements UiBackend {
     h.events.on("turn:error", (e) => { this.broadcast({ type: "error", text: e.error }); });
     h.events.on("processing:start", () => { this.broadcast({ type: "loader", state: "show", text: "Thinking..." }); });
     h.events.on("processing:stop", () => { this.stopSessionTimeBroadcast(); this.broadcast({ type: "loader", state: "hide" }); });
+    h.events.on("agent:exit", (e) => {
+      const agentProcess = h.agentSupervisor.get(e.result.agentId);
+      if (agentProcess?.attachment === "background") {
+        this.broadcast({ type: "info", text: `Agent ${e.result.agentId} ${e.result.state}`, display: "toast" });
+      }
+    });
     h.events.on("message:user", (e) => { this.broadcast({ type: "user_message", text: e.text, images: e.images as any }); });
     h.events.on("ui:info", (e) => { this.broadcast({ type: "info", text: e.text, display: e.display ?? "toast" }); });
     h.events.on("ui:error", (e) => { this.broadcast({ type: "error", text: e.text }); });
@@ -1403,8 +1406,8 @@ export class WebUiBackend implements UiBackend {
 
   private buildConversationHistory(): ConversationMessage[] {
     const messages = this.harness.agent.state.messages as any[];
-    const vms = this.harness.sessionManager?.visionMessages ?? [];
-    return rebuildDisplayMessages(messages, vms) as any;
+    const agentMessages = this.harness.sessionManager?.agentMessages ?? [];
+    return rebuildDisplayMessages(messages, agentMessages) as any;
   }
 
 
@@ -1504,11 +1507,7 @@ export class WebUiBackend implements UiBackend {
   }
 
   private serveSpa(req: IncomingMessage, res: ServerResponse): void {
-    // Resolve web dist: try dist/web relative to project root first (for tsx/source mode),
-    // then fall back to __dirname-relative (for bundled mode).
-    const projectDist = join(resolve(this.projectRoot), "dist", "web");
-    const moduleDist = join(fileURLToPath(new URL(".", import.meta.url)), "web");
-    const webDist = existsSync(projectDist) ? projectDist : moduleDist;
+    const webDist = resolveBuiltResource("web");
 
     let filePath = join(webDist, req.url === "/" ? "index.html" : req.url!);
 

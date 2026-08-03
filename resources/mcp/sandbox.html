@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCP App — dscode</title>
+  <style>
+    :root { --bg: #ffffff; --text: #171717; --muted: #6b7280; --border: #e5e7eb; --bg2: #f9fafb; --bg3: #f3f4f6; }
+    @media (prefers-color-scheme: dark) { :root { --bg: #171717; --text: #fafafa; --muted: #9ca3af; --border: #374151; --bg2: #1f2937; --bg3: #374151; } }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: var(--bg); color: var(--text); font-family: system-ui, -apple-system, sans-serif; font-size: 14px; overflow: hidden; }
+    #inner-frame { width: 100%; border: none; display: block; }
+    #mdx-container { width: 100%; height: calc(100% - 24px); overflow-y: auto; display: none; padding: 12px; }
+    .status-bar { position: fixed; bottom: 0; left: 0; right: 0; height: 24px; background: var(--bg); border-top: 1px solid var(--border); padding: 2px 10px; font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; align-items: center; z-index: 10; }
+    .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; }
+    .dot.ok { background: #10b981; } .dot.err { background: #ef4444; } .dot.wait { background: #f59e0b; }
+    /* MDX Component Styles */
+    .mdx-root { display: flex; flex-direction: column; gap: 10px; }
+    .mdx-card { background: var(--bg2); border-radius: 8px; padding: 12px; border: 1px solid var(--border); }
+    .mdx-card-title { font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+    .mdx-row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .mdx-chart-wrap { position: relative; min-height: 220px; }
+    .mdx-chart { width: 100%; height: 200px; }
+    .mdx-chart-legend { display: flex; gap: 14px; justify-content: center; font-size: 11px; color: var(--muted); padding-top: 4px; }
+    .mdx-legend-item { display: flex; align-items: center; gap: 4px; }
+    .mdx-legend-dot { display: inline-block; width: 10px; height: 2px; border-radius: 1px; }
+    .mdx-legend-item:nth-child(1) .mdx-legend-dot { background: #3b82f6; }
+    .mdx-legend-item:nth-child(2) .mdx-legend-dot { background: #10b981; }
+    .mdx-legend-item:nth-child(3) .mdx-legend-dot { background: #f59e0b; }
+    .mdx-legend-item:nth-child(4) .mdx-legend-dot { background: #ef4444; }
+    .mdx-metrics-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+    .mdx-metric-card { background: var(--bg3); border-radius: 6px; padding: 8px 10px; text-align: center; }
+    .mdx-metric-value { font-size: 16px; font-weight: 600; }
+    .mdx-metric-label { font-size: 10px; color: var(--muted); margin-top: 2px; }
+    .mdx-table-wrap { overflow-x: auto; max-height: 300px; overflow-y: auto; }
+    .mdx-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .mdx-table th { text-align: left; padding: 6px 8px; border-bottom: 2px solid var(--border); font-weight: 600; color: var(--muted); position: sticky; top: 0; background: var(--bg); }
+    .mdx-table td { padding: 4px 8px; border-bottom: 1px solid var(--border); }
+    .mdx-slider-row { display: flex; align-items: center; height: 28px; gap: 8px; }
+    .mdx-slider-label { width: 90px; font-size: 12px; flex-shrink: 0; }
+    .mdx-slider-input { flex: 1; height: 4px; -webkit-appearance: none; appearance: none; background: var(--border); border-radius: 2px; cursor: pointer; }
+    .mdx-slider-input::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: #3b82f6; cursor: pointer; }
+    .mdx-slider-value { width: 56px; font-size: 12px; font-weight: 500; text-align: right; flex-shrink: 0; }
+    .mdx-unknown { padding: 8px; border: 1px dashed var(--border); border-radius: 4px; color: var(--muted); font-style: italic; }
+    .mdx-error { padding: 12px; color: #ef4444; background: rgba(239,68,68,0.1); border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <iframe id="inner-frame" sandbox="allow-scripts" allow=""></iframe>
+  <div id="mdx-container"></div>
+  <div class="status-bar">
+    <span><span class="dot wait" id="status-dot"></span><span id="status-text">connecting...</span></span>
+    <span id="status-time"></span>
+  </div>
+  <!-- MDX_DATA_PLACEHOLDER -->
+  <!-- MDX_RUNTIME_PLACEHOLDER -->
+  <script>
+    const innerFrame = document.getElementById('inner-frame');
+    const mdxContainer = document.getElementById('mdx-container');
+    const statusDot = document.getElementById('status-dot');
+    const statusText = document.getElementById('status-text');
+    const statusTime = document.getElementById('status-time');
+    const params = new URLSearchParams(window.location.search);
+    const pathParts = window.location.pathname.split('/');
+    const appId = pathParts[pathParts.length - 1];
+    const bridgeUrl = '/api/bridge/' + appId;
+
+    var mode = 'html';
+    var appHtml = '';
+    var mdxSource = '';
+    var mdxData = {};
+    var dataModeActive = false;
+
+    // Check for server-injected MDX data (data mode)
+    if (typeof __MDX_SOURCE__ !== 'undefined' && __MDX_SOURCE__) {
+      mdxSource = __MDX_SOURCE__; mode = 'data';
+    }
+    if (typeof __MDX_DATA__ !== 'undefined') {
+      mdxData = __MDX_DATA__;
+    }
+
+    const encodedHtml = params.get('html');
+    if (encodedHtml) { try { appHtml = atob(decodeURIComponent(encodedHtml)); } catch(e) {} }
+
+    const allowPerm = params.get('allow');
+    if (allowPerm) innerFrame.setAttribute('allow', allowPerm);
+
+    window.addEventListener('message', function(event) {
+      if (mode === 'data') {
+        var msg = event.data;
+        if (!msg || typeof msg !== 'object') return;
+        if (msg.id !== undefined && msg.method) {
+          fetch(bridgeUrl, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(msg) })
+            .then(function(r){return r.json()})
+            .then(function(resp){ window.postMessage(resp, '*'); })
+            .catch(function(err){ window.postMessage({jsonrpc:'2.0',id:msg.id,error:{code:-32603,message:err.message}}, '*'); });
+        } else if (msg.method && msg.id === undefined) {
+          fetch(bridgeUrl, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(msg) }).catch(function(){});
+        }
+        return;
+      }
+      if (event.source !== innerFrame.contentWindow) return;
+      var msg = event.data;
+      if (!msg || typeof msg !== 'object') return;
+      if (msg.id !== undefined && msg.method) {
+        fetch(bridgeUrl, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(msg) })
+          .then(function(r){return r.json()})
+          .then(function(resp){ innerFrame.contentWindow.postMessage(resp, '*'); })
+          .catch(function(err){ innerFrame.contentWindow.postMessage({jsonrpc:'2.0',id:msg.id,error:{code:-32603,message:err.message}}, '*'); });
+      } else if (msg.method && msg.id === undefined) {
+        fetch(bridgeUrl, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(msg) }).catch(function(){});
+      }
+    });
+
+    var sseRetries = 0;
+    function connectSSE() {
+      var es = new EventSource(bridgeUrl + '/events');
+      es.onopen = function() { sseRetries=0; statusDot.className='dot ok'; statusText.textContent='connected'; };
+      es.onmessage = function(event) {
+        try {
+          var msg = JSON.parse(event.data);
+          if (mode === 'data' && dataModeActive) {
+            if (msg.method === 'ui/notifications/tool-result' && msg.params) {
+              mdxData = (msg.params && typeof msg.params === 'object' && msg.params.structuredContent && typeof msg.params.structuredContent === 'object')
+                ? msg.params.structuredContent
+                : msg.params;
+              if (typeof renderMDX === 'function' && mdxSource) {
+                renderMDX(mdxSource, mdxData, mdxContainer);
+              }
+            }
+          } else if (innerFrame.contentWindow) {
+            innerFrame.contentWindow.postMessage(msg, '*');
+          }
+        } catch(e){}
+      };
+      es.onerror = function() { statusDot.className='dot err'; statusText.textContent='reconnecting...'; es.close(); sseRetries++; setTimeout(connectSSE, Math.min(1000*Math.pow(2,sseRetries),30000)); };
+    }
+
+    function resize() {
+      if (mode === 'data') {
+        mdxContainer.style.height = (window.innerHeight - 24) + 'px';
+      } else {
+        innerFrame.style.height = (window.innerHeight - 24) + 'px';
+      }
+    }
+    window.addEventListener('resize', resize);
+
+    function injectApp() {
+      innerFrame.srcdoc = appHtml;
+      resize();
+      statusTime.textContent = new Date().toLocaleTimeString();
+      fetch(bridgeUrl, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({jsonrpc:'2.0',method:'ui/notifications/sandbox-proxy-ready',params:{}}) }).catch(function(){});
+    }
+
+    function initDataMode() {
+      dataModeActive = true;
+      innerFrame.style.display = 'none';
+      mdxContainer.style.display = 'block';
+      resize();
+      statusTime.textContent = new Date().toLocaleTimeString();
+      if (typeof renderMDX === 'function' && mdxSource) {
+        renderMDX(mdxSource, mdxData, mdxContainer);
+        mdxContainer.setAttribute('data-mdx-source', mdxSource);
+      } else {
+        mdxContainer.innerHTML = '<div class="mdx-error">MDX Runtime not available</div>';
+      }
+      fetch(bridgeUrl, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({jsonrpc:'2.0',method:'ui/notifications/sandbox-proxy-ready',params:{}}) }).catch(function(){});
+    }
+
+    function loadApp() {
+      if (mode === 'data') { initDataMode(); return; }
+      if (!appHtml) {
+        fetch('/api/app/' + appId + '/html')
+          .then(function(r){ if(!r.ok)throw new Error('HTTP '+r.status); return r.text(); })
+          .then(function(html){ appHtml=html; injectApp(); })
+          .catch(function(err){ statusText.textContent='Failed to load app'; });
+      } else { injectApp(); }
+    }
+
+    connectSSE();
+    loadApp();
+  </script>
+</body>
+</html>

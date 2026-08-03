@@ -1,6 +1,7 @@
 {
   "name": "@creative-dswork/dscode",
-  "version": "0.2.7",
+  "version": "0.3.0",
+  "private": true,
   "type": "module",
   "description": "DeepSeek-native terminal AI agent for digital work — DeepSeek model harness analogous to Claude Code for Claude models.",
   "bin": {
@@ -22,9 +23,11 @@
     "build:web": "cd web && npm run build",
     "ci:check": "npm run lockfile:check && rm -rf dist node_modules web/node_modules && npm ci && cd web && npm install && cd .. && npm run build && echo \"\n✅ CI check passed\"",
     "dev:web": "tsx --env-file=.env src/core/main.ts --web & cd web && npm run dev",
-    "prepublishOnly": "npm run build",
+    "package:verify": "node scripts/verify-package.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:subagent": "vitest run tests/agents tests/drivers/vision/pipeline.test.ts",
+    "test:subagent:vision:live": "DSCODE_VISION_E2E=1 vitest run tests/agents/acceptance/vision-live.test.ts",
     "test:watch": "vitest",
     "lockfile:check": "node scripts/lockfile-check.mjs"
   },
@@ -53,7 +56,9 @@
     "jpeg-js": "^0.4.4",
     "pngjs": "^7.0.0",
     "tesseract.js": "^7.0.0",
-    "ws": "^8.21.0"
+    "typebox": "^1.3.10",
+    "ws": "^8.21.0",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@fission-ai/openspec": "^1.5.0",

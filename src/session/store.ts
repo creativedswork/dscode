@@ -34,9 +34,9 @@ function validateSession(raw: unknown, expectedId: string): SerializedSession {
   if (typeof data.version !== "number") {
     throw new SessionValidateError("Session file is corrupted: missing required field 'version'");
   }
-  if (data.version !== 1 && data.version !== 2) {
+  if (data.version !== 1 && data.version !== 2 && data.version !== 3) {
     throw new SessionValidateError(
-      `Session file has unsupported version: ${data.version}. Expected 1 or 2.`,
+      `Session file has unsupported version: ${data.version}. Expected 1, 2, or 3.`,
     );
   }
   if (data.metadata === null || typeof data.metadata !== "object") {

@@ -20,12 +20,31 @@
 ## 运行
 
 ```bash
-npm start              # REPL
-npm start -- --web     # Web 模式
-npm run build          # 构建 (npm start 前需先执行)
-npm run typecheck      # 类型检查
-npm test               # 测试
+npm install                         # 安装根项目依赖
+cd web && npm install && cd ..      # 安装 Web 依赖
+npm start                           # 源码运行 REPL
+npm run build                       # 构建 CLI、Web 和 Package Resources
+npm start -- --web                  # 源码运行 Web 模式（需先构建）
+node dist/dscode.mjs                # 运行构建后的 CLI
+npm run typecheck                   # 类型检查
+npm test                            # 全量测试
+npm run test:subagent               # SubAgent/Vision 专项测试
 ```
+
+## 本地 npm 包验证
+
+`npm run build` 会生成 `release/package/` 发布 staging。不要从仓库根目录
+执行 `npm publish`，也不要提交 `release/` 目录。
+
+```bash
+rm -rf release/artifacts
+mkdir -p release/artifacts
+npm pack ./release/package --pack-destination release/artifacts
+npm run package:verify -- release/artifacts/*.tgz
+```
+
+`package:verify` 会校验文件白名单、版本、资源 manifest、SHA-256 和包体积，
+然后在临时项目中安装 tgz，并从随机 cwd 执行 CLI 版本及资源加载检查。
 
 ## 自定义模型
 

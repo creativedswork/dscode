@@ -6,6 +6,7 @@ import { CheckpointManager } from "./checkpoint-manager.js";
 import { FileWriteTracker } from "./write-tracker.js";
 import { FileSystemCheckpointStore } from "./store/fs-store.js";
 import { SnapshotStore } from "./snapshot-store.js";
+import { getAgentContext } from "../agents/process/context.js";
 
 // Re-export public types
 export { CheckpointManager } from "./checkpoint-manager.js";
@@ -17,43 +18,69 @@ export type { WriterType, BaselineContinuity, CheckpointMeta } from "./types.js"
 
 // --- Singleton access (initialized by Harness) ---
 
-let _snapshotStore: SnapshotStore | null = null;
-let _checkpointManager: CheckpointManager | null = null;
-let _fileWriteTracker: FileWriteTracker | null = null;
+interface CheckpointBundle {
+  snapshotStore: SnapshotStore;
+  checkpointManager: CheckpointManager;
+  fileWriteTracker: FileWriteTracker;
+}
+
+const bundles = new Map<string, CheckpointBundle>();
+
+function contextKey(): string {
+  return getAgentContext()?.agentId || "__main__";
+}
+
+function createBundle(projectPath: string, namespace: string): CheckpointBundle {
+  const projectHash = createHash("sha256").update(projectPath).digest("hex").slice(0, 12);
+  const baseDir = join(homedir(), ".dscode", "checkpoints", "per-project", projectHash, namespace);
+  const snapshotStore = new SnapshotStore();
+  const store = new FileSystemCheckpointStore(baseDir);
+  return {
+    snapshotStore,
+    checkpointManager: new CheckpointManager(store, projectPath),
+    fileWriteTracker: new FileWriteTracker(),
+  };
+}
+
+function currentBundle(): CheckpointBundle | null {
+  const key = contextKey();
+  const existing = bundles.get(key);
+  if (existing) return existing;
+  const context = getAgentContext();
+  if (!context) return null;
+  const created = createBundle(context.cwd, join(context.parentSessionId, context.agentId));
+  bundles.set(key, created);
+  return created;
+}
 
 export function initCheckpointSystem(
   projectPath: string,
   sessionId: string,
 ): { checkpointManager: CheckpointManager; fileWriteTracker: FileWriteTracker } {
-  const projectHash = createHash("sha256").update(projectPath).digest("hex").slice(0, 12);
-  const baseDir = join(homedir(), ".dscode", "checkpoints", "per-project", projectHash, sessionId);
-  _snapshotStore = new SnapshotStore();
-  const store = new FileSystemCheckpointStore(baseDir);
-  _checkpointManager = new CheckpointManager(store, projectPath);
-  _fileWriteTracker = new FileWriteTracker();
-  return { checkpointManager: _checkpointManager, fileWriteTracker: _fileWriteTracker };
+  const bundle = createBundle(projectPath, sessionId);
+  bundles.set("__main__", bundle);
+  return {
+    checkpointManager: bundle.checkpointManager,
+    fileWriteTracker: bundle.fileWriteTracker,
+  };
 }
 
 export function getCheckpointManager(): CheckpointManager | null {
-  return _checkpointManager;
+  return currentBundle()?.checkpointManager ?? null;
 }
 
 export function getSnapshotStore(): SnapshotStore | null {
-  return _snapshotStore;
+  return currentBundle()?.snapshotStore ?? null;
 }
 
 export function getFileWriteTracker(): FileWriteTracker | null {
-  return _fileWriteTracker;
+  return currentBundle()?.fileWriteTracker ?? null;
 }
 
 export function shutdownCheckpointSystem(): void {
-  if (_checkpointManager) {
-    _checkpointManager.cleanup();
-    _checkpointManager = null;
+  for (const bundle of bundles.values()) {
+    bundle.checkpointManager.cleanup();
+    bundle.snapshotStore.clear();
   }
-  if (_snapshotStore) {
-    _snapshotStore.clear();
-    _snapshotStore = null;
-  }
-  _fileWriteTracker = null;
+  bundles.clear();
 }
