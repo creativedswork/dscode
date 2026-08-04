@@ -1831,7 +1831,8 @@ __DEFERRED_HINT__`;
         this.events.emit({ type: "ui:info", text: `MCP ${event.serverName}: refreshing tool list...` });
         return;
       case "tools_refreshed":
-        this.events.emit({ type: "ui:info", text: `MCP ${event.serverName}: tool list refreshed (${event.toolCount} tools)` });
+        // Successful refreshes are routine (including after idle reconnects) and
+        // should not add persistent system messages to the conversation.
         return;
       case "tools_refresh_failed":
         this.events.emit({ type: "ui:error", text: `MCP ${event.serverName}: tool refresh failed: ${event.error}` });
