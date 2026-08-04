@@ -74,6 +74,14 @@ const MAIN_PROCESS_APPLICATION: AgentApplicationSnapshot = Object.freeze({
   registryGeneration: 0,
 });
 
+export function shouldUseNativeMainImagePath(
+  agentsEnabled: boolean,
+  hasVisionConfig: boolean,
+  mainSupportsImages: boolean,
+): boolean {
+  return !agentsEnabled && !hasVisionConfig && mainSupportsImages;
+}
+
 export class Harness implements HarnessAPI {
   private piAgentRuntime!: PiAgentRuntime;
   sessionManager: SessionManager;
@@ -962,6 +970,7 @@ export class Harness implements HarnessAPI {
         parentAgentId: this.mainAgentId,
         input: {
           prompt: text,
+          displayPrompt: options?.displayPrompt ?? text,
           attachments: cachedRefs.map((data) => ({ type: "image" as const, data })),
         },
         attachment: "foreground",
@@ -1019,22 +1028,34 @@ export class Harness implements HarnessAPI {
     }
   }
 
-  async promptWithImages(text: string, images: ImageContent[]): Promise<void> {
-    return this.runMainTurn(() => this.promptWithImagesInternal(text, images));
+  async promptWithImages(
+    text: string,
+    images: ImageContent[],
+    displayText = text,
+  ): Promise<void> {
+    return this.runMainTurn(() =>
+      this.promptWithImagesInternal(text, images, displayText)
+    );
   }
 
-  private async promptWithImagesInternal(text: string, images: ImageContent[]): Promise<void> {
+  private async promptWithImagesInternal(
+    text: string,
+    images: ImageContent[],
+    displayText: string,
+  ): Promise<void> {
     const turnIdx = this.turnIndex++;
 
     const visionApplication = this.applicationRegistry.require("vision");
     const visionConfig = resolveVisionApplicationConfig(visionApplication, this.config);
     const hasVisionConfig = !!(visionConfig?.provider && visionConfig.model);
-    if (!hasVisionConfig) {
-      const mainModel = resolveModel(this.config.provider, this.config.modelId);
-      if (mainModel.input.includes("image")) {
-        await this.promptAndSaveInternal(text, images);
-        return;
-      }
+    const mainModel = resolveModel(this.config.provider, this.config.modelId);
+    if (shouldUseNativeMainImagePath(
+      this.config.agents.enabled,
+      hasVisionConfig,
+      mainModel.input.includes("image"),
+    )) {
+      await this.promptAndSaveInternal(text, images);
+      return;
     }
 
     this.events.emit({ type: "processing:start" });
@@ -1043,7 +1064,12 @@ export class Harness implements HarnessAPI {
     const parentSessionId = this.sessionManager.getCurrentSessionId();
     if (!parentSessionId) throw new Error("Cannot launch Vision Agent without an active session");
     try {
-      const result = await this.processImagesWithVisionAgent(images, text, undefined, true);
+      const result = await this.processImagesWithVisionAgent(
+        images,
+        text,
+        { displayPrompt: displayText },
+        true,
+      );
       let mainPrompt = result.enrichedText;
       if (result.source === "vision") {
         this.events.emit({ type: "ui:info", text: `Image analysis complete, sending to main model...` });
@@ -1061,7 +1087,7 @@ export class Harness implements HarnessAPI {
       const linked = this.linkVisionAgentMessage(
         parentSessionId,
         result,
-        text,
+        displayText,
         messageIndex,
       );
       if (!linked && result.source === "vision") {
@@ -1069,7 +1095,7 @@ export class Harness implements HarnessAPI {
           turnIndex: turnIdx,
           messageIndex,
           images: result.cachedRefs,
-          prompt: text,
+          prompt: displayText,
           description: result.enrichedText
             .replace(text ? `${text}\n\n<image_description>\n` : `<image_description>\n`, "")
             .replace("\n</image_description>", ""),
@@ -1080,7 +1106,7 @@ export class Harness implements HarnessAPI {
         this.sessionManager.appendVisionMessage(parentSessionId, vMsg);
       }
       if (linked || result.source === "vision") {
-        this.restoreUserMessageImages(text, result.cachedRefs);
+        this.restoreUserMessageImages(displayText, result.cachedRefs);
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {

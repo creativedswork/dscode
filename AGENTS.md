@@ -37,7 +37,7 @@ flowchart LR
 
 ## Web 前端
 
-修改 Web UI 前必读 `openspec/specs/web-frontend/spec.md`。设计分两层：**视觉方向**参考 Open Design 项目（`mcp__open-design__*`），**实现质量**由 taste-skill（`design-taste-frontend`）保证——前者回答「长什么样」，后者防止 AI 生成千篇一律的 slop。禁止引入第三方组件库（Material UI、Ant Design 等），必须使用 `web/src/index.css` 的 `--color-*` token。Open Design 的视觉决策需经 explore→propose 流程沉淀为 change 的 design.md + prototype 后方可实施。
+修改 Web UI 前必读 `openspec/specs/web-frontend/spec.md`。设计分两层：**视觉方向**参考 Open Design 项目（`mcp__open-design__*`），**实现质量**由 taste-skill（`design-taste-frontend`）保证——前者回答「长什么样」，后者防止 AI 生成千篇一律的 slop。禁止引入第三方组件库（Material UI、Ant Design 等），必须使用 `web/src/index.css` 的 `--color-*` token。任何涉及可见组件、渲染、布局、CSS、交互或用户状态的变更，都必须先按 `docs/prototypes/README.md` 在 `docs/prototypes/` 生成并浏览器验证自包含 HTML 原型；纯文字视觉说明不能替代。视觉决策经 explore→propose 流程沉淀为 change 的 design.md + prototype 后方可实施。Session 00MRIZMZQJ 是 HTML 原型→视觉迭代→实现的标准案例。
 
 ## 运行
 

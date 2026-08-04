@@ -87,6 +87,7 @@ export class AgentSupervisor {
       agentId: agentProcess.agentId,
       application: application.name,
       attachment: "foreground",
+      input: "",
     });
     return agentProcess;
   }
@@ -155,6 +156,7 @@ export class AgentSupervisor {
       parentAgentId: parent.agentId,
       application: application.name,
       attachment,
+      input: options.input.displayPrompt ?? options.input.prompt,
     });
     options.onSpawn?.(agentId);
 

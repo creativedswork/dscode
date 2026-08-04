@@ -76,6 +76,7 @@ function extractToolResultText(blocks: any[], toolName: string): string {
 export function rebuildDisplayMessages(
   messages: any[],
   agentMessages: AgentSessionMessage[],
+  parentSessionId = "unknown",
 ): DisplayMessage[] {
   const agentMap = new Map<number, AgentSessionMessage>();
   for (const message of agentMessages) {
@@ -157,7 +158,7 @@ export function rebuildDisplayMessages(
   }
 
   // Pass 2: build DisplayMessage[] for emitted indices
-  const result: DisplayMessage[] = [];
+  const result: Array<{ message: DisplayMessage; sourceIndex: number }> = [];
 
   for (let i = 0; i < messages.length; i++) {
     if (!output.has(i)) continue;
@@ -170,11 +171,17 @@ export function rebuildDisplayMessages(
     // Images
     let images: DisplayMessage["images"] = undefined;
 
-    if (agentMessage) {
-      content = agentMessage.input.prompt;
+    const imageLinkedAgent = agentMessage?.input.attachments?.some(
+      (attachment) => attachment.type === "image",
+    )
+      ? agentMessage
+      : undefined;
+
+    if (imageLinkedAgent) {
+      content = imageLinkedAgent.input.prompt;
 
       const restored: { data: string; mimeType: string }[] = [];
-      const imageRefs = agentMessage.input.attachments
+      const imageRefs = imageLinkedAgent.input.attachments
         ?.filter((attachment) => attachment.type === "image")
         .map((attachment) => attachment.data) ?? [];
       for (const ref of imageRefs) {
@@ -227,18 +234,94 @@ export function rebuildDisplayMessages(
 
     // System messages with no content: preserve but with empty content
     if (m.role === "system" && !content && !images) {
-      result.push({ role: "system", content: "", thinking, tools });
+      result.push({
+        message: {
+          role: "system",
+          content: "",
+          thinking,
+          tools,
+          createdAt: typeof m.createdAt === "number" ? m.createdAt : undefined,
+        },
+        sourceIndex: i,
+      });
       continue;
     }
 
     result.push({
-      role: m.role ?? "assistant",
-      content,
-      images,
-      thinking,
-      tools,
+      message: {
+        role: m.role ?? "assistant",
+        content,
+        images,
+        thinking,
+        tools,
+        createdAt: typeof m.createdAt === "number" ? m.createdAt : undefined,
+      },
+      sourceIndex: i,
     });
   }
 
-  return result;
+  const sortedAgentMessages = agentMessages
+    .map((message, index) => ({ message, index }))
+    .sort((a, b) => a.message.createdAt - b.message.createdAt || a.index - b.index);
+
+  for (const { message: agentMessage } of sortedAgentMessages) {
+    const displayMessage: DisplayMessage = {
+      role: "agent",
+      content: "",
+      createdAt: agentMessage.createdAt,
+      agentActivity: {
+        agentId: agentMessage.agentId,
+        parentAgentId: agentMessage.parentAgentId,
+        parentSessionId,
+        application: agentMessage.application,
+        attachment: "foreground",
+        state: agentMessage.state,
+        input: agentMessage.input.prompt,
+        output: agentMessage.output?.text,
+        error: agentMessage.output?.error,
+        createdAt: agentMessage.createdAt,
+        startedAt: agentMessage.startedAt,
+        endedAt: agentMessage.endedAt,
+      },
+    };
+
+    if (agentMessage.messageIndex !== undefined) {
+      let insertAt = -1;
+      for (let i = result.length - 1; i >= 0; i--) {
+        if (result[i].sourceIndex === agentMessage.messageIndex) {
+          insertAt = i + 1;
+          while (
+            insertAt < result.length
+            && result[insertAt].message.role === "agent"
+          ) {
+            insertAt++;
+          }
+          break;
+        }
+      }
+      if (insertAt >= 0) {
+        result.splice(insertAt, 0, {
+          message: displayMessage,
+          sourceIndex: agentMessage.messageIndex,
+        });
+        continue;
+      }
+    }
+
+    const timestampInsertAt = result.findIndex(
+      (entry) =>
+        typeof entry.message.createdAt === "number"
+        && entry.message.createdAt > agentMessage.createdAt,
+    );
+    if (timestampInsertAt >= 0) {
+      result.splice(timestampInsertAt, 0, {
+        message: displayMessage,
+        sourceIndex: -1,
+      });
+    } else {
+      result.push({ message: displayMessage, sourceIndex: -1 });
+    }
+  }
+
+  return result.map((entry) => entry.message);
 }

@@ -26,6 +26,8 @@ export type ProgressFn = (info: ProgressInfo) => void;
 export interface ProcessOptions {
   onProgress?: ProgressFn;
   onWarning?: (message: string) => void;
+  /** User-facing prompt before runtime-only context or attachment metadata is added. */
+  displayPrompt?: string;
   /** Abort signal to cancel in-progress vision/OCR calls. */
   signal?: AbortSignal;
   /** Application-owned system prompt used by the configured vision model. */

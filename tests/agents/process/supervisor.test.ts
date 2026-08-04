@@ -152,6 +152,30 @@ describe("AgentSupervisor", () => {
     expect(saves.length).toBeGreaterThanOrEqual(3);
   });
 
+  it("separates the display prompt from the runtime prompt", async () => {
+    const runtime = new ImmediateRuntime();
+    const { supervisor, mainAgentId } = setup(runtime);
+    let spawnedInput = "";
+    const events = (supervisor as any).events as HarnessEventBus;
+    events.on("agent:spawned", (event) => {
+      if (event.application === "general") spawnedInput = event.input;
+    });
+
+    const spawned = await supervisor.spawn({
+      application: "general",
+      parentAgentId: mainAgentId,
+      input: {
+        prompt: "runtime prompt\n\nAttached files: /private/image.jpg",
+        displayPrompt: "describe this image",
+      },
+    });
+
+    expect(spawnedInput).toBe("describe this image");
+    expect(spawned.result?.output).toBe(
+      "done: runtime prompt\n\nAttached files: /private/image.jpg",
+    );
+  });
+
   it("keeps one Runtime when a background child is killed", async () => {
     const runtime = new BlockingRuntime();
     const { supervisor, mainAgentId } = setup(runtime);

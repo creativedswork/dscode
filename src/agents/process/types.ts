@@ -118,6 +118,7 @@ export interface SpawnAgentRequest {
   parentAgentId: string;
   input: {
     prompt: string;
+    displayPrompt?: string;
     attachments?: AgentInputAttachment[];
   };
   attachment?: AgentAttachment;

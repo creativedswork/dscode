@@ -1,6 +1,6 @@
 ---
 name: prototype-workflow
-description: HTML prototype generation workflow for frontend UI exploration. Load this skill (which auto-loads html-output) before generating any HTML prototype. Specifies output directory, naming convention, style alignment, and iteration flow.
+description: Mandatory HTML prototype generation workflow for frontend UI exploration and proposal preparation. Load this skill (which auto-loads html-output) before generating any HTML prototype. Specifies output directory, naming convention, style alignment, browser validation, and iteration flow.
 license: MIT
 compatibility: Requires html-output skill. Designed for dscode web frontend design system.
 metadata:
@@ -11,7 +11,9 @@ requires:
 
 # Prototype 产出规范
 
-在 explore 阶段讨论前端 UI 后生成 HTML 原型时的完整流程和约束。
+前端 UI 变更在 explore 或 propose 阶段生成 HTML 原型时的完整流程和约束。
+任何涉及可见组件、渲染、布局、CSS、交互或用户状态的变更都必须产出 HTML；
+纯文字视觉说明不能替代原型，只有严格非 UI 变更才能使用 prototype stub。
 
 ## 触发条件
 
@@ -49,8 +51,9 @@ UI, 页面, 界面, 组件, 交互, 样式, 视觉, CSS, frontend, landing, dash
 2. 提取 `web/index.css` 中的实际 CSS 变量值
 3. 生成自包含 HTML → `docs/prototypes/<change-name>-<descriptor>.html`
 4. HTML 文件必须包含多状态切换按钮（如 waiting / in-progress / done / error），便于视觉迭代
-5. 在原型上直接接收视觉反馈并迭代，直到用户确认
-6. 确认后引导用户运行 `/opsx:propose` — 原型将作为 change 的 prototype artifact 被整合
+5. 在浏览器中打开原型，验证交互、控制台、亮暗主题和关键响应式状态
+6. 在原型上直接接收视觉反馈并迭代，直到用户确认
+7. explore 阶段确认后引导用户运行 `/opsx:propose`；propose 阶段则继续生成 prototype manifest
 
 ## 生命周期
 

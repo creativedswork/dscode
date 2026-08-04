@@ -85,11 +85,12 @@ Depending on what the user brings, you might:
 **Create HTML prototypes for frontend ideas**
 
 > ⚠️ **FRONTEND GATE (HARD RULE)**: Before writing ANY spec requirement,
-> design decision, or task that touches UI components, layout, or interaction
-> patterns, you MUST offer a prototype. Do NOT write spec/design/tasks until
-> the prototype is confirmed or the user explicitly dismisses it.
+> design decision, or task that touches visible UI, rendering, layout, CSS,
+> interaction, or user-facing states, you MUST generate a self-contained HTML
+> prototype. Do NOT write spec/design/tasks until the prototype exists and has
+> been browser-validated.
 > This applies even when also discussing architecture, protocols, or backend.
-> UI + backend discussions require the prototype OFFER before the spec WRITE.
+> UI + backend discussions require the HTML prototype before the spec WRITE.
 >
 > ⚠️ **PRE-OUTPUT GATE (HARD RULE)**: The Frontend Gate above is NOT triggered
 > only at "spec write time" — it must fire BEFORE you present any analysis, fix
@@ -102,8 +103,8 @@ Depending on what the user brings, you might:
 >    rendering / visual presentation? (Check both the user's request AND your
 >    own analysis findings — the user may not say "UI" but your investigation
 >    may reveal CSS, rendering, layout, or component issues.)
-> 2. If YES → offer the prototype FIRST, then pause. Do NOT present the analysis
->    or fix plan until the prototype is confirmed or dismissed.
+> 2. If YES → generate the prototype FIRST. Do NOT present the analysis or fix
+>    plan as proposal-ready until the prototype is browser-validated.
 > 3. If NO → continue normally.
 >
 > Trigger keywords (non-exhaustive, includes both user-facing and internally
@@ -116,14 +117,14 @@ Depending on what the user brings, you might:
 > things look ARE UI design decisions.
 
 - When the conversation touches UI/frontend topics, detect it naturally (keywords: UI, page, component, interaction, style, visual, CSS, frontend, landing, dashboard, prototype, redesign, animation, rendering, layout, spacing, markup, DOM, card, display, toast, modal, panel, picker, button)
-- **ALWAYS offer** (not optional to skip): "This involves frontend design — want me to create an HTML prototype?"
-- If yes:
+- **HTML is mandatory for UI changes**; the workflow may pause, but MUST NOT
+  skip HTML and continue to proposal artifacts.
   1. Load `prototype-workflow` skill (auto-loads `html-output`)
-  2. Extract `--color-*` CSS variables from `web/index.css`
-  3. Generate self-contained HTML at `docs/prototypes/<change-name>-<descriptor>.html`
-  4. Iterate visually based on user feedback on the prototype
-  5. When design is confirmed, capture decisions into `design.md` / `specs`
-- If user says no — continue, but the offer was made
+  2. Read `docs/prototypes/README.md`
+  3. Extract `--color-*` CSS variables from `web/src/index.css`
+  4. Generate self-contained HTML at `docs/prototypes/<change-name>-<descriptor>.html`
+  5. Browser-validate and iterate visually based on user feedback
+  6. When design is confirmed, capture decisions into `design.md` / `specs`
 
 ---
 
@@ -170,8 +171,8 @@ If the user mentions a change or you detect one is relevant:
 
     | Insight Type               | Where to Capture               |
     |----------------------------|--------------------------------|
-- **Prototype before spec (HARD)**: Before writing any spec requirement, design decision, or task that involves UI components (toast, button, panel, picker, modal, input area), layout changes, or interaction patterns — ALWAYS offer an HTML prototype first. See Frontend Gate.
-- **Self-check before writing artifacts**: Does this change involve new UI? Existing component behavior changes? Am I about to write a scenario about toast/button/panel/picker/modal? → If yes to any, offer prototype first.
+- **Prototype before spec (HARD)**: Before writing any spec requirement, design decision, or task that involves UI components (toast, button, panel, picker, modal, input area), layout changes, or interaction patterns — ALWAYS generate and browser-validate an HTML prototype first. See Frontend Gate.
+- **Self-check before writing artifacts**: Does this change involve new UI? Existing component behavior changes? Am I about to write a scenario about toast/button/panel/picker/modal? → If yes to any, require the HTML prototype first.
     | New requirement discovered | `specs/<capability>/spec.md` |
     | Requirement changed        | `specs/<capability>/spec.md` |
     | Design decision made       | `design.md`                  |
@@ -204,7 +205,8 @@ If the user mentions a change or you detect one is relevant:
 When exploration is wrapping up, **always direct the user to `/opsx:propose`** as the next step. Never suggest `/opsx:apply` directly — the flow is explore → propose → apply.
 
 - **If an HTML prototype was created**: "Great, we've confirmed the visual direction. Run `/opsx:propose` next — the prototype will be incorporated into the change's prototype artifact."
-- **If no prototype was created**: "Run `/opsx:propose` next to create a change proposal with all artifacts."
+- **If the change is non-UI and no prototype was created**: "Run `/opsx:propose` next to create a change proposal with all artifacts."
+- **If the change involves UI and no HTML prototype exists**: generate it before directing the user to `/opsx:propose`; the UI exploration is not proposal-ready without HTML.
 - **If the user wants to just capture clarity**: You may summarize key insights, but still end by suggesting `/opsx:propose` if they want to formalize.
 - **If the user wants to continue later**: "We can pick this up anytime — when ready, run `/opsx:propose` to formalize this into a change."
 

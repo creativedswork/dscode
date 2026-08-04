@@ -2,6 +2,140 @@ import { describe, expect, it, vi } from "vitest";
 import { conversationReducer } from "../../src/ui/shared/reducer.js";
 import type { UIMessage, ServerEvent } from "../../src/ui/shared/types.js";
 
+const runningActivity = {
+  agentId: "agent-1",
+  parentAgentId: "main-1",
+  parentSessionId: "session-1",
+  application: "general",
+  attachment: "background" as const,
+  state: "running" as const,
+  input: "inspect the implementation",
+  createdAt: 1700000000000,
+  startedAt: 1700000000100,
+};
+
+describe("conversationReducer — Agent Activity", () => {
+  it("appends a new activity on spawn", () => {
+    const previous: UIMessage[] = [{
+      id: "user-1",
+      role: "user",
+      content: "delegate",
+    }];
+
+    const result = conversationReducer(previous, {
+      type: "agent_activity",
+      activity: runningActivity,
+    });
+
+    expect(result).toHaveLength(2);
+    expect(result[1]).toMatchObject({
+      id: "agent-agent-1",
+      role: "agent",
+      agentActivity: runningActivity,
+    });
+    expect(result[0]).toBe(previous[0]);
+  });
+
+  it("updates progress by agentId without mutating prior state", () => {
+    const initial = conversationReducer([], {
+      type: "agent_activity",
+      activity: runningActivity,
+    });
+    const progress = {
+      phase: "search",
+      current: 2,
+      total: 4,
+      message: "Reading files",
+    };
+
+    const result = conversationReducer(initial, {
+      type: "agent_activity",
+      activity: { ...runningActivity, progress },
+    });
+
+    expect(result).not.toBe(initial);
+    expect(result[0]).not.toBe(initial[0]);
+    expect(initial[0].agentActivity?.progress).toBeUndefined();
+    expect(result[0].agentActivity?.progress).toEqual(progress);
+  });
+
+  it("updates an existing activity to a terminal state", () => {
+    const initial = conversationReducer([], {
+      type: "agent_activity",
+      activity: runningActivity,
+    });
+    const completed = {
+      ...runningActivity,
+      state: "completed" as const,
+      output: "Found two issues",
+      endedAt: 1700000012000,
+    };
+
+    const result = conversationReducer(initial, {
+      type: "agent_activity",
+      activity: completed,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].agentActivity).toEqual(completed);
+  });
+
+  it("does not duplicate repeated terminal snapshots", () => {
+    const completed = {
+      ...runningActivity,
+      state: "completed" as const,
+      output: "Done",
+      endedAt: 1700000012000,
+    };
+    const first = conversationReducer([], {
+      type: "agent_activity",
+      activity: completed,
+    });
+    const second = conversationReducer(first, {
+      type: "agent_activity",
+      activity: completed,
+    });
+
+    expect(second).toHaveLength(1);
+    expect(second[0].agentActivity).toEqual(completed);
+  });
+
+  it("restores agent-role messages from ready", () => {
+    const result = conversationReducer([], {
+      type: "ready",
+      model: "test-model",
+      config: {} as any,
+      messages: [{
+        role: "agent",
+        content: "",
+        agentActivity: {
+          ...runningActivity,
+          state: "failed",
+          error: "Timed out",
+          endedAt: 1700000012000,
+        },
+      }],
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].role).toBe("agent");
+    expect(result[0].id).toBe("agent-agent-1");
+    expect(result[0].agentActivity).toMatchObject({
+      state: "failed",
+      error: "Timed out",
+    });
+  });
+
+  it("clears activities with the rest of the conversation", () => {
+    const initial = conversationReducer([], {
+      type: "agent_activity",
+      activity: runningActivity,
+    });
+
+    expect(conversationReducer(initial, { type: "clear_conversation" })).toEqual([]);
+  });
+});
+
 describe("conversationReducer — thinking timer anchors", () => {
   it("records thinkingStartedAt and thinkingUpdatedAt on first thinking_delta", () => {
     const now = 1700000000000;

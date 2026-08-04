@@ -47,6 +47,7 @@ import { FileTracker } from "./shared/file-tracker.js";
 import { resolveFileRefs, isImagePath } from "../utils/at-file-resolver.js";
 import { existsSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
+import { rebuildDisplayMessages } from "../session/display.js";
 // TuiDeps replaced by HarnessAPI — see src/core/harness-api.ts
 
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;
@@ -1223,6 +1224,7 @@ export class TuiApp {
   }
 
   private async handleSubmit(text: string, echoText?: string): Promise<void> {
+    const displayText = echoText ?? text;
     text = text.replace(/\[image:\d+\]\s*/g, "").trim();
     // Use pre-drained images if Enter was intercepted in input listener,
     // otherwise drain now (for programmatic submits like /image command).
@@ -1401,9 +1403,9 @@ export class TuiApp {
       ? c.dim(`[${images.length} image(s) attached]`)
       : "";
     const userMessage = hasText
-      ? imageIndicator ? `${text}\n${imageIndicator}` : text
+      ? imageIndicator ? `${displayText}\n${imageIndicator}` : displayText
       : imageIndicator;
-    this.addUserMessage(echoText ?? userMessage);
+    this.addUserMessage(userMessage);
 
     // Re-add images as inline images (drafts were removed by editor.setText onChange)
     if (images && images.length > 0) {
@@ -1416,7 +1418,7 @@ export class TuiApp {
     this.imagePasteHandler.updateStatus();
 
     if (images && images.length > 0) {
-      this.deps.promptWithImages(text, images).then(
+      this.deps.promptWithImages(text, images, displayText).then(
         () => this.setProcessing(false),
         (err) => {
           this.setProcessing(false);
@@ -1481,7 +1483,17 @@ export class TuiApp {
   }
 
   replayMessages(messages: unknown[]): void {
-    this.conversation.replayMessages(messages);
+    const sessionId = this.deps.sessionManager.getCurrentSessionId() ?? "unknown";
+    const displayMessages = rebuildDisplayMessages(
+      messages as any[],
+      this.deps.sessionManager.agentMessages,
+      sessionId,
+    );
+    this.conversation.replayMessages(displayMessages);
+  }
+
+  upsertAgentActivity(activity: import("./shared/types.js").AgentActivity): void {
+    this.conversation.upsertAgentActivity(activity);
   }
 
   addPendingImage(image: ImageContent): void {

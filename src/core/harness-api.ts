@@ -41,7 +41,7 @@ export interface HarnessAPI {
   readonly applicationRegistry: AgentApplicationRegistry;
   readonly agentSupervisor: AgentSupervisor;
 
-  promptWithImages(text: string, images: ImageContent[]): Promise<void>;
+  promptWithImages(text: string, images: ImageContent[], displayText?: string): Promise<void>;
   setModel(id: string): void;
   setThinking(level: string): void;
   setProvider(id: string): void;

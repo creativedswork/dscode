@@ -3,6 +3,7 @@ import type { UIMessage } from "../types";
 import { ToolCard } from "./ToolCard";
 import { Markdown } from "./Markdown";
 import { Warning } from "@phosphor-icons/react";
+import { AgentActivityCard } from "./AgentActivityCard";
 
 interface PermissionPrompt {
   toolName: string;
@@ -81,7 +82,11 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
     <div ref={(el) => { (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = el; if (containerRef) { (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el; } }} onScroll={handleChatScroll} className={"flex-1 overflow-y-auto min-h-0 px-4 py-4 space-y-4" + (scrollLocked ? " overflow-hidden pointer-events-none" : "")}>
       {messages.map((msg) => (
         <ErrorBoundary key={msg.id} fallback={<FallbackBubble message={msg} />}>
-          {msg.role === "user" ? <UserBubble message={msg} /> : <AssistantMessage message={msg} />}
+          {msg.role === "user"
+            ? <UserBubble message={msg} />
+            : msg.role === "agent" && msg.agentActivity
+              ? <AgentActivityCard activity={msg.agentActivity} />
+              : <AssistantMessage message={msg} />}
         </ErrorBoundary>
       ))}
 

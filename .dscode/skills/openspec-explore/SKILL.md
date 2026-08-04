@@ -15,6 +15,8 @@ Enter explore mode. Think deeply. Visualize freely. Follow the conversation wher
 
 **This is a stance, not a workflow.** There are no fixed steps, no required sequence, no mandatory outputs. You're a thinking partner helping the user explore.
 
+**Store selection:** If the user names a store (a store is a standalone OpenSpec repo registered on this machine) or the work lives in one, run `openspec store list --json` to discover registered store ids, then pass `--store <id>` on the commands that read or write specs and changes (`new change`, `status`, `instructions`, `list`, `show`, `validate`, `archive`, `doctor`, `context`). Other commands do not take the flag. Hints printed by commands already carry the flag; keep it on follow-ups. Without a store, commands act on the nearest local `openspec/` root.
+
 ---
 
 ## The Stance
@@ -68,6 +70,18 @@ Depending on what the user brings, you might:
 └─────────────────────────────────────────┘
 ```
 
+**Create mandatory HTML prototypes for UI changes**
+
+- Treat visible components, rendering, layout, CSS, interaction, and
+  user-facing states as UI changes.
+- Before a UI exploration becomes proposal-ready, load `prototype-workflow`,
+  read `docs/prototypes/README.md`, extract the current Web design tokens, and
+  generate a self-contained HTML prototype in `docs/prototypes/`.
+- Browser-validate the prototype and iterate on visual feedback before
+  finalizing design decisions.
+- A text-only visual direction is not a prototype. The workflow may pause or be
+  deferred, but it MUST NOT skip HTML and continue to UI proposal artifacts.
+
 **Surface risks and unknowns**
 - Identify what could go wrong
 - Find gaps in understanding
@@ -102,11 +116,10 @@ Think freely. When insights crystallize, you might offer:
 
 If the user mentions a change or you detect one is relevant:
 
-1. **Read existing artifacts for context**
-   - `openspec/changes/<name>/proposal.md`
-   - `openspec/changes/<name>/design.md`
-   - `openspec/changes/<name>/tasks.md`
-   - etc.
+1. **Resolve and read existing artifacts for context**
+   - Run `openspec status --change "<name>" --json`.
+   - Use `changeRoot`, `artifactPaths`, and `actionContext` from the status JSON.
+   - Read existing files from `artifactPaths.<artifact>.existingOutputPaths`.
 
 2. **Reference them naturally in conversation**
    - "Your design mentions using Redis, but we just realized SQLite fits better..."
@@ -252,7 +265,8 @@ You: That changes everything.
 When exploration is wrapping up, **always direct the user to `/opsx:propose`** as the next step. Never suggest `/opsx:apply` directly — the flow is explore → propose → apply.
 
 - **If an HTML prototype was created**: "Great, we've confirmed the visual direction. Run `/opsx:propose` next — the prototype will be incorporated into the change's prototype artifact."
-- **If no prototype was created**: "Run `/opsx:propose` next to create a change proposal with all artifacts."
+- **If the change is non-UI and no prototype was created**: "Run `/opsx:propose` next to create a change proposal with all artifacts."
+- **If the change involves UI and no HTML prototype exists**: Generate it before directing the user to `/opsx:propose`; do not treat the exploration as proposal-ready.
 - **If the user wants to just capture clarity**: You may summarize key insights, but still end by suggesting `/opsx:propose` if they want to formalize.
 - **If the user wants to continue later**: "We can pick this up anytime — when ready, run `/opsx:propose` to formalize this into a change."
 

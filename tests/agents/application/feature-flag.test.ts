@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { loadConfig } from "../../../src/core/config.js";
-import { Harness } from "../../../src/core/harness.js";
+import {
+  Harness,
+  shouldUseNativeMainImagePath,
+} from "../../../src/core/harness.js";
 import { PiAgentRuntimeAdapter } from "../../../src/agents/runtimes/pi-agent-runtime.js";
 
 const temporaryDirectories: string[] = [];
@@ -16,6 +19,14 @@ afterEach(async () => {
 });
 
 describe("agents.enabled rollback switch", () => {
+  it("uses native Main image input only when the Agent system is disabled", () => {
+    expect(shouldUseNativeMainImagePath(true, false, true)).toBe(false);
+    expect(shouldUseNativeMainImagePath(true, true, true)).toBe(false);
+    expect(shouldUseNativeMainImagePath(false, false, true)).toBe(true);
+    expect(shouldUseNativeMainImagePath(false, true, true)).toBe(false);
+    expect(shouldUseNativeMainImagePath(false, false, false)).toBe(false);
+  });
+
   it("keeps process tools out of the Main Agent DriverRegistry when disabled", async () => {
     const root = await mkdtemp(join(tmpdir(), "dscode-agents-disabled-"));
     temporaryDirectories.push(root);

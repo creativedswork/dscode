@@ -2,6 +2,8 @@
 // Pure data model for session persistence and vision pipeline.
 // Consumed by: harness.ts (inference), store.ts (I/O), display.ts (UI)
 
+import type { AgentActivity } from "../ui/shared/types.js";
+
 // --- Image ---
 
 export interface ImageRef {
@@ -106,9 +108,11 @@ export interface SwitchSessionResult {
 // --- Display (forward-declared, implemented in display.ts) ---
 
 export interface DisplayMessage {
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "agent";
   content: string;
   images?: { data: string; mimeType: string }[];
   thinking?: string;
   tools?: { name: string; args: string; result: string; isError: boolean }[];
+  createdAt?: number;
+  agentActivity?: AgentActivity;
 }

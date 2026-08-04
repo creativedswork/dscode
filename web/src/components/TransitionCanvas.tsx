@@ -415,7 +415,9 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       const ry = rect.top - canvasRect.top;
       const rw = rect.width;
       const rh = rect.height;
-      const isCard = el.getAttribute("data-collider") === "tool-card" || el.getAttribute("data-collider") === "message-card";
+      const isCard = ["tool-card", "message-card", "agent-card"].includes(
+        el.getAttribute("data-collider") ?? "",
+      );
       const count = isCard ? randInt(30, 50) : randInt(20, 40);
       for (let i = 0; i < count; i++) {
         const px = rx + rand(0, rw);
@@ -766,6 +768,9 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         case "message-card":
           destroyMessageCard(el);
           break;
+        case "agent-card":
+          destroyMessageCard(el);
+          break;
         case "thinking-block":
           destroyThinkingBlock(el);
           break;
@@ -850,7 +855,7 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       let current: HTMLElement | null = el.parentElement;
       while (current) {
         const type = current.getAttribute("data-collider");
-        if (type !== "tool-card" && type !== "message-card") {
+        if (type !== "tool-card" && type !== "message-card" && type !== "agent-card") {
           current = current.parentElement;
           continue;
         }

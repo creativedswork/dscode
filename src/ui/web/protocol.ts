@@ -16,4 +16,7 @@ export type {
   ToolCallEntry,
   SkillInfo,
   ContextWindowData,
+  AgentActivity,
+  AgentActivityProgress,
+  AgentActivityState,
 } from "../../ui/shared/types.js";

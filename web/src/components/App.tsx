@@ -131,6 +131,7 @@ export function App() {
         break;
       }
       case "user_message":
+      case "agent_activity":
       case "thinking_delta":
       case "text_delta":
       case "tool_progress":

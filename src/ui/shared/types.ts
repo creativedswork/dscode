@@ -136,19 +136,56 @@ export interface ToolCallEntry {
 
 // ── Conversation messages ──
 
+export type AgentActivityState =
+  | "created"
+  | "running"
+  | "waiting"
+  | "stopped"
+  | "completed"
+  | "failed"
+  | "terminated"
+  | "killed";
+
+export interface AgentActivityProgress {
+  phase?: string;
+  current?: number;
+  total?: number;
+  message?: string;
+}
+
+export interface AgentActivity {
+  agentId: string;
+  parentAgentId?: string;
+  parentSessionId: string;
+  application: string;
+  attachment: "foreground" | "background";
+  state: AgentActivityState;
+  input: string;
+  output?: string;
+  error?: string;
+  progress?: AgentActivityProgress;
+  createdAt: number;
+  startedAt?: number;
+  endedAt?: number;
+}
+
 export interface ConversationMessage {
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "agent";
   content: string;
   thinking?: string;
   tools?: ToolCallEntry[];
+  images?: ImageAttachment[];
+  createdAt?: number;
+  agentActivity?: AgentActivity;
 }
 
 export interface UIMessage {
   id: string;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "agent";
   content: string;
   thinking?: string;
   tools?: ToolCallEntry[];
+  agentActivity?: AgentActivity;
   isStreaming?: boolean;
   images?: (ImageAttachment | ImageRef)[];
   createdAt?: number; // epoch ms
@@ -203,6 +240,7 @@ export type ClientCommand =
 
 export type ServerEvent =
   | { type: "ready"; model: string; config: ConfigData; messages: ConversationMessage[] }
+  | { type: "agent_activity"; activity: AgentActivity }
   | { type: "user_message"; text: string; images?: ImageAttachment[] }
   | { type: "assistant_start" }
   | { type: "thinking_delta"; delta: string }
@@ -236,4 +274,3 @@ export type ServerEvent =
   | { type: "artifact_end" }
   | { type: "cache_size"; totalBytes: number; fileCount: number; sessionCount: number }
   | { type: "mcp_open_browser" }
-

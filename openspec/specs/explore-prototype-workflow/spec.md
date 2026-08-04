@@ -1,6 +1,8 @@
 ## Purpose
 
-Defines the HTML-first prototype workflow triggered from explore mode — including output directory conventions, naming rules, constraint file, and skill loading sequence — ensuring visual exploration produces consistent, style-aligned, and retainable HTML artifacts.
+Defines the mandatory HTML-first prototype workflow for UI changes — including
+output directory conventions, naming rules, constraint files, skill loading,
+artifact gating, and canonical command/skill distribution.
 ## Requirements
 ### Requirement: HTML prototype output directory
 HTML prototypes generated during explore mode SHALL be placed in `docs/prototypes/` with the naming convention `<change-name>-<descriptor>.html`.
@@ -14,7 +16,7 @@ HTML prototypes generated during explore mode SHALL be placed in `docs/prototype
 - **THEN** each prototype uses a distinct descriptor (e.g., `waiting-state.html`, `done-state.html`)
 
 ### Requirement: Prototype constraint file
-`docs/prototypes/prototype.md` SHALL exist as a standing constraint file specifying the conventions for HTML prototype generation.
+`docs/prototypes/README.md` SHALL exist as the standing constraint file specifying the conventions for HTML prototype generation.
 
 #### Scenario: Constraint file content
 - **WHEN** the constraint file is read
@@ -22,26 +24,27 @@ HTML prototypes generated during explore mode SHALL be placed in `docs/prototype
 
 #### Scenario: Constraint file is read before generation
 - **WHEN** an agent is about to generate an HTML prototype
-- **THEN** it reads `docs/prototypes/prototype.md` first to obtain constraints
+- **THEN** it reads `docs/prototypes/README.md` first to obtain constraints
 
 ### Requirement: Explore command prototype section
 The explore command file (`.dscode/commands/opsx/explore.md`, `.clinerules/workflows/opsx-explore.md`, and `.claude/commands/opsx/explore.md`) SHALL contain a "Create HTML prototypes for frontend ideas" section under "What You Might Do" AND an "Ending Discovery" section that unconditionally directs to `/opsx:propose`.
 
 #### Scenario: Detection keywords
 - **WHEN** an explore discussion mentions UI, 页面, 界面, 组件, 交互, 样式, 视觉, CSS, frontend, landing, dashboard, 原型, prototype, redesign, or 动效
-- **THEN** the agent SHALL naturally offer to create an HTML prototype
+- **THEN** the agent SHALL identify the change as requiring an HTML prototype
 
 #### Scenario: Generation steps
-- **WHEN** the user accepts the prototype offer
-- **THEN** the agent SHALL: (1) read `docs/prototypes/prototype.md`, (2) load `html-output` skill, (3) extract `--color-*` variables from `web/index.css`, (4) generate self-contained HTML at `docs/prototypes/<name>.html`
+- **WHEN** a UI change is being prepared for proposal
+- **THEN** the agent SHALL: (1) read `docs/prototypes/README.md`, (2) load `prototype-workflow` and `html-output`, (3) extract `--color-*` variables from `web/src/index.css`, (4) generate self-contained HTML at `docs/prototypes/<name>-<descriptor>.html`
 
 #### Scenario: Visual iteration
 - **WHEN** a prototype is generated
 - **THEN** the agent SHALL accept visual feedback and iterate on the HTML prototype before capturing final design decisions
 
 #### Scenario: Ending discovery unconditionally goes to propose
-- **WHEN** explore ends, regardless of whether a prototype was created
-- **THEN** the agent SHALL direct the user to `/opsx:propose` as the next step and SHALL NOT suggest `/opsx:apply`
+- **WHEN** explore for a UI change is ready to proceed
+- **THEN** the agent SHALL ensure an HTML prototype exists before directing the user to `/opsx:propose`
+- **AND** the agent SHALL NOT suggest `/opsx:apply`
 
 ### Requirement: System Prompt prototype alignment
 The System Prompt (AGENTS.md) SHALL describe the HTML prototype workflow consistently with the explore command.
@@ -91,18 +94,26 @@ The `prototype` artifact's `requires` list SHALL include `design`, ensuring prot
 - **THEN** `prototype` SHALL show as `blocked`
 
 ### Requirement: Prototype artifact content for UI changes
-For changes involving UI components, pages, or visual interaction, the `prototype.md` artifact SHALL reference HTML prototype files from `docs/prototypes/` and capture key design decisions refined during visual iteration.
+UI changes SHALL include at least one HTML prototype. For changes involving
+visible UI, rendering, layout, CSS, interaction, or user-facing states, the
+`prototype.md` artifact SHALL reference at least one
+existing self-contained HTML prototype from `docs/prototypes/` and capture key
+design decisions refined during visual iteration. A text-only visual direction
+MUST NOT satisfy this requirement.
 
 #### Scenario: UI change prototype artifact
 - **WHEN** the change involves UI and HTML prototypes exist in `docs/prototypes/`
 - **THEN** `prototype.md` SHALL list each prototype file path, summarize the visual direction, and reference the design decisions confirmed during explore
 
 #### Scenario: UI change without HTML prototype
-- **WHEN** the change involves UI but no HTML prototype was created during explore
-- **THEN** `prototype.md` SHALL state that no prototype was generated and include a brief visual direction description based on design.md
+- **WHEN** the change involves UI but no matching HTML prototype exists
+- **THEN** artifact generation SHALL stop before `prototype.md` is completed
+- **AND** the agent SHALL generate and validate an HTML prototype before continuing
 
 ### Requirement: Prototype artifact content for non-UI changes
-For changes that do not involve UI, the `prototype.md` artifact SHALL contain a stub stating no prototype is needed with a one-line rationale.
+Prototype stubs MUST be limited to changes that have no visible UI, rendering,
+layout, CSS, interaction, or user-facing state impact. Such changes MAY use a
+`prototype.md` stub stating no prototype is needed with a one-line rationale.
 
 #### Scenario: Non-UI change prototype stub
 - **WHEN** the change is backend-only, config, or refactoring with no UI impact
@@ -116,8 +127,13 @@ The explore command SHALL always direct the user to `/opsx:propose` as the next 
 - **THEN** the explore command SHALL say to run `/opsx:propose` next, mentioning the prototype will be incorporated
 
 #### Scenario: Explore ending without prototype
-- **WHEN** explore completes and no prototype was created
+- **WHEN** non-UI exploration completes and no prototype was created
 - **THEN** the explore command SHALL say to run `/opsx:propose` next
+
+#### Scenario: UI explore cannot finish without prototype
+- **WHEN** UI exploration has no HTML prototype
+- **THEN** the agent SHALL generate the HTML prototype or pause the workflow
+- **AND** it SHALL NOT treat the UI exploration as proposal-ready
 
 ### Requirement: Propose command prototype awareness
 The propose command SHALL check `docs/prototypes/` for HTML prototype files matching the change name before creating the prototype artifact.
@@ -128,5 +144,21 @@ The propose command SHALL check `docs/prototypes/` for HTML prototype files matc
 
 #### Scenario: Propose finds no prototype HTML
 - **WHEN** propose runs and no matching HTML prototypes exist
-- **THEN** propose SHALL create a non-UI stub prototype artifact (if the change has no UI impact) or offer to generate a prototype first (if the change has UI impact)
+- **THEN** propose SHALL create a non-UI stub only if the change has no UI impact
+- **AND** for a UI change propose SHALL generate and validate an HTML prototype before continuing
 
+### Requirement: Canonical workflow distribution
+
+`.dscode/commands/opsx` and `.dscode/skills/openspec-*` SHALL be the canonical
+workflow sources. `.claude` and `.trae` SHALL expose the corresponding commands
+and skills through relative symbolic links rather than duplicated files.
+
+#### Scenario: Claude workflow links
+- **WHEN** `.claude` workflow entries are inspected
+- **THEN** `.claude/commands/opsx` SHALL resolve to `.dscode/commands/opsx`
+- **AND** each `.claude/skills/openspec-*` directory SHALL resolve to its matching `.dscode/skills/openspec-*` directory
+
+#### Scenario: Trae workflow links
+- **WHEN** `.trae` workflow entries are inspected
+- **THEN** `.trae/commands/opsx` SHALL resolve to `.dscode/commands/opsx`
+- **AND** each `.trae/skills/openspec-*` directory SHALL resolve to its matching `.dscode/skills/openspec-*` directory

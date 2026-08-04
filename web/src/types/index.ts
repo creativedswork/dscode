@@ -20,6 +20,9 @@ export type {
   UIMessage,
   PermissionPrompt,
   PermOption,
+  AgentActivity,
+  AgentActivityProgress,
+  AgentActivityState,
 } from "@dscode/shared/types";
 
 

@@ -6,12 +6,13 @@ context: |
   It extends spec-driven with two additional artifacts:
 
   1. **prototype** (mandatory, blocks tasks creation):
-     For UI changes, reference HTML prototype files from `docs/prototypes/`
-     that were created during explore. For non-UI changes, write a stub stating
-     no prototype is needed. The prototype artifact is mandatory — tasks cannot
-     be created until prototype exists. See explore command for the full workflow
-     (load `html-output` skill → extract CSS variables → generate HTML at
-     `docs/prototypes/<name>.html`). Load `prototype-workflow` skill for constraints.
+     Every UI change MUST include at least one self-contained HTML prototype in
+     `docs/prototypes/`; a text-only visual direction is never a substitute.
+     If explore did not create one, propose MUST generate and validate it before
+     writing `prototype.md`. Only strictly non-UI changes may use a one-line
+     "No prototype needed" stub. Tasks cannot be created until the mandatory
+     prototype artifact exists. Load `prototype-workflow` (which loads
+     `html-output`) and use `docs/prototypes/README.md` for constraints.
 
   2. **explore options → prototypes** (behavioral rule for explore mode):
     When exploring a problem and multiple approaches emerge, do NOT ask the user

@@ -7,11 +7,14 @@
 原型生成规范见 skill：**`prototype-workflow`** (`.dscode/skills/prototype-workflow/SKILL.md`)
 
 生成原型前 Agent 会加载该 skill，自动包含以下约束：
+- UI 变更必须生成至少一个自包含 HTML 原型，纯文字视觉说明不能替代
+- 仅严格非 UI 变更允许在 OpenSpec 中使用 `No prototype needed` stub
 - 格式: 自包含单文件 HTML
-- 风格: 对齐 `web/index.css` 的 `--color-*` design tokens
+- 风格: 对齐 `web/src/index.css` 的 `--color-*` design tokens
 - 工具: 自动加载 `html-output` skill
 
 ## 文件
 
 - `mcp-toolcard-execution-view-prototype.html` — Session 00MRIZMZQJ，MCP 工具执行视图的原型设计
 - `markdown-line-split-fix.html` — 修复 content.split('\n') 破坏多行 Markdown 结构的原型
+- `show-subagents-in-conversation.html` — SubAgent 在 Web/TUI 对话流中的 Agent Activity Card 交互原型

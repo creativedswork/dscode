@@ -21,6 +21,7 @@ import { buildMcpServers } from "../mcp-browser.js";
 import { resolveAtFileRefs, resolveFileRefs, listProjectFiles, isImagePath } from "../../utils/at-file-resolver.js";
 import { rebuildDisplayMessages } from "../../session/display.js";
 import { formatToolResultForUI } from "../shared/tool-result-formatter.js";
+import { AgentActivityProjector } from "../shared/agent-activity.js";
 import { resolveBuiltResource } from "../../resources/runtime.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
 import type {
@@ -96,6 +97,7 @@ export class WebUiBackend implements UiBackend {
   private contextWindowThrottlePending: boolean = false;
   private lastArtifactHtml: string = "";
   private isAssistantTurn: boolean = false;
+  private readonly agentActivityProjector: AgentActivityProjector;
 
   private cleanupUploadDir(sessionId: string): void {
     const uploadDir = join(this.config.projectPath, ".dscode", "uploads", sessionId);
@@ -138,6 +140,14 @@ export class WebUiBackend implements UiBackend {
 
     // ── Event bus subscriptions ──
     const h = this.harness;
+    this.agentActivityProjector = new AgentActivityProjector(
+      h.agentSupervisor,
+      () => h.sessionManager.getCurrentSessionId() ?? undefined,
+      (activity) => this.broadcast({ type: "agent_activity", activity }),
+    );
+    const projectAgentActivity = (event: Parameters<AgentActivityProjector["handle"]>[0]) => {
+      this.agentActivityProjector.handle(event);
+    };
 
     h.events.on("llm:thinking:delta", (e) => { this.broadcast({ type: "thinking_delta", delta: e.delta }); });
     h.events.on("llm:text:delta", (e) => {
@@ -174,12 +184,11 @@ export class WebUiBackend implements UiBackend {
     h.events.on("turn:error", (e) => { this.broadcast({ type: "error", text: e.error }); });
     h.events.on("processing:start", () => { this.broadcast({ type: "loader", state: "show", text: "Thinking..." }); });
     h.events.on("processing:stop", () => { this.stopSessionTimeBroadcast(); this.broadcast({ type: "loader", state: "hide" }); });
-    h.events.on("agent:exit", (e) => {
-      const agentProcess = h.agentSupervisor.get(e.result.agentId);
-      if (agentProcess?.attachment === "background") {
-        this.broadcast({ type: "info", text: `Agent ${e.result.agentId} ${e.result.state}`, display: "toast" });
-      }
-    });
+    h.events.on("agent:spawned", projectAgentActivity);
+    h.events.on("agent:state", projectAgentActivity);
+    h.events.on("agent:progress", projectAgentActivity);
+    h.events.on("agent:output", projectAgentActivity);
+    h.events.on("agent:exit", projectAgentActivity);
     h.events.on("message:user", (e) => { this.broadcast({ type: "user_message", text: e.text, images: e.images as any }); });
     h.events.on("ui:info", (e) => { this.broadcast({ type: "info", text: e.text, display: e.display ?? "toast" }); });
     h.events.on("ui:error", (e) => { this.broadcast({ type: "error", text: e.text }); });
@@ -523,6 +532,7 @@ export class WebUiBackend implements UiBackend {
   private async handleMessage(client: WebSocketClient, cmd: ClientCommand): Promise<void> {
     switch (cmd.type) {
       case "chat": {
+        const displayText = cmd.text;
         let text = cmd.text;
         let images = cmd.images;
 
@@ -630,7 +640,7 @@ export class WebUiBackend implements UiBackend {
           }
         }
         // Broadcast user message to client before sending to agent
-        client.send({ type: "user_message", text, images: images && images.length > 0 ? images : undefined } as any);
+        client.send({ type: "user_message", text: displayText, images: images && images.length > 0 ? images : undefined } as any);
         this.pushSessionList(client);
 
         try {
@@ -642,7 +652,7 @@ export class WebUiBackend implements UiBackend {
             }) as ImageContent);
             this.pendingImages = [];
             this.harness.logger.info("WebBackend", `promptWithImages: textLen=${text.length}, images=${imageContents.length}, img[0].dataLen=${imageContents[0]?.data?.length ?? 0}, mime=${imageContents[0]?.mimeType ?? "?"}`);
-            await this.harness.promptWithImages(text, imageContents);
+            await this.harness.promptWithImages(text, imageContents, displayText);
           } else {
             this.pendingImages = [];
             await this.harness.promptAndSave(text);
@@ -1379,7 +1389,8 @@ export class WebUiBackend implements UiBackend {
   private buildConversationHistory(): ConversationMessage[] {
     const messages = this.harness.agent.state.messages as any[];
     const agentMessages = this.harness.sessionManager?.agentMessages ?? [];
-    return rebuildDisplayMessages(messages, agentMessages) as any;
+    const sessionId = this.harness.sessionManager.getCurrentSessionId() ?? "unknown";
+    return rebuildDisplayMessages(messages, agentMessages, sessionId) as any;
   }
 
 

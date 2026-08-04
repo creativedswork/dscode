@@ -2,6 +2,7 @@ import type { HarnessAPI } from "../core/harness-api.js";
 import type { PermissionPromptResult } from "../core/types.js";
 import type { UiBackend } from "./backend.js";
 import { TuiApp } from "./tui-app.js";
+import { AgentActivityProjector } from "./shared/agent-activity.js";
 
 /**
  * Thin adapter that wraps TuiApp and exposes the UiBackend interface.
@@ -9,9 +10,18 @@ import { TuiApp } from "./tui-app.js";
  */
 export class TuiBackend implements UiBackend {
   private tui: TuiApp;
+  private readonly agentActivityProjector: AgentActivityProjector;
 
   constructor(deps: HarnessAPI) {
     this.tui = new TuiApp(deps);
+    this.agentActivityProjector = new AgentActivityProjector(
+      deps.agentSupervisor,
+      () => deps.sessionManager.getCurrentSessionId() ?? undefined,
+      (activity) => this.tui.upsertAgentActivity(activity),
+    );
+    const projectAgentActivity = (event: Parameters<AgentActivityProjector["handle"]>[0]) => {
+      this.agentActivityProjector.handle(event);
+    };
 
     // ── Event bus subscriptions ──
     deps.events.on("llm:text:delta", (e) => { this.tui.textDelta(e.delta); });
@@ -30,12 +40,11 @@ export class TuiBackend implements UiBackend {
     deps.events.on("ui:focus:editor", () => { this.tui.focusEditor(); });
     deps.events.on("processing:start", () => { this.tui.setProcessing(true); });
     deps.events.on("processing:stop", () => { this.tui.setProcessing(false); });
-    deps.events.on("agent:exit", (e) => {
-      const agentProcess = deps.agentSupervisor.get(e.result.agentId);
-      if (agentProcess?.attachment === "background") {
-        this.tui.addInfo(`Agent ${e.result.agentId} ${e.result.state}`);
-      }
-    });
+    deps.events.on("agent:spawned", projectAgentActivity);
+    deps.events.on("agent:state", projectAgentActivity);
+    deps.events.on("agent:progress", projectAgentActivity);
+    deps.events.on("agent:output", projectAgentActivity);
+    deps.events.on("agent:exit", projectAgentActivity);
   }
 
   // ── Lifecycle ──
