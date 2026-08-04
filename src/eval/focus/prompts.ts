@@ -179,6 +179,15 @@ Recovery detection types: "tool_error", "user_complaint", "test_failure", "scree
 ## Rules
 - ALWAYS write your final result to output/attribution.json using write_file.`;
 
+/** @deprecated The unified CHIEF pipeline no longer selects Focus prompts. */
+export const ZOOM_SYSTEM_PROMPT = ZOOM_AGENT_SYSTEM_PROMPT;
+
+/** @deprecated The unified CHIEF pipeline no longer selects Focus prompts. */
+export const SYNTH_SYSTEM_PROMPT = `${SYNTH_AGENT_SYSTEM_PROMPT}
+
+Legacy classification contract: preserve errorLayer and errorType, never use a
+tool name as Agent identity, and explain cross-zone cascade logic.`;
+
 // ── Pass 1: SCAN Task Prompt ──
 
 export function buildScanTaskPrompt(skeleton: SessionSkeleton): string {
@@ -255,6 +264,36 @@ Optionally, write your analysis notes to \`notebook/zone-${zone.id}-analysis.md\
 - Look for repair loops: repeated tool calls to the same target
 - Distinguish tool errors (infrastructure) from agent errors (judgment)
 - For creative tools, assess output quality, not just functional correctness`;
+}
+
+/** @deprecated Use the unified CHIEF workspace and chief-graph Application. */
+export function buildZoomPrompt(
+  zone: AttentionZone,
+  _steps: unknown[],
+): string {
+  return `${buildZoomTaskPrompt(zone, {
+    meta: {
+      question: "legacy Focus compatibility",
+      totalSteps: zone.stepEnd + 1,
+      totalMessages: 0,
+      errorRate: "0.0%",
+      duration: "unknown",
+      model: "unknown",
+    },
+    stats: {
+      toolCalls: 0,
+      toolErrors: 0,
+      userComplaints: 0,
+      screenshotsTaken: 0,
+    },
+    phases: [],
+    signalAnchors: [],
+    hotZones: [],
+    coldZones: [],
+    dataItems: [],
+  })}
+
+Classify every candidate with errorLayer and errorType.`;
 }
 
 // ── Pass 3: SYNTHESIZE Task Prompt ──

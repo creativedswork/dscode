@@ -31,6 +31,12 @@ for (const required of [
   "package/package.json",
   "package/dist/dscode.mjs",
   "package/dist/resources/manifest.json",
+  "package/dist/resources/agents/chief-attribution.md",
+  "package/dist/resources/agents/chief-backtrack.md",
+  "package/dist/resources/agents/chief-graph.md",
+  "package/dist/resources/agents/chief-oracle.md",
+  "package/dist/resources/agents/eval-rule-attribution.md",
+  "package/dist/resources/agents/eval-rule-merge.md",
   "package/dist/resources/agents/vision.md",
 ]) {
   if (!files.includes(required)) throw new Error(`Package is missing ${required}`);

@@ -10,10 +10,12 @@ import type { HarnessRule, RuleStore } from "./types.js";
 import { computeSeverity } from "./types.js";
 import type { HarnessAPI } from "../../core/harness-api.js";
 import type { Logger } from "../../utils/logger.js";
-import { resolveModel } from "../../models/index.js";
-import { completeSimple } from "../../models/index.js";
-import { RULE_MERGE_SYSTEM, buildStep8Prompt, extractJSON } from "../prompts.js";
-import { validateMergeDecisions, type MergeDecision } from "../schemas.js";
+import { runStructuredAgent } from "../chief/runner.js";
+import {
+  validateMergeDecisions,
+  type MergeDecision,
+  type ValidationResult,
+} from "../schemas.js";
 
 // ── Path ──
 
@@ -27,7 +29,9 @@ function ruleStorePath(): string {
 
 // ── I/O ──
 
-function stripOldFormat(rules: Record<string, Record<string, unknown>>): Record<string, HarnessRule> {
+export function normalizeRuleRecords(
+  rules: Record<string, Record<string, unknown>>,
+): Record<string, HarnessRule> {
   const result: Record<string, HarnessRule> = {};
   for (const [id, rule] of Object.entries(rules)) {
     const { pattern, needsLlm, ...rest } = rule;
@@ -66,7 +70,7 @@ export function loadRuleStore(projectPath: string, logger?: Logger): RuleStore {
     }
 
     // Strip old-format fields (pattern, needsLlm) on load
-    const rules = stripOldFormat(parsed.rules as Record<string, Record<string, unknown>>);
+    const rules = normalizeRuleRecords(parsed.rules as Record<string, Record<string, unknown>>);
 
     return {
       version: 1,
@@ -98,30 +102,6 @@ function createEmptyStore(projectPath: string): RuleStore {
     rules: {},
     updatedAt: Date.now(),
   };
-}
-
-// ── LLM Helper ──
-
-async function callMergeLLM(
-  systemPrompt: string,
-  userMessage: string,
-  harness: HarnessAPI,
-): Promise<string> {
-  const model = resolveModel(harness.config.provider, harness.config.modelId);
-  const response = await completeSimple(
-    model,
-    {
-      systemPrompt,
-      messages: [{ role: "user" as const, content: userMessage, timestamp: Date.now() }],
-    },
-    { apiKey: harness.config.apiKey },
-  );
-  const content = typeof response.content === "string"
-    ? response.content
-    : Array.isArray(response.content)
-      ? ((response.content as unknown) as Record<string, unknown>[]).find((b) => b["type"] === "text")?.["text"] as string ?? ""
-      : "";
-  return content;
 }
 
 // ── Semantic Merge (Step 8) ──
@@ -161,43 +141,64 @@ export async function semanticMerge(
     evidenceCount: r.evidence.length,
   }));
 
-  const prompt = buildStep8Prompt(newSummaries, existingSummaries);
+  const prompt = `Semantically match each new eval rule to the existing rule store.
+
+New rules:
+${JSON.stringify(newSummaries, null, 2)}
+
+Existing rules:
+${JSON.stringify(existingSummaries, null, 2)}
+
+Return a JSON array with exactly one decision for every new rule:
+[{
+  "newRuleId": "exact new rule ID",
+  "decision": "merge|new",
+  "targetRuleId": "exact existing rule ID when decision is merge",
+  "reasoning": "semantic comparison"
+}]
+
+Do not reference IDs outside these two supplied lists.`;
 
   let decisions: MergeDecision[] = [];
 
   try {
-    let rawOutput = await callMergeLLM(RULE_MERGE_SYSTEM, prompt, harness);
-
-    // Parse and validate with retry
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const json = extractJSON(rawOutput);
-      if (!json) {
-        if (attempt === 0) {
-          rawOutput = await callMergeLLM(RULE_MERGE_SYSTEM, prompt + "\n\n⚠ Output PURE JSON array only.", harness);
-          continue;
+    const newIds = new Set(newSummaries.map((rule) => rule.id));
+    const existingIdSet = new Set(existingSummaries.map((rule) => rule.id));
+    const validate = (value: unknown): ValidationResult<MergeDecision[]> => {
+      const parsed = validateMergeDecisions(value);
+      if (!parsed.ok) return parsed;
+      const errors: string[] = [];
+      const seen = new Set<string>();
+      for (const decision of parsed.value) {
+        if (!newIds.has(decision.newRuleId)) {
+          errors.push(`Unknown newRuleId: ${decision.newRuleId}`);
         }
-        if (logger) logger.warn("RuleStore", "No JSON in merge LLM response, adding all as new");
-        break;
+        if (seen.has(decision.newRuleId)) {
+          errors.push(`Duplicate decision: ${decision.newRuleId}`);
+        }
+        if (decision.decision === "merge"
+          && (!decision.targetRuleId || !existingIdSet.has(decision.targetRuleId))) {
+          errors.push(`Unknown targetRuleId: ${decision.targetRuleId ?? ""}`);
+        }
+        seen.add(decision.newRuleId);
       }
-
-      const parsed = validateMergeDecisions(JSON.parse(json));
-      if (parsed.ok) {
-        decisions = parsed.value;
-        break;
+      for (const id of newIds) {
+        if (!seen.has(id)) errors.push(`Missing decision for ${id}`);
       }
-
-      if (attempt === 0) {
-        rawOutput = await callMergeLLM(
-          RULE_MERGE_SYSTEM,
-          prompt + `\n\n⚠ Validation errors: ${parsed.errors.join("; ")}`,
-          harness,
-        );
-        continue;
-      }
-      if (logger) logger.warn("RuleStore", `Merge validation failed: ${parsed.errors.join("; ")}`);
-    }
+      return errors.length > 0 ? { ok: false, errors } : parsed;
+    };
+    const result = await runStructuredAgent({
+      host: harness,
+      application: "eval-rule-merge",
+      prompt,
+      workspace: existingStore.projectPath || harness.config.projectPath,
+      stage: "rules",
+      validate,
+      logger,
+    });
+    decisions = result.value;
   } catch (err) {
-    if (logger) logger.warn("RuleStore", `Semantic merge LLM call failed, adding all as new: ${(err as Error).message}`);
+    if (logger) logger.warn("RuleStore", `Semantic merge Agent failed, adding all as new: ${(err as Error).message}`);
   }
 
   // Apply merge decisions

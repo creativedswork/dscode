@@ -9,10 +9,16 @@ import type { SerializedSession } from "../session/types.js";
 import { Logger } from "../utils/logger.js";
 import { computeStats } from "./stats.js";
 import { generateDashboard, openDashboard } from "./dashboard.js";
-import { analyzeWithLLM, runCausalGraphPipeline } from "./llm.js";
+import { analyzeWithLLM } from "./llm.js";
 import { loadRuleStore, semanticMerge, saveRuleStore } from "./rules/store.js";
-import { runFocusPipeline, FOCUS_PATH_THRESHOLD } from "./focus/index.js";
-import { parseSessionToSteps } from "./schemas.js";
+import { loadMultiAgentTrajectory } from "./trajectory.js";
+import { runChiefPipeline, type ChiefProgressEvent } from "./chief/pipeline.js";
+import {
+  createEvalRun,
+  finishEvalRun,
+  updateRunStage,
+  type EvalRunContext,
+} from "./chief/workspace.js";
 
 function evalDir(): string {
   return join(homedir(), ".dscode", "eval");
@@ -26,6 +32,7 @@ export async function runEval(
   const manager = harness.sessionManager;
   const runtimeId = process.env.DSCODE_RUNTIME_ID ?? "unknown";
   const evalLogger = new Logger({ type: "harness", id: runtimeId });
+  let activeRun: EvalRunContext | undefined;
 
   try {
     // Resolve session ID
@@ -69,15 +76,27 @@ export async function runEval(
     // onLog pushes to TUI only — no terminal output
     const onLog = (msg: string) => { (ui as any).addInfo(msg); };
 
-    // Analyze — path selection based on session size
-    const steps = parseSessionToSteps(sessionData);
-    const pathLabel = steps.length >= FOCUS_PATH_THRESHOLD
-      ? `Focus (${steps.length} 步 ≥ ${FOCUS_PATH_THRESHOLD})`
-      : `Causal Graph (${steps.length} 步 < ${FOCUS_PATH_THRESHOLD})`;
-    onLog(`📊 ${pathLabel}`);
-    const result = steps.length >= FOCUS_PATH_THRESHOLD
-      ? await runFocusPipeline(sessionData, harness, computeStats(sessionData), onLog, evalLogger)
-      : await runCausalGraphPipeline(sessionData, harness, onLog, evalLogger);
+    const trajectory = await loadMultiAgentTrajectory(sessionData, harness.agentSupervisor);
+    const invokingSessionId = manager.getCurrentSessionId() ?? resolvedId;
+    const run = await createEvalRun(trajectory, invokingSessionId);
+    activeRun = run;
+    const evalStartedAt = Date.now();
+    const reportProgress = (event: ChiefProgressEvent) => {
+      const marker = event.status === "done" ? "OK" : event.status === "failed" ? "FAILED" : "...";
+      const worker = event.workerAgentId ? ` (${event.workerAgentId.slice(0, 6)})` : "";
+      onLog(`[${event.index}/${event.total}] ${event.application}${worker} ${marker}`);
+    };
+    onLog(
+      `CHIEF: ${trajectory.steps.length} Steps, ${trajectory.actors.length} Agents, ` +
+      `${trajectory.evidence.completeness} evidence`,
+    );
+    const result = await runChiefPipeline({
+      trajectory,
+      harness,
+      run,
+      logger: evalLogger,
+      onProgress: reportProgress,
+    });
     // Step 8: LLM semantic rule merge (use session's projectPath, not harness cwd)
     const projectPath = sessionData?.metadata?.projectPath ?? harness.config?.projectPath;
     if (projectPath) {
@@ -85,23 +104,69 @@ export async function runEval(
       const merged = await semanticMerge(result.rules, store, harness, evalLogger);
       saveRuleStore(merged, evalLogger);
     }
+    const dashboardStartedAt = Date.now();
+    await updateRunStage(run, "dashboard", {
+      status: "running",
+      application: "coordinator",
+    });
+    reportProgress({
+      runId: run.manifest.runId,
+      targetSessionId: resolvedId,
+      stage: "dashboard",
+      application: "coordinator",
+      index: 7,
+      total: 7,
+      status: "running",
+      message: "Generating Dashboard",
+    });
+    const runOutputPath = join(run.outputDir, "dashboard.html");
+    generateDashboard(result, runOutputPath);
     const outputPath = join(evalDir(), `${resolvedId.slice(0, 8)}.html`);
     generateDashboard(result, outputPath);
+    await updateRunStage(run, "dashboard", {
+      status: "done",
+      application: "coordinator",
+    });
+    reportProgress({
+      runId: run.manifest.runId,
+      targetSessionId: resolvedId,
+      stage: "dashboard",
+      application: "coordinator",
+      index: 7,
+      total: 7,
+      status: "done",
+      durationMs: Date.now() - dashboardStartedAt,
+      message: "Dashboard generated",
+    });
+    await finishEvalRun(run, "completed");
+    activeRun = undefined;
 
     // Open in browser
     openDashboard(outputPath);
 
-    const analysisLabel = "CHIFF Causal Graph";
+    const analysisLabel = "CHIEF Multi-Agent";
     const attributionInfo = result.attribution
-      ? ` | Root cause: ${result.attribution.mistakeAgent}@Step${result.attribution.mistakeStep}`
+      ? ` | Root cause: ${result.attribution.mistakeAgent}@${result.attribution.mistakeStep === null ? "Agent" : `Step${result.attribution.mistakeStep}`}`
+      : "";
+    const confidence = result.attribution && "confidence" in result.attribution
+      ? ` | Confidence: ${(result.attribution.confidence * 100).toFixed(0)}%`
       : "";
     const rulesTriggered = result.rules ? result.rules.length : 0;
+    const workerCount = harness.agentSupervisor.list().filter((process) =>
+      process.recording === "process-only"
+      && process.role === "subagent"
+      && process.context.cwd === run.runRoot
+    ).length;
     (ui as any).addInfo(
       `Dashboard generated: ${outputPath}\n` +
-      `[${analysisLabel}] Messages: ${result.metadata.totalMessages} | Tool calls: ${result.stats.toolCalls} | ` +
-      `Error rate: ${result.stats.errorRate}${attributionInfo} | Rules: ${rulesTriggered}`,
+      `[${analysisLabel}] Target: ${resolvedId.slice(0, 8)} | Duration: ${Date.now() - evalStartedAt}ms | ` +
+      `Workers: ${workerCount} | Actors: ${trajectory.actors.length} | Evidence: ${trajectory.evidence.completeness} | ` +
+      `Tool calls: ${result.stats.toolCalls} | Error rate: ${result.stats.errorRate}${attributionInfo}${confidence} | Rules: ${rulesTriggered}`,
     );
   } catch (err) {
+    if (activeRun?.manifest.status === "active") {
+      await finishEvalRun(activeRun, "failed").catch(() => undefined);
+    }
     evalLogger.error("Pipeline", `crash: ${err instanceof Error ? err.message : String(err)}`);
     if (err instanceof Error && err.stack) {
       evalLogger.error("Pipeline", `stack:\n${err.stack}`);

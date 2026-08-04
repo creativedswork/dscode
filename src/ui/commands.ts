@@ -441,7 +441,7 @@ const COMMANDS: SlashCommandDef[] = [
   },
   {
     name: "eval",
-    description: "Analyze a session using CHIFF causal graph analysis (/eval [session_id])",
+    description: "Analyze Main/SubAgent trajectories with CHIEF (/eval [session_id])",
     execute: async (args, ctx) => {
       const sessionId = args.trim() || null;
       await runEval(sessionId, ctx);

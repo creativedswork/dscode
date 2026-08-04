@@ -8,8 +8,6 @@ import { join } from "node:path";
 import type { HarnessAPI } from "../../core/harness-api.js";
 import { safeJsonParse, type ValidationResult, type HistoryStep, type SubtaskEdge, type AgentNode, type AgentEdge, type StepDataFlow } from "../schemas.js";
 import type { AttentionZone, ZoneAnalysis, ZoneSubtask, ZoneCandidate, SessionSkeleton } from "./types.js";
-import { ZOOM_AGENT_SYSTEM_PROMPT, buildZoomTaskPrompt } from "./prompts.js";
-import { agentLoop } from "./agent-loop.js";
 import type { ProgressDisplay } from "./progress.js";
 
 // ── Constants ──
@@ -177,42 +175,18 @@ export async function zoomZone(
 
   // Base case: zone fits in one Agent session
   if (zoneSize <= MAX_ZONE_STEPS) {
-    const taskPrompt = buildZoomTaskPrompt(zone, skeleton);
-
-    const result = await agentLoop<ZoneAnalysis>({
-      sessionId,
-      workspacePath,
-      systemPrompt: ZOOM_AGENT_SYSTEM_PROMPT,
-      taskPrompt,
-      harness,
-      maxToolCalls: 30,
-      outputSchemaDescription: "ZoneAnalysis JSON with subtasks, candidates, agentNodes, zoneGraphComplete",
-      validator: validateZoneAnalysis,
-      phase: `ZOOM-${zone.id}`,
-      onProgress: (event) => {
-        progress?.onPhaseProgress(2, event, zone.id);
-      },
-    });
-
-    if (!result) {
-      // Try reading from file as fallback
-      const fileResult = readZoneOutput(workspacePath, zone.id);
-      if (fileResult) return fileResult;
-      // Agent failure
-      return {
-        zoneId: zone.id,
-        subtasks: [],
-        subtaskEdges: [],
-        agentNodes: [],
-        agentEdges: [],
-        stepDataFlows: [],
-        candidates: [],
-        topCandidate: null,
-        zoneGraphComplete: false,
-      };
-    }
-
-    return result;
+    const result = readZoneOutput(workspacePath, zone.id);
+    return result ?? {
+      zoneId: zone.id,
+      subtasks: [],
+      subtaskEdges: [],
+      agentNodes: [],
+      agentEdges: [],
+      stepDataFlows: [],
+      candidates: [],
+      topCandidate: null,
+      zoneGraphComplete: false,
+    };
   }
 
   // Recursive case: split zone for large zones

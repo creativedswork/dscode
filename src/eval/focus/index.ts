@@ -6,7 +6,7 @@ import type { EvalResult, DeviationPoint, RootCause, HarnessRule, PhaseInfo } fr
 import type { HarnessAPI } from "../../core/harness-api.js";
 import type { SerializedSession } from "../../session/types.js";
 import { parseSessionToSteps, type Attribution } from "../schemas.js";
-import { computeStats, type SessionStats } from "../stats.js";
+import type { SessionStats } from "../stats.js";
 import { attributeWithLLM } from "../rules/extraction.js";
 import { buildSkeleton } from "./skeleton.js";
 import { scanSession } from "./scan.js";
@@ -66,6 +66,7 @@ function composeEvalResult(sessionStats: SessionStats, report: FocusReport, rule
   return {
     metadata: sessionStats.metadata,
     stats: sessionStats.stats,
+    agentStats: sessionStats.agentStats,
     phases,
     deviations,
     rootCauses,
@@ -92,7 +93,7 @@ export async function runFocusPipeline(
   const sessionId = sessionStats.metadata.sessionId;
 
   if (steps.length === 0) {
-    return { metadata: sessionStats.metadata, stats: sessionStats.stats, phases: [], deviations: [], rootCauses: [], rules: [], timeline: [], causalGraph: null, attribution: null, rulesApplied: [] };
+    return { metadata: sessionStats.metadata, stats: sessionStats.stats, agentStats: sessionStats.agentStats, phases: [], deviations: [], rootCauses: [], rules: [], timeline: [], causalGraph: null, attribution: null, rulesApplied: [] };
   }
 
   const pipelineStart = Date.now();
@@ -106,7 +107,7 @@ export async function runFocusPipeline(
   await yieldTui();
 
   const ruleResult: EvalResult = {
-    metadata: sessionStats.metadata, stats: sessionStats.stats,
+    metadata: sessionStats.metadata, stats: sessionStats.stats, agentStats: sessionStats.agentStats,
     phases: [], deviations: [], timeline: [], rootCauses: [],
     rules: [], causalGraph: null, attribution: null, rulesApplied: [],
   };

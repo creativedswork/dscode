@@ -20,6 +20,7 @@ function serialize(agentProcess: AgentProcess): SerializedAgentProcess {
     role: agentProcess.role,
     state: agentProcess.state,
     attachment: agentProcess.attachment,
+    recording: agentProcess.recording,
     contextMode: agentProcess.contextMode,
     contextSelection: agentProcess.contextSelection,
     context: agentProcess.context,
@@ -61,11 +62,32 @@ export class AgentProcessStore {
   async load(agentId: string): Promise<SerializedAgentProcess | undefined> {
     try {
       const raw = await readFile(join(this.directory, `${agentId}.json`), "utf8");
-      const parsed = JSON.parse(raw) as SerializedAgentProcess;
-      return parsed.version === 1 ? parsed : undefined;
+      const parsed = JSON.parse(raw) as Omit<SerializedAgentProcess, "recording">
+        & Partial<Pick<SerializedAgentProcess, "recording">>;
+      return parsed.version === 1
+        ? { ...parsed, recording: parsed.recording ?? "session" }
+        : undefined;
     } catch {
       return undefined;
     }
+  }
+
+  async loadMany(agentIds: readonly string[]): Promise<{
+    found: Map<string, SerializedAgentProcess>;
+    missing: string[];
+  }> {
+    const uniqueIds = [...new Set(agentIds)];
+    const records = await Promise.all(uniqueIds.map(async (agentId) => ({
+      agentId,
+      record: await this.load(agentId),
+    })));
+    const found = new Map<string, SerializedAgentProcess>();
+    const missing: string[] = [];
+    for (const { agentId, record } of records) {
+      if (record) found.set(agentId, record);
+      else missing.push(agentId);
+    }
+    return { found, missing };
   }
 
   async list(): Promise<SerializedAgentProcess[]> {
@@ -102,6 +124,7 @@ export class AgentProcessStore {
       application: agentProcess.application.name,
       state: agentProcess.state,
       attachment: agentProcess.attachment,
+      recording: agentProcess.recording,
       contextMode: agentProcess.contextMode,
       createdAt: agentProcess.createdAt,
       endedAt: agentProcess.endedAt,

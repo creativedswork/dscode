@@ -17,6 +17,7 @@ export type AgentProcessState =
 
 export type AgentAttachment = "foreground" | "background";
 export type AgentContextMode = "minimal" | "selected" | "fork";
+export type AgentRecording = "session" | "process-only";
 
 export type ContextSelectionItem =
   | { type: "message"; messageId: string }
@@ -77,6 +78,7 @@ export interface AgentProcess<T = unknown> {
   role: "main" | "subagent";
   state: AgentProcessState;
   attachment: AgentAttachment;
+  recording: AgentRecording;
   contextMode: AgentContextMode;
   contextSelection?: ContextSelectionSnapshot;
   context: AgentContext;
@@ -97,6 +99,7 @@ export interface SerializedAgentProcess {
   role: "main" | "subagent";
   state: AgentProcessState;
   attachment: AgentAttachment;
+  recording: AgentRecording;
   contextMode: AgentContextMode;
   contextSelection?: ContextSelectionSnapshot;
   context: AgentContext;
@@ -122,6 +125,7 @@ export interface SpawnAgentRequest {
     attachments?: AgentInputAttachment[];
   };
   attachment?: AgentAttachment;
+  recording?: AgentRecording;
   contextMode?: AgentContextMode;
   contextSelection?: ContextSelection;
   cwd?: string;

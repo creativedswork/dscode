@@ -1,6 +1,6 @@
 // ── Causal Graph Store ──
 // Deterministic graph storage and query — all operations are pure TypeScript, no LLM.
-// Used by the CHIFF analysis pipeline: Step 1-4 populate, Step 5-6 query.
+// Used by the CHIEF analysis pipeline: Step 1-4 populate, Step 5-6 query.
 
 import type {
   Subtask,

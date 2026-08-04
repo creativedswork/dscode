@@ -1,6 +1,42 @@
 {
   "schemaVersion": 1,
   "entries": {
+    "agent:chief-attribution": {
+      "source": "agents/chief-attribution.md",
+      "path": "agents/chief-attribution.md",
+      "mediaType": "text/markdown",
+      "required": true
+    },
+    "agent:chief-backtrack": {
+      "source": "agents/chief-backtrack.md",
+      "path": "agents/chief-backtrack.md",
+      "mediaType": "text/markdown",
+      "required": true
+    },
+    "agent:chief-graph": {
+      "source": "agents/chief-graph.md",
+      "path": "agents/chief-graph.md",
+      "mediaType": "text/markdown",
+      "required": true
+    },
+    "agent:chief-oracle": {
+      "source": "agents/chief-oracle.md",
+      "path": "agents/chief-oracle.md",
+      "mediaType": "text/markdown",
+      "required": true
+    },
+    "agent:eval-rule-attribution": {
+      "source": "agents/eval-rule-attribution.md",
+      "path": "agents/eval-rule-attribution.md",
+      "mediaType": "text/markdown",
+      "required": true
+    },
+    "agent:eval-rule-merge": {
+      "source": "agents/eval-rule-merge.md",
+      "path": "agents/eval-rule-merge.md",
+      "mediaType": "text/markdown",
+      "required": true
+    },
     "agent:vision": {
       "source": "agents/vision.md",
       "path": "agents/vision.md",

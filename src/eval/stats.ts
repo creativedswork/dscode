@@ -1,9 +1,5 @@
-// ── Session Stats Computation ──
-// Pure computation: metadata formatting + tool statistics. No inference, no rules.
-// Replaces the deterministic portions of analyzer.ts.
-
-import type { SerializedSession, SessionMetadata } from "../session/types.js";
-import type { SessionMeta, ToolStats } from "./types.js";
+import type { MultiAgentTrajectory } from "./trajectory.js";
+import type { AgentStats, SessionMeta, ToolStats } from "./types.js";
 
 // ── Helpers ──
 
@@ -25,48 +21,14 @@ function formatTime(ts: number): string {
   }
 }
 
-function getToolCallNames(msg: Record<string, unknown>): string[] {
-  if (msg["role"] !== "assistant" || !Array.isArray(msg["content"])) return [];
-  const tools: string[] = [];
-  for (const block of msg["content"] as Record<string, unknown>[]) {
-    if (block["type"] === "toolCall") tools.push((block["name"] as string) ?? "unknown");
-  }
-  return tools;
-}
-
-function isToolResultError(msg: Record<string, unknown>): boolean {
-  if (msg["role"] !== "toolResult") return false;
-  if (msg["isError"] === true) return true;
-  if ((msg["details"] as Record<string, unknown> | undefined)?.["error"]) {
-    const content = typeof msg["content"] === "string"
-      ? msg["content"]
-      : Array.isArray(msg["content"])
-        ? (msg["content"] as Record<string, unknown>[]).find((b) => b["type"] === "text")?.["text"] as string ?? ""
-        : "";
-    if (content.trim() === "Exit code: 0") return false;
-    return true;
-  }
-  return false;
-}
-
-function isScreenshotCall(toolNames: string[]): boolean {
-  return toolNames.some((n) => n.toLowerCase().includes("screenshot"));
-}
-
-// ── SessionStats ──
-
 export interface SessionStats {
   metadata: SessionMeta;
   stats: ToolStats;
+  agentStats: AgentStats;
 }
 
-// ── Main Computation ──
-
-export function computeStats(data: SerializedSession): SessionStats {
-  const messages = data.messages as Record<string, unknown>[];
-  const meta = data.metadata as SessionMetadata;
-
-  // Metadata
+export function computeStats(trajectory: MultiAgentTrajectory): SessionStats {
+  const meta = trajectory.session.metadata;
   const duration = meta.updatedAt - meta.createdAt;
   const metadata: SessionMeta = {
     sessionId: meta.id,
@@ -79,25 +41,44 @@ export function computeStats(data: SerializedSession): SessionStats {
     endedAt: formatTime(meta.updatedAt),
   };
 
-  // Tool stats
-  let toolCalls = 0;
-  let toolErrors = 0;
-  let screenshotsTaken = 0;
-  for (const msg of messages) {
-    const names = getToolCallNames(msg);
-    toolCalls += names.length;
-    if (isScreenshotCall(names)) screenshotsTaken++;
-    if (isToolResultError(msg)) toolErrors++;
-  }
+  const toolSteps = trajectory.steps.filter((step) => !!step.toolName);
+  const toolCalls = toolSteps.length;
+  const toolErrors = toolSteps.filter((step) => step.isError).length;
+  const screenshotsTaken = toolSteps.filter((step) =>
+    step.toolName?.toLowerCase().includes("screenshot"),
+  ).length;
   const errorRate = toolCalls > 0 ? ((toolErrors / toolCalls) * 100).toFixed(1) + "%" : "0.0%";
-
   const stats: ToolStats = {
     toolCalls,
     toolErrors,
     errorRate,
     screenshotsTaken,
-    userComplaints: 0, // LLM now handles complaint detection
+    userComplaints: 0,
   };
 
-  return { metadata, stats };
+  const subagents = trajectory.actors.filter((actor) => actor.role === "subagent");
+  const countState = (state: string) =>
+    subagents.filter((actor) => actor.state === state).length;
+  const completed = countState("completed");
+  const failed = countState("failed");
+  const terminated = countState("terminated");
+  const killed = countState("killed");
+  const terminal = completed + failed + terminated + killed;
+  const agentStats: AgentStats = {
+    totalActors: trajectory.actors.length,
+    subagents: subagents.length,
+    applications: new Set(trajectory.actors.map((actor) => actor.application)).size,
+    completed,
+    failed,
+    terminated,
+    killed,
+    processSuccessRate: terminal > 0
+      ? `${((completed / terminal) * 100).toFixed(1)}%`
+      : "100.0%",
+    fullTranscripts: trajectory.evidence.fullTranscripts,
+    summaryTranscripts: trajectory.evidence.summaryTranscripts,
+    missingTranscripts: trajectory.evidence.missingTranscripts,
+  };
+
+  return { metadata, stats, agentStats };
 }

@@ -558,7 +558,12 @@ export class Harness implements HarnessAPI {
 
   private recordSubagentExit(agentId: string): void {
     const agentProcess = this.agentSupervisor.get(agentId);
-    if (!agentProcess || agentProcess.role !== "subagent" || !agentProcess.exit) return;
+    if (
+      !agentProcess
+      || agentProcess.role !== "subagent"
+      || agentProcess.recording !== "session"
+      || !agentProcess.exit
+    ) return;
     const runtimeMessages = agentProcess.runtimeSnapshot?.messages ?? [];
     const userMessage = runtimeMessages.find(
       (message: any) => message?.role === "user",
@@ -1123,6 +1128,17 @@ export class Harness implements HarnessAPI {
     if (this.activeVisionAgentId) {
       void this.agentSupervisor.terminate(this.activeVisionAgentId).catch((error) => {
         this.logger.error("VisionAgent", `Failed to terminate: ${String(error)}`);
+      });
+    }
+    for (const process of this.agentSupervisor.list()) {
+      if (
+        process.role !== "subagent"
+        || process.recording !== "process-only"
+        || !["created", "running", "waiting", "stopped"].includes(process.state)
+        || process.agentId === this.activeVisionAgentId
+      ) continue;
+      void this.agentSupervisor.terminate(process.agentId).catch((error) => {
+        this.logger.error("AgentProcess", `Failed to terminate ${process.agentId}: ${String(error)}`);
       });
     }
     this.events.emit({ type: "turn:abort", reason: this.shuttingDown ? "system" : "user" });

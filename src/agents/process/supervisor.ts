@@ -32,7 +32,7 @@ export class AgentSupervisor {
   constructor(
     private readonly registry: AgentApplicationRegistry,
     private readonly runtimeFactory: AgentRuntimeFactory,
-    store: AgentProcessStore,
+    private readonly store: AgentProcessStore,
     private readonly events: HarnessEventBus,
     logger: Logger,
     private readonly availableTools: () => readonly string[],
@@ -74,6 +74,7 @@ export class AgentSupervisor {
       role: "main",
       state: "running",
       attachment: "foreground",
+      recording: "process-only",
       contextMode: "minimal",
       context: processContext,
       runtime,
@@ -142,6 +143,7 @@ export class AgentSupervisor {
       role: "subagent",
       state: "created",
       attachment,
+      recording: options.recording ?? "session",
       contextMode,
       contextSelection,
       context,
@@ -206,6 +208,10 @@ export class AgentSupervisor {
 
   get(agentId: string): AgentProcess | undefined {
     return this.processes.get(agentId);
+  }
+
+  loadPersisted(agentIds: readonly string[]) {
+    return this.store.loadMany(agentIds);
   }
 
   async updateParentSession(agentId: string, sessionId: string, cwd?: string): Promise<void> {

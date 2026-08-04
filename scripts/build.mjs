@@ -10,7 +10,15 @@ import { parse } from "yaml";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const rootDir = resolve(__dirname, "..");
 const buildDir = "release/package";
-const REQUIRED_AGENT_APPS = ["vision"];
+const REQUIRED_AGENT_APPS = [
+  "chief-attribution",
+  "chief-backtrack",
+  "chief-graph",
+  "chief-oracle",
+  "eval-rule-attribution",
+  "eval-rule-merge",
+  "vision",
+];
 
 function digest(content) {
   return createHash("sha256").update(content).digest("hex");

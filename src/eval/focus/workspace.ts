@@ -1,4 +1,4 @@
-// ── CHIFF Workspace Generator ──
+// ── CHIEF Workspace Generator ──
 // Creates the file-system work directory for Agent exploration:
 //   ~/.dscode/eval/{sessionId}/library/    ← pipeline writes, Agent reads
 //   ~/.dscode/eval/{sessionId}/notebook/    ← Agent writes analysis notes
@@ -21,7 +21,7 @@ import type {
 
 // ── Export Types ──
 
-export type CHIFFPhase = "SCAN" | "ZOOM" | "SYNTHESIZE";
+export type CHIEFPhase = "SCAN" | "ZOOM" | "SYNTHESIZE";
 
 // ── Path Helpers ──
 
@@ -322,10 +322,10 @@ export function writeLibrarySteps(
 }
 
 export function writeLibraryReadme(
-  phase: CHIFFPhase,
+  phase: CHIEFPhase,
   workspacePath: string,
 ): string {
-  const phaseGuides: Record<CHIFFPhase, string> = {
+  const phaseGuides: Record<CHIEFPhase, string> = {
     SCAN: [
       "## Your Task: SCAN",
       "",
@@ -373,9 +373,9 @@ export function writeLibraryReadme(
   };
 
   const content = [
-    "# CHIFF Workspace",
+    "# CHIEF Workspace",
     "",
-    `This workspace contains session analysis data for the CHIFF causal graph pipeline.`,
+    `This workspace contains session analysis data for the CHIEF causal graph pipeline.`,
     `You are currently in the **${phase}** phase.`,
     "",
     "## Directory Structure",
@@ -414,7 +414,7 @@ export function writeLibrary(
   skeleton: SessionSkeleton,
   steps: HistoryStep[],
   ruleResult: EvalResult,
-  phase: CHIFFPhase,
+  phase: CHIEFPhase,
   workspacePath: string,
 ): { path: string; fileCount: number } {
   let fileCount = 0;

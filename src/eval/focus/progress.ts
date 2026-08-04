@@ -1,11 +1,17 @@
-// ── CHIFF Progress Display ──
-// Progress tracking for the five-phase CHIFF pipeline.
+// ── CHIEF Progress Display ──
+// Progress tracking for the five-phase CHIEF pipeline.
 // Outputs via onLog (TUI) and optional logger (file).
 
 import type { Logger } from "../../utils/logger.js";
-import type { ProgressEvent } from "./agent-loop.js";
 
 // ── Types ──
+
+export interface ProgressEvent {
+  type: "thinking" | "tool_call" | "tool_result" | "iteration" | "done";
+  detail: string;
+  toolCallsSoFar: number;
+  elapsedMs: number;
+}
 
 export type PhaseStatus = "pending" | "running" | "done";
 
@@ -165,7 +171,7 @@ export class ProgressDisplay {
   showCompletion(summary: CompletionSummary): void {
     this.emitWebEvent("completion", summary);
     const sec = (summary.totalDurationMs / 1000).toFixed(1);
-    const msg = `✅ CHIFF 分析完成 — ${sec}s · ${summary.totalLLMCalls} LLM 调用 · ${summary.keyFindings}`;
+    const msg = `✅ CHIEF 分析完成 — ${sec}s · ${summary.totalLLMCalls} LLM 调用 · ${summary.keyFindings}`;
     if (this.onLog) {
       this.onLog(msg);
       this.logProgressBar();

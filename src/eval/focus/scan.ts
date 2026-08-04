@@ -7,8 +7,6 @@ import { join } from "node:path";
 import type { HarnessAPI } from "../../core/harness-api.js";
 import { safeJsonParse, type ValidationResult } from "../schemas.js";
 import type { ScanResult, AttentionZone, SessionSkeleton } from "./types.js";
-import { SCAN_AGENT_SYSTEM_PROMPT, buildScanTaskPrompt } from "./prompts.js";
-import { agentLoop } from "./agent-loop.js";
 import type { ProgressDisplay } from "./progress.js";
 
 // ── Validation ──
@@ -62,47 +60,21 @@ function readScanOutput(workspacePath: string): ScanResult | null {
 // ── Main ──
 
 export async function scanSession(
-  skeleton: SessionSkeleton,
-  harness: HarnessAPI,
+  _skeleton: SessionSkeleton,
+  _harness: HarnessAPI,
   workspacePath: string,
-  sessionId: string,
-  progress?: ProgressDisplay,
+  _sessionId: string,
+  _progress?: ProgressDisplay,
 ): Promise<ScanResult> {
-  const taskPrompt = buildScanTaskPrompt(skeleton);
-
-  const result = await agentLoop<ScanResult>({
-    sessionId,
-    workspacePath,
-    systemPrompt: SCAN_AGENT_SYSTEM_PROMPT,
-    taskPrompt,
-    harness,
-    maxToolCalls: 30,
-    outputSchemaDescription: "ScanResult JSON with zones array, globalAssessment, noIssuesDetected",
-    validator: validateScanResult,
-    phase: "SCAN",
-    onProgress: (event) => {
-      progress?.onPhaseProgress(1, event);
-    },
-  });
-
-  // Try reading Agent output from file as fallback
+  const result = readScanOutput(workspacePath);
   if (!result) {
-    const fileResult = readScanOutput(workspacePath);
-    if (fileResult) {
-      // Enforce 3-5 zones, sorted by suspicionScore
-      fileResult.zones = fileResult.zones
-        .sort((a, b) => b.suspicionScore - a.suspicionScore)
-        .slice(0, 5);
-      if (fileResult.zones.length === 0) {
-        fileResult.noIssuesDetected = true;
-      }
-      return fileResult;
-    }
-    // Agent failure
-    return { zones: [], globalAssessment: "SCAN Agent failed to produce output", noIssuesDetected: true };
+    return {
+      zones: [],
+      globalAssessment: "Legacy Focus pipeline is disabled; use the CHIEF pipeline",
+      noIssuesDetected: true,
+    };
   }
 
-  // Enforce 3-5 zones, sorted by suspicionScore
   result.zones = result.zones
     .sort((a, b) => b.suspicionScore - a.suspicionScore)
     .slice(0, 5);

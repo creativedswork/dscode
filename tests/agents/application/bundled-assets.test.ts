@@ -3,11 +3,25 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("Bundled Agent Application packaging", () => {
-  it("ships only vision.md and validates build copying", async () => {
+  it("ships CHIEF workers and vision with build validation", async () => {
     const root = process.cwd();
     const directory = join(root, "resources", "agents");
     const files = (await readdir(directory)).filter((name) => name.endsWith(".md"));
-    expect(files).toEqual(["vision.md"]);
+    expect(files.sort()).toEqual([
+      "chief-attribution.md",
+      "chief-backtrack.md",
+      "chief-graph.md",
+      "chief-oracle.md",
+      "eval-rule-attribution.md",
+      "eval-rule-merge.md",
+      "vision.md",
+    ]);
+    for (const name of files.filter((name) => name !== "vision.md")) {
+      const content = await readFile(join(directory, name), "utf8");
+      expect(content).toContain(`name: ${name.slice(0, -3)}`);
+      expect(content).toContain("permissionMode: plan");
+      expect(content.split("---").at(-1)?.trim().length).toBeGreaterThan(0);
+    }
     const content = await readFile(join(directory, "vision.md"), "utf8");
     expect(content).toContain("name: vision");
     expect(content).toContain("model: vision");

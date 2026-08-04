@@ -97,6 +97,7 @@ function setup(runtime: AgentProcessRuntime): {
         state: value.state,
         parentSessionId: value.parentSessionId,
         contextParentSessionId: value.context.parentSessionId,
+        recording: value.recording,
         runtimeSnapshot: value.runtimeSnapshot,
       });
     },
@@ -145,11 +146,32 @@ describe("AgentSupervisor", () => {
     const child = supervisor.require(spawned.agentId);
     expect(child.parentAgentId).toBe(mainAgentId);
     expect(child.parentSessionId).toBe("session-1");
+    expect(child.recording).toBe("session");
     expect(child.context.depth).toBe(1);
     expect(events).toContain("agent:spawned");
     expect(events).toContain("agent:output");
     expect(events.at(-1)).toBe("agent:exit");
     expect(saves.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("persists process-only children while preserving lifecycle events", async () => {
+    const { supervisor, mainAgentId, events, saves } = setup(new ImmediateRuntime());
+
+    const spawned = await supervisor.spawn({
+      application: "general",
+      input: { prompt: "diagnose" },
+      parentAgentId: mainAgentId,
+      recording: "process-only",
+    });
+
+    expect(spawned.result?.state).toBe("completed");
+    expect(supervisor.require(spawned.agentId).recording).toBe("process-only");
+    expect(saves).toContainEqual(expect.objectContaining({
+      recording: "process-only",
+      state: "completed",
+    }));
+    expect(events).toContain("agent:spawned");
+    expect(events.at(-1)).toBe("agent:exit");
   });
 
   it("separates the display prompt from the runtime prompt", async () => {
