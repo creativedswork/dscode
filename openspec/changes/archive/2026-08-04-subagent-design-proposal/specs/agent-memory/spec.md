@@ -1,8 +1,5 @@
-# agent-memory Specification
+## ADDED Requirements
 
-## Purpose
-TBD - created by archiving change subagent-design-proposal. Update Purpose after archive.
-## Requirements
 ### Requirement: Memory 属于 Application
 
 持久 Memory SHALL 按 AgentApplication name 组织，而不是按单次 agentId 组织。多个同 Application 进程 SHALL 读取同一作用域 Memory。

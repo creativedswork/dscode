@@ -17,6 +17,21 @@ The `SerializedSession` SHALL support version 2 with image references.
 - **THEN** the system SHALL parse its messages including `ImageRef` and `visionMessages`
 - **AND** attempt to recover image data from cache
 
+### Requirement: Session Version Upgrade to V3
+
+The `SerializedSession` SHALL support version 3 with generic child Agent records.
+
+#### Scenario: SubAgent session association
+- **WHEN** a child Agent exits
+- **THEN** the parent session SHALL store an `agentMessages` entry with `role: "subagent"`
+- **AND** the entry SHALL include the child process ID, Application, state, input, output, and timestamps
+- **AND** the child transcript SHALL remain in AgentProcessStore rather than the Main Agent `messages`
+
+#### Scenario: V2 vision record migration
+- **WHEN** a version 2 session containing `visionMessages` is loaded
+- **THEN** the records SHALL be converted to in-memory `agentMessages`
+- **AND** the next save SHALL persist the session as version 3 without `visionMessages`
+
 ### Requirement: V1 Backward Compatibility
 
 The session store SHALL load version 1 session files without error.
@@ -350,4 +365,3 @@ Session MUST be saved periodically (every 15 seconds) during agent execution whe
 - **WHEN** auto-save timer fires 5 seconds later
 - **THEN** `agent.state.messages.length` equals `lastSavedMessageCount`
 - **AND** no redundant save is triggered
-

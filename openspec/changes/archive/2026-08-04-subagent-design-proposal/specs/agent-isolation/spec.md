@@ -1,8 +1,5 @@
-# agent-isolation Specification
+## ADDED Requirements
 
-## Purpose
-TBD - created by archiving change subagent-design-proposal. Update Purpose after archive.
-## Requirements
 ### Requirement: Agent cwd 属于进程环境
 
 每个 Agent SHALL 在 AgentContext 中拥有独立 cwd。所有文件与 Shell 工具 SHALL 相对该 cwd 解析路径。

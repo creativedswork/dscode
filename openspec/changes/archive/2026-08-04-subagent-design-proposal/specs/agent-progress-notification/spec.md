@@ -1,8 +1,5 @@
-# agent-progress-notification Specification
+## ADDED Requirements
 
-## Purpose
-TBD - created by archiving change subagent-design-proposal. Update Purpose after archive.
-## Requirements
 ### Requirement: Agent 生命周期事件
 
 系统 SHALL 通过 HarnessEventBus 发布 `agent:spawned`、`agent:state`、`agent:progress`、`agent:output` 和 `agent:exit`。

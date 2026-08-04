@@ -1,6 +1,6 @@
 ## Purpose
 
-Session data layer types — ImageRef, VisionMessage, session metadata, and display model.
+Session data layer types — ImageRef, generic AgentSessionMessage, session metadata, and display model.
 ## Requirements
 ### Requirement: ImageRef Type Definition
 The system SHALL define an `ImageRef` type for referencing cached images in session messages. This type SHALL be exported from `ImagePipeline`'s types module (`src/image-pipeline/types.ts`) and re-exported for backward compatibility.
@@ -11,25 +11,23 @@ The system SHALL define an `ImageRef` type for referencing cached images in sess
 - **AND** `hash` SHALL be the cache filename (e.g. "a1b2c3d4e5f6a7b8.jpg")
 - **AND** `mimeType` SHALL be the MIME type (e.g. "image/jpeg")
 
-### Requirement: Vision Message Log
-The system SHALL record each vision model invocation in a `visionMessages` array within the session. The vision call SHALL be made through `ImagePipeline.process()`, which provides the logging data.
+### Requirement: SubAgent Message Log
+The system SHALL record child Agent executions in a generic `agentMessages` array within the parent session. Full child transcripts SHALL remain in AgentProcessStore and SHALL NOT be inserted into the Main Agent `messages` array.
 
-#### Scenario: Vision log structure
-- **WHEN** a vision model is called to describe images via `ImagePipeline.process()`
-- **THEN** the system SHALL create a `VisionMessage` entry with:
-  - `turnIndex`: the index of the user turn this vision call belongs to
-  - `images`: array of `ImageRef` inputs
-  - `prompt`: the text prompt sent to the vision model
-  - `description`: the full text response from the vision model
-  - `modelProvider`: the vision model provider name
-  - `modelId`: the vision model ID
-  - `timestamp`: Unix timestamp of the call
-  - `latencyMs?`: optional, call duration in milliseconds (reserved for future)
-  - `tokensUsed?`: optional, token count (reserved for future)
+#### Scenario: Vision Agent log structure
+- **WHEN** a Vision Agent exits
+- **THEN** the parent session SHALL contain an `AgentSessionMessage` with:
+  - `role: "subagent"`
+  - the child `agentId`, `parentAgentId`, Application name, and exit state
+  - generic input prompt and attachments
+  - output text, source, and error
+  - process timestamps
+  - optional `messageIndex` linking the execution to a Main Agent message
 
-#### Scenario: Vision log association
-- **WHEN** a vision log entry is created
-- **THEN** the system SHALL ensure `turnIndex` correctly corresponds to the user message turn in the main session
+#### Scenario: Legacy VisionMessage migration
+- **WHEN** a version 2 session containing `visionMessages` is loaded
+- **THEN** the system SHALL expose those entries as generic `AgentSessionMessage` records
+- **AND** the next save SHALL write version 3 `agentMessages` without `visionMessages`
 
 ### Requirement: Image Recovery on Session Load
 The system SHALL attempt to recover images when loading a session by reading from the image cache via `ImagePipeline`'s internal `ImageCache`.
@@ -45,4 +43,3 @@ The system SHALL attempt to recover images when loading a session by reading fro
 - **AND** the corresponding cache files do NOT exist
 - **THEN** the system SHALL NOT crash or error
 - **AND** SHALL show a placeholder indicator for missing images
-

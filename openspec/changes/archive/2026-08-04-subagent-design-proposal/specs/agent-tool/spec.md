@@ -1,8 +1,5 @@
-# agent-tool Specification
+## ADDED Requirements
 
-## Purpose
-TBD - created by archiving change subagent-design-proposal. Update Purpose after archive.
-## Requirements
 ### Requirement: spawn_agent 启动进程
 
 系统 SHALL 提供 `spawn_agent` 标准工具。输入 MUST 包含 `application`、`description` 和通用 `input` 信封；`input` MUST 包含 prompt，并 MAY 包含带类型的 attachments。工具 MAY 包含 `attachment`、`context_mode`、类型化 `selected_context` 和 `isolation`，但 MUST NOT 覆盖 Application 的 model、tools、Skills、MCP、Hooks、权限或 fallback。

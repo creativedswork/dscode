@@ -1,8 +1,5 @@
-# agent-execution-engine Specification
+## ADDED Requirements
 
-## Purpose
-TBD - created by archiving change subagent-design-proposal. Update Purpose after archive.
-## Requirements
 ### Requirement: Agent 是统一进程实体
 
 系统 SHALL 使用同一 Agent 领域模型表示 Main Agent 与 SubAgent。每个 Agent MUST 拥有 agentId、Application、AgentContext、AgentProcessRuntime、进程状态和 attachment。

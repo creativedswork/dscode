@@ -1,8 +1,5 @@
-# agent-tool-filtering Specification
+## ADDED Requirements
 
-## Purpose
-TBD - created by archiving change subagent-design-proposal. Update Purpose after archive.
-## Requirements
 ### Requirement: Capability 单调收窄
 
 子 Agent 的最终 capability SHALL 由父级 hard deny、项目路径边界、Application tools/disallowedTools、permissionMode、attachment、isolation 和 depth 共同派生。任何子级配置 MUST NOT 覆盖父级 hard deny。

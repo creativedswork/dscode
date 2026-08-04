@@ -1,8 +1,5 @@
-# agent-resume Specification
+## ADDED Requirements
 
-## Purpose
-TBD - created by archiving change subagent-design-proposal. Update Purpose after archive.
-## Requirements
 ### Requirement: 活进程 IPC
 
 系统 SHALL 支持向实现 messaging capability 且处于 running、waiting 或 stopped 的 Agent 发送消息。PiAgentRuntimeAdapter SHALL 通过 steering 或 follow-up queue 在安全边界注入。

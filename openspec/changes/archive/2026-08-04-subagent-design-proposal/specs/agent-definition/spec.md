@@ -1,8 +1,5 @@
-# agent-definition Specification
+## ADDED Requirements
 
-## Purpose
-TBD - created by archiving change subagent-design-proposal. Update Purpose after archive.
-## Requirements
 ### Requirement: AgentApplication 表示可启动应用
 
 系统 SHALL 使用 `AgentApplication` 表示 Agent 应用配置，而不是运行中的进程。每次启动 Application SHALL 创建独立 Agent 进程。

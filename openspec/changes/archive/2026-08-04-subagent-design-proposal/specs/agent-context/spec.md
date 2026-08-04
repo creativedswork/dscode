@@ -1,8 +1,5 @@
-# agent-context Specification
+## ADDED Requirements
 
-## Purpose
-TBD - created by archiving change subagent-design-proposal. Update Purpose after archive.
-## Requirements
 ### Requirement: AgentContext 表示进程执行环境
 
 系统 SHALL 使用 `AgentContext` 表示当前 Agent 进程的执行环境。上下文 MUST 包含 `agentId`、`parentAgentId`、`parentSessionId`、`applicationName`、`role`、`attachment`、`cwd` 和 `depth`。
