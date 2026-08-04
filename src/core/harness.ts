@@ -6,7 +6,11 @@ import { Type } from "@earendil-works/pi-ai";
 import type { Api, AssistantMessage, Context, ImageContent, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 
 import { streamSimple } from "../models/index.js";
-import type { HarnessConfig } from "./types.js";
+import type {
+  HarnessConfig,
+  SwitchSessionRequest,
+  SwitchSessionResult,
+} from "./types.js";
 import { saveUserConfig, loadScopedSettings, projectSettingsPath, userSettingsPath, loadMcpServers } from "./config.js";
 import { SessionManager } from "../session/manager.js";
 import { ContextManager } from "../context/manager.js";
@@ -104,6 +108,8 @@ export class Harness implements HarnessAPI {
   private activeVisionAbortController: AbortController | null = null;
   private autoSaveTimer: NodeJS.Timeout | undefined;
   private lastSavedMessageCount: number = 0;
+  private activeMainTurn: Promise<void> | null = null;
+  private sessionSwitchInProgress = false;
 
   get agent(): PiAgentRuntime {
     return this.piAgentRuntime;
@@ -322,7 +328,6 @@ export class Harness implements HarnessAPI {
         this.config.projectPath,
       );
     };
-    this.events.on("session:loaded", (event) => updateMainSession(event.id));
     this.events.on("session:created", (event) => updateMainSession(event.id));
     if (this.config.agents.enabled) {
       this.driverRegistry.register({
@@ -341,6 +346,10 @@ export class Harness implements HarnessAPI {
    * with exponential backoff, then saves the failed state.
    */
   async promptAndSave(text: string, images?: ImageContent[]): Promise<void> {
+    return this.runMainTurn(() => this.promptAndSaveInternal(text, images));
+  }
+
+  private async promptAndSaveInternal(text: string, images?: ImageContent[]): Promise<void> {
     const maxRetries = this.config.retry.maxRetries;
     const baseDelay = this.config.retry.baseDelayMs;
     const maxDelay = this.config.retry.maxDelayMs;
@@ -421,6 +430,88 @@ export class Harness implements HarnessAPI {
         level: "turn",
       });
     }
+  }
+
+  private runMainTurn(operation: () => Promise<void>): Promise<void> {
+    if (this.sessionSwitchInProgress) {
+      return Promise.reject(new Error("Cannot submit a prompt while a session switch is in progress"));
+    }
+    if (this.activeMainTurn) {
+      return Promise.reject(new Error("A Main Agent turn is already in progress"));
+    }
+    const operationPromise = operation();
+    let tracked: Promise<void>;
+    tracked = operationPromise.finally(() => {
+      if (this.activeMainTurn === tracked) this.activeMainTurn = null;
+    });
+    this.activeMainTurn = tracked;
+    return tracked;
+  }
+
+  async switchSession(request: SwitchSessionRequest): Promise<SwitchSessionResult> {
+    if (this.sessionSwitchInProgress) {
+      throw new Error("A session switch is already in progress");
+    }
+    this.sessionSwitchInProgress = true;
+    try {
+      const targetId = this.resolveSessionId(request.sessionIdOrPrefix);
+      const prepared = await this.sessionManager.prepareLoad(targetId);
+
+      const activeTurn = this.activeMainTurn;
+      if (activeTurn) {
+        this.abort();
+        try {
+          await activeTurn;
+        } catch {
+          // Aborted turns may reject; quiescence, not success, is required here.
+        }
+      }
+
+      this.sessionManager.saveSession(this.agent, request.pendingPermission);
+      await this.agentSupervisor.updateParentSession(
+        this.mainAgentId,
+        targetId,
+        this.config.projectPath,
+      );
+      this.sessionManager.commitPreparedLoad(prepared, this.agent);
+      this.lastSavedMessageCount = prepared.messages.length;
+
+      return {
+        session: prepared.metadata,
+        messages: prepared.messages,
+        agentMessages: prepared.agentMessages,
+      };
+    } finally {
+      this.sessionSwitchInProgress = false;
+    }
+  }
+
+  private resolveSessionId(idOrPrefix: string): string {
+    const normalized = idOrPrefix.trim();
+    if (!normalized) throw new Error("Session ID required");
+
+    const current = this.sessionManager.getCurrentMetadata();
+    const candidates = new Map(
+      [
+        ...this.sessionManager.listAllSessions(),
+        ...(current ? [current] : []),
+      ].map((session) => [session.id, session]),
+    );
+    if (candidates.has(normalized)) return normalized;
+
+    const matches = [...candidates.values()].filter((session) =>
+      session.id.startsWith(normalized),
+    );
+    if (matches.length === 0) {
+      throw new Error(`Session not found: ${normalized}`);
+    }
+    if (matches.length > 1) {
+      const details = matches
+        .map((session) => `  ${session.id.slice(0, 8)} "${session.title.slice(0, 60)}"`)
+        .join("\n");
+      throw new Error(`Ambiguous session ID prefix. Matching sessions:\n${details}`);
+    }
+    return matches[0].id;
   }
 
   /**
@@ -929,6 +1020,10 @@ export class Harness implements HarnessAPI {
   }
 
   async promptWithImages(text: string, images: ImageContent[]): Promise<void> {
+    return this.runMainTurn(() => this.promptWithImagesInternal(text, images));
+  }
+
+  private async promptWithImagesInternal(text: string, images: ImageContent[]): Promise<void> {
     const turnIdx = this.turnIndex++;
 
     const visionApplication = this.applicationRegistry.require("vision");
@@ -937,7 +1032,7 @@ export class Harness implements HarnessAPI {
     if (!hasVisionConfig) {
       const mainModel = resolveModel(this.config.provider, this.config.modelId);
       if (mainModel.input.includes("image")) {
-        await this.promptAndSave(text, images);
+        await this.promptAndSaveInternal(text, images);
         return;
       }
     }
@@ -959,7 +1054,7 @@ export class Harness implements HarnessAPI {
           ? `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`
           : "(用户附带了一张图片，但图片中没有可识别的文字内容)";
       }
-      await this.promptAndSave(mainPrompt);
+      await this.promptAndSaveInternal(mainPrompt);
 
       const messages = this.agent.state.messages as any[];
       const messageIndex = this.findLastUserMessageIndex(messages);

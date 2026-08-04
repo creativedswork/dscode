@@ -16,6 +16,7 @@ import type { HarnessEventBus } from "./events.js";
 import type { Logger } from "../utils/logger.js";
 import type { AgentApplicationRegistry } from "../agents/application/registry.js";
 import type { AgentSupervisor } from "../agents/process/supervisor.js";
+import type { SwitchSessionRequest, SwitchSessionResult } from "./types.js";
 
 /**
  * Public API surface of Harness, consumed by UI backends and slash commands.
@@ -46,6 +47,7 @@ export interface HarnessAPI {
   setProvider(id: string): void;
   updateProjectPath(cwd: string): Promise<{ success: boolean; error?: string }>;
   promptAndSave(text: string, images?: ImageContent[]): Promise<void>;
+  switchSession(request: SwitchSessionRequest): Promise<SwitchSessionResult>;
   saveSessionNow(): void;
   abort(): void;
   rebuildSystemPrompt(): void;

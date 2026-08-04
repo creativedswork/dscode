@@ -3,6 +3,7 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 
 import type {
   AgentSessionMessage,
+  PreparedSessionLoad,
   SerializedSession,
   SessionMetadata,
   VisionMessage,
@@ -411,25 +412,36 @@ export class SessionManager {
     }
   }
 
+  async prepareLoad(id: string): Promise<PreparedSessionLoad> {
+    const session = this.store.load(id);
+    const messages = session.messages as any[];
+
+    for (const message of messages) {
+      await restoreImagesFromCache(message);
+    }
+
+    return {
+      id,
+      metadata: session.metadata,
+      messages,
+      agentMessages: sessionAgentMessages(session),
+    };
+  }
+
+  commitPreparedLoad(prepared: PreparedSessionLoad, agent: PiAgentRuntime): void {
+    // SubAgent records remain display/audit metadata and never enter model context.
+    agent.state.messages = prepared.messages as any;
+    this.current = prepared.metadata;
+    this.accumulatedMs = prepared.metadata.totalActiveMs ?? 0;
+    this._agentMessages = prepared.agentMessages;
+    this._legacyVisionMessages = [];
+    this.events?.emit({ type: "session:loaded", id: prepared.id });
+  }
+
   async loadSession(id: string, agent: PiAgentRuntime): Promise<LoadResult> {
     try {
-      const session = this.store.load(id);
-      const messages = session.messages as any[];
-
-      // Restore images from cache for any ImageRef entries
-      for (const msg of messages) {
-        await restoreImagesFromCache(msg);
-      }
-
-      // Agent messages are display/audit metadata, not model inference context.
-      // agent.state.messages content stays as-is for model inference context.
-
-      agent.state.messages = messages as any;
-      this.current = session.metadata;
-      this.accumulatedMs = session.metadata.totalActiveMs ?? 0;
-      this._agentMessages = sessionAgentMessages(session);
-      this._legacyVisionMessages = [];
-      this.events?.emit({ type: "session:loaded", id });
+      const prepared = await this.prepareLoad(id);
+      this.commitPreparedLoad(prepared, agent);
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message ?? "Unknown error loading session" };

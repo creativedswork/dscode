@@ -148,9 +148,18 @@ compactedPrefix）持久化到磁盘，支持恢复。
 
 - `createSession(model)` — 新建 session
 - `saveSession(agent, metadata)` — 从 `agent.state.messages` 序列化并写入
-- `loadSession(id, agent)` — 恢复 `agent.state.messages`
+- `prepareLoad(id)` — 校验并恢复目标快照，不修改当前 Session
+- `commitPreparedLoad(snapshot, agent)` — 无 I/O 地提交 Main messages、metadata
+  和独立的 `agentMessages`
+- `loadSession(id, agent)` — prepare/commit 兼容包装
 - `listSessions()` / `deleteSession(id)` — 管理操作
 - `getCurrentSessionId()` — 返回 ULID 用于 prompt cache 亲和
+
+跨组件切换由 `Harness.switchSession()` 协调，固定执行
+prepare → abort/quiesce → save source → persist Main Process rebind → commit。
+`session:loaded` 只在 commit 后作为完成通知发布。已有 SubAgent 不参与 Main
+Process 重绑定，并继续按创建时的 `parentSessionId` 写回源 Session。完整约束见
+[`SESSION_SWITCHING.md`](./SESSION_SWITCHING.md)。
 
 ---
 

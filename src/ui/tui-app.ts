@@ -1222,7 +1222,7 @@ export class TuiApp {
     return `${minutes}m ${seconds}s`;
   }
 
-  private handleSubmit(text: string, echoText?: string): void {
+  private async handleSubmit(text: string, echoText?: string): Promise<void> {
     text = text.replace(/\[image:\d+\]\s*/g, "").trim();
     // Use pre-drained images if Enter was intercepted in input listener,
     // otherwise drain now (for programmatic submits like /image command).
@@ -1283,7 +1283,7 @@ export class TuiApp {
       this.setProcessing(false);
       this.addUserMessage(text);
       this.setProcessing(true);
-      this.deps.agent.prompt(text).then(
+      this.deps.promptAndSave(text).then(
         () => {
           this.setProcessing(false);
         },
@@ -1299,7 +1299,7 @@ export class TuiApp {
     if (this.processing) return;
 
     if (text.startsWith("/")) {
-      const executed = executeSlashCommand(text, { harness: this.deps, ui: this as any });
+      const executed = await executeSlashCommand(text, { harness: this.deps, ui: this as any });
       if (executed) {
         return;
       }
@@ -1425,7 +1425,7 @@ export class TuiApp {
         },
       );
     } else {
-      this.deps.agent.prompt(text, images ?? undefined).then(
+      this.deps.promptAndSave(text, images ?? undefined).then(
         () => {
           this.setProcessing(false);
         },

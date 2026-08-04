@@ -75,6 +75,7 @@ function setup(runtime: AgentProcessRuntime): {
   mainAgentId: string;
   events: string[];
   saves: unknown[];
+  setSaveError(error?: Error): void;
 } {
   const apps = new Map([
     ["main", application("main")],
@@ -88,10 +89,14 @@ function setup(runtime: AgentProcessRuntime): {
     },
   };
   const saves: unknown[] = [];
+  let saveError: Error | undefined;
   const store = {
     async save(value: any) {
+      if (saveError) throw saveError;
       saves.push({
         state: value.state,
+        parentSessionId: value.parentSessionId,
+        contextParentSessionId: value.context.parentSessionId,
         runtimeSnapshot: value.runtimeSnapshot,
       });
     },
@@ -115,7 +120,15 @@ function setup(runtime: AgentProcessRuntime): {
     new ImmediateRuntime(),
     createMainAgentContext("/project", "session-1", ["read_file"]),
   );
-  return { supervisor, mainAgentId: main.agentId, events, saves };
+  return {
+    supervisor,
+    mainAgentId: main.agentId,
+    events,
+    saves,
+    setSaveError(error?: Error) {
+      saveError = error;
+    },
+  };
 }
 
 describe("AgentSupervisor", () => {
@@ -186,6 +199,71 @@ describe("AgentSupervisor", () => {
       expect.objectContaining({ agentId: spawned.agentId, state: "completed" }),
     ]);
     expect(supervisor.consumeNotifications("session-1")).toEqual([]);
+  });
+
+  it("persists a Main Process session rebind", async () => {
+    const { supervisor, mainAgentId, saves } = setup(new ImmediateRuntime());
+
+    await supervisor.updateParentSession(mainAgentId, "session-2", "/project-2");
+
+    const main = supervisor.require(mainAgentId);
+    expect(main.parentSessionId).toBe("session-2");
+    expect(main.context.parentSessionId).toBe("session-2");
+    expect(main.context.cwd).toBe("/project-2");
+    expect(saves).toContainEqual(expect.objectContaining({
+      parentSessionId: "session-2",
+      contextParentSessionId: "session-2",
+    }));
+  });
+
+  it("rolls back a Main Process session rebind when persistence fails", async () => {
+    const { supervisor, mainAgentId, setSaveError } = setup(new ImmediateRuntime());
+    const previousContext = supervisor.require(mainAgentId).context;
+    setSaveError(new Error("disk full"));
+
+    await expect(
+      supervisor.updateParentSession(mainAgentId, "session-2", "/project-2"),
+    ).rejects.toThrow("disk full");
+
+    const main = supervisor.require(mainAgentId);
+    expect(main.parentSessionId).toBe("session-1");
+    expect(main.context).toBe(previousContext);
+  });
+
+  it("does not rebind existing SubAgents with the Main Process", async () => {
+    const runtime = new BlockingRuntime();
+    const { supervisor, mainAgentId } = setup(runtime);
+    const spawned = await supervisor.spawn({
+      application: "general",
+      input: { prompt: "background" },
+      parentAgentId: mainAgentId,
+      attachment: "background",
+    });
+    const childContext = supervisor.require(spawned.agentId).context;
+
+    await supervisor.updateParentSession(mainAgentId, "session-2");
+
+    const child = supervisor.require(spawned.agentId);
+    expect(child.parentSessionId).toBe("session-1");
+    expect(child.context).toBe(childContext);
+    await supervisor.kill(spawned.agentId);
+    expect(supervisor.consumeNotifications("session-2")).toEqual([]);
+    expect(supervisor.consumeNotifications("session-1")).toEqual([
+      expect.objectContaining({ agentId: spawned.agentId, state: "killed" }),
+    ]);
+  });
+
+  it("makes new SubAgents inherit the rebound Main Process session", async () => {
+    const { supervisor, mainAgentId } = setup(new ImmediateRuntime());
+    await supervisor.updateParentSession(mainAgentId, "session-2");
+
+    const spawned = await supervisor.spawn({
+      application: "general",
+      input: { prompt: "new task" },
+      parentAgentId: mainAgentId,
+    });
+
+    expect(supervisor.require(spawned.agentId).parentSessionId).toBe("session-2");
   });
 
   it("supports IPC only while a messaging Runtime is active", async () => {

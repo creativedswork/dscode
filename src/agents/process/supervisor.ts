@@ -208,13 +208,21 @@ export class AgentSupervisor {
 
   async updateParentSession(agentId: string, sessionId: string, cwd?: string): Promise<void> {
     const agentProcess = this.require(agentId);
+    const previousSessionId = agentProcess.parentSessionId;
+    const previousContext = agentProcess.context;
     agentProcess.parentSessionId = sessionId;
     agentProcess.context = Object.freeze({
-      ...agentProcess.context,
+      ...previousContext,
       parentSessionId: sessionId,
-      cwd: cwd ?? agentProcess.context.cwd,
+      cwd: cwd ?? previousContext.cwd,
     });
-    await this.lifecycle.persist(agentProcess);
+    try {
+      await this.lifecycle.persistRequired(agentProcess);
+    } catch (error) {
+      agentProcess.parentSessionId = previousSessionId;
+      agentProcess.context = previousContext;
+      throw error;
+    }
   }
 
   require(agentId: string): AgentProcess {

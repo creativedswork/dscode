@@ -34,7 +34,7 @@ describe("slash commands", () => {
   it("opens the MCP browser when MCP servers are available", async () => {
     const openMcpBrowser = vi.fn();
 
-    executeSlashCommand(
+    await executeSlashCommand(
       "/mcp",
       makeContext(
         {
@@ -46,8 +46,6 @@ describe("slash commands", () => {
       ),
     );
 
-    await Promise.resolve();
-
     expect(openMcpBrowser).toHaveBeenCalledOnce();
   });
 
@@ -55,7 +53,7 @@ describe("slash commands", () => {
     const addInfo = vi.fn();
     const addError = vi.fn();
 
-    executeSlashCommand(
+    await executeSlashCommand(
       "/mcp",
       makeContext(
         {
@@ -67,8 +65,6 @@ describe("slash commands", () => {
       ),
     );
 
-    await Promise.resolve();
-
     expect(addInfo).toHaveBeenCalledWith("No MCP servers configured.");
     expect(addError).not.toHaveBeenCalled();
   });
@@ -78,7 +74,7 @@ describe("slash commands", () => {
     const clearConversationView = vi.fn();
     const addInfo = vi.fn();
 
-    executeSlashCommand(
+    await executeSlashCommand(
       "/reset",
       makeContext(
         { agent: { reset, state: { messages: [] } } },
@@ -86,10 +82,48 @@ describe("slash commands", () => {
       ),
     );
 
-    await Promise.resolve();
-
     expect(reset).toHaveBeenCalledOnce();
     expect(clearConversationView).toHaveBeenCalledOnce();
     expect(addInfo).not.toHaveBeenCalledWith("(conversation reset)");
+  });
+
+  it("loads sessions through the unified Harness switch API", async () => {
+    const switchSession = vi.fn(async () => ({
+      session: {
+        id: "TARGET-SESSION",
+        title: "Target",
+        createdAt: 1,
+        updatedAt: 2,
+        modelProvider: "test",
+        modelId: "model",
+        messageCount: 1,
+        projectPath: "/project",
+      },
+      messages: [{ role: "user", content: "target" }],
+      agentMessages: [],
+    }));
+    const clearConversationView = vi.fn();
+    const replayMessages = vi.fn();
+    const takePendingPermission = vi.fn(() => ({
+      toolName: "bash",
+      preview: "echo test",
+    }));
+    const context = makeContext(
+      {
+        switchSession,
+        agent: { reset: vi.fn(), state: { messages: [{ role: "user", content: "target" }] } },
+      },
+      { clearConversationView, replayMessages, takePendingPermission },
+    );
+
+    await executeSlashCommand("/session load TARGET", context);
+
+    expect(switchSession).toHaveBeenCalledWith({
+      sessionIdOrPrefix: "TARGET",
+      pendingPermission: { toolName: "bash", preview: "echo test" },
+    });
+    expect(clearConversationView).toHaveBeenCalledOnce();
+    expect(replayMessages).toHaveBeenCalledWith(context.harness.agent.state.messages);
+    expect(context.harness.sessionManager.loadSession).toBeUndefined();
   });
 });

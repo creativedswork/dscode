@@ -87,6 +87,10 @@ export class AgentProcessLifecycle {
     }
   }
 
+  async persistRequired(agentProcess: AgentProcess): Promise<void> {
+    await this.store.save(agentProcess);
+  }
+
   private async finalizeWorktree(agentProcess: AgentProcess, details: unknown): Promise<unknown> {
     if (!agentProcess.context.worktree) return details;
     try {

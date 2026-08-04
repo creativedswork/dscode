@@ -127,7 +127,14 @@ export class WebUiBackend implements UiBackend {
     // Set WebSocket handlers
     this.wsServer.onConnectHandler = (client) => this.handleConnect(client);
     this.wsServer.onDisconnectHandler = (_client) => this.handleDisconnect();
-    this.wsServer.onMessageHandler = (client, cmd) => this.handleMessage(client, cmd);
+    this.wsServer.onMessageHandler = (client, cmd) => {
+      void this.handleMessage(client, cmd).catch((error) => {
+        client.send({
+          type: "error",
+          text: error instanceof Error ? error.message : String(error),
+        });
+      });
+    };
 
     // ── Event bus subscriptions ──
     const h = this.harness;
@@ -401,6 +408,32 @@ export class WebUiBackend implements UiBackend {
     this.broadcastContextWindow(true, toolsForBroadcast3);
   }
 
+  replayMessages(_messages: unknown[]): void {
+    const model = (this.harness.agent.state.model as any)?.name ?? this.config.modelId;
+    this.broadcast({
+      type: "ready",
+      model,
+      config: this.buildConfigData(),
+      messages: this.buildConversationHistory(),
+    });
+    this.broadcastContextWindow(true);
+  }
+
+  takePendingPermission(): import("../../core/types.js").PendingPermission | undefined {
+    if (this.permissionResolve) {
+      const pendingPermission = {
+        toolName: this.currentPermissionTool,
+        preview: this.currentPermissionPreview,
+        fuzzyPattern: deriveFuzzyPattern(this.currentPermissionTool),
+        permissionArgs: this.currentPermissionArgs,
+      };
+      this.permissionResolve({ decision: "deny" });
+      this.permissionResolve = null;
+      return pendingPermission;
+    }
+    return this.harness.sessionManager.getCurrentMetadata()?.pendingPermission;
+  }
+
   // ── UiBackend Processing ──
 
   setProcessing(processing: boolean): void {
@@ -498,7 +531,7 @@ export class WebUiBackend implements UiBackend {
           const knownCommands = getSlashCommandAutocomplete(this.harness.commandManager.listManifests()).map(c => c.name);
           if (knownCommands.includes(firstWord)) {
             this.pendingImages = [];
-            this.handleSlashCommand(client, text);
+            await this.handleSlashCommand(client, text);
             break;
           }
         }
@@ -745,7 +778,7 @@ export class WebUiBackend implements UiBackend {
         break;
       }
       case "slash": {
-        this.handleSlashCommand(client, cmd.command);
+        await this.handleSlashCommand(client, cmd.command);
         break;
       }
 
@@ -830,7 +863,7 @@ export class WebUiBackend implements UiBackend {
 
   private async handleSlashCommand(client: WebSocketClient, text: string): Promise<void> {
     try {
-      const executed = executeSlashCommand(text, { harness: this.harness, ui: this });
+      const executed = await executeSlashCommand(text, { harness: this.harness, ui: this });
       if (executed) {
         // Push updated session list so sidebar auto-refreshes
         this.pushSessionList(client);
@@ -1134,63 +1167,11 @@ export class WebUiBackend implements UiBackend {
           client.send({ type: "error", text: "Session ID required." });
           return;
         }
-        const sessions = sessionManager.listSessions();
-        const matches = sessions.filter((s: any) => s.id.startsWith(cmd.id!));
-        let match: any;
-        if (matches.length === 0) {
-          // Fallback: check if the requested session is the current active session
-          // (which may be filtered out by listSessions() if messageCount === 0)
-          const currentMeta = sessionManager.getCurrentMetadata();
-          if (currentMeta && currentMeta.id.startsWith(cmd.id!)) {
-            match = currentMeta;
-          } else {
-            client.send({ type: "error", text: `Session not found: ${cmd.id}` });
-            return;
-          }
-        } else if (matches.length > 1) {
-          const matchList = matches.map((s: any) =>
-            `  ${s.id.slice(0, 8)} "${s.title.slice(0, 60)}"  ${s.modelProvider}/${s.modelId}  ${s.messageCount} msgs`
-          ).join("\n");
-          client.send({ type: "error", text: `Ambiguous session ID prefix. Matching sessions:\n${matchList}` });
-          return;
-        } else {
-          match = matches[0];
-        }
-        // If permissionResolve is active, capture and deny it.
-        // If already denied by abort handler, pendingPermission is in metadata.
-        // Either way, save with truncation to keep conversation clean.
-        let pendingPermission: import("../../core/types.js").PendingPermission | undefined;
-        if (this.permissionResolve) {
-          const fuzzy = deriveFuzzyPattern(this.currentPermissionTool);
-          pendingPermission = {
-            toolName: this.currentPermissionTool,
-            preview: this.currentPermissionPreview,
-            fuzzyPattern: fuzzy,
-            permissionArgs: this.currentPermissionArgs,
-          };
-          this.permissionResolve({ decision: "deny" });
-          this.permissionResolve = null;
-        } else {
-          // Check if abort handler already saved pendingPermission to metadata
-          const meta = sessionManager.getCurrentMetadata();
-          if (meta?.pendingPermission) {
-            pendingPermission = meta.pendingPermission;
-            this.harness.logger.info("WebBackend", "using pendingPermission from metadata");
-          }
-        }
-        this.harness.abort();
-        if (pendingPermission) {
-          this.harness.logger.info("WebBackend", `saving with pendingPermission: ${JSON.stringify(pendingPermission)}`);
-          sessionManager.saveSession(agent, pendingPermission);
-        } else {
-          this.harness.logger.info("WebBackend", "saving without pendingPermission");
-          this.harness.saveSessionNow();
-        }
-        const result = await sessionManager.loadSession(match.id, agent);
-        if (!result.success) {
-          client.send({ type: "error", text: `Failed to load session: ${result.error}` });
-          return;
-        }
+        const result = await this.harness.switchSession({
+          sessionIdOrPrefix: cmd.id,
+          pendingPermission: this.takePendingPermission(),
+        });
+        const match = result.session;
         // If loaded session has pendingPermission, clean up the aborted turn
         // from agent.state.messages so the conversation looks clean.
         const loadedMeta = sessionManager.getCurrentMetadata();
@@ -1218,17 +1199,8 @@ export class WebUiBackend implements UiBackend {
             `  Messages: ${match.messageCount}`,
           ].join("\n"),
         });
-        client.send({ type: "clear_conversation" });
-
-        const messages = await this.buildConversationHistory();
-        const model = (agent.state.model as any)?.name ?? this.config.modelId;
-        client.send({
-          type: "ready",
-          model,
-          config: this.buildConfigData(),
-          messages,
-        });
-        this.broadcastContextWindow(true);
+        this.clearConversationView();
+        this.replayMessages(agent.state.messages as unknown[]);
         this.pushSessionList(client);
         break;
       }

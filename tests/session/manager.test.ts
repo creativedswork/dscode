@@ -360,6 +360,61 @@ describe("SessionManager", () => {
     expect(result.error).toBeTruthy();
   });
 
+  it("prepares a session without changing current state", async () => {
+    const source = manager.createSession("p1", "m1");
+    manager.setAgentMessages([{
+      role: "subagent",
+      agentId: "agent-source",
+      application: "general",
+      state: "completed",
+      input: { prompt: "inspect" },
+      output: { text: "done" },
+      createdAt: 1,
+      endedAt: 2,
+    }]);
+    manager.saveSession(createMockAgent([{ role: "user", content: "source message" }]));
+
+    const target = manager.createSession("p2", "m2");
+    const activeMessages = [{ role: "user", content: "target message" }];
+    const agent = createMockAgent(activeMessages);
+    manager.saveSession(agent);
+
+    const prepared = await manager.prepareLoad(source.id);
+
+    expect(manager.getCurrentSessionId()).toBe(target.id);
+    expect(agent.state.messages).toBe(activeMessages);
+    expect(manager.agentMessages).toEqual([]);
+    expect(prepared.metadata.id).toBe(source.id);
+    expect(prepared.messages).toEqual([{ role: "user", content: "source message" }]);
+    expect(prepared.agentMessages).toHaveLength(1);
+  });
+
+  it("commits prepared Main and Agent messages independently", async () => {
+    const source = manager.createSession("p1", "m1");
+    manager.setAgentMessages([{
+      role: "subagent",
+      agentId: "agent-source",
+      application: "general",
+      state: "completed",
+      input: { prompt: "inspect" },
+      output: { text: "done" },
+      createdAt: 1,
+      endedAt: 2,
+    }]);
+    manager.saveSession(createMockAgent([{ role: "user", content: "source message" }]));
+    manager.createSession("p2", "m2");
+    const agent = createMockAgent([{ role: "user", content: "target message" }]);
+
+    manager.commitPreparedLoad(await manager.prepareLoad(source.id), agent);
+
+    expect(manager.getCurrentSessionId()).toBe(source.id);
+    expect(agent.state.messages).toEqual([{ role: "user", content: "source message" }]);
+    expect(agent.state.messages).not.toContainEqual(expect.objectContaining({ role: "subagent" }));
+    expect(manager.agentMessages).toEqual([
+      expect.objectContaining({ agentId: "agent-source" }),
+    ]);
+  });
+
   it("should track active time only between start/stop calls", async () => {
     manager.createSession("p1", "m1");
     // activeSince should be null after createSession (not auto-started)

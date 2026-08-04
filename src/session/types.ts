@@ -85,6 +85,24 @@ export interface SerializedSession {
   compactedPrefix?: string;
 }
 
+export interface PreparedSessionLoad {
+  id: string;
+  metadata: SessionMetadata;
+  messages: unknown[];
+  agentMessages: AgentSessionMessage[];
+}
+
+export interface SwitchSessionRequest {
+  sessionIdOrPrefix: string;
+  pendingPermission?: PendingPermission;
+}
+
+export interface SwitchSessionResult {
+  session: SessionMetadata;
+  messages: unknown[];
+  agentMessages: AgentSessionMessage[];
+}
+
 // --- Display (forward-declared, implemented in display.ts) ---
 
 export interface DisplayMessage {

@@ -9,6 +9,28 @@
 - 文件 ≤300 行，一个文件一个职责
 - 详见 `docs/STYLE.md`
 
+## 文档绘图
+
+架构图、流程图和时序图统一使用 Markdown 内嵌 Mermaid，不提交截图代替可维护的
+图表源码。
+
+- 架构和依赖关系使用 `flowchart LR` 或 `flowchart TB`
+- 调用链和跨组件交互使用 `sequenceDiagram`
+- 生命周期使用 `stateDiagram-v2`
+- 节点 ID 使用稳定的 ASCII 标识，展示文本可以使用中文
+- 复杂模块使用 `subgraph` 分层，每张图只表达一个主要关系
+- 避免 Mermaid 中的 HTML、Emoji、主题 CSS 和依赖特定渲染器的扩展语法
+- 修改图表后检查方向、节点归属、箭头语义以及代码块闭合
+
+示例：
+
+```mermaid
+flowchart LR
+    UI["UI adapter"] --> Coordinator["SessionSwitchCoordinator"]
+    Coordinator --> SessionManager
+    Coordinator --> AgentSupervisor
+```
+
 ## 图像识别
 
 支持 Vision 模型代理和 OCR 识别图片。**不要以"我是文本模型"为由拒绝处理图片。**
