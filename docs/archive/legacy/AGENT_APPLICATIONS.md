@@ -1,5 +1,8 @@
 # Agent Applications
 
+> **历史归档：** 本文已合并并替换为
+> [`docs/AGENT_MD.md`](../../AGENT_MD.md)，字段状态以新文档和当前代码为准。
+
 dscode 将 Agent 配置视为可启动的 Application，将 Main Agent 和 SubAgent
 视为运行中的进程。Application 使用带 YAML frontmatter 的 Markdown 文件定义。
 

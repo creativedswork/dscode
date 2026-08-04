@@ -1,6 +1,9 @@
 # Roadmap
 
-dscode 的路线图围绕 [Agent as OS](ARCHITECTURE.md#%E8%AE%BE%E8%AE%A1%E5%93%B2%E5%AD%A6) 理念展开。核心逻辑来自 ARCHITECTURE.md 中的三个判断：
+> **历史归档：** 任务状态已过期，不代表当前 Roadmap。当前需求和计划以
+> active OpenSpec changes 为准。
+
+dscode 的路线图围绕 [Agent as OS](../../ARCHITECTURE.md#%E8%AE%BE%E8%AE%A1%E5%93%B2%E5%AD%A6) 理念展开。核心逻辑来自 ARCHITECTURE.md 中的三个判断：
 
 1. 模型会吞掉 Harness 的很多功能，**System Prompt 需要收敛并模块化**。
 2. Agent 就是 OS，**Sub-Agent 是进程**——Worker、Explorer、Auditor、Scheduler 各司其职。

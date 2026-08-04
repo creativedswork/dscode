@@ -1,6 +1,7 @@
 # Architecture
 
-dscode 是一个基于 `@mariozechner/pi-agent-core` + `@mariozechner/pi-ai` 构建的分层 CLI Agent Harness。
+dscode 是一个基于 `@earendil-works/pi-agent-core`、`@earendil-works/pi-ai`
+和 `@earendil-works/pi-tui` 构建的分层 Agent Harness，提供 TUI 与 Web 双界面。
 
 ## 设计哲学
 
@@ -42,6 +43,8 @@ resources/agents/vision.md        # 当前唯一随发行版本提供的 Agent.m
 <project>/.claude/agents/*.md     # Claude Code 项目级兼容
 ```
 
+完整字段、覆盖顺序和使用方式见 [Agent.md 配置与使用](AGENT_MD.md)。
+
 运行中的进程保存到：
 
 ```text
@@ -67,7 +70,7 @@ resources/agents/vision.md        # 当前唯一随发行版本提供的 Agent.m
 ├──────────────────────────────────────────────────────────┤
 │  Layer 4: Skills         用户态程序，SKILL.md 声明式加载    │
 │           Drivers        内核模块 (fs/shell/search/edit/    │
-│                           vision/discovery)                  │
+│                           discovery)                         │
 │           Tool Search    延迟工具发现 (search_tools)         │
 │           Checkpoint     编辑安全网 (save/commit/rollback)   │
 ├──────────────────────────────────────────────────────────┤
@@ -85,7 +88,7 @@ resources/agents/vision.md        # 当前唯一随发行版本提供的 Agent.m
 
 ## Layer 0: Agent Loop
 
-由 `@mariozechner/pi-agent-core` 提供，dscode 不重复实现。
+由 `@earendil-works/pi-agent-core` 提供，dscode 不重复实现。
 
 ### Agent 核心 API
 
@@ -159,7 +162,7 @@ compactedPrefix）持久化到磁盘，支持恢复。
 prepare → abort/quiesce → save source → persist Main Process rebind → commit。
 `session:loaded` 只在 commit 后作为完成通知发布。已有 SubAgent 不参与 Main
 Process 重绑定，并继续按创建时的 `parentSessionId` 写回源 Session。完整约束见
-[`SESSION_SWITCHING.md`](./SESSION_SWITCHING.md)。
+[`session-switching` specification](../openspec/specs/session-switching/spec.md)。
 
 ---
 
@@ -242,7 +245,6 @@ Driver 是工具提供者，分为 builtin 和 MCP 两类：
 | `shell` | builtin | `bash` |
 | `search` | builtin | `grep`, `glob` |
 | `edit` | builtin | `edit`（基于 hash anchor 的文件编辑） |
-| `vision` | builtin | 图片 Attachment 缓存与 OCR fallback |
 | `discovery` | builtin | `search_tools`（延迟工具发现） |
 | `<mcp-server>` | mcp | MCP Server 提供的工具，命名空间: `mcp_<server>_<tool>` |
 
@@ -273,8 +275,9 @@ Skill 不直接提供工具，而是声明**允许使用的 Driver 工具白名�
 
 图片先通过 `ImageCache` 压缩并转换为 ImageRef。Pi Agent 模型不可用、调用失败或
 返回空结果时，Supervisor 根据 Application fallback 配置在同一 agentId 下调用
-`OcrFallbackHandler`。取消信号贯穿模型与 OCR。原生支持图片且未配置独立 Vision
-模型时仍直接交给 Main Agent；旧 `ImagePipeline` 仅保留为 agents disabled 回滚路径。
+`OcrFallbackHandler`。取消信号贯穿模型与 OCR。Agent 系统启用时，图片统一经过
+Vision Agent；只有显式关闭 Agent 系统时，才使用 `ImagePipeline` 兼容路径，并在
+没有独立 Vision 配置且 Main 模型支持图片时直接交给 Main Agent。
 
 ### Checkpoint 系统
 
@@ -329,10 +332,11 @@ permission 规则在 `settings.json` 中配置（路径 denyPatterns、自定义
 
 | 后端 | 实现 | 入口 |
 |------|------|------|
-| `TuiBackend` | readline + ANSI escape codes | `dscode` (终端模式) |
+| `TuiBackend` | `@earendil-works/pi-tui` + HarnessEventBus adapter | `dscode` (终端模式) |
 | `WebBackend` | WebSocket + HTTP server | `dscode --web` |
 
-两者实现统一的 `UiBackend` 接口：render text/thinking/tool、prompt permissions、slash commands。
+两者通过统一的 Harness 事件和 `UiBackend` 生命周期/权限接口消费 Agent 能力。
+TUI 与 Web 分别将事件投影到各自的 conversation model。
 
 ### 前端
 
@@ -357,10 +361,10 @@ Web 模式下的前端是独立 Vite + React 项目（`web/`），通过 WebSock
 `Harness` 类（`src/core/harness.ts`）实现 `HarnessAPI` 接口（`src/core/harness-api.ts`），是进程级 host，负责：
 
 1. 加载配置（config.json + settings.json + env），创建 `ConfigWatch` 统一可观测配置层
-2. 实例化 AgentApplicationRegistry、AgentSupervisor、SessionManager、ContextManager、MemoryManager、DriverRegistry、ToolRegistry、PermissionManager 和 ImagePipeline
+2. 实例化 AgentApplicationRegistry、AgentSupervisor、SessionManager、ContextManager、MemoryManager、DriverRegistry、ToolRegistry、PermissionManager 和兼容 ImagePipeline
 3. 初始化 CheckpointManager（编辑安全网）
 4. 构建 system prompt = base + skills instructions + memories + AGENTS.md + deferred tools hint
-5. 将 Main Agent 注册为 PID 1，并注册普通 Agent 与 Pipeline Runtime Factory
+5. 将 Main Agent 注册为 PID 1，并使用统一 PiAgentRuntimeAdapter factory 启动 AgentApplication
 6. 绑定事件（UI 渲染、token 校准、session 自动保存）
 7. 启动 UI（TUI REPL 或 Web server）
 8. 优雅关闭（保存 session, 提取 memory, 关闭 checkpoint 系统）
@@ -393,7 +397,8 @@ base prompt
 - **mutation 方法**: `setModel()`, `setThinking()`, `setProvider()`, `updateProjectPath()`, `abort()`
 - **执行方法**: `promptWithImages()`, `promptAndSave()`
 
-此接口替代了旧的 `TuiDeps` 反模式，消除了 Web 后端中的 `as any` 类型断言。
+此接口替代了旧的 `TuiDeps` 依赖对象，使 TUI 与 Web 后端共享同一 Harness
+能力边界；局部协议适配仍可能使用运行时类型收窄。
 
 ## 目录结构
 
@@ -460,7 +465,10 @@ web/                # Web 前端（独立 Vite + React 项目）
 ├── config.json              # /config 写入的运行时配置
 ├── settings.json            # 用户级声明式 settings
 └── data/
-    ├── sessions/<ulid>.json + index.json
+    ├── sessions/
+    │   ├── index.json       # 全局元数据索引
+    │   └── by-project/<project-slug>/<ulid>.json + index.json
+    ├── agent-processes/by-project/<project-slug>/<agentId>.json + index.json
     └── memory/global.json + projects/<hash>.json
 
 <project>/.dscode/
@@ -477,8 +485,7 @@ web/                # Web 前端（独立 Vite + React 项目）
 
 ## 参考链接
 
-- [DESIGN.md](./DESIGN.md) — 设计决策记录（ADR）
+- [AGENT_MD.md](./AGENT_MD.md) — Agent.md 配置与使用
 - [STYLE.md](./STYLE.md) — 编码规范
-- [ROADMAP.md](./ROADMAP.md) — 路线图
-- [reference/](./reference/) — 技术分析 & 参考资料
-- [archive/](./archive/) — 已完成的方案 & 历史记录
+- [OpenSpec](../openspec/specs/) — 当前行为规格
+- [archive/](./archive/README.md) — 已完成方案、过期 ADR 与历史调研

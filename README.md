@@ -34,13 +34,24 @@
 
 <table>
 <tr>
+<td colspan="2" valign="top">
+
+### 🧠 Agent as OS
+
+dscode is designed as an operating system for Agents: the Harness is the Kernel, the Main Agent is PID 1, SubAgents are processes, `Agent.md` files are Applications, Sessions are TTYs, Drivers are device interfaces, and MCP servers are external devices. This keeps execution generic and composable — new Agent capabilities come from configuration, not specialized runtimes.
+
+**Applications are configured. Agents are processes. Sessions are TTYs.**
+
+</td>
+</tr>
+<tr>
 <td width="50%" valign="top">
 
 ### 🔌 MCP-First
 
-Digital studios don't use one tool. They use ten. MCP turns every tool into an API — dscode is the agent that orchestrates them. Blender for 3D modeling, PlayCanvas for real-time graphics, browser automation for testing, documents for specs, spreadsheets for data. If your production tool has an MCP server, dscode brings it into the workflow.
+Digital studios don't use one tool. They use ten. MCP turns every tool into an API — dscode is the Agent system that orchestrates them. Blender for 3D modeling, PlayCanvas for real-time graphics, browser automation for testing, documents for specs, spreadsheets for data. If your production tool has an MCP server, dscode brings it into the workflow.
 
-**Your toolchain. One agent. All through MCP.**
+**Your toolchain. Coordinated Agents. All through MCP.**
 
 </td>
 <td width="50%" valign="top">
@@ -100,8 +111,8 @@ dscode is not a chatbot with a dark theme. It's a **digital studio** — a creat
   <sub>Declarative third-party extensions via SKILL.md. On-demand activation. User-level + project-level scopes.</sub>
 </td>
 <td width="33%" valign="top">
-  <strong>👁 Vision Pipeline</strong><br />
-  <sub>Bundled vision.md Pipeline SubAgent with native multimodal routing, tesseract OCR fallback (ENG + CHI), progress, and cancellation.</sub>
+  <strong>⚙️ SubAgents</strong><br />
+  <sub>Claude Code-compatible Agent.md Applications with foreground/background execution, inline activity, process control, and persisted results.</sub>
 </td>
 <td width="33%" valign="top">
   <strong>🔧 Open Design</strong><br />
@@ -125,6 +136,22 @@ dscode is not a chatbot with a dark theme. It's a **digital studio** — a creat
 </table>
 
 > **Tip:** In TUI, paste clipboard images with `Ctrl+V` (macOS) or `/image clipboard`.
+
+---
+
+## Agent as OS
+
+The Main Agent runs as PID 1 and delegates work to independent SubAgent
+processes. Applications use **Claude Code-compatible `Agent.md` files**; dscode
+automatically discovers user and project definitions from `.claude/agents`
+alongside native `.dscode/agents` directories. Terminal and Web conversations
+show foreground and background process activity with persisted results.
+
+The bundled [`vision.md`](resources/agents/vision.md) uses the same SubAgent
+runtime and falls back to Tesseract OCR when needed. See
+[Agent.md configuration and usage](docs/AGENT_MD.md) for supported fields,
+discovery priority, and process tools, or read the full
+[Agent as OS architecture](docs/ARCHITECTURE.md#设计哲学).
 
 ---
 
@@ -341,8 +368,6 @@ Then configure the MCP server in `~/.dscode/settings.json`:
 }
 ```
 
-> **Note:** Open Design's dscode integration currently lives on the `add-dscode-agent` branch and has not yet been submitted as a PR to upstream. The integration provides dscode-specific installer targets and agent configuration. Track the progress at [github.com/wangcan26/open-design](https://github.com/wangcan26/open-design).
-
 ---
 
 ## Contributing
@@ -358,10 +383,10 @@ We welcome bug reports, feature ideas, and technical discussions via **[GitHub I
 | Document | What's inside |
 |----------|---------------|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | Full architecture: Agent as OS, 6-layer design, Driver/Skill model, source tree |
-| [AGENT_APPLICATIONS.md](docs/AGENT_APPLICATIONS.md) | Agent.md directories, fields, Claude Code compatibility, process tools |
-| [ROADMAP.md](docs/ROADMAP.md) | Planned Agent process extensions, evaluations, and editing improvements |
+| [AGENT_MD.md](docs/AGENT_MD.md) | Agent.md setup, supported fields, Claude Code compatibility, process tools |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute: philosophy alignment, OpenSpec SDD workflow, coding conventions |
 | [STYLE.md](docs/STYLE.md) | TypeScript coding style: naming, imports, module structure, error handling |
+| [Documentation archive](docs/archive/README.md) | Historical plans and research; not a source of current behavior |
 
 ---
 
@@ -371,7 +396,7 @@ dscode stands on the shoulders of:
 
 - **[OpenSpec](https://github.com/Fission-AI/OpenSpec)** — the spec-driven development framework that shapes our entire workflow
 
-- **[pi-ai](https://www.npmjs.com/package/@mariozechner/pi-ai) / [pi-agent-core](https://www.npmjs.com/package/@mariozechner/pi-agent-core)** — Mario Zechner's agent loop and model abstraction foundation
+- **[@earendil-works/pi-ai](https://www.npmjs.com/package/@earendil-works/pi-ai) / [pi-agent-core](https://www.npmjs.com/package/@earendil-works/pi-agent-core)** — agent loop and model abstraction foundation
 - **[taste-skill](https://github.com/Leonxlnx/taste-skill)** — Leonxlnx's design taste skill system, inspired our skills architecture
 - **[@_can1357](https://x.com/_can1357/status/2021828033640911196)** — hash-anchor editing protocol, the cornerstone of our `edit` tool
 

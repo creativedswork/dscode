@@ -1,6 +1,7 @@
 # Edit Tool 失败治理 — 技术方案
 
-> 基于 `docs/EDIT-TOOL-FAILURE-ANALYSIS.md` 的分析结论
+> 历史实现方案，基于同目录 `analysis.md` 的分析结论。当前行为以
+> `openspec/specs/edit-tool/` 及相关规格为准。
 > 目标：将 edit 成功率从 69.2% 提升至 ≥ 90%，消除系统性失败模式
 
 ---
@@ -676,5 +677,5 @@ Current file state: {file_size} lines. Last modification: {last_modified}.
 
 ### B. 参考
 
-- `docs/EDIT-TOOL-FAILURE-ANALYSIS.md` — 原始失败分析报告
+- `docs/archive/implemented/edit-tool-resilience/analysis.md` — 原始失败分析报告
 - `docs/STYLE.md` — dscode 编码规范

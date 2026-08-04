@@ -15,6 +15,9 @@
 
 ## 文件
 
+- `builtin-tool-result-rendering-fix-v5.html` — 内置工具结果展示修复原型
 - `mcp-toolcard-execution-view-prototype.html` — Session 00MRIZMZQJ，MCP 工具执行视图的原型设计
 - `markdown-line-split-fix.html` — 修复 content.split('\n') 破坏多行 Markdown 结构的原型
+- `settings-cache-management.html` — Settings 缓存管理界面原型
 - `show-subagents-in-conversation.html` — SubAgent 在 Web/TUI 对话流中的 Agent Activity Card 交互原型
+- `web-ui-redesign-editorial-workshop-v3.html` — Editorial Workshop Web UI 视觉原型

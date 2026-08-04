@@ -1,5 +1,8 @@
 # 设计决策记录
 
+> **历史归档：** 本文包含早期 MVP 决策，部分已被 TUI/Web 双界面、
+> Agent Process 架构和 OpenSpec 主规格替代，不应作为当前实现依据。
+
 ## ADR-1: 用 hook 注入而非继承/包装 Agent
 
 **决策**: 通过 `transformContext`、`beforeToolCall`、`afterToolCall` hook 扩展 Agent 行为，不继承或 monkey-patch Agent 类。
