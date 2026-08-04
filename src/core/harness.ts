@@ -501,6 +501,7 @@ export class Harness implements HarnessAPI {
     const current = this.sessionManager.getCurrentMetadata();
     const candidates = new Map(
       [
+        ...this.sessionManager.listSessions(),
         ...this.sessionManager.listAllSessions(),
         ...(current ? [current] : []),
       ].map((session) => [session.id, session]),

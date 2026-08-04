@@ -23,10 +23,15 @@ export type {
   AgentActivity,
   AgentActivityProgress,
   AgentActivityState,
+  EvalDashboardServerEvent,
+  EvalDashboardStage,
+  EvalDashboardEvidenceSummary,
 } from "@dscode/shared/types";
 
 
 // ── Web-specific local types ──
+
+export type ViewMode = "chat" | "session_dashboard" | "eval_dashboard";
 
 export interface Toast {
   id: string;

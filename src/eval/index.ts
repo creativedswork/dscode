@@ -8,7 +8,7 @@ import type { UiBackend } from "../ui/backend.js";
 import type { SerializedSession } from "../session/types.js";
 import { Logger } from "../utils/logger.js";
 import { computeStats } from "./stats.js";
-import { generateDashboard, openDashboard } from "./dashboard.js";
+import { generateDashboard, generateDashboardArtifacts, openDashboard } from "./dashboard.js";
 import { analyzeWithLLM } from "./llm.js";
 import { loadRuleStore, semanticMerge, saveRuleStore } from "./rules/store.js";
 import { loadMultiAgentTrajectory } from "./trajectory.js";
@@ -32,7 +32,32 @@ export async function runEval(
   const manager = harness.sessionManager;
   const runtimeId = process.env.DSCODE_RUNTIME_ID ?? "unknown";
   const evalLogger = new Logger({ type: "harness", id: runtimeId });
+  const evalStartedAt = Date.now();
+  const requestedSessionId = sessionId ?? undefined;
   let activeRun: EvalRunContext | undefined;
+  let resolvedTargetSessionId: string | undefined;
+
+  harness.events.emit({
+    type: "eval:dashboard",
+    state: {
+      status: "starting",
+      requestedSessionId,
+      startedAt: evalStartedAt,
+    },
+  });
+
+  const failBeforeRun = (error: string, targetSessionId?: string) => {
+    harness.events.emit({
+      type: "eval:dashboard",
+      state: {
+        status: "failed",
+        requestedSessionId,
+        targetSessionId,
+        error,
+      },
+    });
+    (ui as any).addError(error);
+  };
 
   try {
     // Resolve session ID
@@ -42,29 +67,31 @@ export async function runEval(
     if (sessionId) {
       const found = manager.getSessionFilePath(sessionId);
       if (!found) {
-        (ui as any).addError(`Session not found: ${sessionId}`);
+        failBeforeRun(`Session not found: ${sessionId}`);
         return;
       }
       resolvedId = found.metadata.id;
+      resolvedTargetSessionId = resolvedId;
       sessionData = await manager.loadSessionFile(resolvedId);
       if (!sessionData) {
-        (ui as any).addError(`Failed to load session: ${resolvedId}`);
+        failBeforeRun(`Failed to load session: ${resolvedId}`, resolvedId);
         return;
       }
     } else {
       const currentId = manager.getCurrentSessionId();
       if (!currentId) {
-        (ui as any).addError("No session to evaluate. Usage: /eval [session_id]");
+        failBeforeRun("No session to evaluate. Usage: /eval [session_id]");
         return;
       }
       resolvedId = currentId;
+      resolvedTargetSessionId = resolvedId;
       sessionData = await manager.loadSessionFile(resolvedId);
       if (!sessionData) {
         // Session is current but not yet persisted; save it first
         harness.saveSessionNow();
         sessionData = await manager.loadSessionFile(resolvedId);
         if (!sessionData) {
-          (ui as any).addError("Failed to load current session data.");
+          failBeforeRun("Failed to load current session data.", resolvedId);
           return;
         }
       }
@@ -80,11 +107,31 @@ export async function runEval(
     const invokingSessionId = manager.getCurrentSessionId() ?? resolvedId;
     const run = await createEvalRun(trajectory, invokingSessionId);
     activeRun = run;
-    const evalStartedAt = Date.now();
     const reportProgress = (event: ChiefProgressEvent) => {
       const marker = event.status === "done" ? "OK" : event.status === "failed" ? "FAILED" : "...";
       const worker = event.workerAgentId ? ` (${event.workerAgentId.slice(0, 6)})` : "";
       onLog(`[${event.index}/${event.total}] ${event.application}${worker} ${marker}`);
+      harness.events.emit({
+        type: "eval:dashboard",
+        state: {
+          status: "running",
+          targetSessionId: event.targetSessionId,
+          runId: event.runId,
+          stage: event.stage,
+          stageStatus: event.status,
+          index: event.index,
+          total: event.total,
+          application: event.application,
+          workerAgentId: event.workerAgentId,
+          retryCount: event.retryCount,
+          durationMs: event.durationMs,
+          message: event.message,
+          startedAt: evalStartedAt,
+          actorCount: trajectory.actors.length,
+          stepCount: trajectory.steps.length,
+          evidence: trajectory.evidence,
+        },
+      });
     };
     onLog(
       `CHIEF: ${trajectory.steps.length} Steps, ${trajectory.actors.length} Agents, ` +
@@ -120,9 +167,8 @@ export async function runEval(
       message: "Generating Dashboard",
     });
     const runOutputPath = join(run.outputDir, "dashboard.html");
-    generateDashboard(result, runOutputPath);
     const outputPath = join(evalDir(), `${resolvedId.slice(0, 8)}.html`);
-    generateDashboard(result, outputPath);
+    const html = generateDashboardArtifacts(result, [runOutputPath, outputPath]);
     await updateRunStage(run, "dashboard", {
       status: "done",
       application: "coordinator",
@@ -141,8 +187,17 @@ export async function runEval(
     await finishEvalRun(run, "completed");
     activeRun = undefined;
 
-    // Open in browser
-    openDashboard(outputPath);
+    harness.events.emit({
+      type: "eval:dashboard",
+      state: {
+        status: "completed",
+        targetSessionId: resolvedId,
+        runId: run.manifest.runId,
+        html,
+        outputPath,
+        generatedAt: Date.now(),
+      },
+    });
 
     const analysisLabel = "CHIEF Multi-Agent";
     const attributionInfo = result.attribution
@@ -167,11 +222,23 @@ export async function runEval(
     if (activeRun?.manifest.status === "active") {
       await finishEvalRun(activeRun, "failed").catch(() => undefined);
     }
-    evalLogger.error("Pipeline", `crash: ${err instanceof Error ? err.message : String(err)}`);
+    const error = err instanceof Error ? err.message : String(err);
+    evalLogger.error("Pipeline", `crash: ${error}`);
     if (err instanceof Error && err.stack) {
       evalLogger.error("Pipeline", `stack:\n${err.stack}`);
     }
-    (ui as any).addError(`eval: ${err instanceof Error ? err.message : String(err)}`);
+    harness.events.emit({
+      type: "eval:dashboard",
+      state: {
+        status: "failed",
+        requestedSessionId,
+        targetSessionId: activeRun?.manifest.targetSessionId ?? resolvedTargetSessionId,
+        runId: activeRun?.manifest.runId,
+        stage: activeRun?.manifest.currentStage,
+        error,
+      },
+    });
+    (ui as any).addError(`eval: ${error}`);
   }
 }
 

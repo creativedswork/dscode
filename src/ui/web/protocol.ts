@@ -19,4 +19,7 @@ export type {
   AgentActivity,
   AgentActivityProgress,
   AgentActivityState,
+  EvalDashboardServerEvent,
+  EvalDashboardStage,
+  EvalDashboardEvidenceSummary,
 } from "../../ui/shared/types.js";

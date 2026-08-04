@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback, useEffect } from "react";
-import type { ImageAttachment, FileAttachment, FileListItem } from "../types";
+import type { ImageAttachment, FileAttachment, FileListItem, ViewMode } from "../types";
 import { PaperPlaneTilt, Folder, File, Image, TextAlignLeft, Video, SpeakerHigh, FilePdf, Archive, X } from "@phosphor-icons/react";
 
 interface MessageInputProps {
@@ -13,7 +13,7 @@ interface MessageInputProps {
   fileListPrefix: string;
   projectPath: string;
   onToast?: (type: "warning" | "error", text: string) => void;
-  viewMode?: "chat" | "dashboard";
+  viewMode?: ViewMode;
 }
 
 function fileToImageAttachment(file: File): Promise<ImageAttachment> {
@@ -540,7 +540,7 @@ export function MessageInput({
       }}
     >
       {/* Slash command popover */}
-      {showSlashMenu && filteredCommands.length > 0 && viewMode !== "dashboard" && (
+      {showSlashMenu && filteredCommands.length > 0 && viewMode !== "session_dashboard" && (
         <div
           className="absolute bottom-full left-4 mb-1 w-72 overflow-hidden z-50"
           style={popoverStyle}
@@ -729,7 +729,7 @@ export function MessageInput({
           placeholder={
             processing
               ? "Processing... (Esc to stop)"
-              : viewMode === "dashboard"
+              : viewMode === "session_dashboard"
               ? "Ask about this dashboard\u2026"
               : "Type a message... (@file, Tab for multi-file, Enter to send)"
           }
@@ -769,7 +769,7 @@ export function MessageInput({
         DSCode Web &middot;{" "}
         {processing
           ? "Press Stop or Esc to abort"
-          : viewMode === "dashboard"
+          : viewMode === "session_dashboard"
             ? "Dashboard mode \u2014 ask follow-up questions about this session"
             : "Type @ for files, Tab to add more, Enter to send, Ctrl+V for images"}
       </div>

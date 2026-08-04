@@ -2,8 +2,9 @@
 import type { CascadeEdge } from "./focus/types.js";
 // Generates a dark-themed, self-contained HTML diagnostic dashboard.
 
-import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, renameSync, rmSync } from "node:fs";
 import { exec } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
 import type { EvalResult } from "./types.js";
 import type { ChiefAttribution } from "./chief/types.js";
@@ -674,13 +675,36 @@ ${timeline.map((e) => `
 
 // ── File generation ──
 
-export function generateDashboard(result: EvalResult, outputPath: string): string {
-  const html = generateDashboardHTML(result);
-  const dir = dirname(outputPath);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
+export function writeDashboardArtifacts(
+  html: string,
+  outputPaths: readonly string[],
+): void {
+  for (const outputPath of outputPaths) {
+    const dir = dirname(outputPath);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+    const temporaryPath = `${outputPath}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      writeFileSync(temporaryPath, html, "utf8");
+      renameSync(temporaryPath, outputPath);
+    } finally {
+      rmSync(temporaryPath, { force: true });
+    }
   }
-  writeFileSync(outputPath, html, "utf8");
+}
+
+export function generateDashboardArtifacts(
+  result: EvalResult,
+  outputPaths: readonly string[],
+): string {
+  const html = generateDashboardHTML(result);
+  writeDashboardArtifacts(html, outputPaths);
+  return html;
+}
+
+export function generateDashboard(result: EvalResult, outputPath: string): string {
+  generateDashboardArtifacts(result, [outputPath]);
   return outputPath;
 }
 

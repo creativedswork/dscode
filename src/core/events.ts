@@ -5,6 +5,66 @@ import type { ConfigData } from "../ui/shared/types.js";
 import type { Logger } from "../utils/logger.js";
 import type { AgentExitResult, AgentProcessState } from "../agents/process/types.js";
 
+export type EvalDashboardStage =
+  | "prepare"
+  | "graph"
+  | "oracle"
+  | "backtrack"
+  | "attribution"
+  | "rules"
+  | "dashboard";
+
+export interface EvalDashboardEvidenceSummary {
+  totalActors: number;
+  subagentCount: number;
+  fullTranscripts: number;
+  summaryTranscripts: number;
+  missingTranscripts: number;
+  completeness: "complete" | "partial";
+  affectedAgentIds: string[];
+}
+
+export type EvalDashboardState =
+  | {
+      status: "starting";
+      requestedSessionId?: string;
+      startedAt: number;
+    }
+  | {
+      status: "running";
+      targetSessionId: string;
+      runId: string;
+      stage: EvalDashboardStage;
+      stageStatus: "running" | "done" | "failed";
+      index: number;
+      total: number;
+      application: string;
+      workerAgentId?: string;
+      retryCount?: number;
+      durationMs?: number;
+      message: string;
+      startedAt: number;
+      actorCount: number;
+      stepCount: number;
+      evidence: EvalDashboardEvidenceSummary;
+    }
+  | {
+      status: "completed";
+      targetSessionId: string;
+      runId: string;
+      html: string;
+      outputPath: string;
+      generatedAt: number;
+    }
+  | {
+      status: "failed";
+      requestedSessionId?: string;
+      targetSessionId?: string;
+      runId?: string;
+      stage?: EvalDashboardStage;
+      error: string;
+    };
+
 // ── HarnessEvent discriminated union ──
 
 export type HarnessEvent =
@@ -35,6 +95,9 @@ export type HarnessEvent =
   | { type: "agent:progress"; agentId: string; phase: string; progress?: number; total?: number; message?: string; details?: unknown }
   | { type: "agent:output"; agentId: string; text: string }
   | { type: "agent:exit"; result: AgentExitResult }
+
+  // Eval Dashboard lifecycle
+  | { type: "eval:dashboard"; state: EvalDashboardState }
 
   // Session lifecycle
   | { type: "session:created"; id: string }

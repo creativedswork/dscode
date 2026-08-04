@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { UIMessage, ServerEvent, ConfigData, SessionInfo, McpServerInfo, SkillInfo, ImageAttachment, FileListItem, ContextWindowData } from "../types";
+import type { UIMessage, ServerEvent, ConfigData, SessionInfo, McpServerInfo, SkillInfo, ImageAttachment, FileListItem, ContextWindowData, EvalDashboardServerEvent, ViewMode } from "../types";
 import { conversationReducer } from "@dscode/shared/reducer";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { ChatView } from "./ChatView";
@@ -10,13 +10,36 @@ import { ToastContainer, useToasts } from "./Toast";
 import { CommandPanel } from "./CommandPanel";
 import { ContextWindowBar } from "./ContextWindowBar";
 import { ArtifactContainer } from "./ArtifactContainer";
+import { EvalDashboardView } from "./EvalDashboardView";
 import { TransitionCanvas } from "./TransitionCanvas";
-import { List, Sun, Moon, Chat, ChartBar } from "@phosphor-icons/react";
+import { ViewModeSelector } from "./ViewModeSelector";
+import { List, Sun, Moon } from "@phosphor-icons/react";
 import {
+  cacheDashboardEntry,
   createDashboardCacheEntry,
   isDashboardCacheEntryValid,
   type DashboardCacheEntry,
 } from "../utils/dashboardCache";
+import {
+  cacheCompletedEvalDashboard,
+  evalDashboardCacheKey,
+  getLatestEvalDashboardEntry,
+  loadEvalDashboardCache,
+  saveEvalDashboardCache,
+  touchEvalDashboardCacheEntry,
+} from "../utils/evalDashboardCache";
+import {
+  evalDashboardStateFromCache,
+  reduceEvalDashboardState,
+  type EvalDashboardViewState,
+} from "../utils/evalDashboardState";
+import { openEvalDashboardHtml } from "../utils/evalExternalOpen";
+import {
+  evalCommandForSelection,
+  shouldRenderMessageInput,
+  viewModeAfterSessionChange,
+  viewModeForMessageCount,
+} from "../utils/viewMode";
 
 const SLASH_COMMANDS = [
   { name: "help", description: "Show available commands" },
@@ -29,6 +52,7 @@ const SLASH_COMMANDS = [
   { name: "permissions", description: "Show session permission grants" },
   { name: "cost", description: "Show token usage for this session" },
   { name: "compact", description: "Force context compaction" },
+  { name: "eval", description: "Evaluate a Session with CHIEF (/eval [session_id])" },
   { name: "config", description: "Show or change user command config" },
   { name: "image", description: "Attach an image (file path or 'clipboard')" },
 ];
@@ -63,8 +87,6 @@ function saveDashCache(cache: Record<string, DashboardCacheEntry>): void {
   } catch { /* ignore storage errors */ }
 }
 
-const MAX_DASH_CACHE = 20;
-
 export function App() {
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [processing, setProcessing] = useState(false);
@@ -81,9 +103,9 @@ export function App() {
   const [theme, setTheme] = useState<"light" | "dark">(getInitialTheme);
   const [contextWindow, setContextWindow] = useState<ContextWindowData | null>(null);
   const [commandPanel, setCommandPanel] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"chat" | "dashboard">("chat");
-  const [artifactHtml, setArtifactHtml] = useState("");
-  const [artifactLoading, setArtifactLoading] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("chat");
+  const [sessionArtifactHtml, setSessionArtifactHtml] = useState("");
+  const [sessionArtifactLoading, setSessionArtifactLoading] = useState(false);
   const [cacheSize, setCacheSize] = useState<{ totalBytes: number; fileCount: number; sessionCount: number } | null>(null);
   const [cacheClearing, setCacheClearing] = useState(false);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
@@ -97,10 +119,21 @@ export function App() {
   currentSessionIdRef.current = currentSessionId;
   const prevSessionIdRef = useRef<string | null>(null);
   const dashCacheRef = useRef<Record<string, DashboardCacheEntry>>(loadDashCache());
-  const artifactHtmlRef = useRef(artifactHtml);
-  artifactHtmlRef.current = artifactHtml;
-  const artifactLoadingRef = useRef(artifactLoading);
-  artifactLoadingRef.current = artifactLoading;
+  const sessionArtifactHtmlRef = useRef(sessionArtifactHtml);
+  sessionArtifactHtmlRef.current = sessionArtifactHtml;
+  const sessionArtifactLoadingRef = useRef(sessionArtifactLoading);
+  sessionArtifactLoadingRef.current = sessionArtifactLoading;
+  const evalCacheRef = useRef(loadEvalDashboardCache());
+  const initialEvalEntryRef = useRef(getLatestEvalDashboardEntry(evalCacheRef.current));
+  const [latestSuccessfulEval, setLatestSuccessfulEval] = useState(initialEvalEntryRef.current);
+  const [evalState, setEvalState] = useState<EvalDashboardViewState | null>(
+    () => initialEvalEntryRef.current
+      ? evalDashboardStateFromCache(initialEvalEntryRef.current)
+      : null,
+  );
+  const evalStateRef = useRef(evalState);
+  evalStateRef.current = evalState;
+  const evalObjectUrlRef = useRef<string | null>(null);
   const chatContainerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -109,20 +142,24 @@ export function App() {
     localStorage.setItem("dscode-theme", theme);
   }, [theme]);
 
-  // Session switch in Dashboard mode resets to Chat
+  useEffect(() => () => {
+    if (evalObjectUrlRef.current) {
+      URL.revokeObjectURL(evalObjectUrlRef.current);
+    }
+  }, []);
+
+  // Session Dashboard is bound to the active Session; Eval keeps its own target.
   useEffect(() => {
     const prev = prevSessionIdRef.current;
     prevSessionIdRef.current = currentSessionId;
-    if (prev !== null && prev !== currentSessionId && viewMode === "dashboard") {
-      setViewMode("chat");
-    }
+    const next = viewModeAfterSessionChange(viewMode, prev, currentSessionId);
+    if (next !== viewMode) setViewMode(next);
   }, [currentSessionId, viewMode]);
 
-  // Dashboard unavailable when session is empty
+  // Session Dashboard is unavailable when the active Session is empty.
   useEffect(() => {
-    if (messages.length === 0 && viewMode === "dashboard") {
-      setViewMode("chat");
-    }
+    const next = viewModeForMessageCount(viewMode, messages.length);
+    if (next !== viewMode) setViewMode(next);
   }, [messages, viewMode]);
 
   const toggleTheme = useCallback(() => setTheme((p) => (p === "light" ? "dark" : "light")), []);
@@ -185,30 +222,55 @@ export function App() {
       case "config": setConfig(event.data); break;
       case "file_list_result": setFileListItems(event.items); setFileListPrefix(event.prefix); break;
       case "artifact_start":
-        setArtifactHtml("");
-        setArtifactLoading(true);
+        setSessionArtifactHtml("");
+        setSessionArtifactLoading(true);
         break;
       case "artifact_delta":
-        setArtifactHtml((prev) => prev + event.delta);
+        setSessionArtifactHtml((prev) => prev + event.delta);
         break;
       case "artifact_end": {
-        setArtifactLoading(false);
+        setSessionArtifactLoading(false);
         const csid = currentSessionIdRef.current;
         if (csid) {
           const session = sessions.find((s) => s.id === csid);
           if (session) {
-            const cache = dashCacheRef.current;
-            const entries = Object.keys(cache);
-            if (entries.length >= MAX_DASH_CACHE && !cache[csid]) {
-              // Evict oldest entry
-              delete cache[entries[0]];
-            }
-            cache[csid] = createDashboardCacheEntry(
-              session.contentHash,
-              artifactHtmlRef.current,
+            const cache = cacheDashboardEntry(
+              dashCacheRef.current,
+              csid,
+              createDashboardCacheEntry(
+                session.contentHash,
+                sessionArtifactHtmlRef.current,
+              ),
             );
+            dashCacheRef.current = cache;
             saveDashCache(cache);
           }
+        }
+        break;
+      }
+      case "eval_dashboard": {
+        const evalEvent = event as EvalDashboardServerEvent;
+        const previous = evalStateRef.current;
+        const next = reduceEvalDashboardState(previous, evalEvent);
+        if (next === previous) break;
+        evalStateRef.current = next;
+        setEvalState(next);
+        setTransitionPhase("idle");
+        setViewMode("eval_dashboard");
+
+        if (evalEvent.status === "completed") {
+          const cache = cacheCompletedEvalDashboard(
+            evalCacheRef.current,
+            evalEvent,
+          );
+          evalCacheRef.current = cache;
+          saveEvalDashboardCache(cache);
+          setLatestSuccessfulEval(
+            cache[evalDashboardCacheKey(
+              evalEvent.targetSessionId,
+              evalEvent.runId,
+            )],
+          );
         }
         break;
       }
@@ -223,9 +285,10 @@ export function App() {
 
   const handleSend = useCallback((text: string, images?: ImageAttachment[], fileRefs?: string[], uploadedFiles?: { name: string; content: string }[]) => {
     if (!text.trim() && (!images || images.length === 0) && (!uploadedFiles || uploadedFiles.length === 0)) return;
+    if (viewMode === "eval_dashboard") return;
     turnStartRef.current = Date.now();
     setProcessing(true);
-    if (viewMode === "dashboard") {
+    if (viewMode === "session_dashboard") {
       send({ type: "artifact", action: "update", instruction: text });
     } else {
       send({ type: "chat", text, images: images?.length ? images : undefined, fileRefs: fileRefs?.length ? fileRefs : undefined, uploadedFiles: uploadedFiles?.length ? uploadedFiles : undefined });
@@ -258,35 +321,83 @@ export function App() {
   const handleMcpAction = useCallback((action: "list" | "refresh" | "connect" | "disconnect", serverName?: string) => send({ type: "mcp", action, serverName } as any), [send]);
   const handleNewSession = useCallback(() => send({ type: "slash", command: "/reset" }), [send]);
 
-  const handleViewModeChange = useCallback((mode: "chat" | "dashboard") => {
+  const handleOpenEvalExternal = useCallback((html: string) => {
+    if (evalObjectUrlRef.current) {
+      URL.revokeObjectURL(evalObjectUrlRef.current);
+    }
+    evalObjectUrlRef.current = openEvalDashboardHtml(html);
+  }, []);
+
+  const handleOpenLatestEval = useCallback(() => {
+    if (!latestSuccessfulEval) return;
+    const cache = touchEvalDashboardCacheEntry(
+      evalCacheRef.current,
+      latestSuccessfulEval.targetSessionId,
+      latestSuccessfulEval.runId,
+    );
+    evalCacheRef.current = cache;
+    saveEvalDashboardCache(cache);
+    const entry = cache[evalDashboardCacheKey(
+      latestSuccessfulEval.targetSessionId,
+      latestSuccessfulEval.runId,
+    )];
+    if (!entry) return;
+    setLatestSuccessfulEval(entry);
+    const restored = evalDashboardStateFromCache(entry);
+    evalStateRef.current = restored;
+    setEvalState(restored);
+    setViewMode("eval_dashboard");
+  }, [latestSuccessfulEval]);
+
+  const handleRetryEval = useCallback(() => {
+    const target = evalStateRef.current?.targetSessionId
+      ?? evalStateRef.current?.requestedSessionId;
+    send({
+      type: "slash",
+      command: target ? `/eval ${target}` : "/eval",
+    });
+  }, [send]);
+
+  const handleViewModeChange = useCallback((mode: ViewMode) => {
     if (mode === "chat") {
       setViewMode("chat");
       return;
     }
-    // mode === "dashboard"
+    if (mode === "eval_dashboard") {
+      const currentEval = evalStateRef.current;
+      const evalCommand = evalCommandForSelection(currentEval?.status ?? null);
+      if (evalCommand) {
+        send(evalCommand);
+        return;
+      }
+      setTransitionPhase("idle");
+      setViewMode("eval_dashboard");
+      return;
+    }
+
     if (messages.length === 0) return;
     const csid = currentSessionIdRef.current;
     if (csid) {
       const cached = dashCacheRef.current[csid];
       const sessionHash = sessions.find((s) => s.id === csid)?.contentHash;
       if (isDashboardCacheEntryValid(cached, sessionHash)) {
-        setArtifactHtml(cached.html);
-        setArtifactLoading(false);
-        setViewMode("dashboard");
+        setSessionArtifactHtml(cached.html);
+        setSessionArtifactLoading(false);
+        setViewMode("session_dashboard");
         return;
       }
     }
     // Check reduced motion
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      setViewMode("dashboard");
-      setArtifactHtml("");
-      setArtifactLoading(true);
+      setViewMode("session_dashboard");
+      setSessionArtifactHtml("");
+      setSessionArtifactLoading(true);
       send({ type: "artifact", action: "generate", context: "session_dashboard" });
       return;
     }
     // Start cascade transition
-    setArtifactHtml("");
-    setArtifactLoading(true);
+    setSessionArtifactHtml("");
+    setSessionArtifactLoading(true);
     send({ type: "artifact", action: "generate", context: "session_dashboard" });
     setTransitionPhase("animating");
   }, [send, sessions, messages]);
@@ -294,9 +405,9 @@ export function App() {
     // Poll until artifactLoading is confirmed false before transitioning,
     // preventing a flash of "Generating dashboard..." in ArtifactContainer.
     const tryTransition = () => {
-      if (!artifactLoadingRef.current) {
+      if (!sessionArtifactLoadingRef.current) {
         setTransitionPhase("idle");
-        setViewMode("dashboard");
+        setViewMode("session_dashboard");
       } else {
         requestAnimationFrame(tryTransition);
       }
@@ -326,22 +437,20 @@ export function App() {
           </button>
           <span style={{ width: "8px", height: "8px", borderRadius: "1.5px", transform: "rotate(45deg)", background: "var(--color-accent)", flexShrink: 0 }} />
           <span className="text-sm font-medium truncate hidden sm:inline" style={{ color: "var(--color-text)", fontFamily: "var(--font-display)" }}>
-            {viewMode === "dashboard" && currentSessionId
+            {viewMode === "eval_dashboard" && evalState?.targetSessionId
+              ? `eval · ${evalState.targetSessionId.slice(0, 8)}`
+              : viewMode === "session_dashboard" && currentSessionId
               ? `dashboard · ${sessions.find((s) => s.id === currentSessionId)?.title || "Session"}`
               : "DSCode"}
           </span>
         </div>
         <div className="flex-1 flex items-center justify-center gap-3">
-          {messages.length > 0 && (
-            <div className="flex items-center shrink-0" style={{ borderRadius: "8px", backgroundColor: "var(--color-surface-hover)", padding: "2px" }}>
-              <button onClick={() => handleViewModeChange("chat")} className="flex items-center gap-1 text-xs font-medium transition-colors" style={{ padding: "3px 10px", borderRadius: "6px", color: viewMode === "chat" ? "var(--color-text)" : "var(--color-text-muted)", backgroundColor: viewMode === "chat" ? "var(--color-surface)" : "transparent" }}>
-                <Chat size={12} weight="bold" /> Chat
-              </button>
-              <button onClick={() => handleViewModeChange("dashboard")} className="flex items-center gap-1 text-xs font-medium transition-colors" style={{ padding: "3px 10px", borderRadius: "6px", color: viewMode === "dashboard" ? "var(--color-text)" : "var(--color-text-muted)", backgroundColor: viewMode === "dashboard" ? "var(--color-surface)" : "transparent" }}>
-                <ChartBar size={12} weight="bold" /> Dashboard
-              </button>
-            </div>
-          )}
+          <ViewModeSelector
+            viewMode={viewMode}
+            sessionDashboardAvailable={messages.length > 0}
+            evalReportAvailable={evalState?.status === "completed" || latestSuccessfulEval !== undefined}
+            onChange={handleViewModeChange}
+          />
           <div className="hidden md:flex"><ContextWindowBar data={contextWindow} /></div>
         </div>
         <div className="flex items-center gap-2">
@@ -365,16 +474,27 @@ export function App() {
         <main className="flex-1 flex flex-col min-w-0">
           <div className="flex-1 flex flex-col min-h-0" style={{ position: "relative" }}>
           {transitionPhase === "animating" && (
-            <TransitionCanvas artifactReady={!artifactLoading && artifactHtml !== ""} onComplete={handleTransitionComplete} scrollContainerRef={chatContainerRef} />
+            <TransitionCanvas artifactReady={!sessionArtifactLoading && sessionArtifactHtml !== ""} onComplete={handleTransitionComplete} scrollContainerRef={chatContainerRef} />
           )}
-          {viewMode === "dashboard" && transitionPhase === "idle" ? (
-            <ArtifactContainer html={artifactHtml} loading={artifactLoading} />
+          {viewMode === "session_dashboard" && transitionPhase === "idle" ? (
+            <ArtifactContainer presentation={{ kind: "session_dashboard", html: sessionArtifactHtml, loading: sessionArtifactLoading }} />
+          ) : viewMode === "eval_dashboard" && evalState ? (
+            <EvalDashboardView
+              state={evalState}
+              latestSuccessful={latestSuccessfulEval}
+              onBackToChat={() => handleViewModeChange("chat")}
+              onOpenLatest={handleOpenLatestEval}
+              onRetry={handleRetryEval}
+              onOpenExternal={handleOpenEvalExternal}
+            />
           ) : (
             <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} sessionActiveMs={sessionActiveMs} permissionPrompt={permissionPrompt} onPermission={handlePermission} containerRef={chatContainerRef} scrollLocked={transitionPhase === "animating"} />
           )}
-          <MessageInput onSend={handleSend} onAbort={handleAbort} onSlashCommand={handleSlashCommand} onCommand={handleCommand}
-            processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} viewMode={viewMode} projectPath={config?.projectPath ?? ""}
-            onToast={(type, text) => addToast({ type, text })} />
+          {shouldRenderMessageInput(viewMode) && (
+            <MessageInput onSend={handleSend} onAbort={handleAbort} onSlashCommand={handleSlashCommand} onCommand={handleCommand}
+              processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} viewMode={viewMode} projectPath={config?.projectPath ?? ""}
+              onToast={(type, text) => addToast({ type, text })} />
+          )}
           </div>
         </main>
       </div>

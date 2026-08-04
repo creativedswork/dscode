@@ -211,6 +211,71 @@ export interface PermOption {
   key: string;
 }
 
+// ── Eval Dashboard ──
+
+export type EvalDashboardStage =
+  | "prepare"
+  | "graph"
+  | "oracle"
+  | "backtrack"
+  | "attribution"
+  | "rules"
+  | "dashboard";
+
+export interface EvalDashboardEvidenceSummary {
+  totalActors: number;
+  subagentCount: number;
+  fullTranscripts: number;
+  summaryTranscripts: number;
+  missingTranscripts: number;
+  completeness: "complete" | "partial";
+  affectedAgentIds: string[];
+}
+
+export type EvalDashboardServerEvent =
+  | {
+      type: "eval_dashboard";
+      status: "starting";
+      requestedSessionId?: string;
+      startedAt: number;
+    }
+  | {
+      type: "eval_dashboard";
+      status: "running";
+      targetSessionId: string;
+      runId: string;
+      stage: EvalDashboardStage;
+      stageStatus: "running" | "done" | "failed";
+      index: number;
+      total: number;
+      application: string;
+      workerAgentId?: string;
+      retryCount?: number;
+      durationMs?: number;
+      message: string;
+      startedAt: number;
+      actorCount: number;
+      stepCount: number;
+      evidence: EvalDashboardEvidenceSummary;
+    }
+  | {
+      type: "eval_dashboard";
+      status: "completed";
+      targetSessionId: string;
+      runId: string;
+      html: string;
+      generatedAt: number;
+    }
+  | {
+      type: "eval_dashboard";
+      status: "failed";
+      requestedSessionId?: string;
+      targetSessionId?: string;
+      runId?: string;
+      stage?: EvalDashboardStage;
+      error: string;
+    };
+
 // ── Wire protocol ──
 
 export type ClientCommand =
@@ -272,5 +337,6 @@ export type ServerEvent =
   | { type: "artifact_start" }
   | { type: "artifact_delta"; delta: string }
   | { type: "artifact_end" }
+  | EvalDashboardServerEvent
   | { type: "cache_size"; totalBytes: number; fileCount: number; sessionCount: number }
   | { type: "mcp_open_browser" }

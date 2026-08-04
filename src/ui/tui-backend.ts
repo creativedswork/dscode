@@ -3,6 +3,7 @@ import type { PermissionPromptResult } from "../core/types.js";
 import type { UiBackend } from "./backend.js";
 import { TuiApp } from "./tui-app.js";
 import { AgentActivityProjector } from "./shared/agent-activity.js";
+import { openDashboard } from "../eval/dashboard.js";
 
 /**
  * Thin adapter that wraps TuiApp and exposes the UiBackend interface.
@@ -45,6 +46,11 @@ export class TuiBackend implements UiBackend {
     deps.events.on("agent:progress", projectAgentActivity);
     deps.events.on("agent:output", projectAgentActivity);
     deps.events.on("agent:exit", projectAgentActivity);
+    deps.events.on("eval:dashboard", (event) => {
+      if (event.state.status === "completed") {
+        openDashboard(event.state.outputPath);
+      }
+    });
   }
 
   // ── Lifecycle ──

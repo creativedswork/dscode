@@ -29,6 +29,7 @@ import { AgentActivityProjector } from "../shared/agent-activity.js";
 import { formatAgentDisplayId } from "../shared/agent-id.js";
 import { resolveBuiltResource } from "../../resources/runtime.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
+import type { EvalDashboardState } from "../../core/events.js";
 import type {
   ClientCommand,
   ServerEvent,
@@ -39,11 +40,65 @@ import type {
   McpAppInfo,
   ToolCallEntry,
   SkillInfo,
+  EvalDashboardServerEvent,
 } from "./protocol.js";
 import type { ImageAttachment } from "./protocol.js";
 
 export const DASHBOARD_AGENT_TASK_SUMMARY_LIMIT = 100;
 export const DASHBOARD_AGENT_OUTCOME_SUMMARY_LIMIT = 120;
+
+export function projectEvalDashboardState(
+  state: EvalDashboardState,
+): EvalDashboardServerEvent {
+  switch (state.status) {
+    case "starting":
+      return {
+        type: "eval_dashboard",
+        status: "starting",
+        requestedSessionId: state.requestedSessionId,
+        startedAt: state.startedAt,
+      };
+    case "running":
+      return {
+        type: "eval_dashboard",
+        status: "running",
+        targetSessionId: state.targetSessionId,
+        runId: state.runId,
+        stage: state.stage,
+        stageStatus: state.stageStatus,
+        index: state.index,
+        total: state.total,
+        application: state.application,
+        workerAgentId: state.workerAgentId,
+        retryCount: state.retryCount,
+        durationMs: state.durationMs,
+        message: state.message,
+        startedAt: state.startedAt,
+        actorCount: state.actorCount,
+        stepCount: state.stepCount,
+        evidence: state.evidence,
+      };
+    case "completed":
+      return {
+        type: "eval_dashboard",
+        status: "completed",
+        targetSessionId: state.targetSessionId,
+        runId: state.runId,
+        html: state.html,
+        generatedAt: state.generatedAt,
+      };
+    case "failed":
+      return {
+        type: "eval_dashboard",
+        status: "failed",
+        requestedSessionId: state.requestedSessionId,
+        targetSessionId: state.targetSessionId,
+        runId: state.runId,
+        stage: state.stage,
+        error: state.error,
+      };
+  }
+}
 
 export function summarizeDashboardAgentText(
   text: string | undefined,
@@ -309,6 +364,9 @@ export class WebUiBackend implements UiBackend {
     h.events.on("agent:progress", projectAgentActivity);
     h.events.on("agent:output", projectAgentActivity);
     h.events.on("agent:exit", projectAgentActivity);
+    h.events.on("eval:dashboard", (event) => {
+      this.broadcast(projectEvalDashboardState(event.state));
+    });
     h.events.on("message:user", (e) => { this.broadcast({ type: "user_message", text: e.text, images: e.images as any }); });
     h.events.on("ui:info", (e) => { this.broadcast({ type: "info", text: e.text, display: e.display ?? "toast" }); });
     h.events.on("ui:error", (e) => { this.broadcast({ type: "error", text: e.text }); });

@@ -37,6 +37,7 @@ function createHarness(overrides: Record<string, unknown> = {}) {
     config: { projectPath: "/project" },
     piAgentRuntime: { state: { messages: [{ role: "user", content: "source" }] } },
     sessionManager: {
+      listSessions: () => [target],
       listAllSessions: () => [target],
       getCurrentMetadata: () => metadata("SOURCE-SESSION"),
       prepareLoad: vi.fn(async () => {
@@ -93,6 +94,7 @@ describe("Harness.switchSession", () => {
 
   it("does not abort or mutate state when target resolution fails", async () => {
     const { harness } = createHarness();
+    (harness as any).sessionManager.listSessions = () => [];
     (harness as any).sessionManager.listAllSessions = () => [];
     (harness as any).sessionManager.getCurrentMetadata = () => null;
 
@@ -105,8 +107,26 @@ describe("Harness.switchSession", () => {
     expect((harness as any).sessionManager.saveSession).not.toHaveBeenCalled();
   });
 
+  it("resolves a project session after it is evicted from the capped global index", async () => {
+    const { harness, prepared } = createHarness();
+    (harness as any).sessionManager.listAllSessions = () => [];
+
+    await expect(
+      harness.switchSession({ sessionIdOrPrefix: "TARGET" }),
+    ).resolves.toEqual({
+      session: prepared.metadata,
+      messages: prepared.messages,
+      agentMessages: prepared.agentMessages,
+    });
+
+    expect((harness as any).sessionManager.prepareLoad).toHaveBeenCalledWith(
+      "TARGET-SESSION",
+    );
+  });
+
   it("rejects ambiguous prefixes before prepare", async () => {
     const { harness } = createHarness();
+    (harness as any).sessionManager.listSessions = () => [];
     (harness as any).sessionManager.listAllSessions = () => [
       metadata("PREFIX-ONE"),
       metadata("PREFIX-TWO"),
