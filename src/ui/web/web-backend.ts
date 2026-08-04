@@ -6,7 +6,11 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 import { streamSimple } from "../../models/index.js";
 import { getAllProviders, getAllModels, getVisionModels, getVisionProviders, resolveModel } from "../../models/index.js";
 import type { UiBackend } from "../backend.js";
-import type { HarnessConfig, PermissionPromptResult } from "../../core/types.js";
+import type {
+  AgentSessionMessage,
+  HarnessConfig,
+  PermissionPromptResult,
+} from "../../core/types.js";
 import type { ConfigWatch } from "../../core/config-watch.js";
 import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig, loadScopedSettings, projectSettingsPath, saveProjectSettings } from "../../core/config.js";
 import { executeSlashCommand, getSlashCommandAutocomplete, resolveCustomCommand } from "../commands.js";
@@ -22,6 +26,7 @@ import { resolveAtFileRefs, resolveFileRefs, listProjectFiles, isImagePath } fro
 import { rebuildDisplayMessages } from "../../session/display.js";
 import { formatToolResultForUI } from "../shared/tool-result-formatter.js";
 import { AgentActivityProjector } from "../shared/agent-activity.js";
+import { formatAgentDisplayId } from "../shared/agent-id.js";
 import { resolveBuiltResource } from "../../resources/runtime.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
 import type {
@@ -36,6 +41,121 @@ import type {
   SkillInfo,
 } from "./protocol.js";
 import type { ImageAttachment } from "./protocol.js";
+
+export const DASHBOARD_AGENT_TASK_SUMMARY_LIMIT = 100;
+export const DASHBOARD_AGENT_OUTCOME_SUMMARY_LIMIT = 120;
+
+export function summarizeDashboardAgentText(
+  text: string | undefined,
+  maxLength: number,
+): string {
+  const normalized = (text ?? "").replace(/\s+/g, " ").trim();
+  const sentenceEnd = normalized.search(/[。！？.!?]/);
+  const oneSentence = sentenceEnd >= 0
+    ? normalized.slice(0, sentenceEnd + 1)
+    : normalized;
+  if (oneSentence.length <= maxLength) return oneSentence;
+  if (maxLength <= 3) return normalized.slice(0, maxLength);
+  return `${oneSentence.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
+export function formatDashboardDuration(ms: number): string {
+  const safeMs = Math.max(0, ms);
+  if (safeMs < 1000) return `${safeMs}ms`;
+  const sec = Math.floor(safeMs / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const remainSec = sec % 60;
+  if (min < 60) return `${min}m ${remainSec}s`;
+  const hrs = Math.floor(min / 60);
+  return `${hrs}h ${min % 60}m`;
+}
+
+export function buildDashboardSubagentSummary(
+  agentMessages: AgentSessionMessage[],
+) {
+  const stateCounts: Record<AgentSessionMessage["state"], number> = {
+    completed: 0,
+    failed: 0,
+    terminated: 0,
+    killed: 0,
+  };
+  const applicationCounts = new Map<string, number>();
+  let totalDurationMs = 0;
+
+  const records = [...agentMessages]
+    .sort((a, b) => a.createdAt - b.createdAt || a.agentId.localeCompare(b.agentId))
+    .map((message) => {
+      const durationMs = Math.max(
+        0,
+        message.endedAt - (message.startedAt ?? message.createdAt),
+      );
+      const error = summarizeDashboardAgentText(
+        message.output?.error,
+        DASHBOARD_AGENT_OUTCOME_SUMMARY_LIMIT,
+      );
+      const output = summarizeDashboardAgentText(
+        message.output?.text,
+        DASHBOARD_AGENT_OUTCOME_SUMMARY_LIMIT,
+      );
+      stateCounts[message.state]++;
+      applicationCounts.set(
+        message.application,
+        (applicationCounts.get(message.application) ?? 0) + 1,
+      );
+      totalDurationMs += durationMs;
+
+      return {
+        agentId: formatAgentDisplayId(message.agentId),
+        application: message.application,
+        state: message.state,
+        durationMs,
+        durationFormatted: formatDashboardDuration(durationMs),
+        taskSummary: summarizeDashboardAgentText(
+          message.input.prompt,
+          DASHBOARD_AGENT_TASK_SUMMARY_LIMIT,
+        ),
+        outcomeSummary: error || output,
+        outcomeKind: error ? "error" : output ? "output" : "none",
+      };
+    });
+
+  return {
+    total: records.length,
+    stateCounts,
+    successRate: records.length > 0
+      ? Math.round((stateCounts.completed / records.length) * 100)
+      : null,
+    totalDurationMs,
+    totalDurationFormatted: formatDashboardDuration(totalDurationMs),
+    applicationCounts: Object.fromEntries(
+      [...applicationCounts.entries()].sort(([a], [b]) => a.localeCompare(b)),
+    ),
+    records,
+  };
+}
+
+export const SESSION_DASHBOARD_VISUAL_REQUIREMENTS = `DASHBOARD CONTENT REQUIREMENTS:
+- Preserve all existing session metrics: token usage and category breakdown, context pressure, Main Agent tool statistics, top-tool warnings, Session active time, turn count, and average turn duration.
+- Treat subagents as an additional first-class section; do not replace or merge the existing metrics.
+- When subagents.total > 0, include SubAgent count and success rate in the headline metrics and render an "Agent Processes" section.
+- Each Agent Processes record must be a compact overview row showing Application, six-character Agent ID, visible state text, duration, taskSummary, and outcomeSummary.
+- Render taskSummary and outcomeSummary as single-line text. Do NOT use "Input:" or "Result:" labels.
+- Do NOT copy full SubAgent input/output, render multi-paragraph Agent prose, create transcript-style blocks, or provide expandable Agent details.
+- Full SubAgent execution detail belongs exclusively in Chat Agent Activity and must not be duplicated in Dashboard.
+- Failed, terminated, and killed records must use the error semantic colors plus visible status text; never communicate failure by color alone.
+- Label totalDurationFormatted as "Delegated time" and keep it distinct from Session active time because parallel Agents may overlap.
+- When subagents.total is 0, retain the Agent section with an explicit "Main Agent only" empty state.`;
+
+export function buildSessionDashboardUserPrompt(sessionSummary: string): string {
+  return `Create a rich visual dashboard for this coding session. Use the data below to build a comprehensive, beautiful dashboard:
+
+${sessionSummary}
+
+${SESSION_DASHBOARD_VISUAL_REQUIREMENTS}
+
+Make it visually rich with clear hierarchy, progress bars, color-coded metrics, and CSS charts.`;
+}
 
 function extractImagesFromToolResult(result: unknown): ImageAttachment[] | undefined {
   if (!result || typeof result !== "object") return undefined;
@@ -1598,11 +1718,7 @@ Respond ONLY with the raw HTML starting with <!DOCTYPE html>. DO NOT wrap the ou
       // Build user prompt
       let userPrompt: string;
       if (cmd.action === "generate") {
-        userPrompt = `Create a rich visual dashboard for this coding session. Use the data below to build a comprehensive, beautiful dashboard:
-
-${sessionSummary}
-
-Make it visually stunning with emojis, progress bars, color-coded metrics, and CSS charts.`;
+        userPrompt = buildSessionDashboardUserPrompt(sessionSummary);
       } else {
         // update action
         const existingHtml = this.lastArtifactHtml || "";
@@ -1792,6 +1908,7 @@ Modify the HTML to fulfill the user's request. Output the complete modified HTML
         pressureLabel,
       },
       topTools,
+      subagents: buildDashboardSubagentSummary(sm?.agentMessages ?? []),
     }, null, 2)
   }
 }

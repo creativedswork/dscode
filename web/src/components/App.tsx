@@ -12,6 +12,11 @@ import { ContextWindowBar } from "./ContextWindowBar";
 import { ArtifactContainer } from "./ArtifactContainer";
 import { TransitionCanvas } from "./TransitionCanvas";
 import { List, Sun, Moon, Chat, ChartBar } from "@phosphor-icons/react";
+import {
+  createDashboardCacheEntry,
+  isDashboardCacheEntryValid,
+  type DashboardCacheEntry,
+} from "../utils/dashboardCache";
 
 const SLASH_COMMANDS = [
   { name: "help", description: "Show available commands" },
@@ -44,7 +49,7 @@ function getInitialTheme(): "light" | "dark" {
   return "light";
 }
 
-function loadDashCache(): Record<string, { contentHash: string; html: string }> {
+function loadDashCache(): Record<string, DashboardCacheEntry> {
   try {
     const raw = localStorage.getItem("dscode-dash-cache");
     if (raw) return JSON.parse(raw);
@@ -52,7 +57,7 @@ function loadDashCache(): Record<string, { contentHash: string; html: string }> 
   return {};
 }
 
-function saveDashCache(cache: Record<string, { contentHash: string; html: string }>): void {
+function saveDashCache(cache: Record<string, DashboardCacheEntry>): void {
   try {
     localStorage.setItem("dscode-dash-cache", JSON.stringify(cache));
   } catch { /* ignore storage errors */ }
@@ -91,7 +96,7 @@ export function App() {
   const currentSessionIdRef = useRef(currentSessionId);
   currentSessionIdRef.current = currentSessionId;
   const prevSessionIdRef = useRef<string | null>(null);
-  const dashCacheRef = useRef<Record<string, { contentHash: string; html: string }>>(loadDashCache());
+  const dashCacheRef = useRef<Record<string, DashboardCacheEntry>>(loadDashCache());
   const artifactHtmlRef = useRef(artifactHtml);
   artifactHtmlRef.current = artifactHtml;
   const artifactLoadingRef = useRef(artifactLoading);
@@ -198,7 +203,10 @@ export function App() {
               // Evict oldest entry
               delete cache[entries[0]];
             }
-            cache[csid] = { contentHash: session.contentHash, html: artifactHtmlRef.current };
+            cache[csid] = createDashboardCacheEntry(
+              session.contentHash,
+              artifactHtmlRef.current,
+            );
             saveDashCache(cache);
           }
         }
@@ -261,7 +269,7 @@ export function App() {
     if (csid) {
       const cached = dashCacheRef.current[csid];
       const sessionHash = sessions.find((s) => s.id === csid)?.contentHash;
-      if (cached && sessionHash !== undefined && sessionHash !== "" && cached.contentHash === sessionHash) {
+      if (isDashboardCacheEntryValid(cached, sessionHash)) {
         setArtifactHtml(cached.html);
         setArtifactLoading(false);
         setViewMode("dashboard");

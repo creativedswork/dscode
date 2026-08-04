@@ -349,6 +349,7 @@ function UserBubble({ message }: { message: UIMessage }) {
               return (
                 <img
                   key={i}
+                  data-collider="media-item"
                   src={src ?? "/placeholder-image.svg"}
                   alt={`Attached image ${i + 1}`}
                   className="max-w-[200px] max-h-[200px] object-cover rounded cursor-pointer hover:opacity-90 transition-opacity"
@@ -425,6 +426,7 @@ function AssistantMessage({ message }: { message: UIMessage }) {
             return (
               <img
                 key={i}
+                data-collider="media-item"
                 src={src ?? "/placeholder-image.svg"}
                 alt={`Attached image ${i + 1}`}
                 className="max-w-[200px] max-h-[200px] object-cover rounded cursor-pointer hover:opacity-90 transition-opacity"

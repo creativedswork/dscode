@@ -21,6 +21,8 @@ export interface LoadResult {
   error?: string;
 }
 
+export const DASHBOARD_CONTENT_VERSION = "session-dashboard-v3-agent-overview";
+
 function ulid(): string {
   const t = Date.now().toString(36).padStart(10, "0");
   const r = Array.from({ length: 16 }, () => Math.random().toString(36)[2]).join("");
@@ -52,6 +54,38 @@ function sessionAgentMessages(session: SerializedSession): AgentSessionMessage[]
     ...(session.agentMessages ?? []),
     ...migrateVisionMessages(session.visionMessages ?? []),
   ];
+}
+
+export function computeSessionContentHash(
+  messages: unknown[],
+  agentMessages: AgentSessionMessage[] = [],
+  dashboardVersion = DASHBOARD_CONTENT_VERSION,
+): string {
+  const mainProjection = messages.map((message: any) =>
+    `${message.role}:${String(message.content ?? "").slice(0, 200)}`,
+  );
+  const agentProjection = [...agentMessages]
+    .sort((a, b) => a.createdAt - b.createdAt || a.agentId.localeCompare(b.agentId))
+    .map((message) => ({
+      agentId: message.agentId,
+      application: message.application,
+      state: message.state,
+      prompt: message.input.prompt,
+      output: message.output?.text,
+      error: message.output?.error,
+      createdAt: message.createdAt,
+      startedAt: message.startedAt,
+      endedAt: message.endedAt,
+    }));
+
+  return createHash("sha256")
+    .update(JSON.stringify({
+      version: dashboardVersion,
+      main: mainProjection,
+      agents: agentProjection,
+    }))
+    .digest("hex")
+    .slice(0, 12);
 }
 
 function extractFirstUserMessage(messages: unknown[]): string {
@@ -240,6 +274,10 @@ export class SessionManager {
       message,
     ];
     delete session.visionMessages;
+    session.metadata.contentHash = computeSessionContentHash(
+      session.messages,
+      session.agentMessages,
+    );
     this.store.save(session);
     this.events?.emit({ type: "session:saved", id: sessionId });
   }
@@ -252,6 +290,10 @@ export class SessionManager {
     const session = this.store.load(sessionId);
     session.version = 2;
     session.visionMessages = [...(session.visionMessages ?? []), message];
+    session.metadata.contentHash = computeSessionContentHash(
+      session.messages,
+      sessionAgentMessages(session),
+    );
     this.store.save(session);
     this.events?.emit({ type: "session:saved", id: sessionId });
   }
@@ -349,12 +391,8 @@ export class SessionManager {
     if (!this.current.preview) {
       this.current.preview = extractFirstUserMessage(messages as unknown[]);
     }
-    // Compute content hash for dashboard cache invalidation
-    const contentHash = createHash("sha256")
-      .update(messages.map((m: any) => `${m.role}:${String(m.content ?? "").slice(0, 200)}`).join("|"))
-      .digest("hex")
-      .slice(0, 12);
-    this.current.contentHash = contentHash;
+    // Compute content hash for dashboard cache invalidation.
+    this.current.contentHash = computeSessionContentHash(messages, this.agentMessages);
 
     this.current.projectPath = this.projectPath;
 

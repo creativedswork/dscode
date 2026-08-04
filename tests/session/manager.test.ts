@@ -2,8 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, existsSync, readFileSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { SessionManager, setTitleIntent } from "../../src/session/manager.js";
+import {
+  computeSessionContentHash,
+  SessionManager,
+  setTitleIntent,
+} from "../../src/session/manager.js";
 import { SessionStore } from "../../src/session/store.js";
+import type { AgentSessionMessage } from "../../src/session/types.js";
 
 // Minimal Agent mock
 function createMockAgent(messages: unknown[] = []) {
@@ -561,6 +566,109 @@ describe("SessionManager", () => {
     const sessions = manager.listSessions();
     expect(sessions.length).toBe(1);
     expect(sessions[0].id).toBe(session2.id);
+  });
+
+  it("computes stable dashboard hashes from Main and Agent records", () => {
+    const messages = [{ role: "user", content: "inspect dashboard" }];
+    const agentMessage: AgentSessionMessage = {
+      role: "subagent",
+      agentId: "agent-123456",
+      application: "explorer",
+      state: "completed",
+      input: { prompt: "inspect cache" },
+      output: { text: "cache excludes agents" },
+      createdAt: 100,
+      startedAt: 110,
+      endedAt: 200,
+    };
+
+    expect(computeSessionContentHash(messages, [agentMessage])).toBe(
+      computeSessionContentHash(messages, [agentMessage]),
+    );
+    expect(computeSessionContentHash(messages)).toBe(
+      computeSessionContentHash(messages, []),
+    );
+  });
+
+  it("invalidates dashboard hash when the presentation version changes", () => {
+    const messages = [{ role: "user", content: "inspect dashboard" }];
+
+    expect(computeSessionContentHash(messages, [], "dashboard-v1")).not.toBe(
+      computeSessionContentHash(messages, [], "dashboard-v2"),
+    );
+  });
+
+  it.each([
+    { application: "vision" },
+    { state: "failed" as const },
+    { startedAt: 120 },
+    { endedAt: 220 },
+    { input: { prompt: "different prompt" } },
+    { output: { text: "different output" } },
+    { output: { error: "failed output" } },
+  ])("changes dashboard hash when an Agent field changes: %o", (override) => {
+    const messages = [{ role: "user", content: "inspect dashboard" }];
+    const base: AgentSessionMessage = {
+      role: "subagent",
+      agentId: "agent-123456",
+      application: "explorer",
+      state: "completed",
+      input: { prompt: "inspect cache" },
+      output: { text: "cache excludes agents" },
+      createdAt: 100,
+      startedAt: 110,
+      endedAt: 200,
+    };
+    const changed = { ...base, ...override } as AgentSessionMessage;
+
+    expect(computeSessionContentHash(messages, [changed])).not.toBe(
+      computeSessionContentHash(messages, [base]),
+    );
+  });
+
+  it("invalidates the current Session hash when an Agent completes", () => {
+    const session = manager.createSession("p1", "m1");
+    const agent = createMockAgent([{ role: "user", content: "inspect dashboard" }]);
+    manager.saveSession(agent);
+    const before = manager.getCurrentMetadata()!.contentHash;
+
+    manager.upsertAgentMessage(session.id, {
+      role: "subagent",
+      agentId: "agent-current",
+      application: "explorer",
+      state: "completed",
+      input: { prompt: "inspect cache" },
+      output: { text: "done" },
+      createdAt: 100,
+      endedAt: 200,
+    });
+    manager.saveSession(agent);
+
+    expect(manager.getCurrentMetadata()!.contentHash).not.toBe(before);
+  });
+
+  it("invalidates a non-current Session hash on background Agent completion", () => {
+    const first = manager.createSession("p1", "m1");
+    manager.saveSession(createMockAgent([{ role: "user", content: "first session" }]));
+    const store = new SessionStore(dataDir, TEST_PROJECT);
+    const before = store.load(first.id).metadata.contentHash;
+
+    manager.createSession("p2", "m2");
+    manager.saveSession(createMockAgent([{ role: "user", content: "second session" }]));
+    manager.upsertAgentMessage(first.id, {
+      role: "subagent",
+      agentId: "agent-background",
+      application: "explorer",
+      state: "completed",
+      input: { prompt: "inspect first session" },
+      output: { text: "done" },
+      createdAt: 100,
+      endedAt: 200,
+    });
+
+    const stored = store.load(first.id);
+    expect(stored.metadata.contentHash).not.toBe(before);
+    expect(stored.agentMessages).toHaveLength(1);
   });
 });
 
