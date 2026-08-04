@@ -24,6 +24,21 @@ export function shouldRenderMessageInput(viewMode: ViewMode): boolean {
   return viewMode !== "eval_dashboard";
 }
 
+export function canEnterSessionDashboard(
+  viewMode: ViewMode,
+  messageCount: number,
+): boolean {
+  return viewMode === "chat" && messageCount > 0;
+}
+
+export function sessionDashboardTransitionAction(
+  viewMode: ViewMode,
+  artifactLoading: boolean,
+): "wait" | "commit" | "cancel" {
+  if (viewMode !== "chat") return "cancel";
+  return artifactLoading ? "wait" : "commit";
+}
+
 export function evalCommandForSelection(
   status: "starting" | "running" | "completed" | "failed" | null,
 ): { type: "slash"; command: "/eval" } | null {

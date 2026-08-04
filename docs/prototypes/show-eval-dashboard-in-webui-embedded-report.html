@@ -96,6 +96,8 @@ button { color: inherit; font: inherit; }
 }
 .mode-btn:hover { color: var(--color-text); }
 .mode-btn.active { color: var(--color-text); background: var(--color-surface); }
+.mode-btn:disabled { opacity: .4; cursor: not-allowed; }
+.mode-btn:disabled:hover { color: var(--color-text-muted); }
 .mode-btn.has-report::after {
   content: "";
   position: absolute;
@@ -156,29 +158,29 @@ button { color: inherit; font: inherit; }
 .main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .eval-view { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--color-bg); }
 .eval-toolbar {
-  min-height: 46px;
+  min-height: 52px;
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 7px 14px;
+  padding: 8px 16px;
   border-bottom: 1px solid var(--color-border);
   background: var(--color-surface);
 }
 .eval-heading { min-width: 0; flex: 1; }
-.eval-title { display: flex; align-items: center; gap: 8px; font-weight: 650; }
+.eval-title { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 650; }
 .chief-badge {
-  padding: 2px 6px;
+  padding: 2px 7px;
   border-radius: 5px;
   color: var(--color-accent);
   background: var(--color-accent-bg);
-  font: 700 9px var(--font-mono);
+  font: 700 11px var(--font-mono);
   letter-spacing: .06em;
 }
 .eval-meta {
   margin-top: 2px;
   overflow: hidden;
   color: var(--color-text-muted);
-  font: 10px var(--font-mono);
+  font: 12px var(--font-mono);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -186,9 +188,9 @@ button { color: inherit; font: inherit; }
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px;
+  padding: 4px 9px;
   border-radius: 8px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
 }
 .status-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
@@ -196,8 +198,7 @@ button { color: inherit; font: inherit; }
 .status-chip.running { color: var(--color-warning-text); background: var(--color-warning); }
 .status-chip.failed { color: var(--color-error-text); background: var(--color-error); }
 body[data-state="starting"] .external-open,
-body[data-state="running"] .external-open,
-body[data-state="failed"] .external-open { display: none; }
+body[data-state="running"] .external-open { display: none; }
 .eval-stage { flex: 1; min-height: 0; position: relative; }
 .state-panel { display: none; width: 100%; height: 100%; }
 body[data-state="starting"] .state-starting,
@@ -205,7 +206,7 @@ body[data-state="complete"] .state-complete,
 body[data-state="running"] .state-running,
 body[data-state="failed"] .state-failed { display: flex; }
 .report-frame { width: 100%; height: 100%; border: 0; background: #1e1c19; }
-.starting-wrap, .progress-wrap, .failed-wrap {
+.starting-wrap, .progress-wrap {
   align-items: stretch;
   justify-content: stretch;
   padding: 16px;
@@ -237,9 +238,9 @@ body[data-state="failed"] .state-failed { display: flex; }
   animation: spin .8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-.progress-eyebrow { color: var(--color-accent); font: 700 10px var(--font-mono); letter-spacing: .08em; }
-.progress-title, .failed-title { margin: 5px 0 4px; font: 500 24px var(--font-display); }
-.progress-copy, .failed-copy { color: var(--color-text-muted); font-size: 12px; }
+.progress-eyebrow { color: var(--color-accent); font: 700 12px var(--font-mono); letter-spacing: .08em; }
+.progress-title, .failed-title { margin: 5px 0 4px; font: 500 26px var(--font-display); }
+.progress-copy, .failed-copy { color: var(--color-text-muted); font-size: 14px; line-height: 1.55; }
 .run-overview {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -248,10 +249,10 @@ body[data-state="failed"] .state-failed { display: flex; }
   border: 1px solid var(--color-border);
   border-radius: 8px;
 }
-.run-stat { min-width: 0; padding: 9px 11px; border-right: 1px solid var(--color-border); }
+.run-stat { min-width: 0; padding: 11px 13px; border-right: 1px solid var(--color-border); }
 .run-stat:last-child { border-right: 0; }
-.run-stat-label { color: var(--color-text-muted); font-size: 8px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
-.run-stat-value { margin-top: 2px; overflow: hidden; font: 600 12px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.run-stat-label { color: var(--color-text-muted); font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.run-stat-value { margin-top: 2px; overflow: hidden; font: 600 14px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .worker-strip {
   display: flex;
   align-items: center;
@@ -261,7 +262,7 @@ body[data-state="failed"] .state-failed { display: flex; }
   border-radius: 7px;
   color: var(--color-text-secondary);
   background: var(--color-accent-bg);
-  font-size: 10px;
+  font-size: 12px;
 }
 .worker-pulse {
   width: 7px;
@@ -272,34 +273,34 @@ body[data-state="failed"] .state-failed { display: flex; }
   animation: pulse 1.2s ease-in-out infinite;
 }
 @keyframes pulse { 50% { opacity: .35; transform: scale(.8); } }
-.worker-strip code { font: 600 10px var(--font-mono); }
-.worker-strip .attempt { margin-left: auto; color: var(--color-text-muted); font: 9px var(--font-mono); }
+.worker-strip code { font: 600 12px var(--font-mono); }
+.worker-strip .attempt { margin-left: auto; color: var(--color-text-muted); font: 11px var(--font-mono); }
 .stages { flex: 1; align-content: start; margin-top: 20px; display: grid; gap: 7px; }
 .stage {
   display: grid;
-  grid-template-columns: 21px 140px 1fr auto;
-  gap: 9px;
+  grid-template-columns: 23px 160px 1fr auto;
+  gap: 10px;
   align-items: center;
-  min-height: 30px;
-  padding: 4px 7px;
+  min-height: 38px;
+  padding: 6px 9px;
   border-radius: 6px;
 }
 .stage.active { background: var(--color-accent-bg); }
 .stage-index {
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   display: grid;
   place-items: center;
   border: 1px solid var(--color-border);
   border-radius: 50%;
   color: var(--color-text-muted);
-  font: 9px var(--font-mono);
+  font: 10px var(--font-mono);
 }
 .stage.done .stage-index { color: var(--color-success-text); border-color: var(--color-success-text); background: var(--color-success); }
 .stage.active .stage-index { color: var(--color-accent); border-color: var(--color-accent); }
-.stage-name { font: 600 11px var(--font-mono); }
-.stage-description { overflow: hidden; color: var(--color-text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.stage-time { color: var(--color-text-muted); font: 9px var(--font-mono); }
+.stage-name { font: 600 13px var(--font-mono); }
+.stage-description { overflow: hidden; color: var(--color-text-muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.stage-time { color: var(--color-text-muted); font: 11px var(--font-mono); }
 .failed-card {
   display: flex;
   flex-direction: column;
@@ -317,18 +318,34 @@ body[data-state="failed"] .state-failed { display: flex; }
   font-weight: 800;
 }
 .failed-actions { display: flex; gap: 8px; margin-top: 18px; }
+.failed-report-wrap { min-width: 0; min-height: 0; flex-direction: column; }
+.failed-report-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-error-text) 30%, var(--color-border));
+  color: var(--color-error-text);
+  background: var(--color-error);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.failed-report-notice strong, .failed-report-notice span { display: block; }
+.failed-report-notice code { font: 650 11px var(--font-mono); }
+.failed-report-error { margin: 2px 0; color: var(--color-text-secondary); }
+.failed-report-actions { display: flex; flex: 0 0 auto; gap: 6px; margin-left: auto; }
 .action-btn {
-  padding: 6px 11px;
+  padding: 7px 12px;
   border: 1px solid var(--color-border);
   border-radius: 6px;
   color: var(--color-text-secondary);
   background: var(--color-bg);
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
 }
 .action-btn.primary { color: #fff; border-color: var(--color-accent); background: var(--color-accent); }
 .readonly-bar {
-  min-height: 34px;
+  min-height: 38px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -337,9 +354,9 @@ body[data-state="failed"] .state-failed { display: flex; }
   border-top: 1px solid var(--color-border);
   color: var(--color-text-muted);
   background: var(--color-surface);
-  font-size: 10px;
+  font-size: 12px;
 }
-.readonly-bar code { color: var(--color-text-secondary); font: 10px var(--font-mono); }
+.readonly-bar code { color: var(--color-text-secondary); font: 11px var(--font-mono); }
 .prototype-controls {
   position: fixed;
   z-index: 30;
@@ -373,9 +390,11 @@ body[data-state="failed"] .state-failed { display: flex; }
   .eval-heading { flex-basis: calc(100% - 78px); }
   .open-label { display: none; }
   .readonly-bar span:last-child { display: none; }
-  .starting-wrap, .progress-wrap, .failed-wrap { padding: 10px; }
+  .starting-wrap, .progress-wrap { padding: 10px; }
   .starting-card, .progress-card, .failed-card { padding: 18px 14px; }
-  .stage { grid-template-columns: 21px minmax(90px, 1fr) auto; }
+  .failed-report-notice { flex-wrap: wrap; padding-inline: 10px; }
+  .failed-report-actions { width: 100%; margin-left: 28px; }
+  .stage { grid-template-columns: 23px minmax(100px, 1fr) auto; }
   .stage-description { display: none; }
   .run-overview { grid-template-columns: repeat(2, 1fr); }
   .run-stat:nth-child(2) { border-right: 0; }
@@ -392,7 +411,7 @@ body[data-state="failed"] .state-failed { display: flex; }
     </div>
     <nav class="mode-switcher" aria-label="View mode">
       <button class="mode-btn" data-view="chat">Chat</button>
-      <button class="mode-btn" data-view="dashboard">Dashboard</button>
+      <button class="mode-btn" data-view="dashboard" disabled title="Return to Chat before opening Session Dashboard">Dashboard</button>
       <button class="mode-btn active has-report" data-view="eval">Eval</button>
     </nav>
     <div class="top-actions">
@@ -472,23 +491,26 @@ body[data-state="failed"] .state-failed { display: flex; }
               </div>
             </div>
           </div>
-          <div class="state-panel state-failed failed-wrap">
-            <div class="failed-card">
+          <div class="state-panel state-failed failed-report-wrap">
+            <div class="failed-report-notice">
               <div class="failed-mark">!</div>
-              <div class="failed-title">Evaluation stopped at attribution</div>
-              <div class="failed-copy">The worker returned an unknown Step reference after one fresh-process retry. The latest successful report was not replaced.</div>
-              <div class="failed-actions">
-                <button class="action-btn primary">Retry evaluation</button>
-                <button class="action-btn">Open latest successful report</button>
+              <div>
+                <strong>Current evaluation failed at chief-attribution</strong>
+                <span class="failed-report-error">The worker returned an unknown Step reference after one fresh-process retry.</span>
+                <span>Showing the last complete report for this target: run <code>e4ac2f</code> · 2026-08-04 21:18</span>
+              </div>
+              <div class="failed-report-actions">
+                <button class="action-btn primary">Retry</button>
                 <button class="action-btn">Back to chat</button>
               </div>
             </div>
+            <iframe class="report-frame" id="failedReportFrame" title="Historical CHIEF evaluation report" sandbox="allow-same-origin"></iframe>
           </div>
         </div>
 
         <footer class="readonly-bar">
-          <span>Read-only eval artifact · report input cannot modify this HTML</span>
-          <code>~/.dscode/eval/00MSE9R8/runs/e4ac2f/output/dashboard.html</code>
+          <span id="readonlyLabel">Read-only eval artifact · report input cannot modify this HTML</span>
+          <code id="readonlyIdentity">00MSE9R8:e4ac2f</code>
         </footer>
       </section>
     </main>
@@ -523,6 +545,7 @@ const reportHtml = `<!DOCTYPE html>
 
 const frame = document.getElementById("reportFrame");
 frame.srcdoc = reportHtml;
+document.getElementById("failedReportFrame").srcdoc = reportHtml;
 
 document.querySelectorAll("[data-state-button]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -536,11 +559,21 @@ document.querySelectorAll("[data-state-button]").forEach((button) => {
     chip.textContent =
       state === "starting" ? "Preparing" :
       state === "complete" ? "Completed" :
-      state === "running" ? "Running" : "Failed";
+      state === "running" ? "Running" : "Failed · Previous report";
     document.getElementById("evalMeta").textContent =
       state === "starting"
         ? "request current Session · resolving target · run pending"
-        : "target 00MSE9R8 · run e4ac2f · 3 actors · 5 Steps · complete evidence";
+        : state === "failed"
+          ? "target 00MSE9R8 · failed run f31a90 · showing complete run e4ac2f"
+          : "target 00MSE9R8 · run e4ac2f · 3 actors · 5 Steps · complete evidence";
+    document.getElementById("readonlyLabel").textContent =
+      state === "failed"
+        ? "Read-only historical eval artifact · current run failed"
+        : "Read-only eval artifact · report input cannot modify this HTML";
+    document.getElementById("readonlyIdentity").textContent =
+      state === "failed"
+        ? "00MSE9R8:e4ac2f · failed f31a90"
+        : "00MSE9R8:e4ac2f";
   });
 });
 

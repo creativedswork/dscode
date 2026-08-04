@@ -11,6 +11,7 @@ import {
   EVAL_DASHBOARD_CACHE_STORAGE_KEY,
   evalDashboardCacheKey,
   getLatestEvalDashboardEntry,
+  getLatestEvalDashboardEntryForTarget,
   loadEvalDashboardCache,
   MAX_EVAL_DASHBOARD_CACHE_ENTRIES,
   normalizeEvalDashboardCache,
@@ -137,6 +138,32 @@ describe("Eval Dashboard cache", () => {
     const storage = new MemoryStorage();
     storage.setItem(EVAL_DASHBOARD_CACHE_STORAGE_KEY, JSON.stringify(normalized));
     expect(loadEvalDashboardCache(storage)).toEqual(normalized);
+  });
+
+  it("selects the newest completed report only from the failed target", () => {
+    let cache: EvalDashboardCache = {};
+    cache = cacheCompletedEvalDashboard(
+      cache,
+      { ...completed("target-A", "run-old"), generatedAt: 100 },
+      30,
+    );
+    cache = cacheCompletedEvalDashboard(
+      cache,
+      { ...completed("target-A", "run-new"), generatedAt: 200 },
+      10,
+    );
+    cache = cacheCompletedEvalDashboard(
+      cache,
+      { ...completed("target-B", "run-other"), generatedAt: 300 },
+      40,
+    );
+
+    expect(
+      getLatestEvalDashboardEntryForTarget(cache, "target-A")?.runId,
+    ).toBe("run-new");
+    expect(
+      getLatestEvalDashboardEntryForTarget(cache, "target-missing"),
+    ).toBeUndefined();
   });
 
   it("preserves the Session Dashboard 20-entry cache behavior", () => {

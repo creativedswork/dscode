@@ -24,6 +24,7 @@ import {
   cacheCompletedEvalDashboard,
   evalDashboardCacheKey,
   getLatestEvalDashboardEntry,
+  getLatestEvalDashboardEntryForTarget,
   loadEvalDashboardCache,
   saveEvalDashboardCache,
   touchEvalDashboardCacheEntry,
@@ -35,7 +36,9 @@ import {
 } from "../utils/evalDashboardState";
 import { openEvalDashboardHtml } from "../utils/evalExternalOpen";
 import {
+  canEnterSessionDashboard,
   evalCommandForSelection,
+  sessionDashboardTransitionAction,
   shouldRenderMessageInput,
   viewModeAfterSessionChange,
   viewModeForMessageCount,
@@ -111,6 +114,8 @@ export function App() {
   const [skills, setSkills] = useState<SkillInfo[]>([]);
 
   const [transitionPhase, setTransitionPhase] = useState<"idle" | "animating">("idle");
+  const viewModeRef = useRef(viewMode);
+  viewModeRef.current = viewMode;
   const { toasts, addToast, removeToast } = useToasts();
   const turnStartRef = useRef<number>(0);
   const permissionPromptRef = useRef(permissionPrompt);
@@ -271,6 +276,31 @@ export function App() {
               evalEvent.runId,
             )],
           );
+        } else if (evalEvent.status === "failed") {
+          const targetSessionId = next.targetSessionId;
+          const latestForTarget = targetSessionId
+            ? getLatestEvalDashboardEntryForTarget(
+                evalCacheRef.current,
+                targetSessionId,
+              )
+            : undefined;
+          if (!latestForTarget) {
+            setLatestSuccessfulEval(undefined);
+          } else {
+            const cache = touchEvalDashboardCacheEntry(
+              evalCacheRef.current,
+              latestForTarget.targetSessionId,
+              latestForTarget.runId,
+            );
+            evalCacheRef.current = cache;
+            saveEvalDashboardCache(cache);
+            setLatestSuccessfulEval(
+              cache[evalDashboardCacheKey(
+                latestForTarget.targetSessionId,
+                latestForTarget.runId,
+              )],
+            );
+          }
         }
         break;
       }
@@ -328,27 +358,6 @@ export function App() {
     evalObjectUrlRef.current = openEvalDashboardHtml(html);
   }, []);
 
-  const handleOpenLatestEval = useCallback(() => {
-    if (!latestSuccessfulEval) return;
-    const cache = touchEvalDashboardCacheEntry(
-      evalCacheRef.current,
-      latestSuccessfulEval.targetSessionId,
-      latestSuccessfulEval.runId,
-    );
-    evalCacheRef.current = cache;
-    saveEvalDashboardCache(cache);
-    const entry = cache[evalDashboardCacheKey(
-      latestSuccessfulEval.targetSessionId,
-      latestSuccessfulEval.runId,
-    )];
-    if (!entry) return;
-    setLatestSuccessfulEval(entry);
-    const restored = evalDashboardStateFromCache(entry);
-    evalStateRef.current = restored;
-    setEvalState(restored);
-    setViewMode("eval_dashboard");
-  }, [latestSuccessfulEval]);
-
   const handleRetryEval = useCallback(() => {
     const target = evalStateRef.current?.targetSessionId
       ?? evalStateRef.current?.requestedSessionId;
@@ -375,7 +384,7 @@ export function App() {
       return;
     }
 
-    if (messages.length === 0) return;
+    if (!canEnterSessionDashboard(viewModeRef.current, messages.length)) return;
     const csid = currentSessionIdRef.current;
     if (csid) {
       const cached = dashCacheRef.current[csid];
@@ -405,7 +414,15 @@ export function App() {
     // Poll until artifactLoading is confirmed false before transitioning,
     // preventing a flash of "Generating dashboard..." in ArtifactContainer.
     const tryTransition = () => {
-      if (!sessionArtifactLoadingRef.current) {
+      const action = sessionDashboardTransitionAction(
+        viewModeRef.current,
+        sessionArtifactLoadingRef.current,
+      );
+      if (action === "cancel") {
+        setTransitionPhase("idle");
+        return;
+      }
+      if (action === "commit") {
         setTransitionPhase("idle");
         setViewMode("session_dashboard");
       } else {
@@ -447,7 +464,10 @@ export function App() {
         <div className="flex-1 flex items-center justify-center gap-3">
           <ViewModeSelector
             viewMode={viewMode}
-            sessionDashboardAvailable={messages.length > 0}
+            sessionDashboardAvailable={
+              viewMode === "session_dashboard"
+              || canEnterSessionDashboard(viewMode, messages.length)
+            }
             evalReportAvailable={evalState?.status === "completed" || latestSuccessfulEval !== undefined}
             onChange={handleViewModeChange}
           />
@@ -483,7 +503,6 @@ export function App() {
               state={evalState}
               latestSuccessful={latestSuccessfulEval}
               onBackToChat={() => handleViewModeChange("chat")}
-              onOpenLatest={handleOpenLatestEval}
               onRetry={handleRetryEval}
               onOpenExternal={handleOpenEvalExternal}
             />

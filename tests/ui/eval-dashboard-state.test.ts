@@ -6,7 +6,9 @@ import {
   reduceEvalDashboardState,
 } from "../../web/src/utils/evalDashboardState.js";
 import {
+  canEnterSessionDashboard,
   evalCommandForSelection,
+  sessionDashboardTransitionAction,
   shouldRenderMessageInput,
   viewModeAfterSessionChange,
   viewModeForMessageCount,
@@ -165,6 +167,20 @@ describe("Eval Dashboard frontend state", () => {
     expect(shouldRenderMessageInput("chat")).toBe(true);
     expect(shouldRenderMessageInput("session_dashboard")).toBe(true);
     expect(shouldRenderMessageInput("eval_dashboard")).toBe(false);
+  });
+
+  it("allows Session Dashboard entry only from a non-empty Chat view", () => {
+    expect(canEnterSessionDashboard("chat", 1)).toBe(true);
+    expect(canEnterSessionDashboard("chat", 0)).toBe(false);
+    expect(canEnterSessionDashboard("eval_dashboard", 1)).toBe(false);
+    expect(canEnterSessionDashboard("session_dashboard", 1)).toBe(false);
+  });
+
+  it("cancels a pending Session Dashboard transition after Eval takes over", () => {
+    expect(sessionDashboardTransitionAction("chat", true)).toBe("wait");
+    expect(sessionDashboardTransitionAction("chat", false)).toBe("commit");
+    expect(sessionDashboardTransitionAction("eval_dashboard", false)).toBe("cancel");
+    expect(sessionDashboardTransitionAction("eval_dashboard", true)).toBe("cancel");
   });
 
   it("dispatches /eval for empty or terminal selector states", () => {

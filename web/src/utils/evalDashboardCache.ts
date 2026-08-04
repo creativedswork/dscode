@@ -139,3 +139,14 @@ export function getLatestEvalDashboardEntry(
   return Object.values(cache)
     .sort((a, b) => b.accessedAt - a.accessedAt)[0];
 }
+
+export function getLatestEvalDashboardEntryForTarget(
+  cache: EvalDashboardCache,
+  targetSessionId: string,
+): EvalDashboardCacheEntry | undefined {
+  return Object.values(cache)
+    .filter((entry) => entry.targetSessionId === targetSessionId)
+    .sort((a, b) =>
+      b.generatedAt - a.generatedAt || b.accessedAt - a.accessedAt
+    )[0];
+}
