@@ -1,49 +1,62 @@
-## ADDED Requirements
+# eval-stats-computation Specification
 
+## Purpose
+
+Define deterministic, inference-free statistics extraction for Eval trajectories and Dashboard metadata.
+## Requirements
 ### Requirement: Pure computational stats extraction
 
-The system SHALL provide a `computeStats()` function that extracts metadata and tool call statistics from a `SerializedSession` without any inference, heuristics, or pattern matching. This function is pure computation — counting, formatting, and data extraction only.
+The system SHALL provide a pure `computeStats()` function that extracts metadata, tool statistics, and Agent execution statistics from a normalized `MultiAgentTrajectory` without inference, heuristics, pattern matching, or I/O.
 
-The function SHALL accept `SerializedSession` and return `SessionMeta` and `ToolStats`:
+The result SHALL include:
 
-- `SessionMeta`: sessionId, title, model (provider/modelId), totalMessages, duration (formatted), projectPath, startedAt, endedAt
-- `ToolStats`: toolCalls (count of all `toolCall` blocks), toolErrors (count of `toolResult` messages with `isError: true`), errorRate (percentage string), screenshotsTaken (tool names containing "screenshot"), userComplaints (always 0 — complaint detection is LLM territory)
+- `SessionMeta`: target Session ID, title, model, Main message count, duration, project path, start/end time
+- `ToolStats`: tool calls/errors across full Main and SubAgent transcripts, error rate, screenshots, user complaints fixed at 0
+- `AgentStats`: total actors, SubAgent count, unique Application count, completed/failed/terminated/killed counts, process success rate, full/summary/missing transcript counts
 
-The function SHALL NOT:
-- Detect phases or phase boundaries
-- Compute Jaccard distance or keyword overlap
-- Infer root causes
-- Match user complaint patterns
-- Extract visual keywords
-- Compact or summarize session content
+Summary-only actors SHALL contribute to Agent lifecycle counts but SHALL not invent tool calls. Main and SubAgent tool calls SHALL each be counted exactly once.
 
-#### Scenario: Stats computed from valid session
+The function SHALL NOT detect phases, infer causal edges/root causes, synthesize missing transcript content, or match user complaint keywords.
 
-- **WHEN** a `SerializedSession` contains 66 messages with 67 tool calls and 8 tool errors
-- **THEN** `computeStats()` SHALL return `toolCalls: 67`, `toolErrors: 8`, `errorRate: "11.9%"`
-- **AND** `metadata.totalMessages` SHALL be 66
-- **AND** `metadata.model` SHALL be `"deepseek/deepseek-v4-pro"`
-- **AND** `stats.userComplaints` SHALL be 0
+#### Scenario: Stats include Main and SubAgent tools
 
-#### Scenario: Stats with no tool calls
+- **WHEN** Main has 10 tool calls and two full SubAgents have 4 and 6 tool calls
+- **AND** one tool result in each actor is an error
+- **THEN** stats SHALL report 20 tool calls and 3 tool errors
+- **AND** SHALL report three total actors and two SubAgents
 
-- **WHEN** a session has zero `toolCall` blocks
-- **THEN** `toolCalls` SHALL be 0, `toolErrors` SHALL be 0, `errorRate` SHALL be `"0.0%"`
-- **AND** `screenshotsTaken` SHALL be 0
+#### Scenario: Summary-only Agent does not invent tools
 
-#### Scenario: Stats with null timestamps
+- **WHEN** a summary-only Agent record reports completed output but has no runtime messages
+- **THEN** it SHALL count toward completed Agent executions
+- **AND** SHALL contribute zero tool calls
+- **AND** transcript stats SHALL increment `summary`
 
-- **WHEN** a session has null or NaN `createdAt` or `updatedAt` timestamps
-- **THEN** `startedAt` and `endedAt` SHALL be `"unknown"`
-- **AND** `duration` SHALL be `"< 1m"`
+#### Scenario: Main-only Session
+
+- **WHEN** a trajectory contains only Main with zero tool calls
+- **THEN** tool calls/errors SHALL be zero with error rate `"0.0%"`
+- **AND** Agent totals SHALL report one actor and zero SubAgents
+- **AND** transcript completeness SHALL be complete
+
+#### Scenario: Parallel SubAgent duration
+
+- **WHEN** two SubAgents overlap in wall-clock time
+- **THEN** Session duration SHALL remain based on Session metadata
+- **AND** the system SHALL not sum process durations into Session duration
 
 ### Requirement: Stats module is independent of eval inference
 
-The `computeStats()` function SHALL be importable without triggering any side effects. It SHALL NOT depend on `analyzer.ts`, `llm.ts`, focus pipeline, or any inference-related module. It SHALL only depend on `SerializedSession` types and Node.js standard library.
+The stats module SHALL accept only normalized trajectory data and SHALL be importable without loading AgentSupervisor, AgentProcessStore, CHIEF workers, rule attribution, Dashboard rendering, or filesystem modules.
 
-#### Scenario: Stats module has no inference dependencies
+#### Scenario: Stats import has no side effects
 
-- **WHEN** `stats.ts` is imported in isolation
-- **THEN** no LLM calls SHALL be made
-- **AND** no rule engine logic SHALL be executed
-- **AND** no file system reads SHALL occur (pure function of its input)
+- **WHEN** the stats module is imported in isolation
+- **THEN** no Agent process SHALL be created
+- **AND** no model call SHALL occur
+- **AND** no file SHALL be read or written
+
+#### Scenario: Deterministic result
+
+- **WHEN** the same immutable trajectory is passed to `computeStats()` twice
+- **THEN** both results SHALL be deeply equivalent

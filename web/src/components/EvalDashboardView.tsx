@@ -190,7 +190,7 @@ export function EvalDashboardView({
         )}
       </div>
 
-      <div className="flex-1 min-h-0">
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
         {state.status === "starting" && (
           <div className="eval-state-wrap">
             <div className="eval-state-card eval-state-card-centered">

@@ -24,6 +24,28 @@ describe("Eval Dashboard artifact presentation", () => {
     expect(markup).toContain('title="CHIEF evaluation report"');
   });
 
+  it("gives completed reports a full-height flex content slot", () => {
+    const markup = renderToStaticMarkup(createElement(EvalDashboardView, {
+      state: {
+        status: "completed",
+        targetSessionId: "target",
+        runId: "run",
+        startedAt: 1,
+        stages: [],
+        html: "<!doctype html><html><body>complete report</body></html>",
+        generatedAt: 2,
+      },
+      onBackToChat: vi.fn(),
+      onRetry: vi.fn(),
+      onOpenExternal: vi.fn(),
+    }));
+
+    expect(markup).toContain(
+      'class="flex-1 min-h-0 flex flex-col overflow-hidden"',
+    );
+    expect(markup).toContain('title="CHIEF evaluation report"');
+  });
+
   it("escapes failed error text through React rendering", () => {
     const markup = renderToStaticMarkup(createElement(EvalDashboardView, {
       state: {
