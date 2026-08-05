@@ -5,20 +5,103 @@ dscode 是一个基于 `@earendil-works/pi-agent-core`、`@earendil-works/pi-ai`
 
 ## 设计哲学
 
-**Agent as OS** — Karpathy 的 LLM as OS 概念中，Agent 各组件在 OS 里都有映射：
+**Agent as OS** — dscode 借用操作系统概念描述组件之间的责任边界。这是架构类比，
+不是声称 Harness 实现了完整操作系统；每项映射都以当前代码行为为依据。
 
-| Agent 概念 | OS 映射 |
-|-----------|--------|
-| 上下文窗口 | 寄存器 |
-| System Prompt | 内核 |
-| 工具（Drivers） | 设备驱动接口 |
-| MCP Server | USB 外部设备 |
-| Skill | 用户态程序（SKILL.md = 文件描述符） |
-| Harness | Kernel |
-| Main Agent | PID 1 / init |
-| AgentApplication | Application / Executable |
-| Main Agent / SubAgent | 进程 |
-| Session | TTY |
+### Kernel 与计算
+
+| Agent 概念 | OS 类比 | dscode 职责 |
+|-----------|---------|------------|
+| Harness | Kernel | 组装组件，协调进程、权限、I/O 与生命周期 |
+| Model | CPU / 计算引擎 | 执行推理计算 |
+| Agent Runtime | 进程执行环境 | 驱动单个 Agent 的 prompt、tool-call 和事件循环 |
+| System Prompt | 进程启动策略 / 只读指令段 | 为 Runtime 装载身份、规则和行为约束 |
+
+System Prompt 影响单个进程如何执行，但不管理其他进程或资源，因此不是 Kernel。
+
+### 应用与进程
+
+| Agent 概念 | OS 类比 | dscode 职责 |
+|-----------|---------|------------|
+| AgentApplication / Agent.md | Application / Executable Image / Manifest | 定义 Prompt、模型和 capability，编译为不可变 snapshot |
+| Main Agent / SubAgent | 进程 | 由同构 Agent Runtime 执行的运行实例 |
+| Main Agent | PID 1 / init | 当前 Harness 中的根 Agent 进程 |
+| `agentId` / `parentAgentId` | PID / PPID | 标识进程及父子关系 |
+| AgentSupervisor | 进程表 + 生命周期管理 + Job Control | spawn、list、wait、terminate、kill 及前后台切换 |
+| AgentContext | PCB + 进程环境 + capability set | 保存 cwd、Session 归属、深度、工具权限和 Worktree |
+
+AgentSupervisor 当前没有时间片、优先级或抢占机制，因此不等同于完整的 OS Scheduler。
+
+### 内存与状态
+
+| Agent 概念 | OS 类比 | dscode 职责 |
+|-----------|---------|------------|
+| 上下文窗口 | RAM / Agent 进程工作集 | 保存当前推理可见的 Prompt、消息、工具定义与结果 |
+| ContextManager | 内存管理器 / Pager | 负责 token 预算、工作集压缩和 overflow 恢复 |
+| Session `messages` | 可恢复会话快照 / Backing Store | 持久化 Main Agent 消息并重新装载工作集 |
+| Agent Runtime Snapshot | 进程快照 / Backing Store | 持久化 Agent Process transcript 与 usage |
+| MemoryManager | 持久化长期知识存储 | 保存跨 Session 知识，并在选中后注入 System Prompt |
+
+这里的 RAM 不是 `MemoryManager` 的同义词。前者是当前推理的易失工作集，后者保存
+跨 Session 的长期知识。
+
+### I/O
+
+| Agent 概念 | OS 类比 | dscode 职责 |
+|-----------|---------|------------|
+| Tool Call | System Call | Agent 发起的原子操作，如 `read_file`、`write_file`、`bash` |
+| Tool Schema | Syscall ABI | 定义操作名称、参数和返回契约 |
+| ToolRegistry | Syscall Table / 可调用操作表 | 汇总 Tool，并控制基础、延迟和已发现状态 |
+| DriverRegistry / Driver | 驱动注册表 / 资源适配器 | 将一组 Tool 连接到文件系统、Shell 或 MCP |
+| MCP Server | 外部应用、设备或远程服务 | 提供由 MCP Driver 暴露给 Agent 的能力 |
+| 文件系统、Shell、浏览器等 | Device / Resource | 被 Driver 实际操作的资源 |
+
+`read_file`、`write_file` 和 MCP Tool 是 Agent 可调用的操作，不是 Driver 本身。调用链为：
+
+```text
+Agent Process
+  → Tool Call
+  → Tool Schema / ToolRegistry
+  → Driver
+  → Resource
+```
+
+文件读取和 MCP 调用分别落到：
+
+```text
+Agent → read_file(path) → schema / ToolRegistry → fs Driver → 文件系统 / 磁盘
+Agent → mcp_<server>_<tool> → schema / ToolRegistry → MCP Driver → MCP Server → 外部资源
+```
+
+### 能力与隔离
+
+| Agent 概念 | OS 类比 | dscode 职责 |
+|-----------|---------|------------|
+| Skill | 按需加载的用户态能力模块 / Library | 注入 instructions，并选择允许使用的 Driver Tool |
+| SKILL.md | 模块 Manifest + 指令源 | 声明 Skill 元数据、操作规程和 Tool 白名单 |
+| PermissionManager | Capability / ACL / Syscall Filter | 在 Tool Call 前执行 allow、deny 或 ask 策略 |
+| Worktree Isolation | Filesystem Namespace / Sandbox | 为后台写进程隔离 cwd、分支和文件修改 |
+
+Skill 编排 Tool，但不实现底层资源访问；真正连接资源的是 Driver。
+
+### 通信与恢复
+
+| Agent 概念 | OS 类比 | dscode 职责 |
+|-----------|---------|------------|
+| Agent Message | 定向 IPC | 父进程向运行中的 Agent Process 补充消息 |
+| HarnessEventBus | Kernel 内事件分发 | 在 Harness 组件间发布生命周期与 UI 事件 |
+| Session | TTY + 可恢复会话 | 承载用户交互，并持久化 Main Agent 消息 |
+| Agent Runtime Snapshot | 进程快照 | 保存 Agent Process 的可审计运行状态 |
+| CheckpointManager | 文件级 Snapshot / Rollback Journal | 在文件修改前保存内容并支持回滚 |
+
+Session snapshot、Agent Runtime Snapshot 和 CheckpointManager 的粒度不同：它们分别恢复
+用户会话、记录 Agent Process 状态和回滚单个文件，不应混称为同一种 checkpoint。
+
+### 类比边界
+
+dscode 当前没有抢占式 Scheduler、通用文件描述符表，也不管理模型内部的 CPU
+寄存器式即时状态。没有对应运行时原语的 OS 概念保持未映射，不能为了让表格看起来
+完整而分配给无关组件。
 
 dscode 不服务传统"代码感知"场景（那是 Cursor / Claude Code 的领地），而是面向**数字创作**——通过 MCP 连接 Blender、浏览器、文档、表格等创作工具，让模型探索和操控各类数字环境。
 
