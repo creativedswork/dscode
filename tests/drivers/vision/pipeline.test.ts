@@ -7,6 +7,7 @@ import type { ProcessResult } from "../../../src/drivers/vision/types.js";
 vi.mock("../../../src/drivers/vision/cache.js", () => ({
   ImageCache: {
     put: vi.fn(),
+    get: vi.fn(),
     getSync: vi.fn(),
   },
 }));
@@ -18,6 +19,7 @@ vi.mock("../../../src/drivers/vision/client.js", () => ({
 
 vi.mock("../../../src/drivers/vision/ocr.js", () => ({
   ocrImages: vi.fn(),
+  shutdownOcr: vi.fn(),
 }));
 
 import { ImageCache } from "../../../src/drivers/vision/cache.js";
@@ -54,6 +56,7 @@ describe("ImagePipeline.process()", () => {
     vi.clearAllMocks();
     // Default: cache always succeeds
     vi.mocked(ImageCache.put).mockResolvedValue(mockCachedRef);
+    vi.mocked(ImageCache.get).mockResolvedValue(mockImage);
   });
 
   // ── Scenario 1: Vision success ──

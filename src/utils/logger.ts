@@ -6,6 +6,7 @@
 import { appendFileSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
+import { getAgentContext } from "../agents/process/context.js";
 
 // ── Types ──
 
@@ -69,7 +70,8 @@ export class Logger {
   private write(level: LogLevel, tag: string, message: string): void {
     if (LEVEL_RANK[level] < this.minLevel) return;
 
-    const line = formatLine(level, this.type, this.id, tag, message);
+    const context = getAgentContext();
+    const line = formatLine(level, this.type, context?.agentId || this.id, tag, message);
     try {
       ensureDir();
       appendFileSync(filePath(), line + "\n", "utf8");

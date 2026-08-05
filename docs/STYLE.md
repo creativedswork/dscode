@@ -1,6 +1,6 @@
 # 编码规范
 
-工具链：仅 `tsc --strict`，不引入额外 linter/formatter。
+工具链：`tsc --strict` + Vitest，不引入额外 linter/formatter。
 风格基准：[Google TypeScript Style Guide](https://google.github.io/styleguide/tsguide.html) 的关键子集。
 
 ---
@@ -55,7 +55,7 @@ export default class SessionManager { ... }
 ## Import 顺序
 
 1. Node.js 内置模块 (`node:fs`, `node:path`)
-2. 第三方依赖 (`@mariozechner/pi-agent-core`, `@mariozechner/pi-ai`)
+2. 第三方依赖 (`@earendil-works/pi-agent-core`, `@earendil-works/pi-ai`)
 3. 项目内部模块 (相对路径)
 
 组间空行分隔：
@@ -64,8 +64,8 @@ export default class SessionManager { ... }
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-import { Agent } from "@mariozechner/pi-agent-core";
-import { getModel, streamSimple } from "@mariozechner/pi-ai";
+import { Agent } from "@earendil-works/pi-agent-core";
+import { Type } from "@earendil-works/pi-ai";
 
 import { SessionManager } from "../session/manager.js";
 import type { HarnessConfig } from "./types.js";
@@ -112,7 +112,7 @@ skills/
 - 一个文件一个主要职责
 - 文件不超过 300 行（超过则拆分）
 - 公共类型如果仅一个模块用，放在该模块文件顶部
-- 跨模块共享类型放 `core/types.ts`
+- 跨模块共享类型放在对应边界的 `types.ts`；UI 协议类型放 `ui/shared/types.ts`
 
 ---
 
@@ -163,8 +163,10 @@ const divisor = 3.5 * (1 - cjkRatio) + 2.5 * cjkRatio;
 
 ---
 
-## 测试（未来）
+## 测试
 
-- 测试文件与源文件同目录：`manager.ts` → `manager.test.ts`
-- 测试用 `vitest` 或 Node.js 内置 test runner
+- 测试集中放在 `tests/`，目录结构与 `src/` 的功能边界对应
+- 测试使用 Vitest
 - 命名：`describe("SessionManager")` → `it("saves session to disk")`
+- 修复缺陷时添加覆盖失败路径的回归测试
+- 提交前至少运行相关测试和 `npm run typecheck`

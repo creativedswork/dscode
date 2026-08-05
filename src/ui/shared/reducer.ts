@@ -36,14 +36,36 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
   switch (event.type) {
     case "ready":
       return (event.messages as any[]).map((m: any, i) => ({
-        id: `hist-${i}`,
+        id: m.role === "agent" && m.agentActivity?.agentId
+          ? `agent-${m.agentActivity.agentId}`
+          : `hist-${i}`,
         role: m.role,
         content: normalizeContent(m.content),
         thinking: typeof m.thinking === "string" ? m.thinking : "",
         tools: Array.isArray(m.tools) ? m.tools : [],
         createdAt: typeof m.createdAt === "number" ? m.createdAt : undefined,
         images: Array.isArray(m.images) ? m.images : [],
+        agentActivity: m.role === "agent" ? m.agentActivity : undefined,
       }));
+
+    case "agent_activity": {
+      const index = prev.findIndex(
+        (message) =>
+          message.role === "agent"
+          && message.agentActivity?.agentId === event.activity.agentId,
+      );
+      const message: UIMessage = {
+        id: `agent-${event.activity.agentId}`,
+        role: "agent",
+        content: "",
+        agentActivity: event.activity,
+        createdAt: event.activity.createdAt,
+      };
+      if (index < 0) return [...prev, message];
+      return prev.map((item, itemIndex) => itemIndex === index
+        ? { ...item, ...message }
+        : item);
+    }
 
     case "user_message":
       return [

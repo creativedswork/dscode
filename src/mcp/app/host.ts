@@ -1,23 +1,14 @@
 import http from "node:http";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 
+import { resolveRuntimeResource } from "../../resources/runtime.js";
 import type { AppInstance, McpUiResourceCsp, McpUiResourcePermissions } from "./types.js";
 import type { MCPManager } from "../manager.js";
 import { generateMdxRuntimeBundle } from "../../ui/mdx/runtime-bundle.js";
 
 function findSandboxPath(): string {
-  const candidates = [
-    join(process.cwd(), "src", "mcp", "app", "sandbox.html"),
-    join(dirname(fileURLToPath(import.meta.url)), "sandbox.html"),
-    join(dirname(fileURLToPath(import.meta.url)), "..", "app", "sandbox.html"),
-  ];
-  for (const p of candidates) {
-    try { readFileSync(p); return p; } catch {}
-  }
-  return candidates[0];
+  return resolveRuntimeResource("mcp", "sandbox.html");
 }
 
 export function buildCspHeader(csp?: McpUiResourceCsp): string {

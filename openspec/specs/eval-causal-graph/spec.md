@@ -3,70 +3,44 @@
 ## Purpose
 
 基于 CHIFF（From Flat Logs to Causal Graphs）方法论的 session 因果图分析引擎。将 dscode session 日志从扁平消息序列转换为结构化的因果图（包含子任务分解、Agent OTAR 节点、数据流边、Agent 依赖边），并通过反事实推理（Rule1/2/3/4）定位单一根因。支持 Completion-based 快速路径（<500 steps）和 Agent-based Focus 路径（≥500 steps）。
-
-## ADDED Requirements
-
+## Requirements
 ### Requirement: Session Parsing to History Steps
 
-The system SHALL parse a `SerializedSession` into an ordered array of `HistoryStep` objects, where each step represents a single agent action (tool call) with its surrounding context.
+The system SHALL parse a `MultiAgentTrajectory` into ordered `TrajectoryStep` objects. Each step SHALL identify the real executing actor and keep tool execution separate from actor identity.
 
-Each `HistoryStep` SHALL contain:
-- `stepId`: sequential integer index
-- `agent`: tool name from `toolCall.name` (agent identity)
-- `observation`: content of the user message or toolResult that triggered this action
-- `thought`: text from the `thinking` block in the assistant message
-- `action`: `"toolName(args_summary)"` string derived from `toolCall.name` and key arguments
-- `result`: first 500 characters of the corresponding `toolResult` content
-- `messageIdx`: index into the original session messages array
-- `isError`: whether the corresponding toolResult indicates an error
-- `timestamp`: Unix ms timestamp from the original message
+Each step SHALL contain:
 
-#### Scenario: Parse session with tool calls
+- `stepId`: deterministic global integer index
+- `agentId`: full Main/SubAgent process identity
+- `application`: Agent Application name
+- `role`: `"main" | "subagent"`
+- `parentAgentId`: optional parent process identity
+- `kind`: `"response" | "tool_call" | "spawn" | "exit" | "summary"`
+- `toolName`: tool name for tool actions, otherwise undefined
+- `observation`, `thought`, `action`, `result`: OTAR evidence
+- `sourceMessageIndex` and actor-local order
+- `timestamp`
+- `isError`
+- `evidenceQuality`: `"full" | "summary"`
 
-- **WHEN** a session contains an assistant message with thinking block and `toolCall` blocks, followed by `toolResult` messages
-- **THEN** the system SHALL produce one `HistoryStep` per `toolCall`
-- **AND** `agent` SHALL be set to the tool name (e.g., `"read_file"`, `"write_file"`)
-- **AND** `thought` SHALL contain the thinking text
-- **AND** `action` SHALL be a compact representation of the tool call (e.g., `"write_file(path='src/foo.ts')"`)
+#### Scenario: Parse Main and SubAgent tool calls
 
-#### Scenario: Parse session with user messages
+- **WHEN** Main calls `spawn_agent` and the spawned Explorer later calls `read_file`
+- **THEN** the Main step SHALL identify the Main actor with `toolName: "spawn_agent"`
+- **AND** the Explorer step SHALL identify the Explorer Agent ID/Application with `toolName: "read_file"`
+- **AND** neither tool SHALL become an Agent actor
 
-- **WHEN** a session contains user text messages between assistant tool calls
-- **THEN** the user message content SHALL appear as `observation` in the next `HistoryStep`
-- **AND** user messages without following tool calls SHALL be preserved as standalone entries with `agent: "user"`
+#### Scenario: Parse text-only Agent response
 
-#### Scenario: Parse session without thinking blocks
+- **WHEN** a SubAgent assistant message contains text without a tool call
+- **THEN** the system SHALL create a `kind: "response"` step for that SubAgent
+- **AND** SHALL preserve its result text and actor identity
 
-- **WHEN** an assistant message has `toolCall` blocks but no `thinking` block
-- **THEN** `thought` SHALL be set to the assistant's text response (first 200 characters) or empty string if none exists
+#### Scenario: Parse summary-only SubAgent
 
-### Requirement: Adaptive Pipeline Path Selection
-
-The system SHALL select between the Agent-based focus pipeline and the completion-based fast path based on session step count.
-
-When `steps.length >= FOCUS_PATH_THRESHOLD` (default 500):
-- The system SHALL use the Agent-based pipeline (`runFocusPipeline`)
-- The system SHALL first write the workspace to `~/.dscode/eval/{sessionId}/library/`
-- Each CHIFF Pass SHALL spawn an independent Agent session with file system tools
-- The system SHALL display Phase progress during Agent execution
-
-When `steps.length < FOCUS_PATH_THRESHOLD`:
-- The system SHALL use the completion-based pipeline (`runCausalGraphPipeline`)
-- The system SHALL NOT create a workspace directory
-- Behavior SHALL be identical to the fast path
-
-#### Scenario: Large session triggers Agent path
-
-- **WHEN** `/eval` is run on a session with 800 steps
-- **THEN** the system SHALL select the Agent-based focus pipeline
-- **AND** SHALL create `~/.dscode/eval/{sessionId}/` with library/, notebook/, output/
-- **AND** SHALL display Phase progress (Phase 0/4 → 1/4 → 2/4 → 3/4 → 4/4)
-
-#### Scenario: Small session uses fast path
-
-- **WHEN** `/eval` is run on a session with 200 steps
-- **THEN** the system SHALL select `runCausalGraphPipeline`
-- **AND** SHALL NOT create a workspace directory
+- **WHEN** only an `AgentSessionMessage` summary is available
+- **THEN** the system SHALL create one `kind: "summary"` step with `evidenceQuality: "summary"`
+- **AND** SHALL not claim internal thoughts or tool actions
 
 ### Requirement: Step 1 — Subtask Decomposition (LLM)
 
@@ -126,54 +100,40 @@ When `onLog` callback is provided, the system SHALL call `onLog("🔗 Phase 2/6:
 
 ### Requirement: Step 3 — Agent Nodes (Deterministic) and Step Data Flows (LLM)
 
-The system SHALL construct `AgentNode[]` deterministically from `HistoryStep[]` and `Subtask[]` using `buildAgentNodes(steps, subtasks)` without calling an LLM. Agent node construction SHALL NOT fail for any valid input.
+The system SHALL construct `AgentNode[]` deterministically from real trajectory actors, `TrajectoryStep[]`, and `Subtask[]`. Agent nodes SHALL be keyed by stable Agent ID within a Subtask and SHALL contain Application, role, OTAR summaries, and referenced Step IDs.
 
-The system SHALL call an LLM for each subtask individually (divide-and-conquer) to extract step-level data flows. For each subtask, a dedicated prompt SHALL include:
-- The target subtask's step range and detailed agent/action list
-- Brief context of adjacent subtasks (IDs and step ranges) for cross-boundary data flow tracking
-- Instruction to output `StepDataFlow[]` with data item tracking for that subtask ONLY
+The CHIEF graph worker SHALL extract step-level data flows for candidate Subtasks. Every flow SHALL reference valid source and target Step IDs and their corresponding real Agent IDs. Tool names MAY appear in Action evidence but MUST NOT populate source/target Agent identity.
 
-Each `AgentNode` SHALL contain: subtaskId, agent, otar (observation, thought, action, result), and stepIds (list of step indices this agent action covers). Agent nodes SHALL be constructed from `HistoryStep` fields directly without LLM summarization.
+#### Scenario: Multiple tools used by one Agent
 
-Each `StepDataFlow` SHALL contain: subtaskId, fromStep, toStep, sourceAgent, targetAgent, dataItem, dataType, transformation, correctness ("correct" | "misinterpreted" | "misused" | "fabricated"), and confidence (0.0-1.0).
+- **WHEN** Explorer uses `read_file`, `grep`, and `glob` in one Subtask
+- **THEN** the graph SHALL contain one Explorer Agent node for that Subtask
+- **AND** its OTAR evidence SHALL reference all relevant Steps
+- **AND** SHALL not create three tool-named Agent nodes
 
-`executeStep3` SHALL return `{ agents, dataFlows }` where agents come from `buildAgentNodes()` and dataFlows are aggregated from per-subtask LLM calls. If an individual subtask's LLM call fails, the subtask SHALL be skipped with a warning and processing SHALL continue.
+#### Scenario: Cross-Agent data transfer
 
-When `onLog` callback is provided, the system SHALL call `onLog("🤖 Phase 3/6: 提取 Agent 节点...")` before processing and `onLog("✓ Phase 3/6 完成")` after successful completion.
-
-#### Scenario: Agent node construction without LLM
-
-- **WHEN** Step 1 has produced subtasks with valid step ranges and Step 2 has completed
-- **THEN** agent nodes SHALL be built deterministically from `HistoryStep[]` without an LLM call
-- **AND** each `AgentNode.otar` SHALL map directly from the corresponding `HistoryStep` fields
-
-#### Scenario: Divide-and-conquer data flow extraction
-
-- **WHEN** Step 1 produced N subtasks (e.g., N=8)
-- **THEN** the system SHALL make N separate LLM calls, one per subtask, each with maxTokens=4096
-- **AND** the aggregated `dataFlows` SHALL be the union of all successful per-subtask results
-
-#### Scenario: Graceful degradation on per-subtask failure
-
-- **WHEN** a single subtask's LLM call fails
-- **THEN** the system SHALL log a warning identifying the failed subtask
-- **AND** the system SHALL continue processing remaining subtasks
+- **WHEN** Explorer produces a finding consumed by Main
+- **THEN** a Step data-flow edge SHALL reference Explorer as source Agent and Main as target Agent
+- **AND** the edge SHALL identify the concrete producer and consumer Step IDs
 
 ### Requirement: Step 4 — Agent Edges (LLM)
 
-The system SHALL call an LLM to identify dependency edges between agents within each subtask. The LLM prompt SHALL include:
-- Subtasks and their agent nodes
-- Instruction to output agent edges with dependency type and failure modes
+The system SHALL identify dependency edges between real Agent process nodes within and across Subtasks. Each edge SHALL identify full source/target Agent IDs, Application labels, dependency type, strength, explanation, and counterfactual failure patterns.
 
-Each `AgentEdge` SHALL contain: subtask_id, source agent, target agent, dependency type (one of: "obs_dependency", "reasoning_continuation", "decision_dependency", "environment_feedback", "memory_ref", "loop_control"), strength, explanation, and failure_modes.
+Agent edges SHALL support observation dependency, reasoning continuation, decision dependency, environment feedback, memory reference, loop control, spawn control, and result return.
 
-When `onLog` callback is provided, the system SHALL call `onLog("🔗 Phase 4/6: 识别 Agent 依赖边...")` before the LLM call and `onLog("✓ Phase 4/6 完成")` after successful completion.
+#### Scenario: Orchestrator-executor dependency
 
-#### Scenario: Agent dependency detection
+- **WHEN** Main delegates a constrained task to Explorer
+- **AND** Explorer returns a result used by Main
+- **THEN** the graph SHALL include Main → Explorer spawn/control evidence
+- **AND** SHALL include Explorer → Main result-return/data evidence
 
-- **WHEN** a `read_file` agent produces data consumed by a `write_file` agent's decision
-- **THEN** an `AgentEdge` SHALL be created with type "obs_dependency"
-- **AND** `src_agent` SHALL be "read_file", `dst_agent` SHALL be "write_file"
+#### Scenario: Concurrent Agents without dependency
+
+- **WHEN** two parallel SubAgents do not exchange data and share only a Main parent
+- **THEN** the graph SHALL not infer a direct Agent edge solely because their timestamps overlap
 
 ### Requirement: Causal Graph Assembly (deterministic)
 
@@ -221,88 +181,52 @@ When `onLog` callback is provided, the system SHALL call `onLog("🎯 Phase 5/6:
 
 ### Requirement: Step 6 — Counterfactual Root Cause Attribution (LLM)
 
-The system SHALL call an LLM to determine the single root cause from the candidate set using four counterfactual rules:
+After hierarchical backtracking produces candidate real Agent Steps, the CHIEF attribution worker SHALL select a single responsible origin using progressive causal screening:
 
-**Rule 1 (Control Flow / Loop)**: If a loop is involved, determine whether the loop was justified. If not, attribute to the decision to enter the loop. If yes, attribute to the irreversible action within or after the loop.
+1. **Local Attribution**: determine whether valid inputs were locally transformed into an incorrect output or whether the anomaly propagated from an upstream Agent.
+2. **Planning-Control Attribution**: for loops, distinguish a Main/planner that repeats an unchanged failed strategy from an executor that fails despite valid strategy changes.
+3. **Data-Flow Attribution**: trace concrete data edges to the earliest Step where valid input is fabricated, misinterpreted, or misused.
+4. **Deviation-Aware Final Screening**: remove later self-corrected deviations and prefer the first irreversible point that blocks normal recovery.
 
-**Rule 2 (Data Flow)**: Trace each key data item used in the final failure. If upstream data was misinterpreted → blame current executor. If data was fabricated without upstream source → blame generator. If data was correct but misused → blame misusing node.
+The output SHALL identify `mistakeAgentId`, `mistakeApplication`, `mistakeStep`, `granularity`, `confidence`, `evidenceQuality`, reasoning, screening stages, and optional Recovery Arcs. A complete transcript attribution SHALL use Step granularity. An evidence-limited summary-only attribution SHALL use Agent granularity with `mistakeStep: null` rather than inventing a Step.
 
-**Rule 3 (Irrecoverable Point)**: Attribute to the FIRST node that made the correct path unrecoverable by normal means, not necessarily the first deviating node.
+#### Scenario: Upstream SubAgent caused downstream Main symptom
 
-**Rule 4 (Taste / Creative Drift)**: Attribute to the step where the agent chose a generic, templated, or visually degraded approach instead of the distinctive, intentional, tasteful output dscode is designed to produce.
+- **WHEN** Explorer fabricates a value and Main later uses it correctly
+- **THEN** Local Attribution SHALL exclude the Main symptom
+- **AND** Data-Flow Attribution SHALL select Explorer's corruption Step
 
-**Recovery Arc Detection**: After determining the root cause, the LLM SHALL also scan the session history for recovery arcs — instances where an error was detected and subsequently corrected by the agent. For each recovered error, the LLM SHALL identify the error event, detection event, correction event, and assess whether the correction was effective.
+#### Scenario: Planner responsibility in a loop
 
-The LLM SHALL output an `Attribution` with: mistake_agent, mistake_step, reason, rules_applied (list of "Rule1"/"Rule2"/"Rule3"/"Rule4"), **rootCauseTitle** + **rootCauseSeverity** ("primary" | "secondary"), and optionally **recoveryArcs** (array of `RecoveryArc` objects).
+- **WHEN** Main repeatedly sends semantically identical instructions after receiving failure evidence
+- **THEN** Planning-Control Attribution SHALL select the Main planning Step that failed to adapt
 
-Each `RecoveryArc` SHALL contain: errorStep, errorAgent, errorSummary, detectionStep, detectionType, correctionStep, correctionAgent, correctionSummary, effective, stepsToRecover, misdiagnosisCount.
+#### Scenario: Executor responsibility in a loop
 
-When `onLog` callback is provided, the system SHALL call `onLog("⚖️ Phase 6/6: 反事实归因...")` before the LLM call and `onLog("✓ Phase 6/6 完成")` after successful completion.
+- **WHEN** Main provides valid changed strategies but a SubAgent repeatedly ignores their constraints
+- **THEN** Planning-Control Attribution SHALL select the responsible SubAgent execution Step
 
-#### Scenario: Root cause attributed via Rule 2
+#### Scenario: Reversible deviation filtered
 
-- **WHEN** a `read_file` call returned correct data but a subsequent `write_file` misinterpreted it
-- **THEN** `mistake_agent` SHALL be "write_file"
-- **AND** `rules_applied` SHALL include "Rule2"
-- **AND** `reason` SHALL describe the data misinterpretation
-- **AND** `rootCauseTitle` SHALL be a concise summary suitable for dashboard display
+- **WHEN** a candidate error is later corrected and the relevant Oracle acceptance criteria are re-satisfied before downstream impact
+- **THEN** Final Screening SHALL assign that candidate minimal responsibility
+- **AND** SHALL prefer an irreversible candidate with stronger downstream impact
 
-#### Scenario: Root cause attributed via Rule 3
+#### Scenario: Summary-only final attribution
 
-- **WHEN** the earliest deviation was at step 12 but the first irreversible action was at step 18
-- **THEN** `mistake_step` SHALL be 18
-- **AND** `rules_applied` SHALL include "Rule3"
-- **AND** `reason` SHALL explain why step 18 was the point of no return
-
-#### Scenario: Attribution validation failure
-
-- **WHEN** Step 6 LLM returns an agent name or step number not present in the session
-- **THEN** the system SHALL retry with a correction hint
-- **AND** if retry also fails, SHALL throw an error to the caller
-
-#### Scenario: Recovery arcs present in attribution
-
-- **WHEN** the session contains an error at step 5 that was corrected at step 8 after a test failure at step 6
-- **THEN** `recoveryArcs` SHALL contain at least one `RecoveryArc`
-- **AND** the arc SHALL have errorStep=5, detectionStep=6, correctionStep=8
-- **AND** detectionType SHALL be "test_failure"
-
-#### Scenario: No recovery arcs in session
-
-- **WHEN** no errors in the session were corrected (e.g., all errors persist)
-- **THEN** `recoveryArcs` SHALL be absent or an empty array
+- **WHEN** available evidence identifies a responsible SubAgent but its internal transcript is unavailable
+- **THEN** attribution SHALL use `granularity: "agent"` and `mistakeStep: null`
+- **AND** confidence/evidence quality SHALL indicate partial evidence
 
 ### Requirement: Structured Output Parsing
 
 All LLM responses SHALL be parsed via `extractJSON(text)` to locate a JSON block, then validated against Zod schemas. Parse failures SHALL trigger at most one retry with a format correction hint. Two consecutive failures for any step SHALL throw an error to the caller.
 
-### Requirement: Agent-Based Analysis Pipeline (Focus Path)
+#### Scenario: Invalid structured output is retried once
 
-The system SHALL implement a three-pass Agent pipeline for large sessions (≥500 steps):
-
-**Pass 1 — SCAN Agent**: 
-- System prompt SHALL define the Agent as a session scanner
-- Task prompt SHALL instruct the Agent to explore `library/` and identify 3-5 attention zones
-- The Agent SHALL have access to `read_file`, `grep`, `glob`, `write_file` tools
-- The Agent SHALL write structured output to `output/scan-result.json`
-- The Agent MAY write analysis notes to `notebook/scan-notes.md`
-
-**Pass 2 — ZOOM Agent** (one per attention zone):
-- System prompt SHALL define the Agent as a causal graph analyst
-- Task prompt SHALL instruct the Agent to deep-dive a specific zone's steps
-- The Agent SHALL write structured output to `output/zone-{id}-result.json`
-
-**Pass 3 — SYNTHESIZE Agent**:
-- System prompt SHALL define the Agent as a cross-zone synthesizer
-- The Agent SHALL write structured output to `output/attribution.json`
-
-#### Scenario: Three-pass Agent pipeline execution
-
-- **WHEN** `runFocusPipeline` is called for a large session
-- **THEN** the system SHALL execute Pass 1 SCAN Agent, wait for completion, and parse `output/scan-result.json`
-- **AND** for each zone, execute a Pass 2 ZOOM Agent
-- **AND** after all zones, execute Pass 3 SYNTHESIZE Agent
-- **AND** compose the final `EvalResult` from the structured outputs
+- **WHEN** an LLM response does not contain JSON valid against the stage schema
+- **THEN** the system SHALL retry once with a format correction hint
+- **AND** a second invalid response SHALL return an error to the caller
 
 ### Requirement: Pipeline Output Consistency
 
@@ -314,18 +238,58 @@ The Agent-based focus pipeline SHALL produce `EvalResult` output that is structu
 - **THEN** `composeEvalResult` SHALL produce an `EvalResult` with all required fields
 - **AND** the result SHALL pass the same validation as the completion-based pipeline
 
-### Requirement: Pipeline Fallback on Agent Failure
+### Requirement: CHIEF Virtual Oracle Synthesis
 
-The system SHALL return a partial EvalResult with `agentFailed: true` annotation if the Agent-based pipeline encounters an unrecoverable error. The system SHALL NOT throw — it SHALL always return a valid EvalResult structure.
+The system SHALL synthesize one structured Virtual Oracle per Subtask in forward Subtask order. Each Oracle SHALL contain Goal, Preconditions, Key Evidence, and Acceptance Criteria.
 
-#### Scenario: Workspace creation fails
+Oracle synthesis SHALL consider the original user objective, previous Oracles, upstream outputs, later user feedback, final execution state, and the remaining trajectory. It SHALL perform a global consistency check so Preconditions only depend on information available before the Subtask and Acceptance Criteria are falsifiable.
 
-- **WHEN** the system cannot create `~/.dscode/eval/{sessionId}/` (e.g., disk full, permission denied)
-- **THEN** the system SHALL log a warning
-- **AND** SHALL fall back to `runCausalGraphPipeline` if session <500 steps; if ≥500 steps, return a partial EvalResult with `agentFailed: true`
+#### Scenario: Sequential Oracle constraints
 
-#### Scenario: All Agent passes exceed maxToolCalls
+- **WHEN** Subtask S2 depends on output from S1
+- **THEN** S2 Preconditions MAY reference S1's expected output
+- **AND** S1 SHALL not depend on evidence first created in S2
 
-- **WHEN** all three Agent passes fail to produce valid output
-- **THEN** the system SHALL return a partial EvalResult with `agentFailed: true`
-- **AND** the dashboard SHALL display "Agent 分析失败（已返回部分结果）"
+#### Scenario: Creative task Oracle
+
+- **WHEN** the user objective includes distinctive visual quality
+- **THEN** the Oracle SHALL include checkable quality criteria derived from user intent and feedback
+- **AND** SHALL not reduce success to tool execution alone
+
+### Requirement: Hierarchical Oracle-Guided Backtracking
+
+The system SHALL perform candidate localization in three ordered levels:
+
+1. Traverse Subtasks in reverse topological order and compare actual outputs with Oracle Goals and Acceptance Criteria.
+2. Within candidate Subtasks, compare each real Agent OTAR with Oracle Preconditions and Key Evidence.
+3. Within candidate Agents, compare concrete Steps with the Agent OTAR and full Subtask Oracle.
+
+Only candidates from the preceding level SHALL be inspected at the next level. The output SHALL preserve candidate Subtasks, Agent IDs, and Step IDs as separate sets.
+
+#### Scenario: Backtracking prunes healthy Subtasks
+
+- **WHEN** six Subtasks exist and only S3 and S4 violate their Oracles
+- **THEN** Agent-level evaluation SHALL inspect Agents from S3 and S4
+- **AND** SHALL not inspect Agents exclusively belonging to healthy Subtasks
+
+#### Scenario: Backtracking uses real Agent IDs
+
+- **WHEN** two Explorer processes use the same Application in one Session
+- **THEN** Agent candidates SHALL distinguish them by full Agent ID
+- **AND** Step candidates SHALL remain associated with the correct process
+
+### Requirement: Unified CHIEF Pipeline
+
+All Session sizes SHALL use the same CHIEF stages and output contracts. Session size SHALL only control deterministic workspace chunking and worker read strategy.
+
+#### Scenario: Small Session
+
+- **WHEN** a Session has 80 Steps
+- **THEN** it SHALL execute graph, oracle, backtracking, attribution, and rule stages through CHIEF workers
+
+#### Scenario: Large Session
+
+- **WHEN** a Session has 800 Steps
+- **THEN** it SHALL execute the same CHIEF stages
+- **AND** workspace preparation SHALL split the trajectory into bounded chunks
+- **AND** the resulting attribution schema SHALL be identical to the small Session path

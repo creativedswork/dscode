@@ -6,6 +6,7 @@ import { randomBytes } from "node:crypto";
 import { loadConfig, PROVIDER_ENV_VARS } from "./config.js";
 import { Harness } from "./harness.js";
 import { Logger } from "../utils/logger.js";
+import { PackageResourceProvider } from "../agents/application/package-resources.js";
 import { ensureOdMcpEntry, expandTilde, startOdDaemon, waitForOdDaemon, registerOdCleanup } from "./od-daemon.js";
 
 // ── Runtime ID ──
@@ -121,6 +122,11 @@ function parseArgs(): { web: boolean; webPort: number; debug: boolean; cwd?: str
 async function main(): Promise<void> {
   if (process.argv.slice(2).some((arg) => arg === "--version" || arg === "-v")) {
     console.log(readCliVersion());
+    return;
+  }
+  if (process.argv.slice(2).includes("--check-resources")) {
+    const documents = await new PackageResourceProvider().load();
+    console.log(`Resources OK: ${documents.map((item) => item.source.path).join(", ")}`);
     return;
   }
 

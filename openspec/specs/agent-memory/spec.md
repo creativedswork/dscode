@@ -1,46 +1,66 @@
-## ADDED Requirements
+# agent-memory Specification
 
-### Requirement: 记忆作用域
-系统 SHALL 支持三种代理记忆作用域：
-- **user**：`~/.claude/agent-memory/<agentType>/MEMORY.md`，跨项目共享
-- **project**：`.claude/agent-memory/<agentType>/MEMORY.md`，项目级，可版本控制
-- **local**：`.claude/agent-memory-local/<agentType>/MEMORY.md`，项目级，不入版本控制
+## Purpose
+TBD - created by archiving change subagent-design-proposal. Update Purpose after archive.
+## Requirements
+### Requirement: Memory 属于 Application
 
-#### Scenario: 作用域路径解析
-- **WHEN** 代理 `memory: "project"` 且 `agentType: "code-reviewer"`
-- **THEN** 记忆文件路径为 `<cwd>/.claude/agent-memory/code-reviewer/MEMORY.md`
+持久 Memory SHALL 按 AgentApplication name 组织，而不是按单次 agentId 组织。多个同 Application 进程 SHALL 读取同一作用域 Memory。
 
-### Requirement: 记忆注入
-系统 SHALL 在代理启动时将记忆内容注入系统提示。
+#### Scenario: Reviewer 共享项目记忆
+- **WHEN** 两个 reviewer Agent 在同一项目依次启动
+- **THEN** 两者读取同一 reviewer project memory
 
-注入格式 SHALL 包含：
-- 记忆标题：`Persistent Agent Memory`
-- 作用域提示：user 作用域提示跨项目适用，project 作用域提示项目专用
-- 完整 MARKDOWN 文件内容
+### Requirement: dscode 原生 Memory 路径
 
-#### Scenario: 记忆作为系统提示
-- **WHEN** code-reviewer 代理定义了 `memory: "project"` 且 `MEMORY.md` 包含 "always check for SQL injection"
-- **THEN** 系统提示中包含该 SQL 注入检查提示
+系统 SHALL 使用：
 
-### Requirement: 记忆更新
-系统 SHALL 允许子代理通过 `Write` 或 `Edit` 工具更新其记忆文件。
+- user：`~/.dscode/agent-memory/<application>/MEMORY.md`
+- project：`<project>/.dscode/agent-memory/<application>/MEMORY.md`
+- local：`<project>/.dscode/agent-memory-local/<application>/MEMORY.md`
 
-记忆文件路径 SHALL 在 `isAgentMemoryPath()` 中识别为代理记忆路径。
+系统 MUST NOT 将 `.claude` 作为 dscode 原生写入路径。
 
-#### Scenario: 子代理更新记忆
-- **WHEN** code-reviewer 代理在任务中发现新的代码规范问题，写入 `MEMORY.md`
-- **THEN** 下次 code-reviewer 启动时自动加载更新后的记忆
+#### Scenario: Project Memory
+- **WHEN** Application 声明 `memory: project`
+- **THEN** MemoryManager 从 `.dscode/agent-memory/<application>/MEMORY.md` 加载
 
-### Requirement: 记忆目录创建
-系统 SHALL 在代理启动时自动创建记忆目录（如不存在），创建操作 SHALL 为 fire-and-forget（不阻塞代理启动）。
+### Requirement: Claude memory 字段兼容
 
-#### Scenario: 首次使用
-- **WHEN** 首次启动带有 `memory: "project"` 的代理且记忆目录不存在
-- **THEN** 系统异步创建目录，代理正常启动
+Claude Code Application 中的 `memory: user|project|local` SHALL 映射到 dscode 对应作用域。兼容只改变路径实现，不改变字段语义。
 
-### Requirement: 记忆安全
-`isAgentMemoryPath()` SHALL 通过路径规范化（normalize）防止路径穿越攻击。
+#### Scenario: Claude 项目记忆
+- **WHEN** `.claude/agents/reviewer.md` 声明 `memory: project`
+- **THEN** 编译后的 AgentApplication 使用 dscode project memory namespace
 
-#### Scenario: 路径穿越防护
-- **WHEN** 检查 `../../etc/passwd` 是否在代理记忆目录中
-- **THEN** 规范化后判断为非记忆路径
+### Requirement: Memory 注入
+
+Application Memory SHALL 在进程启动时注入 systemPrompt 的独立区段，并 SHALL 标注 Application 和作用域。
+
+#### Scenario: 启动时注入
+- **WHEN** reviewer project Memory 包含安全检查规则
+- **THEN** reviewer Agent systemPrompt 包含该规则和 project scope 标识
+
+### Requirement: Memory 写权限
+
+Memory 更新 SHALL 经过正常 PermissionManager。只读 Application MUST NOT 因声明 memory 而自动获得写权限。
+
+#### Scenario: Explore 更新 Memory
+- **WHEN** 只读 explore Agent 尝试写 Memory
+- **THEN** 写入被权限层拒绝
+
+### Requirement: 并发 Memory 更新
+
+多个同 Application Agent 并发更新 Memory 时，系统 SHALL 使用版本检查或原子更新防止静默覆盖。
+
+#### Scenario: 并发冲突
+- **WHEN** 两个 reviewer 基于同一旧版本写入不同内容
+- **THEN** 至少一个写入收到版本冲突，不得静默覆盖
+
+### Requirement: Memory 延后实现诊断
+
+在 per-application Memory 尚未实现的阶段，加载带 memory 字段的 Application SHALL 产生 unsupported 诊断，系统 MUST NOT 静默忽略。
+
+#### Scenario: MVP 读取 Memory 配置
+- **WHEN** MVP 启动声明 memory 的 Application
+- **THEN** 启动失败或要求用户显式允许降级，并展示尚未实现诊断

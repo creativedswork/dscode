@@ -8,8 +8,6 @@ import type { HarnessAPI } from "../../core/harness-api.js";
 import { safeJsonParse, type ValidationResult, type CausalGraphSnapshot, type SubtaskSummary, type EdgeSummary, type AgentSummary, type DataFlowSummary } from "../schemas.js";
 import type { RecoveryArc } from "../schemas.js";
 import type { ScanResult, ZoneAnalysis, FocusAttribution, CascadeEdge, AlternateRootCause, SessionSkeleton, CascadeMechanism } from "./types.js";
-import { SYNTH_AGENT_SYSTEM_PROMPT, buildSynthesizeTaskPrompt } from "./prompts.js";
-import { agentLoop } from "./agent-loop.js";
 import type { ProgressDisplay } from "./progress.js";
 
 // ── Validation ──
@@ -219,39 +217,15 @@ function defaultAttribution(): FocusAttribution {
 // ── Main ──
 
 export async function synthesize(
-  scanResult: ScanResult,
+  _scanResult: ScanResult,
   zoneAnalyses: ZoneAnalysis[],
   skeleton: SessionSkeleton,
-  harness: HarnessAPI,
+  _harness: HarnessAPI,
   workspacePath: string,
-  sessionId: string,
-  progress?: ProgressDisplay,
+  _sessionId: string,
+  _progress?: ProgressDisplay,
 ): Promise<{ attribution: FocusAttribution; mergedGraph: CausalGraphSnapshot }> {
-  const taskPrompt = buildSynthesizeTaskPrompt(scanResult.zones, skeleton);
-
-  const result = await agentLoop<FocusAttribution>({
-    sessionId,
-    workspacePath,
-    systemPrompt: SYNTH_AGENT_SYSTEM_PROMPT,
-    taskPrompt,
-    harness,
-    maxToolCalls: 30,
-    outputSchemaDescription: "FocusAttribution JSON with mistakeAgent, mistakeStep, reason, rulesApplied, cascadePath, recoveryArcs",
-    validator: validateFocusAttribution,
-    phase: "SYNTHESIZE",
-    onProgress: (event) => {
-      progress?.onPhaseProgress(3, event);
-    },
-  });
-
-  // Try reading from file as fallback
-  let attribution: FocusAttribution;
-  if (result) {
-    attribution = result;
-  } else {
-    const fileResult = readAttributionOutput(workspacePath);
-    attribution = fileResult ?? defaultAttribution();
-  }
+  const attribution = readAttributionOutput(workspacePath) ?? defaultAttribution();
 
   const mergedGraph = buildMergedGraphSnapshot(zoneAnalyses, skeleton);
 

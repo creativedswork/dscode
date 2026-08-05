@@ -1,16 +1,18 @@
 import { createServer, request as httpRequest } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync } from "node:fs";
-import { join, extname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, extname } from "node:path";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { Api, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { streamSimple } from "../../models/index.js";
 import { getAllProviders, getAllModels, getVisionModels, getVisionProviders, resolveModel } from "../../models/index.js";
 import type { UiBackend } from "../backend.js";
-import type { HarnessConfig, PermissionPromptResult } from "../../core/types.js";
+import type {
+  AgentSessionMessage,
+  HarnessConfig,
+  PermissionPromptResult,
+} from "../../core/types.js";
 import type { ConfigWatch } from "../../core/config-watch.js";
-import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig, normalizeTransport, normalizeProtocolVersion, loadScopedSettings, projectSettingsPath, saveProjectSettings } from "../../core/config.js";
+import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig, loadScopedSettings, projectSettingsPath, saveProjectSettings } from "../../core/config.js";
 import { executeSlashCommand, getSlashCommandAutocomplete, resolveCustomCommand } from "../commands.js";
 import { deriveFuzzyPattern, deriveFuzzyArgPattern, describeFuzzyArgPattern } from "../../permissions/fuzzy.js";
 import { prefetchLlmSuggestions, getLlmSuggestions } from "../../permissions/fuzzy-llm.js";
@@ -23,7 +25,11 @@ import { buildMcpServers } from "../mcp-browser.js";
 import { resolveAtFileRefs, resolveFileRefs, listProjectFiles, isImagePath } from "../../utils/at-file-resolver.js";
 import { rebuildDisplayMessages } from "../../session/display.js";
 import { formatToolResultForUI } from "../shared/tool-result-formatter.js";
+import { AgentActivityProjector } from "../shared/agent-activity.js";
+import { formatAgentDisplayId } from "../shared/agent-id.js";
+import { resolveBuiltResource } from "../../resources/runtime.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
+import type { EvalDashboardState } from "../../core/events.js";
 import type {
   ClientCommand,
   ServerEvent,
@@ -34,8 +40,177 @@ import type {
   McpAppInfo,
   ToolCallEntry,
   SkillInfo,
+  EvalDashboardServerEvent,
 } from "./protocol.js";
 import type { ImageAttachment } from "./protocol.js";
+
+export const DASHBOARD_AGENT_TASK_SUMMARY_LIMIT = 100;
+export const DASHBOARD_AGENT_OUTCOME_SUMMARY_LIMIT = 120;
+
+export function projectEvalDashboardState(
+  state: EvalDashboardState,
+): EvalDashboardServerEvent {
+  switch (state.status) {
+    case "starting":
+      return {
+        type: "eval_dashboard",
+        status: "starting",
+        requestedSessionId: state.requestedSessionId,
+        startedAt: state.startedAt,
+      };
+    case "running":
+      return {
+        type: "eval_dashboard",
+        status: "running",
+        targetSessionId: state.targetSessionId,
+        runId: state.runId,
+        stage: state.stage,
+        stageStatus: state.stageStatus,
+        index: state.index,
+        total: state.total,
+        application: state.application,
+        workerAgentId: state.workerAgentId,
+        retryCount: state.retryCount,
+        durationMs: state.durationMs,
+        message: state.message,
+        startedAt: state.startedAt,
+        actorCount: state.actorCount,
+        stepCount: state.stepCount,
+        evidence: state.evidence,
+      };
+    case "completed":
+      return {
+        type: "eval_dashboard",
+        status: "completed",
+        targetSessionId: state.targetSessionId,
+        runId: state.runId,
+        html: state.html,
+        generatedAt: state.generatedAt,
+      };
+    case "failed":
+      return {
+        type: "eval_dashboard",
+        status: "failed",
+        requestedSessionId: state.requestedSessionId,
+        targetSessionId: state.targetSessionId,
+        runId: state.runId,
+        stage: state.stage,
+        error: state.error,
+      };
+  }
+}
+
+export function summarizeDashboardAgentText(
+  text: string | undefined,
+  maxLength: number,
+): string {
+  const normalized = (text ?? "").replace(/\s+/g, " ").trim();
+  const sentenceEnd = normalized.search(/[。！？.!?]/);
+  const oneSentence = sentenceEnd >= 0
+    ? normalized.slice(0, sentenceEnd + 1)
+    : normalized;
+  if (oneSentence.length <= maxLength) return oneSentence;
+  if (maxLength <= 3) return normalized.slice(0, maxLength);
+  return `${oneSentence.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
+export function formatDashboardDuration(ms: number): string {
+  const safeMs = Math.max(0, ms);
+  if (safeMs < 1000) return `${safeMs}ms`;
+  const sec = Math.floor(safeMs / 1000);
+  if (sec < 60) return `${sec}s`;
+  const min = Math.floor(sec / 60);
+  const remainSec = sec % 60;
+  if (min < 60) return `${min}m ${remainSec}s`;
+  const hrs = Math.floor(min / 60);
+  return `${hrs}h ${min % 60}m`;
+}
+
+export function buildDashboardSubagentSummary(
+  agentMessages: AgentSessionMessage[],
+) {
+  const stateCounts: Record<AgentSessionMessage["state"], number> = {
+    completed: 0,
+    failed: 0,
+    terminated: 0,
+    killed: 0,
+  };
+  const applicationCounts = new Map<string, number>();
+  let totalDurationMs = 0;
+
+  const records = [...agentMessages]
+    .sort((a, b) => a.createdAt - b.createdAt || a.agentId.localeCompare(b.agentId))
+    .map((message) => {
+      const durationMs = Math.max(
+        0,
+        message.endedAt - (message.startedAt ?? message.createdAt),
+      );
+      const error = summarizeDashboardAgentText(
+        message.output?.error,
+        DASHBOARD_AGENT_OUTCOME_SUMMARY_LIMIT,
+      );
+      const output = summarizeDashboardAgentText(
+        message.output?.text,
+        DASHBOARD_AGENT_OUTCOME_SUMMARY_LIMIT,
+      );
+      stateCounts[message.state]++;
+      applicationCounts.set(
+        message.application,
+        (applicationCounts.get(message.application) ?? 0) + 1,
+      );
+      totalDurationMs += durationMs;
+
+      return {
+        agentId: formatAgentDisplayId(message.agentId),
+        application: message.application,
+        state: message.state,
+        durationMs,
+        durationFormatted: formatDashboardDuration(durationMs),
+        taskSummary: summarizeDashboardAgentText(
+          message.input.prompt,
+          DASHBOARD_AGENT_TASK_SUMMARY_LIMIT,
+        ),
+        outcomeSummary: error || output,
+        outcomeKind: error ? "error" : output ? "output" : "none",
+      };
+    });
+
+  return {
+    total: records.length,
+    stateCounts,
+    successRate: records.length > 0
+      ? Math.round((stateCounts.completed / records.length) * 100)
+      : null,
+    totalDurationMs,
+    totalDurationFormatted: formatDashboardDuration(totalDurationMs),
+    applicationCounts: Object.fromEntries(
+      [...applicationCounts.entries()].sort(([a], [b]) => a.localeCompare(b)),
+    ),
+    records,
+  };
+}
+
+export const SESSION_DASHBOARD_VISUAL_REQUIREMENTS = `DASHBOARD CONTENT REQUIREMENTS:
+- Preserve all existing session metrics: token usage and category breakdown, context pressure, Main Agent tool statistics, top-tool warnings, Session active time, turn count, and average turn duration.
+- Treat subagents as an additional first-class section; do not replace or merge the existing metrics.
+- When subagents.total > 0, include SubAgent count and success rate in the headline metrics and render an "Agent Processes" section.
+- Each Agent Processes record must be a compact overview row showing Application, six-character Agent ID, visible state text, duration, taskSummary, and outcomeSummary.
+- Render taskSummary and outcomeSummary as single-line text. Do NOT use "Input:" or "Result:" labels.
+- Do NOT copy full SubAgent input/output, render multi-paragraph Agent prose, create transcript-style blocks, or provide expandable Agent details.
+- Full SubAgent execution detail belongs exclusively in Chat Agent Activity and must not be duplicated in Dashboard.
+- Failed, terminated, and killed records must use the error semantic colors plus visible status text; never communicate failure by color alone.
+- Label totalDurationFormatted as "Delegated time" and keep it distinct from Session active time because parallel Agents may overlap.
+- When subagents.total is 0, retain the Agent section with an explicit "Main Agent only" empty state.`;
+
+export function buildSessionDashboardUserPrompt(sessionSummary: string): string {
+  return `Create a rich visual dashboard for this coding session. Use the data below to build a comprehensive, beautiful dashboard:
+
+${sessionSummary}
+
+${SESSION_DASHBOARD_VISUAL_REQUIREMENTS}
+
+Make it visually rich with clear hierarchy, progress bars, color-coded metrics, and CSS charts.`;
+}
 
 function extractImagesFromToolResult(result: unknown): ImageAttachment[] | undefined {
   if (!result || typeof result !== "object") return undefined;
@@ -67,7 +242,6 @@ export class WebUiBackend implements UiBackend {
   private harness: HarnessAPI;
   private config: HarnessConfig;
   private configStore: ConfigWatch;
-  private projectRoot: string;
   private httpServer: ReturnType<typeof createServer>;
   private wsServer: WsServer;
   private currentClient: WebSocketClient | null = null;
@@ -98,6 +272,7 @@ export class WebUiBackend implements UiBackend {
   private contextWindowThrottlePending: boolean = false;
   private lastArtifactHtml: string = "";
   private isAssistantTurn: boolean = false;
+  private readonly agentActivityProjector: AgentActivityProjector;
 
   private cleanupUploadDir(sessionId: string): void {
     const uploadDir = join(this.config.projectPath, ".dscode", "uploads", sessionId);
@@ -114,7 +289,6 @@ export class WebUiBackend implements UiBackend {
     this.port = options.port;
     this.harness = options.harness;
     this.configStore = options.configStore;
-    this.projectRoot = options.projectRoot ?? process.cwd();
     this.config = options.config;
 
     this.wsServer = new WsServer();
@@ -130,10 +304,25 @@ export class WebUiBackend implements UiBackend {
     // Set WebSocket handlers
     this.wsServer.onConnectHandler = (client) => this.handleConnect(client);
     this.wsServer.onDisconnectHandler = (_client) => this.handleDisconnect();
-    this.wsServer.onMessageHandler = (client, cmd) => this.handleMessage(client, cmd);
+    this.wsServer.onMessageHandler = (client, cmd) => {
+      void this.handleMessage(client, cmd).catch((error) => {
+        client.send({
+          type: "error",
+          text: error instanceof Error ? error.message : String(error),
+        });
+      });
+    };
 
     // ── Event bus subscriptions ──
     const h = this.harness;
+    this.agentActivityProjector = new AgentActivityProjector(
+      h.agentSupervisor,
+      () => h.sessionManager.getCurrentSessionId() ?? undefined,
+      (activity) => this.broadcast({ type: "agent_activity", activity }),
+    );
+    const projectAgentActivity = (event: Parameters<AgentActivityProjector["handle"]>[0]) => {
+      this.agentActivityProjector.handle(event);
+    };
 
     h.events.on("llm:thinking:delta", (e) => { this.broadcast({ type: "thinking_delta", delta: e.delta }); });
     h.events.on("llm:text:delta", (e) => {
@@ -170,6 +359,14 @@ export class WebUiBackend implements UiBackend {
     h.events.on("turn:error", (e) => { this.broadcast({ type: "error", text: e.error }); });
     h.events.on("processing:start", () => { this.broadcast({ type: "loader", state: "show", text: "Thinking..." }); });
     h.events.on("processing:stop", () => { this.stopSessionTimeBroadcast(); this.broadcast({ type: "loader", state: "hide" }); });
+    h.events.on("agent:spawned", projectAgentActivity);
+    h.events.on("agent:state", projectAgentActivity);
+    h.events.on("agent:progress", projectAgentActivity);
+    h.events.on("agent:output", projectAgentActivity);
+    h.events.on("agent:exit", projectAgentActivity);
+    h.events.on("eval:dashboard", (event) => {
+      this.broadcast(projectEvalDashboardState(event.state));
+    });
     h.events.on("message:user", (e) => { this.broadcast({ type: "user_message", text: e.text, images: e.images as any }); });
     h.events.on("ui:info", (e) => { this.broadcast({ type: "info", text: e.text, display: e.display ?? "toast" }); });
     h.events.on("ui:error", (e) => { this.broadcast({ type: "error", text: e.text }); });
@@ -398,6 +595,32 @@ export class WebUiBackend implements UiBackend {
     this.broadcastContextWindow(true, toolsForBroadcast3);
   }
 
+  replayMessages(_messages: unknown[]): void {
+    const model = (this.harness.agent.state.model as any)?.name ?? this.config.modelId;
+    this.broadcast({
+      type: "ready",
+      model,
+      config: this.buildConfigData(),
+      messages: this.buildConversationHistory(),
+    });
+    this.broadcastContextWindow(true);
+  }
+
+  takePendingPermission(): import("../../core/types.js").PendingPermission | undefined {
+    if (this.permissionResolve) {
+      const pendingPermission = {
+        toolName: this.currentPermissionTool,
+        preview: this.currentPermissionPreview,
+        fuzzyPattern: deriveFuzzyPattern(this.currentPermissionTool),
+        permissionArgs: this.currentPermissionArgs,
+      };
+      this.permissionResolve({ decision: "deny" });
+      this.permissionResolve = null;
+      return pendingPermission;
+    }
+    return this.harness.sessionManager.getCurrentMetadata()?.pendingPermission;
+  }
+
   // ── UiBackend Processing ──
 
   setProcessing(processing: boolean): void {
@@ -487,6 +710,7 @@ export class WebUiBackend implements UiBackend {
   private async handleMessage(client: WebSocketClient, cmd: ClientCommand): Promise<void> {
     switch (cmd.type) {
       case "chat": {
+        const displayText = cmd.text;
         let text = cmd.text;
         let images = cmd.images;
 
@@ -495,7 +719,7 @@ export class WebUiBackend implements UiBackend {
           const knownCommands = getSlashCommandAutocomplete(this.harness.commandManager.listManifests()).map(c => c.name);
           if (knownCommands.includes(firstWord)) {
             this.pendingImages = [];
-            this.handleSlashCommand(client, text);
+            await this.handleSlashCommand(client, text);
             break;
           }
         }
@@ -594,7 +818,7 @@ export class WebUiBackend implements UiBackend {
           }
         }
         // Broadcast user message to client before sending to agent
-        client.send({ type: "user_message", text, images: images && images.length > 0 ? images : undefined } as any);
+        client.send({ type: "user_message", text: displayText, images: images && images.length > 0 ? images : undefined } as any);
         this.pushSessionList(client);
 
         try {
@@ -606,7 +830,7 @@ export class WebUiBackend implements UiBackend {
             }) as ImageContent);
             this.pendingImages = [];
             this.harness.logger.info("WebBackend", `promptWithImages: textLen=${text.length}, images=${imageContents.length}, img[0].dataLen=${imageContents[0]?.data?.length ?? 0}, mime=${imageContents[0]?.mimeType ?? "?"}`);
-            await this.harness.promptWithImages(text, imageContents);
+            await this.harness.promptWithImages(text, imageContents, displayText);
           } else {
             this.pendingImages = [];
             await this.harness.promptAndSave(text);
@@ -742,7 +966,7 @@ export class WebUiBackend implements UiBackend {
         break;
       }
       case "slash": {
-        this.handleSlashCommand(client, cmd.command);
+        await this.handleSlashCommand(client, cmd.command);
         break;
       }
 
@@ -827,7 +1051,7 @@ export class WebUiBackend implements UiBackend {
 
   private async handleSlashCommand(client: WebSocketClient, text: string): Promise<void> {
     try {
-      const executed = executeSlashCommand(text, { harness: this.harness, ui: this });
+      const executed = await executeSlashCommand(text, { harness: this.harness, ui: this });
       if (executed) {
         // Push updated session list so sidebar auto-refreshes
         this.pushSessionList(client);
@@ -1131,63 +1355,11 @@ export class WebUiBackend implements UiBackend {
           client.send({ type: "error", text: "Session ID required." });
           return;
         }
-        const sessions = sessionManager.listSessions();
-        const matches = sessions.filter((s: any) => s.id.startsWith(cmd.id!));
-        let match: any;
-        if (matches.length === 0) {
-          // Fallback: check if the requested session is the current active session
-          // (which may be filtered out by listSessions() if messageCount === 0)
-          const currentMeta = sessionManager.getCurrentMetadata();
-          if (currentMeta && currentMeta.id.startsWith(cmd.id!)) {
-            match = currentMeta;
-          } else {
-            client.send({ type: "error", text: `Session not found: ${cmd.id}` });
-            return;
-          }
-        } else if (matches.length > 1) {
-          const matchList = matches.map((s: any) =>
-            `  ${s.id.slice(0, 8)} "${s.title.slice(0, 60)}"  ${s.modelProvider}/${s.modelId}  ${s.messageCount} msgs`
-          ).join("\n");
-          client.send({ type: "error", text: `Ambiguous session ID prefix. Matching sessions:\n${matchList}` });
-          return;
-        } else {
-          match = matches[0];
-        }
-        // If permissionResolve is active, capture and deny it.
-        // If already denied by abort handler, pendingPermission is in metadata.
-        // Either way, save with truncation to keep conversation clean.
-        let pendingPermission: import("../../core/types.js").PendingPermission | undefined;
-        if (this.permissionResolve) {
-          const fuzzy = deriveFuzzyPattern(this.currentPermissionTool);
-          pendingPermission = {
-            toolName: this.currentPermissionTool,
-            preview: this.currentPermissionPreview,
-            fuzzyPattern: fuzzy,
-            permissionArgs: this.currentPermissionArgs,
-          };
-          this.permissionResolve({ decision: "deny" });
-          this.permissionResolve = null;
-        } else {
-          // Check if abort handler already saved pendingPermission to metadata
-          const meta = sessionManager.getCurrentMetadata();
-          if (meta?.pendingPermission) {
-            pendingPermission = meta.pendingPermission;
-            this.harness.logger.info("WebBackend", "using pendingPermission from metadata");
-          }
-        }
-        this.harness.abort();
-        if (pendingPermission) {
-          this.harness.logger.info("WebBackend", `saving with pendingPermission: ${JSON.stringify(pendingPermission)}`);
-          sessionManager.saveSession(agent, pendingPermission);
-        } else {
-          this.harness.logger.info("WebBackend", "saving without pendingPermission");
-          this.harness.saveSessionNow();
-        }
-        const result = await sessionManager.loadSession(match.id, agent);
-        if (!result.success) {
-          client.send({ type: "error", text: `Failed to load session: ${result.error}` });
-          return;
-        }
+        const result = await this.harness.switchSession({
+          sessionIdOrPrefix: cmd.id,
+          pendingPermission: this.takePendingPermission(),
+        });
+        const match = result.session;
         // If loaded session has pendingPermission, clean up the aborted turn
         // from agent.state.messages so the conversation looks clean.
         const loadedMeta = sessionManager.getCurrentMetadata();
@@ -1215,17 +1387,8 @@ export class WebUiBackend implements UiBackend {
             `  Messages: ${match.messageCount}`,
           ].join("\n"),
         });
-        client.send({ type: "clear_conversation" });
-
-        const messages = await this.buildConversationHistory();
-        const model = (agent.state.model as any)?.name ?? this.config.modelId;
-        client.send({
-          type: "ready",
-          model,
-          config: this.buildConfigData(),
-          messages,
-        });
-        this.broadcastContextWindow(true);
+        this.clearConversationView();
+        this.replayMessages(agent.state.messages as unknown[]);
         this.pushSessionList(client);
         break;
       }
@@ -1403,8 +1566,9 @@ export class WebUiBackend implements UiBackend {
 
   private buildConversationHistory(): ConversationMessage[] {
     const messages = this.harness.agent.state.messages as any[];
-    const vms = this.harness.sessionManager?.visionMessages ?? [];
-    return rebuildDisplayMessages(messages, vms) as any;
+    const agentMessages = this.harness.sessionManager?.agentMessages ?? [];
+    const sessionId = this.harness.sessionManager.getCurrentSessionId() ?? "unknown";
+    return rebuildDisplayMessages(messages, agentMessages, sessionId) as any;
   }
 
 
@@ -1504,11 +1668,7 @@ export class WebUiBackend implements UiBackend {
   }
 
   private serveSpa(req: IncomingMessage, res: ServerResponse): void {
-    // Resolve web dist: try dist/web relative to project root first (for tsx/source mode),
-    // then fall back to __dirname-relative (for bundled mode).
-    const projectDist = join(resolve(this.projectRoot), "dist", "web");
-    const moduleDist = join(fileURLToPath(new URL(".", import.meta.url)), "web");
-    const webDist = existsSync(projectDist) ? projectDist : moduleDist;
+    const webDist = resolveBuiltResource("web");
 
     let filePath = join(webDist, req.url === "/" ? "index.html" : req.url!);
 
@@ -1616,11 +1776,7 @@ Respond ONLY with the raw HTML starting with <!DOCTYPE html>. DO NOT wrap the ou
       // Build user prompt
       let userPrompt: string;
       if (cmd.action === "generate") {
-        userPrompt = `Create a rich visual dashboard for this coding session. Use the data below to build a comprehensive, beautiful dashboard:
-
-${sessionSummary}
-
-Make it visually stunning with emojis, progress bars, color-coded metrics, and CSS charts.`;
+        userPrompt = buildSessionDashboardUserPrompt(sessionSummary);
       } else {
         // update action
         const existingHtml = this.lastArtifactHtml || "";
@@ -1810,6 +1966,7 @@ Modify the HTML to fulfill the user's request. Output the complete modified HTML
         pressureLabel,
       },
       topTools,
+      subagents: buildDashboardSubagentSummary(sm?.agentMessages ?? []),
     }, null, 2)
   }
 }

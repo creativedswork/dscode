@@ -1,6 +1,6 @@
 ## Why
 
-Edit tool 在生产环境中的成功率为 69.2%，系统性失败模式（参数命名冲突、anchor_stale、invalid_range_order、safety_check_failed 诊断不足）导致每会话平均浪费 ~15% token 和 ~20% 往返延迟。基于 `docs/EDIT-TOOL-FAILURE-ANALYSIS.md` 的根因分析，需要通过系统层、工具层、模型层的综合治理将成功率提升至 ≥ 90%。
+Edit tool 在生产环境中的成功率为 69.2%，系统性失败模式（参数命名冲突、anchor_stale、invalid_range_order、safety_check_failed 诊断不足）导致每会话平均浪费 ~15% token 和 ~20% 往返延迟。基于 `docs/archive/implemented/edit-tool-resilience/analysis.md` 的历史根因分析，需要通过系统层、工具层、模型层的综合治理将成功率提升至 ≥ 90%。
 
 ## What Changes
 

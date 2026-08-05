@@ -20,6 +20,8 @@ When ready to implement, run /opsx:apply
 
 ---
 
+**Store selection:** If the user names a store (a store is a standalone OpenSpec repo registered on this machine) or the work lives in one, run `openspec store list --json` to discover registered store ids, then pass `--store <id>` on the commands that read or write specs and changes (`new change`, `status`, `instructions`, `list`, `show`, `validate`, `archive`, `doctor`, `context`). Other commands do not take the flag. Hints printed by commands already carry the flag; keep it on follow-ups. Without a store, commands act on the nearest local `openspec/` root.
+
 **Input**: The user's request should include a change name (kebab-case) OR a description of what they want to build.
 
 **Steps**
@@ -39,10 +41,16 @@ When ready to implement, run /opsx:apply
    matching the change name (e.g., `<change-name>-*.html`):
    - **If found**: Read the prototype HTML files — they are the design source-of-truth
      from explore. These will be referenced in the prototype artifact.
-   - **If not found and the change involves UI**: Offer to generate a prototype first
-     using the `prototype-workflow` skill, or proceed if the user prefers to skip.
+   - **If not found and the change involves UI**: STOP proposal artifact generation.
+     Load `prototype-workflow`, generate and browser-validate a self-contained HTML
+     prototype in `docs/prototypes/`, then continue. A text-only visual direction
+     or user preference to skip MUST NOT substitute for HTML.
    - **If not found and the change is non-UI**: Proceed — a non-UI stub prototype
      artifact will be created during artifact generation.
+
+   A change counts as UI if it affects visible components, rendering, layout,
+   CSS, interaction, or user-facing states. Only strictly non-UI changes may use
+   the "No prototype needed" stub.
 
 3. **Create the change directory**
    ```bash
@@ -57,6 +65,7 @@ When ready to implement, run /opsx:apply
    Parse the JSON to get:
    - `applyRequires`: array of artifact IDs needed before implementation (e.g., `["tasks"]`)
    - `artifacts`: list of all artifacts with their status and dependencies
+   - `planningHome`, `changeRoot`, `artifactPaths`, and `actionContext`: path and scope context. Use these instead of assuming repo-local paths.
 
 5. **Create artifacts in sequence until apply-ready**
 
@@ -74,10 +83,10 @@ When ready to implement, run /opsx:apply
         - `rules`: Artifact-specific rules (constraints for you - do NOT include in output)
         - `template`: The structure to use for your output file
         - `instruction`: Schema-specific guidance for this artifact type
-        - `outputPath`: Where to write the artifact
+        - `resolvedOutputPath`: Resolved path or pattern to write the artifact
         - `dependencies`: Completed artifacts to read for context
       - Read any completed dependency files for context
-      - Create the artifact file using `template` as the structure
+      - Create the artifact file using `template` as the structure and write it to `resolvedOutputPath`
       - Apply `context` and `rules` as constraints - but do NOT copy them into the file
       - Show brief progress: "Created <artifact-id>"
 

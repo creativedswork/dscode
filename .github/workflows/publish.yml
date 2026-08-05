@@ -5,8 +5,16 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
-  build:
+  build-package:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -38,29 +46,38 @@ jobs:
             exit 1
           fi
       - run: node scripts/build.mjs
+
+      - name: Pack npm artifact
+        run: |
+          mkdir -p release/artifacts
+          npm pack ./release/package --pack-destination release/artifacts
+
+      - name: Verify exact npm artifact
+        run: node scripts/verify-package.mjs release/artifacts/*.tgz
+
       - uses: actions/upload-artifact@v4
         with:
-          name: pkg
-          path: dist-standalone/
+          name: npm-package
+          path: release/artifacts/*.tgz
+          if-no-files-found: error
 
   publish-npm:
-    needs: build
+    needs: build-package
     runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: pkg
-          path: dist-standalone/
+          name: npm-package
+          path: package/
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
-      - name: Verify npm authentication
-        run: |
-          npm whoami
-          npm ping
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-      - run: cd dist-standalone && npm publish --access public
+      - run: npm install --global npm@11
+      - run: npm publish package/*.tgz --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

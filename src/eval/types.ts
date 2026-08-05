@@ -1,4 +1,11 @@
 import type { CausalGraphSnapshot, Attribution, RecoveryArc } from "./schemas.js";
+import type { ChiefAttribution, ChiefRecoveryArc } from "./chief/types.js";
+import type {
+  TrajectoryActor,
+  TrajectoryEdge,
+  TrajectoryEvidenceSummary,
+  TrajectoryStep,
+} from "./trajectory.js";
 import type { HarnessRule } from "./rules/types.js";
 export type { HarnessRule } from "./rules/types.js";
 export type { RecoveryArc } from "./schemas.js";
@@ -50,6 +57,20 @@ export interface ToolStats {
   userComplaints: number;
 }
 
+export interface AgentStats {
+  totalActors: number;
+  subagents: number;
+  applications: number;
+  completed: number;
+  failed: number;
+  terminated: number;
+  killed: number;
+  processSuccessRate: string;
+  fullTranscripts: number;
+  summaryTranscripts: number;
+  missingTranscripts: number;
+}
+
 export interface TimelineEvent {
   messageIdx: number;
   type: "phase_start" | "deviation" | "complaint" | "error" | "screenshot";
@@ -61,16 +82,24 @@ export interface TimelineEvent {
 export interface EvalResult {
   metadata: SessionMeta;
   stats: ToolStats;
+  agentStats?: AgentStats;
   phases: PhaseInfo[];
   deviations: DeviationPoint[];
   rootCauses: RootCause[];
   rules: HarnessRule[];
   timeline: TimelineEvent[];
   causalGraph: CausalGraphSnapshot | null;
-  attribution: Attribution | null;
+  attribution: Attribution | ChiefAttribution | null;
   rulesApplied: string[];
-  recoveryArcs?: RecoveryArc[];
+  recoveryArcs?: Array<RecoveryArc | ChiefRecoveryArc>;
   cascadePath?: import("./focus/types.js").CascadeEdge[];
+  actors?: TrajectoryActor[];
+  trajectoryEvidence?: TrajectoryEvidenceSummary;
+  trajectory?: {
+    steps: TrajectoryStep[];
+    controlEdges: TrajectoryEdge[];
+    dataEdges: TrajectoryEdge[];
+  };
 }
 
 export interface CompactMessage {

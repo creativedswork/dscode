@@ -1,21 +1,145 @@
 # Architecture
 
-dscode 是一个基于 `@mariozechner/pi-agent-core` + `@mariozechner/pi-ai` 构建的分层 CLI Agent Harness。
+dscode 是一个基于 `@earendil-works/pi-agent-core`、`@earendil-works/pi-ai`
+和 `@earendil-works/pi-tui` 构建的分层 Agent Harness，提供 TUI 与 Web 双界面。
 
 ## 设计哲学
 
-**Agent as OS** — Karpathy 的 LLM as OS 概念中，Agent 各组件在 OS 里都有映射：
+**Agent as OS** — dscode 借用操作系统概念描述组件之间的责任边界。这是架构类比，
+不是声称 Harness 实现了完整操作系统；每项映射都以当前代码行为为依据。
 
-| Agent 概念 | OS 映射 |
-|-----------|--------|
-| 上下文窗口 | 寄存器 |
-| System Prompt | 内核 |
-| 工具（Drivers） | 设备驱动接口 |
-| MCP Server | USB 外部设备 |
-| Skill | 用户态程序（SKILL.md = 文件描述符） |
-| Sub Agent | 进程 |
+### Kernel 与计算
+
+| Agent 概念 | OS 类比 | dscode 职责 |
+|-----------|---------|------------|
+| Harness | Kernel | 组装组件，协调进程、权限、I/O 与生命周期 |
+| Model | CPU / 计算引擎 | 执行推理计算 |
+| Agent Runtime | 进程执行环境 | 驱动单个 Agent 的 prompt、tool-call 和事件循环 |
+| System Prompt | 进程启动策略 / 只读指令段 | 为 Runtime 装载身份、规则和行为约束 |
+
+System Prompt 影响单个进程如何执行，但不管理其他进程或资源，因此不是 Kernel。
+
+### 应用与进程
+
+| Agent 概念 | OS 类比 | dscode 职责 |
+|-----------|---------|------------|
+| AgentApplication / Agent.md | Application / Executable Image / Manifest | 定义 Prompt、模型和 capability，编译为不可变 snapshot |
+| Main Agent / SubAgent | 进程 | 由同构 Agent Runtime 执行的运行实例 |
+| Main Agent | PID 1 / init | 当前 Harness 中的根 Agent 进程 |
+| `agentId` / `parentAgentId` | PID / PPID | 标识进程及父子关系 |
+| AgentSupervisor | 进程表 + 生命周期管理 + Job Control | spawn、list、wait、terminate、kill 及前后台切换 |
+| AgentContext | PCB + 进程环境 + capability set | 保存 cwd、Session 归属、深度、工具权限和 Worktree |
+
+AgentSupervisor 当前没有时间片、优先级或抢占机制，因此不等同于完整的 OS Scheduler。
+
+### 内存与状态
+
+| Agent 概念 | OS 类比 | dscode 职责 |
+|-----------|---------|------------|
+| 上下文窗口 | RAM / Agent 进程工作集 | 保存当前推理可见的 Prompt、消息、工具定义与结果 |
+| ContextManager | 内存管理器 / Pager | 负责 token 预算、工作集压缩和 overflow 恢复 |
+| Session `messages` | 可恢复会话快照 / Backing Store | 持久化 Main Agent 消息并重新装载工作集 |
+| Agent Runtime Snapshot | 进程快照 / Backing Store | 持久化 Agent Process transcript 与 usage |
+| MemoryManager | 持久化长期知识存储 | 保存跨 Session 知识，并在选中后注入 System Prompt |
+
+这里的 RAM 不是 `MemoryManager` 的同义词。前者是当前推理的易失工作集，后者保存
+跨 Session 的长期知识。
+
+### I/O
+
+| Agent 概念 | OS 类比 | dscode 职责 |
+|-----------|---------|------------|
+| Tool Call | System Call | Agent 发起的原子操作，如 `read_file`、`write_file`、`bash` |
+| Tool Schema | Syscall ABI | 定义操作名称、参数和返回契约 |
+| ToolRegistry | Syscall Table / 可调用操作表 | 汇总 Tool，并控制基础、延迟和已发现状态 |
+| DriverRegistry / Driver | 驱动注册表 / 资源适配器 | 将一组 Tool 连接到文件系统、Shell 或 MCP |
+| MCP Server | 外部应用、设备或远程服务 | 提供由 MCP Driver 暴露给 Agent 的能力 |
+| 文件系统、Shell、浏览器等 | Device / Resource | 被 Driver 实际操作的资源 |
+
+`read_file`、`write_file` 和 MCP Tool 是 Agent 可调用的操作，不是 Driver 本身。调用链为：
+
+```text
+Agent Process
+  → Tool Call
+  → Tool Schema / ToolRegistry
+  → Driver
+  → Resource
+```
+
+文件读取和 MCP 调用分别落到：
+
+```text
+Agent → read_file(path) → schema / ToolRegistry → fs Driver → 文件系统 / 磁盘
+Agent → mcp_<server>_<tool> → schema / ToolRegistry → MCP Driver → MCP Server → 外部资源
+```
+
+### 能力与隔离
+
+| Agent 概念 | OS 类比 | dscode 职责 |
+|-----------|---------|------------|
+| Skill | 按需加载的用户态能力模块 / Library | 注入 instructions，并选择允许使用的 Driver Tool |
+| SKILL.md | 模块 Manifest + 指令源 | 声明 Skill 元数据、操作规程和 Tool 白名单 |
+| PermissionManager | Capability / ACL / Syscall Filter | 在 Tool Call 前执行 allow、deny 或 ask 策略 |
+| Worktree Isolation | Filesystem Namespace / Sandbox | 为后台写进程隔离 cwd、分支和文件修改 |
+
+Skill 编排 Tool，但不实现底层资源访问；真正连接资源的是 Driver。
+
+### 通信与恢复
+
+| Agent 概念 | OS 类比 | dscode 职责 |
+|-----------|---------|------------|
+| Agent Message | 定向 IPC | 父进程向运行中的 Agent Process 补充消息 |
+| HarnessEventBus | Kernel 内事件分发 | 在 Harness 组件间发布生命周期与 UI 事件 |
+| Session | TTY + 可恢复会话 | 承载用户交互，并持久化 Main Agent 消息 |
+| Agent Runtime Snapshot | 进程快照 | 保存 Agent Process 的可审计运行状态 |
+| CheckpointManager | 文件级 Snapshot / Rollback Journal | 在文件修改前保存内容并支持回滚 |
+
+Session snapshot、Agent Runtime Snapshot 和 CheckpointManager 的粒度不同：它们分别恢复
+用户会话、记录 Agent Process 状态和回滚单个文件，不应混称为同一种 checkpoint。
+
+### 类比边界
+
+dscode 当前没有抢占式 Scheduler、通用文件描述符表，也不管理模型内部的 CPU
+寄存器式即时状态。没有对应运行时原语的 OS 概念保持未映射，不能为了让表格看起来
+完整而分配给无关组件。
 
 dscode 不服务传统"代码感知"场景（那是 Cursor / Claude Code 的领地），而是面向**数字创作**——通过 MCP 连接 Blender、浏览器、文档、表格等创作工具，让模型探索和操控各类数字环境。
+
+## Agent 进程模型
+
+所有 Agent 都是进程。Main Agent 是当前应用的 PID 1，SubAgent 是由
+`AgentSupervisor` 启动和管理的子进程。Session 只承担用户会话与消息持久化，
+不作为 SubAgent 的执行载体。
+
+SubAgent 不创建独立 Session。父 Session 的 `agentMessages` 保存
+`role: "subagent"` 的轻量关联记录，完整 transcript、Application snapshot 和
+退出结果保存在独立的 `agent-processes` 目录。旧 Session 的 `visionMessages`
+仅在加载时兼容迁移。
+
+AgentApplication 使用 Markdown 配置：
+
+```text
+resources/agents/vision.md        # 当前唯一随发行版本提供的 Agent.md
+~/.dscode/agents/*.md             # 用户级
+<project>/.dscode/agents/*.md     # 项目级
+~/.claude/agents/*.md             # Claude Code 用户级兼容
+<project>/.claude/agents/*.md     # Claude Code 项目级兼容
+```
+
+完整字段、覆盖顺序和使用方式见 [Agent.md 配置与使用](AGENT_MD.md)。
+
+运行中的进程保存到：
+
+```text
+~/.dscode/data/agent-processes/by-project/<project>/<agentId>.json
+```
+
+所有 AgentProcess 通过 `PiAgentRuntimeAdapter` 持有独立 Pi Agent。Application
+只能配置 Prompt、模型和 capability，不能选择内部 Runtime。
+
+进程通过 `spawn_agent`、`list_agents`、`wait_agent`、`terminate_agent`、
+`kill_agent` 和 `send_agent_message` 管理。后台写进程必须使用 Git Worktree，
+相对路径和 Checkpoint 通过 AsyncLocalStorage 中的 AgentContext 隔离。
 
 ## 分层架构
 
@@ -29,7 +153,7 @@ dscode 不服务传统"代码感知"场景（那是 Cursor / Claude Code 的领�
 ├──────────────────────────────────────────────────────────┤
 │  Layer 4: Skills         用户态程序，SKILL.md 声明式加载    │
 │           Drivers        内核模块 (fs/shell/search/edit/    │
-│                           vision/discovery)                  │
+│                           discovery)                         │
 │           Tool Search    延迟工具发现 (search_tools)         │
 │           Checkpoint     编辑安全网 (save/commit/rollback)   │
 ├──────────────────────────────────────────────────────────┤
@@ -47,7 +171,7 @@ dscode 不服务传统"代码感知"场景（那是 Cursor / Claude Code 的领�
 
 ## Layer 0: Agent Loop
 
-由 `@mariozechner/pi-agent-core` 提供，dscode 不重复实现。
+由 `@earendil-works/pi-agent-core` 提供，dscode 不重复实现。
 
 ### Agent 核心 API
 
@@ -88,7 +212,8 @@ agent.prompt(input)
 
 ### 职责
 
-将对话状态（消息历史 + 元数据 + compactedPrefix）持久化到磁盘，支持恢复。
+将对话状态（Main Agent 消息历史 + SubAgent 关联记录 + 元数据 +
+compactedPrefix）持久化到磁盘，支持恢复。
 
 ### 数据模型
 
@@ -102,14 +227,25 @@ agent.prompt(input)
 - **ID**: ULID（时间可排序，26 字符）
 - **写入**: 原子写入（tmp → rename）
 - **标题**: 首条用户消息截 60 字符
+- **SubAgent**: Session v3 使用 `agentMessages` 关联 Agent Process，不将其
+  transcript 混入 Main Agent 的 `messages`
 
 ### SessionManager
 
 - `createSession(model)` — 新建 session
 - `saveSession(agent, metadata)` — 从 `agent.state.messages` 序列化并写入
-- `loadSession(id, agent)` — 恢复 `agent.state.messages`
+- `prepareLoad(id)` — 校验并恢复目标快照，不修改当前 Session
+- `commitPreparedLoad(snapshot, agent)` — 无 I/O 地提交 Main messages、metadata
+  和独立的 `agentMessages`
+- `loadSession(id, agent)` — prepare/commit 兼容包装
 - `listSessions()` / `deleteSession(id)` — 管理操作
 - `getCurrentSessionId()` — 返回 ULID 用于 prompt cache 亲和
+
+跨组件切换由 `Harness.switchSession()` 协调，固定执行
+prepare → abort/quiesce → save source → persist Main Process rebind → commit。
+`session:loaded` 只在 commit 后作为完成通知发布。已有 SubAgent 不参与 Main
+Process 重绑定，并继续按创建时的 `parentSessionId` 写回源 Session。完整约束见
+[`session-switching` specification](../openspec/specs/session-switching/spec.md)。
 
 ---
 
@@ -192,7 +328,6 @@ Driver 是工具提供者，分为 builtin 和 MCP 两类：
 | `shell` | builtin | `bash` |
 | `search` | builtin | `grep`, `glob` |
 | `edit` | builtin | `edit`（基于 hash anchor 的文件编辑） |
-| `vision` | builtin | `ImagePipeline`（vision → OCR → fallback 图像处理链） |
 | `discovery` | builtin | `search_tools`（延迟工具发现） |
 | `<mcp-server>` | mcp | MCP Server 提供的工具，命名空间: `mcp_<server>_<tool>` |
 
@@ -216,16 +351,16 @@ Skill 不直接提供工具，而是声明**允许使用的 Driver 工具白名�
 3. LLM 需要时调用 `search_tools` 工具按关键词或 `select:` 精确匹配
 4. 匹配到的工具被标记为 `discovered`，下一轮请求中携带完整 schema
 
-### Vision Driver（图像处理管道）
+### Vision Agent 与 OCR fallback
 
-Vision 驱动（`src/drivers/vision/`）提供统一的 `ImagePipeline`，负责图像预处理链：vision 模型描述 → OCR 降级 → 文本占位符兜底。
+非原生多模态路径由 `AgentSupervisor` 启动 `vision.md` 对应的普通 Pi Agent。
+任务描述作为 prompt，图片作为通用 Attachment；Vision Agent 不加载工具或 Skills。
 
-1. 压缩并缓存所有图像（`ImageCache`）
-2. 若配置了 vision 模型，调用获取描述
-3. vision 失败或返回空结果 → 降级到 OCR（tesseract.js）
-4. 两者都失败 → 返回 `[Image(s) could not be processed]` 占位符
-
-`ImagePipeline` 支持 `AbortSignal`，可在图像预处理阶段取消。`Harness.promptWithImages()` 将用户上传的图像通过 `ImagePipeline.process()` 处理；MCP 工具结果中的图像同样通过此管道处理。
+图片先通过 `ImageCache` 压缩并转换为 ImageRef。Pi Agent 模型不可用、调用失败或
+返回空结果时，Supervisor 根据 Application fallback 配置在同一 agentId 下调用
+`OcrFallbackHandler`。取消信号贯穿模型与 OCR。Agent 系统启用时，图片统一经过
+Vision Agent；只有显式关闭 Agent 系统时，才使用 `ImagePipeline` 兼容路径，并在
+没有独立 Vision 配置且 Main 模型支持图片时直接交给 Main Agent。
 
 ### Checkpoint 系统
 
@@ -237,7 +372,8 @@ Vision 驱动（`src/drivers/vision/`）提供统一的 `ImagePipeline`，负责
 - **isDirty / listDirty** — 查询未提交的 checkpoint
 - **baseCommit** — 初始化时捕获 git HEAD 作为变更基线
 
-`Harness.initialize()` 初始化 CheckpointManager，使用当前 session ID 隔离不同会话的 checkpoint。
+`Harness.initialize()` 初始化 Main Agent CheckpointManager。SubAgent 通过
+AgentContext 的 agentId、parentSessionId 和 cwd 使用独立 Checkpoint namespace。
 
 ---
 
@@ -279,10 +415,11 @@ permission 规则在 `settings.json` 中配置（路径 denyPatterns、自定义
 
 | 后端 | 实现 | 入口 |
 |------|------|------|
-| `TuiBackend` | readline + ANSI escape codes | `dscode` (终端模式) |
+| `TuiBackend` | `@earendil-works/pi-tui` + HarnessEventBus adapter | `dscode` (终端模式) |
 | `WebBackend` | WebSocket + HTTP server | `dscode --web` |
 
-两者实现统一的 `UiBackend` 接口：render text/thinking/tool、prompt permissions、slash commands。
+两者通过统一的 Harness 事件和 `UiBackend` 生命周期/权限接口消费 Agent 能力。
+TUI 与 Web 分别将事件投影到各自的 conversation model。
 
 ### 前端
 
@@ -307,10 +444,10 @@ Web 模式下的前端是独立 Vite + React 项目（`web/`），通过 WebSock
 `Harness` 类（`src/core/harness.ts`）实现 `HarnessAPI` 接口（`src/core/harness-api.ts`），是进程级 host，负责：
 
 1. 加载配置（config.json + settings.json + env），创建 `ConfigWatch` 统一可观测配置层
-2. 实例化各模块：SessionManager, ContextManager, MemoryManager, DriverRegistry, ToolRegistry, SkillManager, PermissionManager, MCPManager, ImagePipeline
+2. 实例化 AgentApplicationRegistry、AgentSupervisor、SessionManager、ContextManager、MemoryManager、DriverRegistry、ToolRegistry、PermissionManager 和兼容 ImagePipeline
 3. 初始化 CheckpointManager（编辑安全网）
 4. 构建 system prompt = base + skills instructions + memories + AGENTS.md + deferred tools hint
-5. 创建 Agent（注入 hooks: transformContext, beforeToolCall, afterToolCall）
+5. 将 Main Agent 注册为 PID 1，并使用统一 PiAgentRuntimeAdapter factory 启动 AgentApplication
 6. 绑定事件（UI 渲染、token 校准、session 自动保存）
 7. 启动 UI（TUI REPL 或 Web server）
 8. 优雅关闭（保存 session, 提取 memory, 关闭 checkpoint 系统）
@@ -339,16 +476,22 @@ base prompt
 
 `HarnessAPI`（`src/core/harness-api.ts`）定义 Harness 的公共 API 表面，TUI 和 Web 后端通过该接口消费 Agent 能力，不依赖 Harness 的内部实现细节：
 
-- **readonly 访问器**: agent, sessionManager, memoryManager, driverRegistry, toolRegistry, skillManager, permissionManager, contextManager, mcpManager, config, configStore, imagePipeline
+- **readonly 访问器**: agent, agentSupervisor, applicationRegistry, sessionManager, memoryManager, driverRegistry, toolRegistry, skillManager, permissionManager, contextManager, mcpManager, config, configStore, imagePipeline
 - **mutation 方法**: `setModel()`, `setThinking()`, `setProvider()`, `updateProjectPath()`, `abort()`
 - **执行方法**: `promptWithImages()`, `promptAndSave()`
 
-此接口替代了旧的 `TuiDeps` 反模式，消除了 Web 后端中的 `as any` 类型断言。
+此接口替代了旧的 `TuiDeps` 依赖对象，使 TUI 与 Web 后端共享同一 Harness
+能力边界；局部协议适配仍可能使用运行时类型收窄。
 
 ## 目录结构
 
 ```
 src/
+├── agents/         # Agent Application、进程、Runtime 与进程工具
+│   ├── application/      # YAML loader、compiler、registry、memory
+│   ├── process/          # AgentSupervisor、Context、Fallback、Store、Worktree
+│   ├── runtimes/         # PiAgentRuntimeAdapter、OCR fallback
+│   └── tools/            # spawn/list/wait/signal/IPC
 ├── core/           # 入口 + Harness 组装 + 配置 + 共享类型
 │   ├── main.ts
 │   ├── harness.ts
@@ -395,6 +538,9 @@ src/
 web/                # Web 前端（独立 Vite + React 项目）
 ```
 
+产品发行资源位于顶层 `resources/`；构建后统一进入
+`release/package/dist/resources/`，并由带 SHA-256 的 manifest 管理。
+
 ### 运行时数据
 
 ```
@@ -402,7 +548,10 @@ web/                # Web 前端（独立 Vite + React 项目）
 ├── config.json              # /config 写入的运行时配置
 ├── settings.json            # 用户级声明式 settings
 └── data/
-    ├── sessions/<ulid>.json + index.json
+    ├── sessions/
+    │   ├── index.json       # 全局元数据索引
+    │   └── by-project/<project-slug>/<ulid>.json + index.json
+    ├── agent-processes/by-project/<project-slug>/<agentId>.json + index.json
     └── memory/global.json + projects/<hash>.json
 
 <project>/.dscode/
@@ -419,8 +568,7 @@ web/                # Web 前端（独立 Vite + React 项目）
 
 ## 参考链接
 
-- [DESIGN.md](./DESIGN.md) — 设计决策记录（ADR）
+- [AGENT_MD.md](./AGENT_MD.md) — Agent.md 配置与使用
 - [STYLE.md](./STYLE.md) — 编码规范
-- [ROADMAP.md](./ROADMAP.md) — 路线图
-- [reference/](./reference/) — 技术分析 & 参考资料
-- [archive/](./archive/) — 已完成的方案 & 历史记录
+- [OpenSpec](../openspec/specs/) — 当前行为规格
+- [archive/](./archive/README.md) — 已完成方案、过期 ADR 与历史调研

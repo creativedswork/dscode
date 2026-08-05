@@ -63,8 +63,8 @@ describe("permission prompt navigation", () => {
     expect(canNavigateMenu.call(state, "down")).toBe(true);
   });
 
-  it("submits input idea even while a tool call is waiting", () => {
-    const handleSubmit = TuiApp.prototype["handleSubmit"] as (this: any, text: string) => void;
+  it("submits input idea even while a tool call is waiting", async () => {
+    const handleSubmit = TuiApp.prototype["handleSubmit"] as (this: any, text: string) => Promise<void>;
     const resolvePermissionChoice = vi.fn();
     const setProcessing = vi.fn();
     const addUserMessage = vi.fn();
@@ -76,14 +76,15 @@ describe("permission prompt navigation", () => {
       imagePasteHandler: { drainImages: vi.fn().mockReturnValue([]), updateStatus: vi.fn(), imageCount: 0 },
       pendingPermissionContext: { toolName: "write_file", args: { path: "/tmp/test.json" } },
       editor: { setText: vi.fn(), addToHistory: vi.fn() },
+      drainedSubmitFiles: [],
       resolvePermissionChoice,
       setProcessing,
       addUserMessage,
       addError,
-      deps: { agent: { prompt } },
+      deps: { agent: {}, promptAndSave: prompt },
     };
 
-    handleSubmit.call(state, "写一个 Test.json 吧");
+    await handleSubmit.call(state, "写一个 Test.json 吧");
 
     expect(state.editor.setText).toHaveBeenCalledWith("");
     expect(resolvePermissionChoice).toHaveBeenCalledWith({
@@ -123,8 +124,8 @@ describe("permission prompt navigation", () => {
     expect(state.editor.disableSubmit).toBe(false);
   });
 
-  it("submits image-only messages", () => {
-    const handleSubmit = TuiApp.prototype["handleSubmit"] as (this: any, text: string) => void;
+  it("submits image-only messages", async () => {
+    const handleSubmit = TuiApp.prototype["handleSubmit"] as (this: any, text: string) => Promise<void>;
     const prompt = vi.fn().mockResolvedValue(undefined);
     const state = {
       imagePasteHandler: {
@@ -135,6 +136,7 @@ describe("permission prompt navigation", () => {
       },
       processing: false,
       permissionExplainMode: false,
+      drainedSubmitFiles: [],
       editor: { setText: vi.fn(), addToHistory: vi.fn() },
       deps: {
         agent: { prompt: vi.fn() },
@@ -152,7 +154,7 @@ describe("permission prompt navigation", () => {
       stop: vi.fn(),
     };
 
-    handleSubmit.call(state, "");
+    await handleSubmit.call(state, "");
 
     expect(state.editor.setText).toHaveBeenCalledWith("");
     expect(state.addUserMessage).toHaveBeenCalledWith(expect.stringContaining("1 image(s) attached"));
@@ -163,17 +165,18 @@ describe("permission prompt navigation", () => {
     ]);
   });
 
-  it("keeps empty submit as a no-op when there is no text or image", () => {
-    const handleSubmit = TuiApp.prototype["handleSubmit"] as (this: any, text: string) => void;
+  it("keeps empty submit as a no-op when there is no text or image", async () => {
+    const handleSubmit = TuiApp.prototype["handleSubmit"] as (this: any, text: string) => Promise<void>;
     const state = {
       imagePasteHandler: { drainImages: vi.fn().mockReturnValue([]) },
+      drainedSubmitFiles: [],
       editor: { setText: vi.fn(), addToHistory: vi.fn() },
       deps: { agent: { prompt: vi.fn() }, config: { atFile: {} }, projectPath: "/tmp", onSetCwd: vi.fn(), promptWithImages: vi.fn().mockResolvedValue(undefined) },
       addUserMessage: vi.fn(),
       setProcessing: vi.fn(),
     };
 
-    handleSubmit.call(state, "");
+    await handleSubmit.call(state, "");
 
     expect(state.editor.setText).not.toHaveBeenCalled();
     expect(state.addUserMessage).not.toHaveBeenCalled();

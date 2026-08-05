@@ -1,63 +1,59 @@
-## ADDED Requirements
+# eval-llm-rule-attribution Specification
 
+## Purpose
+
+Define LLM-based Harness Rule attribution from complete Eval context, including structured validation, retry, and semantic merge behavior.
+## Requirements
 ### Requirement: LLM autonomously generates rules from full CHIFF context
 
-The system SHALL generate harness rules via a single LLM call that receives the complete CHIFF analysis context. There is no non-attribution fallback path — `attributeWithLLM` is always called after successful CHIFF pipeline completion.
+The `eval-rule-attribution` Agent Application SHALL generate Harness Rules from the complete validated CHIEF context.
 
-The LLM input SHALL include:
-- CHIFF subtask summary (names, step ranges, oracle goals, phaseStatus)
-- Causal graph key paths (subtask→subtask edges with failure modes, agent→agent edges with errors)
-- Step data flows with correctness anomalies (where `correctness !== "correct"`)
-- Candidate error set (top 5 by impact_score, with deviationDescriptions and irrecoverable reasons)
-- Attribution conclusion (mistake_agent, mistake_step, reason, rules_applied, rootCauseTitle, rootCauseSeverity)
-- Recovery arcs summary (when available): error agent/step, detection type, correction agent/step, steps to recover, misdiagnosis count, rootCauseHypothesis per arc
-- Session key fragments: the 5 steps surrounding the mistake_step (thought, action, result)
-- Current Agent configuration excerpts: Identity, Soul, Tool Use Rules, AGENTS.md key lines
-- The total session length and tool call statistics
+Its input SHALL include:
 
-The LLM SHALL output a JSON `HarnessRule[]` array where each rule contains:
-- `id: string` — a concise, stable rule identifier (LLM-generated, e.g., `"R_WRITE_WITHOUT_READ_VALIDATION"`)
-- `category: RuleCategory` — which Agent config layer is implicated (identity, tool_use, tool_registry, agents_md, skill, or "other")
-- `targetLayer: string` — finer-grained target within the layer
-- `abstract: string` — de-concretized description decoupled from this specific session
-- `rawDescription: string` — LLM's complete original observation including session-specific context
-- `severity: number` — 0.0 to 1.0, LLM's initial assessment of how serious this config issue is
-- `suggestion: RuleSuggestion` — actionable config modification with `action`, `proposed` text, and `rationale`
+- target task and Session metadata
+- real Actor inventory with Agent ID, Application, role, parent, Application source/digest, and evidence quality
+- Subtasks and Virtual Oracles
+- Agent/control/data graph paths
+- Subtask, Agent, and Step candidate sets
+- final root-cause Actor, Step/granularity, confidence, and screening evidence
+- cross-Agent Recovery Arcs
+- local trajectory fragments around the root cause
+- configuration excerpts for the responsible Agent Application when available
+- shared Harness/AGENTS.md/Skill configuration relevant to the finding
 
-#### Scenario: LLM generates rules after successful CHIFF pipeline
+Each generated rule SHALL identify whether its suggestion targets a specific Agent Application or a shared Harness layer. Application-specific suggestions MUST reference the Application name/source, not a transient Agent ID. Rules SHALL remain de-concretized and MUST NOT encode Session IDs or Step numbers in their reusable abstract/suggestion.
 
-- **WHEN** CHIFF Steps 1-6 complete successfully with full causal graph and attribution
-- **THEN** Step 7 SHALL call the LLM with the complete CHIFF context
-- **AND** the LLM SHALL return a `HarnessRule[]` array
-- **AND** each rule SHALL have a non-empty `id`, `abstract`, `rawDescription`, and `suggestion`
-- **AND** `category` SHALL be one of the valid `RuleCategory` values
+#### Scenario: Rule targets responsible SubAgent Application
 
-#### Scenario: LLM identifies a novel config issue not in any pre-defined catalog
+- **WHEN** root cause belongs to an Explorer Agent and evidence implicates Explorer's system prompt
+- **THEN** the rule SHALL target the Explorer Application definition/source
+- **AND** SHALL use the Agent ID only as evidence
+- **AND** SHALL not recommend changing the Main Agent prompt by default
 
-- **WHEN** the session exhibits a pattern not anticipated by any existing rule template (e.g., "Soul section's 'editorial voice' conflicts with AGENTS.md's 'concise and direct' instruction, causing inconsistent output style")
-- **THEN** the LLM SHALL generate a new rule with a novel `id` and `abstract`
-- **AND** `category` MAY be "other" if the issue spans multiple config layers
-- **AND** `suggestion.proposed` SHALL target the specific config sections implicated
+#### Scenario: Rule targets shared Harness behavior
 
-#### Scenario: LLM finds no config-level issues worth reporting
+- **WHEN** failures across multiple Applications originate from a shared tool contract
+- **THEN** the rule SHALL target the shared tool/Harness layer
+- **AND** MAY include evidence from multiple Agent IDs
 
-- **WHEN** the session executed well and the LLM determines no Agent config changes are warranted
-- **THEN** the LLM MAY return an empty `HarnessRule[]`
-- **AND** `EvalResult.rules` SHALL be an empty array
-- **AND** the dashboard SHALL display "未检测到 Agent 配置问题"
+#### Scenario: Application snapshot unavailable
 
-#### Scenario: LLM generates rules from recovery patterns
+- **WHEN** attribution identifies a summary-only legacy Agent without an Application source snapshot
+- **THEN** the worker SHALL not invent an Application file path
+- **AND** MAY produce a shared-layer rule marked with partial evidence
+- **OR** MAY return no rule when evidence is insufficient
 
-- **WHEN** recovery arcs show `misdiagnosisCount >= 2` with `detectionType === "test_failure"`
-- **THEN** the LLM MAY generate a rule targeting the "diagnose before fix" workflow in the Tool Use Rules layer
-- **AND** the rule abstract SHALL reference the recovery pattern as evidence
-- **AND** the suggestion SHALL be de-concretized (not referencing specific step numbers)
+#### Scenario: No config issue
 
-#### Scenario: Step 7 without recovery arcs (backward compat)
+- **WHEN** CHIEF attribution finds an execution-specific error with no justified configuration change
+- **THEN** the worker MAY return an empty `HarnessRule[]`
+- **AND** the Dashboard SHALL display that no Agent configuration issue was detected
 
-- **WHEN** Step 7 LLM is called but no recovery arcs are available
-- **THEN** the prompt SHALL omit the recovery arcs section
-- **AND** Harness Rule generation SHALL proceed normally with the existing context
+#### Scenario: Recovery pattern informs rule
+
+- **WHEN** one Agent causes an error and another Agent corrects it after repeated misdiagnosis
+- **THEN** the worker MAY derive a rule from the cross-Agent recovery pattern
+- **AND** SHALL preserve the distinction between error and correction Applications in evidence
 
 ### Requirement: Simplified HarnessRule type without deterministic pattern
 
@@ -89,22 +85,23 @@ The simplified `HarnessRule` SHALL contain:
 
 ### Requirement: LLM output validation and retry
 
-The LLM output from Step 7 SHALL be validated against a Zod schema for `HarnessRule[]`. If validation fails (invalid JSON, missing required fields, invalid category), the system SHALL retry once with a format correction hint. After two consecutive failures, the system SHALL log a warning, return an empty array, and NOT block the eval pipeline.
+The eval coordinator SHALL validate the `eval-rule-attribution` worker output using the existing typed HarnessRule validators plus Actor/Application reference validation.
 
-#### Scenario: Valid LLM output passes validation
+Invalid output SHALL trigger one fresh process retry with validation feedback. If both attempts fail, the coordinator SHALL log the failure, use an empty rule list, and continue Dashboard generation because rule extraction is supplementary to validated CHIEF attribution.
 
-- **WHEN** the LLM returns a valid JSON array of HarnessRule objects
-- **THEN** the rules SHALL be accepted and included in `EvalResult.rules`
+#### Scenario: Valid Application target
 
-#### Scenario: Invalid LLM output triggers retry
+- **WHEN** a rule targets an Application present in the trajectory or a known shared layer
+- **THEN** it SHALL pass target validation
 
-- **WHEN** the LLM returns JSON missing the required `abstract` field
-- **THEN** the system SHALL retry once with the error message: "Missing required field 'abstract' in rule[0]"
-- **AND** if retry succeeds, the corrected rules SHALL be used
+#### Scenario: Unknown Application target
 
-#### Scenario: Two consecutive failures produce empty rules
+- **WHEN** a rule claims an Application-specific change for an unknown Application
+- **THEN** validation SHALL reject the output
+- **AND** the retry prompt SHALL identify the unknown target
 
-- **WHEN** both the initial call and retry produce invalid output
-- **THEN** the system SHALL log a warning
-- **AND** `EvalResult.rules` SHALL be an empty array
-- **AND** the eval pipeline SHALL continue normally (dashboard generation etc.)
+#### Scenario: Two invalid outputs
+
+- **WHEN** both rule worker attempts fail validation
+- **THEN** `EvalResult.rules` SHALL be empty
+- **AND** CHIEF root-cause attribution and Dashboard generation SHALL continue

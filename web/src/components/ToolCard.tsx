@@ -304,6 +304,7 @@ export function ToolCard({ tool, thinking }: ToolCardProps) {
             {images.map((img, i) => (
               <img
                 key={i}
+                data-collider="media-item"
                 src={`data:${img.mimeType};base64,${img.data}`}
                 alt={`Tool result image ${i + 1}`}
                 className="max-w-[300px] max-h-[300px] object-contain rounded cursor-pointer hover:opacity-90 transition-opacity"

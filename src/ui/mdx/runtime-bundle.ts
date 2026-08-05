@@ -1,22 +1,11 @@
-import { existsSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { readFileSync } from "node:fs";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
+import { resolveRuntimeResource } from "../../resources/runtime.js";
 
 let cached: string | null = null;
 
 function findMdxRuntimePath(): string {
-  const candidates = [
-    // Built dist directory (runtime-bundle.js is in dist/ alongside dist/mdx-runtime.js)
-    join(process.cwd(), "dist", "mdx-runtime.js"),
-    // Source directory (development)
-    join(__dirname, "mdx-runtime.js"),
-  ];
-  for (const p of candidates) {
-    if (existsSync(p)) return p;
-  }
-  return candidates[1]; // Fallback to src path
+  return resolveRuntimeResource("mdx", "mdx-runtime.js");
 }
 
 /**

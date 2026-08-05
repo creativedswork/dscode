@@ -1,6 +1,6 @@
-// ── CHIFF Iterative Focusing Types ──
+// ── CHIEF Iterative Focusing Types ──
 // Types for the three-pass focusing pipeline: Scan → Zoom → Synthesize.
-// Reuses existing CHIFF schemas (SubtaskEdge, AgentNode, AgentEdge, StepDataFlow)
+// Reuses existing CHIEF schemas (SubtaskEdge, AgentNode, AgentEdge, StepDataFlow)
 // for zone-level analysis results.
 
 import type {

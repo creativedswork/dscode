@@ -1,4 +1,4 @@
-import type { DisplayMessage, ImageRef, VisionMessage } from "./types.js";
+import type { AgentSessionMessage, DisplayMessage } from "./types.js";
 import { ImageCache } from "../utils/image-cache.js";
 import { formatToolResultForUI } from "../ui/shared/tool-result-formatter.js";
 
@@ -60,10 +60,10 @@ function extractToolResultText(blocks: any[], toolName: string): string {
 // ── Main ──
 
 /**
- * Rebuild display-ready messages from raw agent messages and vision message logs.
+ * Rebuild display-ready messages from raw Main Agent messages and child Agent logs.
  *
  * - agent.state.messages → the model's actual input (may contain <image_description>)
- * - visionMessages → links ImageRef to messages by messageIndex
+ * - agentMessages → links child Agent attachments to messages by messageIndex
  *
  * The display layer strips machine-generated descriptions and restores original images
  * from cache, so the user sees their own text + images instead of text descriptions.
@@ -75,12 +75,14 @@ function extractToolResultText(blocks: any[], toolName: string): string {
  */
 export function rebuildDisplayMessages(
   messages: any[],
-  visionMessages: VisionMessage[],
+  agentMessages: AgentSessionMessage[],
+  parentSessionId = "unknown",
 ): DisplayMessage[] {
-  // Build a lookup: messageIndex → VisionMessage
-  const visionMap = new Map<number, VisionMessage>();
-  for (const vm of visionMessages) {
-    visionMap.set(vm.messageIndex, vm);
+  const agentMap = new Map<number, AgentSessionMessage>();
+  for (const message of agentMessages) {
+    if (message.messageIndex !== undefined) {
+      agentMap.set(message.messageIndex, message);
+    }
   }
 
   // Pass 1: sequential scan — extract tool calls, match results, collect output indices
@@ -156,12 +158,12 @@ export function rebuildDisplayMessages(
   }
 
   // Pass 2: build DisplayMessage[] for emitted indices
-  const result: DisplayMessage[] = [];
+  const result: Array<{ message: DisplayMessage; sourceIndex: number }> = [];
 
   for (let i = 0; i < messages.length; i++) {
     if (!output.has(i)) continue;
     const m = messages[i];
-    const vm = visionMap.get(i);
+    const agentMessage = agentMap.get(i);
 
     // Content
     let content = extractText(m.content);
@@ -169,12 +171,20 @@ export function rebuildDisplayMessages(
     // Images
     let images: DisplayMessage["images"] = undefined;
 
-    if (vm) {
-      // Vision-associated message: strip <image_description>, restore images from cache
-      content = content.replace(/<image_description>[\s\S]*?<\/image_description>/g, "").trim();
+    const imageLinkedAgent = agentMessage?.input.attachments?.some(
+      (attachment) => attachment.type === "image",
+    )
+      ? agentMessage
+      : undefined;
+
+    if (imageLinkedAgent) {
+      content = imageLinkedAgent.input.prompt;
 
       const restored: { data: string; mimeType: string }[] = [];
-      for (const ref of vm.images) {
+      const imageRefs = imageLinkedAgent.input.attachments
+        ?.filter((attachment) => attachment.type === "image")
+        .map((attachment) => attachment.data) ?? [];
+      for (const ref of imageRefs) {
         const cached = ImageCache.getSync(ref);
         if (cached) {
           restored.push({ data: cached.data, mimeType: cached.mimeType });
@@ -224,18 +234,94 @@ export function rebuildDisplayMessages(
 
     // System messages with no content: preserve but with empty content
     if (m.role === "system" && !content && !images) {
-      result.push({ role: "system", content: "", thinking, tools });
+      result.push({
+        message: {
+          role: "system",
+          content: "",
+          thinking,
+          tools,
+          createdAt: typeof m.createdAt === "number" ? m.createdAt : undefined,
+        },
+        sourceIndex: i,
+      });
       continue;
     }
 
     result.push({
-      role: m.role ?? "assistant",
-      content,
-      images,
-      thinking,
-      tools,
+      message: {
+        role: m.role ?? "assistant",
+        content,
+        images,
+        thinking,
+        tools,
+        createdAt: typeof m.createdAt === "number" ? m.createdAt : undefined,
+      },
+      sourceIndex: i,
     });
   }
 
-  return result;
+  const sortedAgentMessages = agentMessages
+    .map((message, index) => ({ message, index }))
+    .sort((a, b) => a.message.createdAt - b.message.createdAt || a.index - b.index);
+
+  for (const { message: agentMessage } of sortedAgentMessages) {
+    const displayMessage: DisplayMessage = {
+      role: "agent",
+      content: "",
+      createdAt: agentMessage.createdAt,
+      agentActivity: {
+        agentId: agentMessage.agentId,
+        parentAgentId: agentMessage.parentAgentId,
+        parentSessionId,
+        application: agentMessage.application,
+        attachment: "foreground",
+        state: agentMessage.state,
+        input: agentMessage.input.prompt,
+        output: agentMessage.output?.text,
+        error: agentMessage.output?.error,
+        createdAt: agentMessage.createdAt,
+        startedAt: agentMessage.startedAt,
+        endedAt: agentMessage.endedAt,
+      },
+    };
+
+    if (agentMessage.messageIndex !== undefined) {
+      let insertAt = -1;
+      for (let i = result.length - 1; i >= 0; i--) {
+        if (result[i].sourceIndex === agentMessage.messageIndex) {
+          insertAt = i + 1;
+          while (
+            insertAt < result.length
+            && result[insertAt].message.role === "agent"
+          ) {
+            insertAt++;
+          }
+          break;
+        }
+      }
+      if (insertAt >= 0) {
+        result.splice(insertAt, 0, {
+          message: displayMessage,
+          sourceIndex: agentMessage.messageIndex,
+        });
+        continue;
+      }
+    }
+
+    const timestampInsertAt = result.findIndex(
+      (entry) =>
+        typeof entry.message.createdAt === "number"
+        && entry.message.createdAt > agentMessage.createdAt,
+    );
+    if (timestampInsertAt >= 0) {
+      result.splice(timestampInsertAt, 0, {
+        message: displayMessage,
+        sourceIndex: -1,
+      });
+    } else {
+      result.push({ message: displayMessage, sourceIndex: -1 });
+    }
+  }
+
+  return result.map((entry) => entry.message);
 }

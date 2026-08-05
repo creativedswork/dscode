@@ -14,7 +14,8 @@ runCausalGraphPipeline()
 
 现有设计将所有步骤和历史作为单一 LLM 上下文传入，假设 session 总能装进 context window。对于大 session，这个假设不成立。
 
-技术方案详见 `docs/CHIFF-ITERATIVE-FOCUSING.md`，本文档聚焦架构决策和取舍。
+历史技术方案归档于
+`docs/archive/implemented/eval/CHIFF-ITERATIVE-FOCUSING.md`，本文档聚焦架构决策和取舍。
 
 ## Goals / Non-Goals
 
@@ -161,4 +162,3 @@ runCausalGraphPipeline()
 - Pass 2 的 Zone 并行化如何实现？决策：V1 使用 `Promise.allSettled`（async I/O 并发, LLM 调用是纯 I/O-bound, 无需 Worker Threads/Child Processes）。V2 如需 provider rate limit 再加 `p-limit` 信号量。
 - 500 steps 的快速路径阈值是否需要从配置读取？决策：V1 硬编码为常量 `FOCUS_PATH_THRESHOLD = 500`。后期如有需要再加环境变量 override。
 - FocusAttribution 的 cascadePath 是否需要在 dashboard 中可视化？决策：需要。在 dashboard 中新增级联路径图，展示错误如何跨 zone 传播（见 eval-iterative-focusing spec）。
-

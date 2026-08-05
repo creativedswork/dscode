@@ -16,4 +16,10 @@ export type {
   ToolCallEntry,
   SkillInfo,
   ContextWindowData,
+  AgentActivity,
+  AgentActivityProgress,
+  AgentActivityState,
+  EvalDashboardServerEvent,
+  EvalDashboardStage,
+  EvalDashboardEvidenceSummary,
 } from "../../ui/shared/types.js";

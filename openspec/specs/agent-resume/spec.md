@@ -1,47 +1,64 @@
-## ADDED Requirements
+# agent-resume Specification
 
-### Requirement: 中断恢复入口
-系统 SHALL 提供 `resumeAgentBackground()` 函数，支持从侧链转录恢复被中断或后台化的代理。
+## Purpose
+TBD - created by archiving change subagent-design-proposal. Update Purpose after archive.
+## Requirements
+### Requirement: 活进程 IPC
 
-恢复流程 MUST：
-1. 从 `getAgentTranscript(agentId)` 读取侧链转录
-2. 从 `readAgentMetadata(agentId)` 读取代理元数据
-3. 重建消息列表（过滤空白消息、孤立思考消息、未解决的 tool_use）
-4. 重建内容替换状态（`reconstructForSubagentResume`）
-5. 将新 prompt 作为 user 消息追加
-6. 调用 `runAgent()` 继续执行
+系统 SHALL 支持向实现 messaging capability 且处于 running、waiting 或 stopped 的 Agent 发送消息。PiAgentRuntimeAdapter SHALL 通过 steering 或 follow-up queue 在安全边界注入。
 
-#### Scenario: SendMessage 恢复
-- **WHEN** 主 Agent 通过 `SendMessage({to: "explorer-1", content: "再查查测试文件"})` 恢复后台代理
-- **THEN** `resumeAgentBackground()` 加载历史转录，追加新 prompt，继续执行
+#### Scenario: Steering 消息
+- **WHEN** 父进程向正在执行工具的 Agent 发送补充要求
+- **THEN** 当前工具完成后，目标 Agent 在下一轮模型调用前接收消息
 
-### Requirement: 转录过滤
-恢复时 SHALL 对侧链转录进行过滤：
-- 移除仅包含空白内容的 assistant 消息
-- 移除孤立思维消息（无后续 tool_use 的 thinking 内容）
-- 移除未解决的 tool_use 块（无对应 tool_result）
+### Requirement: 进程可见性
 
-#### Scenario: 过滤无效消息
-- **WHEN** 转录中包含一条仅含 thinking 的 assistant 消息
-- **THEN** 该消息在恢复时被过滤掉
+只有父进程、祖先进程或具备 managed process-control capability 的调用方 SHALL 能控制 Agent。普通 Agent MUST NOT 向无关进程发送消息或信号。
 
-### Requirement: 状态重建
-系统 SHALL 在恢复时重建以下状态：
-- 文件读取缓存（`cloneFileStateCache`）
-- 内容替换状态（`reconstructForSubagentResume`）
-- Worktree 路径（如原始代理使用了 worktree 隔离）
+#### Scenario: 跨会话控制
+- **WHEN** Session B 的 Main Agent 尝试 kill Session A 的子进程
+- **THEN** 操作被拒绝
 
-#### Scenario: Worktree 恢复
-- **WHEN** 原始代理使用 worktree 且 worktree 仍然存在
-- **THEN** 恢复的代理在相同 worktree 路径下执行
+### Requirement: 协作式终止
 
-#### Scenario: Worktree 丢失
-- **WHEN** 原始 worktree 已被外部删除
-- **THEN** 恢复时代理回退到父代理的 cwd
+`terminate_agent` SHALL 请求 Agent 在当前安全边界退出。系统 SHALL 保留已完成的消息、工具结果和输出，并 SHALL 将状态转换为 exited 或 failed。
 
-### Requirement: Fork 代理恢复
-恢复 Fork 子代理时 SHALL 使用 `FORK_AGENT` 定义和父代理的系统提示（而非 `FORK_AGENT` 的空系统提示）。
+#### Scenario: 工具执行期间终止
+- **WHEN** Agent 正在执行可取消工具且收到 terminate
+- **THEN** 系统先发送协作式取消并保存已完成结果
 
-#### Scenario: Fork 恢复
-- **WHEN** 恢复一个 Fork 子代理
-- **THEN** 使用父代理渲染的系统提示，确保 Prompt Cache 一致性
+### Requirement: 强制终止
+
+`kill_agent` SHALL abort PiAgentRuntime 和可取消工具，并 SHALL 将 Agent 转为 killed 终态。强制终止 MUST 产生 agent:exit。
+
+#### Scenario: Agent 无法协作停止
+- **WHEN** terminate 超时后父进程发送 kill
+- **THEN** Agent 进入 killed 且 Process Table 不再标记 running
+
+### Requirement: stopped 与 background 正交
+
+`stopped` SHALL 表示暂停执行，`background` SHALL 表示终端挂载方式。系统 MUST NOT 将二者混为同一状态。
+
+#### Scenario: Background stopped
+- **WHEN** background Agent 被暂停
+- **THEN** state 为 stopped 且 attachment 仍为 background
+
+### Requirement: 暂停与继续
+
+当 AgentProcessRuntime 实现 suspension capability 时，`suspend_agent` SHALL 在当前安全边界将进程切换为 stopped。`continue_agent` SHALL 使用同一 agentId、runtime state 和 attachment 恢复运行。
+
+#### Scenario: 继续前台进程
+- **WHEN** stopped foreground Agent 收到 continue
+- **THEN** state 返回 running，attachment 仍为 foreground
+
+#### Scenario: Runtime 不支持 STOP
+- **WHEN** 对未实现 suspension capability 的 AgentProcessRuntime 调用 suspend_agent
+- **THEN** 操作返回 unsupported，进程保持原状态
+
+### Requirement: 退出进程消息
+
+`send_agent_message` MUST 拒绝 exited、failed 和 killed Agent。若调用方希望继续工作，SHALL 启动新 Agent 并显式选择是否携带旧转录摘要。
+
+#### Scenario: 给已退出 Agent 发消息
+- **WHEN** Main Agent 向 completed Agent 发送消息
+- **THEN** 返回进程已退出错误，不自动重新创建 Agent

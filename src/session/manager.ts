@@ -1,7 +1,13 @@
-import type { Agent } from "@earendil-works/pi-agent-core";
+import type { Agent as PiAgentRuntime } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
 
-import type { ImageRef, SerializedSession, SessionMetadata, VisionMessage } from "../core/types.js";
+import type {
+  AgentSessionMessage,
+  PreparedSessionLoad,
+  SerializedSession,
+  SessionMetadata,
+  VisionMessage,
+} from "../core/types.js";
 import { ImageCache } from "../utils/image-cache.js";
 import { SessionStore } from "./store.js";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
@@ -15,10 +21,71 @@ export interface LoadResult {
   error?: string;
 }
 
+export const DASHBOARD_CONTENT_VERSION = "session-dashboard-v3-agent-overview";
+
 function ulid(): string {
   const t = Date.now().toString(36).padStart(10, "0");
   const r = Array.from({ length: 16 }, () => Math.random().toString(36)[2]).join("");
   return (t + r).toUpperCase().slice(0, 26);
+}
+
+function migrateVisionMessages(messages: VisionMessage[]): AgentSessionMessage[] {
+  return messages.map((message) => ({
+    role: "subagent",
+    agentId: `legacy-vision-${message.turnIndex}-${message.timestamp}`,
+    application: "vision",
+    state: "completed",
+    input: {
+      prompt: message.prompt,
+      attachments: message.images.map((data) => ({ type: "image" as const, data })),
+    },
+    output: {
+      text: message.description,
+      source: "vision",
+    },
+    messageIndex: message.messageIndex,
+    createdAt: message.timestamp,
+    endedAt: message.timestamp,
+  }));
+}
+
+function sessionAgentMessages(session: SerializedSession): AgentSessionMessage[] {
+  return [
+    ...(session.agentMessages ?? []),
+    ...migrateVisionMessages(session.visionMessages ?? []),
+  ];
+}
+
+export function computeSessionContentHash(
+  messages: unknown[],
+  agentMessages: AgentSessionMessage[] = [],
+  dashboardVersion = DASHBOARD_CONTENT_VERSION,
+): string {
+  const mainProjection = messages.map((message: any) =>
+    `${message.role}:${String(message.content ?? "").slice(0, 200)}`,
+  );
+  const agentProjection = [...agentMessages]
+    .sort((a, b) => a.createdAt - b.createdAt || a.agentId.localeCompare(b.agentId))
+    .map((message) => ({
+      agentId: message.agentId,
+      application: message.application,
+      state: message.state,
+      prompt: message.input.prompt,
+      output: message.output?.text,
+      error: message.output?.error,
+      createdAt: message.createdAt,
+      startedAt: message.startedAt,
+      endedAt: message.endedAt,
+    }));
+
+  return createHash("sha256")
+    .update(JSON.stringify({
+      version: dashboardVersion,
+      main: mainProjection,
+      agents: agentProjection,
+    }))
+    .digest("hex")
+    .slice(0, 12);
 }
 
 function extractFirstUserMessage(messages: unknown[]): string {
@@ -169,7 +236,8 @@ export class SessionManager {
   private store: SessionStore;
   private current: SessionMetadata | null = null;
   private projectPath: string;
-  private _visionMessages: VisionMessage[] = [];
+  private _agentMessages: AgentSessionMessage[] = [];
+  private _legacyVisionMessages: VisionMessage[] = [];
   private accumulatedMs = 0;
   private activeSince: number | null = null;
 
@@ -179,12 +247,55 @@ export class SessionManager {
     this.store = new SessionStore(dataDir, projectPath);
   }
 
-  get visionMessages(): VisionMessage[] {
-    return this._visionMessages;
+  get agentMessages(): AgentSessionMessage[] {
+    return [
+      ...this._agentMessages,
+      ...migrateVisionMessages(this._legacyVisionMessages),
+    ];
   }
 
-  setVisionMessages(vms: VisionMessage[]): void {
-    this._visionMessages = vms;
+  setAgentMessages(messages: AgentSessionMessage[]): void {
+    this._agentMessages = messages;
+    this._legacyVisionMessages = [];
+  }
+
+  upsertAgentMessage(sessionId: string, message: AgentSessionMessage): void {
+    if (this.current?.id === sessionId) {
+      this._agentMessages = [
+        ...this._agentMessages.filter((item) => item.agentId !== message.agentId),
+        message,
+      ];
+      return;
+    }
+    const session = this.store.load(sessionId);
+    session.version = 3;
+    session.agentMessages = [
+      ...sessionAgentMessages(session).filter((item) => item.agentId !== message.agentId),
+      message,
+    ];
+    delete session.visionMessages;
+    session.metadata.contentHash = computeSessionContentHash(
+      session.messages,
+      session.agentMessages,
+    );
+    this.store.save(session);
+    this.events?.emit({ type: "session:saved", id: sessionId });
+  }
+
+  appendVisionMessage(sessionId: string, message: VisionMessage): void {
+    if (this.current?.id === sessionId) {
+      this._legacyVisionMessages = [...this._legacyVisionMessages, message];
+      return;
+    }
+    const session = this.store.load(sessionId);
+    session.version = 2;
+    session.visionMessages = [...(session.visionMessages ?? []), message];
+    session.metadata.contentHash = computeSessionContentHash(
+      session.messages,
+      sessionAgentMessages(session),
+    );
+    this.store.save(session);
+    this.events?.emit({ type: "session:saved", id: sessionId });
   }
 
   /** Subscribe to event bus for autonomous timer management and emit session lifecycle events. */
@@ -226,7 +337,8 @@ export class SessionManager {
       };
       this.accumulatedMs = 0;
     }
-    this._visionMessages = [];
+    this._agentMessages = [];
+    this._legacyVisionMessages = [];
     this.events?.emit({ type: "session:created", id: this.current.id });
     return this.current;
   }
@@ -249,7 +361,7 @@ export class SessionManager {
     this.events?.emit({ type: "session:saved", id: this.current!.id });
   }
 
-  saveSession(agent: Agent, pendingPermission?: import("../core/types.js").PendingPermission): void {
+  saveSession(agent: PiAgentRuntime, pendingPermission?: import("../core/types.js").PendingPermission): void {
     if (!this.current) return;
     const messages = agent.state.messages as any[];
     if (messages.length === 0) return;
@@ -279,12 +391,8 @@ export class SessionManager {
     if (!this.current.preview) {
       this.current.preview = extractFirstUserMessage(messages as unknown[]);
     }
-    // Compute content hash for dashboard cache invalidation
-    const contentHash = createHash("sha256")
-      .update(messages.map((m: any) => `${m.role}:${String(m.content ?? "").slice(0, 200)}`).join("|"))
-      .digest("hex")
-      .slice(0, 12);
-    this.current.contentHash = contentHash;
+    // Compute content hash for dashboard cache invalidation.
+    this.current.contentHash = computeSessionContentHash(messages, this.agentMessages);
 
     this.current.projectPath = this.projectPath;
 
@@ -313,21 +421,28 @@ export class SessionManager {
     this.current.hasImages = hasImages;
     this.current.imageCount = totalImages;
 
-    const version: 1 | 2 = hasImages || this._visionMessages.length > 0 ? 2 : 1;
+    const version: 1 | 2 | 3 = this._agentMessages.length > 0
+      ? 3
+      : hasImages || this._legacyVisionMessages.length > 0
+        ? 2
+        : 1;
 
     const session: SerializedSession = {
       version,
       metadata: this.current,
       messages: serializedMessages as unknown[],
     };
-    if (this._visionMessages.length > 0) {
-      session.visionMessages = this._visionMessages;
+    if (this._agentMessages.length > 0) {
+      session.agentMessages = this._agentMessages;
+    }
+    if (this._legacyVisionMessages.length > 0) {
+      session.visionMessages = this._legacyVisionMessages;
     }
     this.store.save(session);
     this.events?.emit({ type: "session:saved", id: this.current!.id });
   }
 
-  trySaveSession(agent: Agent, pendingPermission?: import("../core/types.js").PendingPermission): void {
+  trySaveSession(agent: PiAgentRuntime, pendingPermission?: import("../core/types.js").PendingPermission): void {
     try {
       this.saveSession(agent, pendingPermission);
     } catch (err) {
@@ -335,24 +450,36 @@ export class SessionManager {
     }
   }
 
-  async loadSession(id: string, agent: Agent): Promise<LoadResult> {
+  async prepareLoad(id: string): Promise<PreparedSessionLoad> {
+    const session = this.store.load(id);
+    const messages = session.messages as any[];
+
+    for (const message of messages) {
+      await restoreImagesFromCache(message);
+    }
+
+    return {
+      id,
+      metadata: session.metadata,
+      messages,
+      agentMessages: sessionAgentMessages(session),
+    };
+  }
+
+  commitPreparedLoad(prepared: PreparedSessionLoad, agent: PiAgentRuntime): void {
+    // SubAgent records remain display/audit metadata and never enter model context.
+    agent.state.messages = prepared.messages as any;
+    this.current = prepared.metadata;
+    this.accumulatedMs = prepared.metadata.totalActiveMs ?? 0;
+    this._agentMessages = prepared.agentMessages;
+    this._legacyVisionMessages = [];
+    this.events?.emit({ type: "session:loaded", id: prepared.id });
+  }
+
+  async loadSession(id: string, agent: PiAgentRuntime): Promise<LoadResult> {
     try {
-      const session = this.store.load(id);
-      const messages = session.messages as any[];
-
-      // Restore images from cache for any ImageRef entries
-      for (const msg of messages) {
-        await restoreImagesFromCache(msg);
-      }
-
-      // visionMessages preserved for display layer (display.ts).
-      // agent.state.messages content stays as-is for model inference context.
-
-      agent.state.messages = messages as any;
-      this.current = session.metadata;
-      this.accumulatedMs = session.metadata.totalActiveMs ?? 0;
-      this._visionMessages = session.visionMessages ?? [];
-      this.events?.emit({ type: "session:loaded", id });
+      const prepared = await this.prepareLoad(id);
+      this.commitPreparedLoad(prepared, agent);
       return { success: true };
     } catch (err: any) {
       return { success: false, error: err.message ?? "Unknown error loading session" };

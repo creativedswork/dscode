@@ -1,92 +1,182 @@
-## ADDED Requirements
+# agent-execution-engine Specification
 
-### Requirement: runAgent 核心接口
-系统 SHALL 提供 `runAgent()` 函数作为所有子代理执行的统一入口，返回 `AsyncGenerator<Message>`。
+## Purpose
+TBD - created by archiving change subagent-design-proposal. Update Purpose after archive.
+## Requirements
+### Requirement: Agent 是统一进程实体
 
-`runAgent()` 的参数 MUST 包括：
-- `agentDefinition`：代理定义
-- `promptMessages`：初始提示消息
-- `toolUseContext`：工具使用上下文
-- `canUseTool`：权限检查函数
-- `isAsync`：是否异步模式
-- `querySource`：查询来源标识
-- `availableTools`：可用工具池
+系统 SHALL 使用同一 Agent 领域模型表示 Main Agent 与 SubAgent。每个 Agent MUST 拥有 agentId、Application、AgentContext、AgentProcessRuntime、进程状态和 attachment。
 
-#### Scenario: 基本调用
-- **WHEN** 调用 `runAgent({agentDefinition: ExploreAgent, promptMessages: [...], ...})`
-- **THEN** 返回异步生成器，逐个产出子代理的响应消息
+#### Scenario: Main 与 SubAgent 同构
+- **WHEN** 检查 Main Agent 和 Explore SubAgent
+- **THEN** 两者均由同一 Agent 类型表示，仅 role、PID/PPID、Application 和 capability 不同
 
-### Requirement: 系统提示构建
-系统 SHALL 为子代理构建独立系统提示，流程为：
-1. 调用 `agentDefinition.getSystemPrompt()` 获取基础提示
-2. 调用 `enhanceSystemPromptWithEnvDetails()` 添加环境信息（绝对路径、Emoji 指导等）
-3. 注入 Agent Memory（如配置）
-4. 使用 `buildEffectiveSystemPrompt()` 组装最终提示
+### Requirement: PiAgentRuntime Adapter
 
-#### Scenario: 环境信息增强
-- **WHEN** 子代理系统提示构建完成
-- **THEN** 系统提示中包含当前工作目录的绝对路径、平台信息等环境细节
+系统 SHALL 将 `pi-agent-core.Agent` 作为 `PiAgentRuntime` 使用，并 SHALL 通过 PiAgentRuntimeAdapter 实现 AgentProcessRuntime。PiAgentRuntime SHALL 负责模型、消息和工具循环，但 MUST NOT 取代领域 Agent 的进程身份与生命周期。
 
-#### Scenario: Agent Memory 注入
-- **WHEN** 代理定义 `memory: "project"`
-- **THEN** 系统提示中包含 `.claude/agent-memory/<agentType>/MEMORY.md` 的内容
+#### Scenario: Runtime 创建
+- **WHEN** AgentSupervisor 启动 runtime=agent 的子进程
+- **THEN** 新 Agent 持有独立 PiAgentRuntimeAdapter，且进程元数据不存放在 PiAgentRuntime 全局状态中
 
-### Requirement: MCP 服务器初始化
-子代理 SHALL 初始化其专属 MCP 服务器（定义在 `agentDefinition.mcpServers`），并与父代理的 MCP 客户端合并。
+### Requirement: AgentSupervisor 与 Process Table
 
-子代理专属 MCP 服务器的生命周期 MUST：
-- 在子代理启动时连接
-- 在子代理结束时清理
+系统 SHALL 提供 AgentSupervisor 作为唯一进程创建和状态变更入口，并 SHALL 维护 Agent Process Table。
 
-#### Scenario: 代理专属 MCP
-- **WHEN** 代理定义 `mcpServers: [{myServer: {...}}]`
-- **THEN** `myServer` 在子代理运行期间连接，子代理结束后断开
+Process Table MUST 至少记录 agentId、parentAgentId、parentSessionId、applicationName、applicationSource、applicationDigest、registryGeneration、state、attachment、cwd、createdAt、updatedAt、usage 和 exit result。
 
-### Requirement: 同步执行模式
-同步模式 SHALL 在主线程内运行子代理，逐条产出消息直到完成或达到 `maxTurns`。
+#### Scenario: 创建子进程
+- **WHEN** Main Agent 启动 reviewer
+- **THEN** Supervisor 分配唯一 agentId，并在 Process Table 中记录 Main Agent 为父进程
 
-同步代理 SHALL 支持：
-- 注册为前台任务，可被 `backgroundAll()` 转为后台
-- 在运行超过阈值时显示后台提示 UI
-- 通过竞态机制响应后台化信号
+### Requirement: Main Agent 为 PID 1
 
-#### Scenario: 同步代理自动转后台
-- **WHEN** 同步代理运行超过 120 秒且触发自动后台机制
-- **THEN** 代理转为后台运行，父代理收到 async_launched 状态
+Harness 初始化 SHALL 通过 AgentSupervisor 创建 Main Agent。Main Agent SHALL 是当前 Harness 生命周期中的根进程，parentAgentId SHALL 为空且 role SHALL 为 main。
 
-### Requirement: 异步执行模式
-异步模式 SHALL 通过 `registerAsyncAgent()` 注册后台任务，在独立的异步上下文中运行。
+#### Scenario: Harness 初始化
+- **WHEN** Harness 完成 initialize
+- **THEN** Process Table 中存在且仅存在一个根 Main Agent
 
-异步代理的完整生命周期 MUST 包括：
-1. 注册任务（`registerAsyncAgent`）
-2. 运行 `runAsyncAgentLifecycle`
-3. 进度追踪与更新
-4. 完成后调用 `completeAgentTask`
-5. 发送 `enqueueAgentNotification` 通知父代理
+### Requirement: AgentProcessRuntimeFactory
 
-#### Scenario: 异步代理完成通知
-- **WHEN** 后台代理成功完成
-- **THEN** 系统生成 `<task-notification status="completed">` 消息推送到父代理
+系统 SHALL 使用统一 AgentProcessRuntimeFactory 从不可变 Application snapshot 创建 PiAgentRuntimeAdapter。所有 Main Agent 与 SubAgent MUST 使用该执行链，MVP 不提供 Application 专用 PipelineRuntime。
 
-### Requirement: 上下文隔离
-子代理 SHALL 拥有独立的文件状态缓存（`readFileState`），与父代理的文件读取缓存隔离。
+Factory SHALL 复用允许共享的 model registry、Driver definitions、MCP connections、Logger 和 EventBus，并 SHALL 隔离 runtime state、messages、ContextManager、ToolRegistry discovery、PermissionManager grants、AbortController 和 Usage。
 
-#### Scenario: 文件缓存隔离
-- **WHEN** 父代理和子代理先后读取同一文件
-- **THEN** 各自的读取缓存独立维护，互不影响
+#### Scenario: 工具发现隔离
+- **WHEN** 子进程通过 search_tools 发现一个 MCP 工具
+- **THEN** Main Agent 的 discovered tool set 不发生变化
 
-### Requirement: 侧链转录
-系统 SHALL 将子代理的完整对话记录到侧链转录文件（sidechain transcript），与主对话分开存储。
+#### Scenario: Vision Runtime
+- **WHEN** AgentSupervisor 启动 Bundled vision Application
+- **THEN** Factory 创建与其他 SubAgent 相同的 PiAgentRuntimeAdapter，并应用 Vision snapshot 的 Prompt、model 和空 capability
 
-转录文件路径 SHALL 为 `subagents/<agentId>.jsonl`。
+### Requirement: Agent fallback 执行策略
 
-#### Scenario: 转录记录
-- **WHEN** 子代理执行完成
-- **THEN** 其所有消息（assistant、user、progress、system）被记录到侧链 JSONL 文件
+AgentProcessRuntime 返回可恢复失败时，Supervisor SHALL 在进程进入终态前按 Application snapshot 解析 fallback。Fallback 成功 SHALL 完成同一 AgentProcess；全部 fallback 失败后 Agent 才可进入 failed。
 
-### Requirement: 中断与中止
-子代理 SHALL 支持通过 AbortController 中止执行，中止时 MUST 抛出 `AbortError`。
+#### Scenario: OCR 恢复 Vision
+- **WHEN** Vision PiAgentRuntime 返回 model_error 且 Application 声明对应 OCR fallback
+- **THEN** Supervisor 在同一 agentId 下执行 OcrFallbackHandler，并记录主执行与恢复阶段
 
-#### Scenario: 用户取消
-- **WHEN** 父代理被用户中断
-- **THEN** 其所有运行中的子代理收到中止信号并终止
+### Requirement: Agent 进程状态机
+
+Agent state SHALL 遵循：
+
+```text
+created -> running
+running <-> waiting
+running -> stopped -> running
+running|waiting|stopped -> exited|failed|killed
+```
+
+终态 MUST 不可逆。
+
+#### Scenario: 失败终结
+- **WHEN** AgentProcessRuntime 以不可恢复错误结束
+- **THEN** Agent 状态变为 failed，保存错误和退出结果，后续不得回到 running
+
+### Requirement: Foreground 执行
+
+foreground 启动 SHALL 等待同一 Agent 进程进入终态并返回结构化 AgentExitResult。
+
+#### Scenario: 同步 Explore
+- **WHEN** Main Agent foreground 启动 explore
+- **THEN** spawn 工具等待 explore 退出并返回其结果、Usage 和 agentId
+
+### Requirement: Background 执行
+
+background 启动 SHALL 在进程进入 running 后立即返回 agentId。AgentProcessRuntime MUST 在同一进程实例中继续运行。
+
+#### Scenario: 后台不重启
+- **WHEN** foreground Agent 被切换为 background
+- **THEN** agentId、AgentProcessRuntime、runtime state 和已完成工作保持不变
+
+### Requirement: 同轮并行启动
+
+`spawn_agent` SHALL 允许 pi-agent-core 按 parallel tool execution 并行执行多个独立启动。Supervisor MUST 保证 Process Table 更新并发安全。
+
+#### Scenario: 并行探索
+- **WHEN** Main Agent 在同一 assistant message 中调用两个 spawn_agent
+- **THEN** 两个 Agent 可并行运行且拥有独立上下文和结果
+
+### Requirement: Agent Process Store
+
+系统 SHALL 将子进程元数据、Application snapshot、messages 和退出结果保存到独立版本化 AgentProcessStore。子进程 MUST NOT 通过 `SessionManager.current` 持久化。
+
+#### Scenario: Session 列表不污染
+- **WHEN** 一个用户 Session 启动五个 SubAgent
+- **THEN** 普通 Session 列表仍只包含该用户 Session，Process Store 包含五个子进程记录
+
+### Requirement: 运行进程配置不可变
+
+Agent SHALL 在启动时固定 applicationSource、applicationDigest、registryGeneration 和编译后的 snapshot。Registry 热更新 MUST NOT 原地修改运行进程。
+
+#### Scenario: 配置热更新可追溯
+- **WHEN** Agent 使用 generation 4 启动后 Registry 更新到 generation 5
+- **THEN** Process Table 和 Store 仍记录该 Agent 使用 generation 4 及对应 digest
+
+### Requirement: Session 作为 TTY
+
+Agent SHALL 通过 parentSessionId 关联用户 Session。Session 删除或 Harness shutdown 时，Supervisor SHALL 按进程 attachment 和关闭策略发送终止信号。
+
+#### Scenario: 后台进程关联
+- **WHEN** 后台 Agent 完成
+- **THEN** 退出事件路由到其 parentSessionId，不创建新的用户 Session
+
+### Requirement: 父 Session 的通用 Agent 关联记录
+
+子进程退出时，系统 SHALL 在 parentSessionId 对应 Session 的顶层 `agentMessages` 中写入通用记录。记录 MUST 包含 `role: "subagent"`、agentId、parentAgentId、Application、状态、输入、输出和时间戳。完整子进程 transcript SHALL 继续保存在 AgentProcessStore，且 MUST NOT 混入 Main Agent 的 `messages` 推理上下文。
+
+#### Scenario: Vision Agent 完成
+- **WHEN** Vision Agent 完成图片分析
+- **THEN** 父 Session 的 `agentMessages` 包含该 Agent 的通用记录和图片 Attachment 引用
+- **AND** Session 不写入新的 `visionMessages`
+
+#### Scenario: 旧 Session 兼容
+- **WHEN** 加载带有 `visionMessages` 的版本 2 Session
+- **THEN** 系统在内存中将其转换为通用 `agentMessages`
+- **AND** 下次保存时写为版本 3
+
+### Requirement: Main Agent TTY 重绑定
+
+Session 切换时，AgentSupervisor SHALL 更新 Main Agent Process 的
+`parentSessionId` 和 AgentContext，并在返回成功前将新值持久化到 Agent Process
+Store。
+
+#### Scenario: Main Agent 从 A 切换到 B
+- **WHEN** 统一切换事务要求 Main Agent 重绑定 Session B
+- **THEN** Main Agent 的内存 Process、AgentContext 和持久化 Process 记录均指向 B
+
+### Requirement: Main 重绑定失败回滚
+
+AgentSupervisor MUST 在重绑定持久化失败时恢复 Main Agent Process 原有的
+`parentSessionId` 和 AgentContext，并向调用方传播错误。
+
+#### Scenario: Process Store 写入失败
+- **WHEN** Main Agent 从 A 重绑定 B 时 Process Store 持久化失败
+- **THEN** Main Agent 的内存 Process 和 AgentContext 恢复指向 A，Session B 不得 commit
+
+### Requirement: 已有子进程归属不可变
+
+Main Agent TTY 重绑定 MUST NOT 修改已经创建的 SubAgent Process、
+AgentContext、Process Store 记录或 pending notification 路由键。
+
+#### Scenario: Background Agent 跨越切换
+- **WHEN** Agent X 在 Session A 创建且在 Main Agent 切换到 B 后继续运行
+- **THEN** X 的 parentSessionId 始终为 A，完成通知和退出记录仍路由到 A
+
+#### Scenario: Foreground Agent 在切换前中止
+- **WHEN** 当前 Main turn 的 foreground SubAgent 尚未结束且开始 Session 切换
+- **THEN** 切换流程先中止并等待该执行终结，不得把它重绑定到目标 Session
+
+### Requirement: 新子进程继承当前 Main 归属
+
+AgentSupervisor 创建 SubAgent 时 SHALL 从 Main Agent Process 的当前
+`parentSessionId` 派生子进程上下文。该创建 MUST 由 load 之后的独立任务调用
+触发，Session load 本身 MUST NOT 调用 AgentSupervisor.spawn。
+
+#### Scenario: 后续独立任务触发 spawn
+- **WHEN** Main Agent 已完成到 Session B 的重绑定，随后由新任务启动 SubAgent
+- **THEN** 新 SubAgent 的 parentSessionId 为 B，parentAgentId 仍为 Main Agent ID
+

@@ -1,5 +1,9 @@
 import { useEffect, useRef } from "react";
 import type { Particle, ImpactRing, Shard, TimestampEntry } from "../animation/types";
+import {
+  hasRenderableColliderContent,
+  selectNextCascadeRowIndex,
+} from "../animation/cascade";
 
 interface TransitionCanvasProps {
   artifactReady: boolean;
@@ -261,8 +265,9 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         if (el.querySelector("[data-collider]")) return;
         // ── Nesting exclusion: skip elements that contain child [data-collider] (keep leaves only) ──
 
-        // ── Universal empty filter: skip empty/whitespace-only colliders ──
-        if (!el.textContent?.trim()) return;
+        const colliderType = el.getAttribute("data-collider");
+        // Media colliders are renderable without textContent.
+        if (!hasRenderableColliderContent(colliderType, el.textContent)) return;
 
         const rect = el.getBoundingClientRect();
         const top = rect.top - canvasRect.top;
@@ -278,7 +283,6 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
           if (rect.bottom <= saRect.top || rect.top >= saRect.bottom) return;
         }
 
-        const colliderType = el.getAttribute("data-collider");
         let width = rect.width;
 
         // ── Content-tight width for text-like colliders ──
@@ -415,7 +419,9 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       const ry = rect.top - canvasRect.top;
       const rw = rect.width;
       const rh = rect.height;
-      const isCard = el.getAttribute("data-collider") === "tool-card" || el.getAttribute("data-collider") === "message-card";
+      const isCard = ["tool-card", "message-card", "agent-card"].includes(
+        el.getAttribute("data-collider") ?? "",
+      );
       const count = isCard ? randInt(30, 50) : randInt(20, 40);
       for (let i = 0; i < count; i++) {
         const px = rx + rand(0, rw);
@@ -598,13 +604,15 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
     }
 
     function destroyMessageCard(el: HTMLElement): void {
-      // Lightweight — gentle bg flash + shards. Don't change opacity
-      // so child colliders stay visible for individual striking.
+      // Parent cards only reach this function after all nested colliders are
+      // struck, so the remaining card chrome and unwrapped text can now leave.
       el.style.transition = "none";
       el.style.backgroundColor = "rgba(255,255,255,0.5)";
       requestAnimationFrame(() => {
-        el.style.transition = "background-color 80ms ease-out";
+        el.style.transition =
+          "background-color 80ms ease-out, opacity 180ms ease-out 60ms";
         el.style.backgroundColor = "transparent";
+        el.style.opacity = "0";
       });
 
       const canvasRect = canvas!.getBoundingClientRect();
@@ -766,6 +774,18 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         case "message-card":
           destroyMessageCard(el);
           break;
+        case "agent-card":
+          destroyToolCard(el, impactX, impactY);
+          break;
+        case "phase-label":
+          destroyTextLine(el);
+          break;
+        case "exec-card":
+          destroyToolCard(el, impactX, impactY);
+          break;
+        case "media-item":
+          destroyToolCard(el, impactX, impactY);
+          break;
         case "thinking-block":
           destroyThinkingBlock(el);
           break;
@@ -774,6 +794,8 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
           break;
         default:
           spawnParticles(el);
+          el.style.transition = "opacity 220ms ease-out";
+          el.style.opacity = "0";
           break;
       }
     }
@@ -807,35 +829,37 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       // can cause candidate rows to be incorrectly skipped.
       const liveCurrentTop = currentRow.top;
 
-      // Find the next unstruck row, using live positions
-      let nextIndex = c.rowIndex + 1;
-      let nextRow: CascadeRow | null = null;
-      let liveNextTop = 0;
-      while (nextIndex < s.rows.length) {
-        const candidate = s.rows[nextIndex];
-        if (candidate.struck) { nextIndex++; continue; }
-        const candidateRect = candidate.el.getBoundingClientRect();
-        const candidateTop = candidateRect.top - canvasRect.top;
-        // Skip rows shifted above current row or entirely above viewport
-        if (candidateTop < liveCurrentTop || candidateRect.bottom - canvasRect.top <= 0) { nextIndex++; continue; }
-        nextRow = candidate;
-        c.nextRowIndex = nextIndex;
-        liveNextTop = candidateTop;
-        break;
-      }
-
-      if (!nextRow) {
+      const liveCandidates = s.rows.map((candidate, index) => {
+        const rect = candidate.el.getBoundingClientRect();
+        return {
+          index,
+          struck: candidate.struck,
+          top: rect.top - canvasRect.top,
+          bottom: rect.bottom - canvasRect.top,
+          left: rect.left - canvasRect.left,
+        };
+      });
+      const nextIndex = selectNextCascadeRowIndex(
+        liveCandidates,
+        liveCurrentTop,
+        H,
+      );
+      if (nextIndex < 0) {
         startGather();
         return;
       }
 
+      const nextRow = s.rows[nextIndex];
+      const nextGeometry = liveCandidates[nextIndex];
+      c.nextRowIndex = nextIndex;
       // Update the next row's stored position to the live measurement
-      nextRow.top = liveNextTop;
+      nextRow.top = nextGeometry.top;
+      nextRow.left = nextGeometry.left;
 
       c.hopStartX = currentRow.landingX;
       c.hopStartY = liveCurrentTop;
       c.hopEndX = nextRow.landingX;
-      c.hopEndY = liveNextTop;
+      c.hopEndY = nextGeometry.top;
 
       const gap = Math.abs(c.hopEndY - c.hopStartY);
       c.hopDuration = Math.max(350, Math.min(800, Math.sqrt(gap) * 25));
@@ -850,7 +874,7 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       let current: HTMLElement | null = el.parentElement;
       while (current) {
         const type = current.getAttribute("data-collider");
-        if (type !== "tool-card" && type !== "message-card") {
+        if (type !== "tool-card" && type !== "message-card" && type !== "agent-card") {
           current = current.parentElement;
           continue;
         }
@@ -861,9 +885,13 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
           return true;
         });
         if (!allDone) break;
-        spawnParticles(current);
-        current.style.transition = "opacity 200ms ease-out";
-        current.style.opacity = "0";
+        const rect = current.getBoundingClientRect();
+        const canvasRect = canvas!.getBoundingClientRect();
+        destroyByType(
+          current,
+          rect.left - canvasRect.left + rect.width / 2,
+          rect.top - canvasRect.top + rect.height / 2,
+        );
         current = current.parentElement;
       }
     }
@@ -974,24 +1002,9 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       const impactX = row.landingX;
       const impactY = row.top + row.height * 0.35;
 
-      row.el.style.transition = "none";
+      destroyByType(row.el, impactX, impactY);
       // ── Recursive parent container cleanup ──
       cleanupParents(row.el);
-
-      requestAnimationFrame(() => {
-        row.el.style.transition =
-          "background-color 60ms ease-out, box-shadow 60ms ease-out, opacity 180ms ease-out 60ms";
-        row.el.style.backgroundColor = "";
-        row.el.style.boxShadow = "";
-        if (row.el.getAttribute("data-collider") !== "message-card") {
-          row.el.style.opacity = "0";
-        }
-      });
-
-      const dx = rand(-8, 8);
-      const dy = rand(-4, 2);
-      row.el.style.transform = `translate(${dx}px, ${dy}px)`;
-      row.el.style.transition += ", transform 120ms ease-out";
 
       for (const offset of CLUSTER_OFFSETS) {
         const lx = c.x + offset.ox;

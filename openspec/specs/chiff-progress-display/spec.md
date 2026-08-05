@@ -3,83 +3,88 @@
 ## Purpose
 
 CHIFF 进度展示系统。在终端会话窗口中实时展示三阶段 Agent 的执行进度——Phase 日志、tool call 计数和最近操作描述、进度百分比。
-
-## ADDED Requirements
-
+## Requirements
 ### Requirement: Phase Progress Tracking
 
-The system SHALL track the progress of each CHIFF phase and emit structured progress events.
+The system SHALL track the unified CHIEF phases and emit structured events for:
 
-Phases tracked:
-- Phase 0/4: 落盘（library generation）
-- Phase 1/4: SCAN（attention zone identification）
-- Phase 2/4: ZOOM（per-zone causal analysis），含子 phase 列表（Z1, Z2, ...）
-- Phase 3/4: SYNTHESIZE（cross-zone attribution）
-- Phase 4/4: 生成报告（dashboard generation）
+1. Prepare trajectory and workspace
+2. Construct hierarchical causal graph
+3. Synthesize Virtual Oracles
+4. Backtrack Subtask → Agent → Step candidates
+5. Perform counterfactual attribution
+6. Attribute and merge Harness Rules
+7. Generate Dashboard
 
-#### Scenario: Phase lifecycle
+Each phase event SHALL contain eval run ID, target Session ID, phase name, status, duration when complete, and worker Agent ID/Application when the phase uses a worker.
 
-- **WHEN** a phase starts
-- **THEN** the system SHALL emit a phase event with `status: "running"`
-- **AND** when the phase completes, the system SHALL emit with `status: "done"` plus timing and stats
-- **AND** phases not yet started SHALL show `status: "pending"`
+#### Scenario: Worker-backed phase lifecycle
 
-#### Scenario: Phase completion with stats
+- **WHEN** Oracle synthesis starts
+- **THEN** the system SHALL emit the phase as `running`
+- **AND** SHALL identify the spawned `chief-oracle` Agent
+- **AND** on exit SHALL emit `done` with duration or `failed` with a diagnostic
 
-- **WHEN** Pass 1 SCAN completes after 8 tool calls and 3.2 seconds
-- **THEN** the phase event SHALL include `toolCalls: 8` and `durationMs: 3200`
-- **AND** SHALL include a summary (e.g., "识别 3 个 attention zones: Z1, Z2, Z3")
+#### Scenario: Deterministic phase lifecycle
 
+- **WHEN** trajectory preparation completes without an Agent worker
+- **THEN** the phase SHALL emit `done`
+- **AND** SHALL report actor count, Step count, and transcript completeness
 
 ### Requirement: Web Progress Rendering
 
-The system SHALL push progress events to the Web UI via WebSocket when running in web mode.
+Web and TUI SHALL surface CHIEF workers through the shared Agent Activity model and SHALL surface phase boundaries through existing info/progress events. UI adapters SHALL not reconstruct worker state from eval-specific logs.
 
-The Web UI SHALL render a progress panel that mirrors the terminal display but using HTML/CSS with:
-- Animated progress bar
-- Expandable phase log with per-phase details
-- Auto-scroll to the currently running phase
-- Color-coded status (green done / blue running / gray pending)
+Progress labels SHALL use the official name `CHIEF` and SHALL display worker Application plus 6-character Agent ID when available.
 
-#### Scenario: Web progress update
+#### Scenario: Web worker progress
 
-- **WHEN** the system is in web mode and a progress event is emitted
-- **THEN** the event SHALL be sent to the frontend via WebSocket
-- **AND** the frontend SHALL update the progress panel without full page reload
+- **WHEN** a `chief-backtrack` worker is running in the visible Session
+- **THEN** Web UI SHALL render its standard Agent Activity
+- **AND** SHALL show the CHIEF backtracking phase as running
+
+#### Scenario: Historical target routing
+
+- **WHEN** Session B invokes `/eval A`
+- **THEN** progress SHALL appear in B
+- **AND** SHALL identify A as the target Session
+- **AND** loading A SHALL not show process-only eval workers as historical task Agents
 
 ### Requirement: Completion Summary
 
-When all phases complete, the system SHALL display a summary showing:
-- Total duration
-- Total LLM calls (including tool calls across all Passes)
-- Key findings: number of attention zones, root cause agent and step
+After all phases complete, the system SHALL display target Session, total duration, CHIEF worker process count, total worker model usage when available, actor/transcript counts, and the root-cause Application, short Agent ID, and Step or Agent-level granularity.
 
-#### Scenario: Completion summary after successful eval
+#### Scenario: Step-level completion
 
-- **WHEN** all 5 phases complete successfully
-- **THEN** the terminal SHALL print a summary block with the total duration and call count
-- **AND** SHALL print the root cause: "根因: write_file@Step 480 — hash ambiguity in edit"
-- **AND** SHALL then proceed to open the dashboard
+- **WHEN** attribution selects Explorer `agent-8f31ad...` at Step 18
+- **THEN** the summary SHALL identify `Explorer (8f31ad) @ Step 18`
+- **AND** SHALL include attribution confidence
+- **AND** SHALL then open the Dashboard
 
+#### Scenario: Partial-evidence completion
+
+- **WHEN** attribution can only identify a summary-only Vision Agent
+- **THEN** the summary SHALL identify Vision with Agent-level granularity
+- **AND** SHALL warn that the internal Step is unavailable
 
 ### Requirement: File-Based Progress Logging
 
-`ProgressDisplay` SHALL 接受可选的 `logger: Logger` 参数，用于将进度事件写入日志文件。
+CHIEF phase and worker lifecycle events SHALL be written through the eval `Logger`. Log entries SHALL contain eval run ID, target Session ID, phase, worker Agent ID when present, status, duration, and validation retry count.
 
-`onPhaseStart`、`onPhaseDone`、`onPhaseProgress`、`showCompletion` SHALL 在 logger 可用时通过 `logger.info(tag, msg)` 写入对应事件。
+Routine successful Agent tool activity SHALL remain available through Process records and SHALL not flood the TUI info stream.
 
-#### Scenario: Phase start logged to file
+#### Scenario: Phase start logged
 
-- **WHEN** `ProgressDisplay` 以 `{ onLog, logger }` 实例化
-- **AND** `onPhaseStart(0)` 被调用
-- **THEN** logger SHALL 写入 `logger.info("Phase0", "start")`
+- **WHEN** graph construction starts with worker X
+- **THEN** the logger SHALL record run ID, target Session, `graph`, X's Agent ID, and `running`
 
-#### Scenario: Phase done logged to file
+#### Scenario: Validation retry logged
 
-- **WHEN** `onPhaseDone(1, "识别到 3 个 attention zones", 3200)` 被调用
-- **THEN** logger SHALL 写入 `logger.info("Phase1", "done: 识别到 3 个 attention zones (3200ms)")`
+- **WHEN** a worker output fails Schema validation and a retry process starts
+- **THEN** the logger SHALL record the validation error and retry count
+- **AND** the user SHALL receive a concise phase update without the full stack trace
 
-#### Scenario: Completion logged to file
+#### Scenario: Completion logged
 
-- **WHEN** `showCompletion({ totalDurationMs: 120000, totalLLMCalls: 8, keyFindings: "根因: ..." })` 被调用
-- **THEN** logger SHALL 写入 `logger.info("Complete", "120.0s · 8 LLM calls · 根因: ...")`
+- **WHEN** CHIEF completes successfully
+- **THEN** the logger SHALL record total duration, worker count, evidence completeness, and root-cause Actor

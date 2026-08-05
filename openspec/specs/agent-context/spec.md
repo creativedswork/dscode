@@ -1,53 +1,60 @@
-## ADDED Requirements
+# agent-context Specification
 
-### Requirement: AsyncLocalStorage 上下文存储
-系统 SHALL 使用 Node.js `AsyncLocalStorage` 存储当前代理上下文，确保并发代理的上下文互不干扰。
+## Purpose
+TBD - created by archiving change subagent-design-proposal. Update Purpose after archive.
+## Requirements
+### Requirement: AgentContext 表示进程执行环境
 
-代理上下文类型 SHALL 包括：
-- `SubagentContext`：Agent Tool 子代理（`agentType: "subagent"`）
-- `TeammateAgentContext`：群组成员代理（`agentType: "teammate"`）
+系统 SHALL 使用 `AgentContext` 表示当前 Agent 进程的执行环境。上下文 MUST 包含 `agentId`、`parentAgentId`、`parentSessionId`、`applicationName`、`role`、`attachment`、`cwd` 和 `depth`。
 
-#### Scenario: 并发代理隔离
-- **WHEN** Agent A 和 Agent B 同时在同一进程中运行
-- **THEN** Agent A 的 `getAgentContext()` 返回 A 的上下文，Agent B 返回 B 的上下文
+#### Scenario: 子进程上下文
+- **WHEN** Main Agent 从 Session S 启动 Explore Agent
+- **THEN** 子进程上下文包含新的 agentId、Main Agent agentId 作为 parentAgentId、S 作为 parentSessionId
 
-### Requirement: SubagentContext 结构
-`SubagentContext` SHALL 包含以下字段：
-- `agentId`：子代理 UUID
-- `parentSessionId`：父会话 ID（undefined 表示主 REPL）
-- `agentType`：固定值 "subagent"
-- `subagentName`：代理类型名（如 "Explore"）
-- `isBuiltIn`：是否为内置代理
-- `invokingRequestId`：触发此次调用的 API 请求 ID
-- `invocationKind`：调用类型（"spawn" 或 "resume"）
+### Requirement: AsyncLocalStorage 隔离
 
-#### Scenario: SubagentContext 初始化
-- **WHEN** 子代理通过 AgentTool 启动
-- **THEN** SubagentContext 包含正确的 agentId、parentSessionId、subagentName
+系统 SHALL 使用 Node.js `AsyncLocalStorage` 传播 AgentContext，确保并发 Agent 的身份与 cwd 互不覆盖。
 
-### Requirement: runWithAgentContext
-系统 SHALL 提供 `runWithAgentContext(context, fn)` 函数，在给定的代理上下文中执行异步函数。
+#### Scenario: 并发进程隔离
+- **WHEN** Agent A 和 Agent B 并行执行异步工具调用
+- **THEN** A 内部获取 A 的 AgentContext，B 内部获取 B 的 AgentContext
 
-#### Scenario: 上下文传递
-- **WHEN** 调用 `runWithAgentContext(ctx, async () => { ... await someAsyncOp(); getAgentContext(); })`
-- **THEN** 异步操作内部通过 `getAgentContext()` 获取到正确的上下文
+### Requirement: Main Agent 使用同一上下文模型
 
-### Requirement: getAgentContext
-系统 SHALL 提供 `getAgentContext()` 函数返回当前代理上下文，不在代理上下文中时返回 `undefined`。
+Main Agent SHALL 拥有 role 为 `main`、无 parentAgentId、depth 为 0 的 AgentContext。系统 MUST NOT 仅为 SubAgent 建立特殊上下文模型。
 
-#### Scenario: 主线程无上下文
-- **WHEN** 在主 REPL 线程中调用 `getAgentContext()`
-- **THEN** 返回 `undefined`
+#### Scenario: Main Agent 上下文
+- **WHEN** Main Agent 执行工具
+- **THEN** 工具可读取 Main Agent 的 agentId、parentSessionId 和 cwd
 
-#### Scenario: 子代理线程有上下文
-- **WHEN** 在运行中的子代理内部调用 `getAgentContext()`
-- **THEN** 返回该子代理的 SubagentContext
+### Requirement: 并发安全 cwd
 
-### Requirement: 分析归因
-系统 SHALL 使用代理上下文实现分析事件归因，`getSubagentLogName()` 返回用于日志的代理名称（内置代理返回类型名，自定义代理返回 "user-defined"）。
+文件、Shell、Checkpoint 和路径相关工具 SHALL 从 AgentContext 获取 cwd。SubAgent MUST NOT 调用 `process.chdir()` 修改全局工作目录。
 
-`consumeInvokingRequestId()` SHALL 在每次代理调用中仅返回一次调用请求 ID。
+#### Scenario: Worktree 与主工作区并行
+- **WHEN** Agent A 在主工作区运行且 Agent B 在 Worktree 运行
+- **THEN** 两者解析同一相对路径时得到各自 cwd 下的不同绝对路径
 
-#### Scenario: 分析事件归属
-- **WHEN** Explore 子代理发起 API 调用
-- **THEN** 对应的 `tengu_api_success` 事件携带 `subagentName: "Explore"` 和正确的 invoking request ID
+### Requirement: 进程上下文 API
+
+系统 SHALL 提供 `runWithAgentContext(context, fn)` 和 `getAgentContext()`。所有 AgentRuntime 启动入口 MUST 使用 `runWithAgentContext` 包裹。
+
+#### Scenario: 异步链传播
+- **WHEN** runWithAgentContext 内经过多个 await 后调用 getAgentContext
+- **THEN** 返回原始 AgentContext
+
+### Requirement: 日志与事件归因
+
+Logger、HarnessEventBus、Usage 和工具事件 SHALL 携带当前 agentId、parentAgentId 与 applicationName。日志 tag MUST 使用 PascalCase 常量。
+
+#### Scenario: 子进程工具事件
+- **WHEN** reviewer Agent 调用 grep
+- **THEN** tool event 可归因到 reviewer 的 agentId，而不是 Main Agent
+
+### Requirement: 上下文不作为权限来源
+
+AgentContext SHALL 携带已编译 capability 的引用，但权限决策 MUST 由 PermissionManager 执行。调用方不得通过伪造 context 字段提升权限。
+
+#### Scenario: 伪造 Application 名
+- **WHEN** 工具参数中包含高权限 applicationName
+- **THEN** PermissionManager 仍使用 Supervisor 创建的不可变 AgentContext

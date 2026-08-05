@@ -1,55 +1,81 @@
-## ADDED Requirements
+# agent-tool-filtering Specification
 
-### Requirement: 多层过滤架构
-系统 SHALL 通过 `filterToolsForAgent()` 函数实现多层工具过滤，维度包括：
-- 全局禁用（`ALL_AGENT_DISALLOWED_TOOLS`）
-- 自定义代理禁用（`CUSTOM_AGENT_DISALLOWED_TOOLS`）
-- 异步代理限制（`ASYNC_AGENT_ALLOWED_TOOLS`）
-- MCP 工具始终放行
+## Purpose
+TBD - created by archiving change subagent-design-proposal. Update Purpose after archive.
+## Requirements
+### Requirement: Capability 单调收窄
 
-过滤优先级 SHALL 为：MCP 工具放行 → 全局禁用检查 → 自定义禁用检查 → 异步限制检查。
+子 Agent 的最终 capability SHALL 由父级 hard deny、项目路径边界、Application tools/disallowedTools、permissionMode、attachment、isolation 和 depth 共同派生。任何子级配置 MUST NOT 覆盖父级 hard deny。
 
-#### Scenario: MCP 工具优先
-- **WHEN** 工具名为 `mcp__slack__send_message` 且该工具在禁用列表中
-- **THEN** 该工具仍被放行（MCP 工具不受禁用列表限制）
+#### Scenario: 父级 deny 保留
+- **WHEN** 父进程禁止 bash 且子 Application 声明 tools 包含 Bash
+- **THEN** 子 Agent 最终 capability 不包含 bash
 
-#### Scenario: 全局禁用
-- **WHEN** 子代理尝试使用 `Agent` 工具（在 `ALL_AGENT_DISALLOWED_TOOLS` 中）
-- **THEN** 该工具被过滤掉，子代理无法调用
+### Requirement: Application 工具白名单与黑名单
 
-### Requirement: 通配符支持
-代理定义的 `tools` 字段 SHALL 支持 `["*"]` 通配符，表示可使用所有非禁用工具。
+`tools` SHALL 表示候选白名单，`["*"]` SHALL 表示全部候选工具；`disallowedTools` SHALL 在白名单之后继续排除工具。
 
-`disallowedTools` 在 `tools: ["*"]` 时 SHALL 正常生效，排除指定工具。
+#### Scenario: 通配符与黑名单
+- **WHEN** Application 声明 `tools: ["*"]` 且 disallowedTools 包含 write_file
+- **THEN** 最终 capability 包含其他允许工具但不包含 write_file
 
-#### Scenario: 通配符 + 黑名单
-- **WHEN** 代理定义 `tools: ["*"], disallowedTools: ["Bash(git push*)"]`
-- **THEN** 代理可使用除 `Bash(git push*)` 外的所有工具
+### Requirement: Claude Code 工具表达式编译
 
-### Requirement: 异步代理工具限制
-异步代理 SHALL 仅允许使用 `ASYNC_AGENT_ALLOWED_TOOLS` 中的工具，排除交互式工具。
+兼容层 SHALL 将 Claude Code 工具名和常用工具限制表达式编译为 dscode capability rule。无法无歧义编译的表达式 MUST 产生诊断。
 
-允许的异步工具 MUST 包括：Bash（非交互式）、Read、Write、Edit、Grep、Glob、WebFetch、WebSearch 等。
+#### Scenario: Agent 工具别名
+- **WHEN** Claude 配置包含 `Agent`
+- **THEN** 编译器将其映射为 spawn_agent，并继续应用 depth 和父级权限限制
 
-#### Scenario: 异步代理无法交互
-- **WHEN** 异步代理尝试使用 `AskUserQuestion` 工具
-- **THEN** 该工具被过滤掉，因为不在 `ASYNC_AGENT_ALLOWED_TOOLS` 中
+### Requirement: MCP 工具遵循统一权限
 
-### Requirement: resolveAgentTools 工具解析
-系统 SHALL 提供 `resolveAgentTools()` 函数，将代理定义的工具规格解析为实际工具列表。
+MCP 工具 SHALL 与内置工具使用相同的白名单、黑名单、父级 deny 和 attachment 规则。MCP 工具 MUST NOT 因名称前缀而绕过权限。
 
-解析逻辑 SHALL：
-- 通配符 `*`：返回过滤后的全部可用工具
-- 显式列表：仅返回列表中指定的工具
-- `Agent(x, y)` 语法：解析出 `allowedAgentTypes` 限制
+#### Scenario: 后台 MCP 写操作
+- **WHEN** 后台 Application 未声明某个 MCP 写工具
+- **THEN** 该工具不可见，即使 MCP Server 已连接
 
-#### Scenario: Agent(x, y) 语法
-- **WHEN** 代理定义 `tools: ["Agent(code-reviewer, test-runner)"]`
-- **THEN** 解析出 `allowedAgentTypes: ["code-reviewer", "test-runner"]`，该代理仅能调用这两种子代理
+### Requirement: 后台非交互权限
 
-### Requirement: 内置 vs 自定义代理差异
-内置代理 SHALL 仅受 `ALL_AGENT_DISALLOWED_TOOLS` 限制；自定义代理 SHALL 额外受 `CUSTOM_AGENT_DISALLOWED_TOOLS` 限制。
+background Agent MUST NOT 打开用户权限对话框。权限决策为 ask 时 SHALL 转为 deny，并在工具结果中说明后台进程不能交互。
 
-#### Scenario: 自定义代理额外限制
-- **WHEN** 自定义代理尝试使用某仅内置代理可用的工具
-- **THEN** 该工具被 `CUSTOM_AGENT_DISALLOWED_TOOLS` 过滤
+#### Scenario: 后台 ask
+- **WHEN** 后台 Agent 调用需要 ask 的 bash 命令
+- **THEN** 调用被拒绝且 Main Agent 不出现隐藏或延迟的权限弹窗
+
+### Requirement: Claude permissionMode 映射
+
+系统 SHALL 至少支持：
+
+- `default`：继承父级约束；
+- `acceptEdits`：允许工作区范围内已授权编辑；
+- `plan`：只读；
+- `bypassPermissions`：仅 managed policy。
+
+#### Scenario: Plan 模式
+- **WHEN** Application permissionMode 为 plan
+- **THEN** 最终 capability 不包含写文件、编辑和产生副作用的 Shell 调用
+
+### Requirement: 递归和深度限制
+
+系统 SHALL 提供全局最大 Agent 深度，默认值 SHALL 为 1。`spawn_agent` 只有在当前 depth 小于最大值且 Application 明确允许时才可见。
+
+#### Scenario: 深度达到上限
+- **WHEN** depth 等于最大值
+- **THEN** 当前 Agent 无法启动更多子进程
+
+### Requirement: Session Grant 不继承
+
+父进程通过交互获得的 session grant MUST NOT 自动复制到子进程。子进程 SHALL 从持久规则和 Application capability 重新计算权限。
+
+#### Scenario: 父级临时授权
+- **WHEN** 用户只为 Main Agent 当前 Session 临时允许 bash
+- **THEN** 新 SubAgent 不自动获得 bash grant
+
+### Requirement: 写进程隔离
+
+background Agent 最终 capability 包含写工具时，系统 SHALL 要求 isolation 为 worktree；否则进程启动失败。
+
+#### Scenario: 后台写主工作区
+- **WHEN** background Application 可写且 isolation 为 none
+- **THEN** Supervisor 拒绝启动并返回需要 worktree 的诊断

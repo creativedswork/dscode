@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { c } from "./theme.js";
 import { convertJpegToPng, detectImageFormat } from "../utils/image-convert.js";
-import type { PermissionPrompt } from "./shared/types.js";
+import type { AgentActivity, PermissionPrompt } from "./shared/types.js";
+import { formatAgentDisplayId } from "./shared/agent-id.js";
 
 interface ToolEntry {
   name: string;
@@ -17,7 +18,71 @@ interface ToolEntry {
 
 type ContentBlock =
   | { type: "text"; content: string }
+  | { type: "agent"; agentId: string; content: string }
   | { type: "image"; img: Image };
+
+function truncateSummary(text: string, length: number): string {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  return normalized.length <= length
+    ? normalized
+    : `${normalized.slice(0, Math.max(0, length - 3)).trimEnd()}...`;
+}
+
+function formatActivityDuration(activity: AgentActivity, now = Date.now()): string {
+  const start = activity.startedAt ?? activity.createdAt;
+  const end = activity.endedAt ?? now;
+  const seconds = Math.max(0, Math.floor((end - start) / 1000));
+  return seconds < 60
+    ? `${seconds}s`
+    : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+}
+
+function formatApplicationName(application: string): string {
+  if (application.toLowerCase() === "general") return "General Agent";
+  return application
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function activitySymbol(activity: AgentActivity): string {
+  if (activity.state === "completed") return "✓";
+  if (
+    activity.state === "failed"
+    || activity.state === "terminated"
+    || activity.state === "killed"
+  ) return "✗";
+  if (activity.state === "waiting" || activity.state === "stopped") return "◇";
+  return "◆";
+}
+
+export function formatAgentActivityForTui(
+  activity: AgentActivity,
+  now = Date.now(),
+): string {
+  const application = formatApplicationName(activity.application);
+  const lines = [
+    `${activitySymbol(activity)} ${application}  ${activity.state} · ${activity.attachment} · ${formatActivityDuration(activity, now)}`,
+    `  ${truncateSummary(activity.input, 100) || "(no input)"}`,
+  ];
+  if (activity.error) {
+    lines.push(`  ↳ ${truncateSummary(activity.error, 120)}`);
+  } else if (activity.output) {
+    lines.push(`  ↳ ${truncateSummary(activity.output, 120)}`);
+  } else if (activity.progress) {
+    const count = activity.progress.current != null
+      ? `${activity.progress.current}${activity.progress.total != null ? `/${activity.progress.total}` : ""} · `
+      : "";
+    const detail = activity.progress.message ?? activity.progress.phase ?? "working";
+    lines.push(`  ↳ ${count}${truncateSummary(detail, 120)}`);
+  }
+  const terminalNote = activity.endedAt
+    ? " · full output retained in Agent Process Store"
+    : "";
+  lines.push(`  agent id: ${formatAgentDisplayId(activity.agentId)}${terminalNote}`);
+  return lines.join("\n");
+}
 
 function compactJsonSummary(obj: unknown): string {
   if (typeof obj === "string") return obj.length > 60 ? obj.slice(0, 57) + "..." : obj;
@@ -178,6 +243,11 @@ export class ConversationView {
 
   replayMessages(messages: unknown[]): void {
     const lines: string[] = [];
+    const flushLines = () => {
+      if (lines.length === 0) return;
+      this.pushText(lines.join("\n"));
+      lines.length = 0;
+    };
     for (const msg of messages) {
       const m = msg as any;
       if (m.role === "user") {
@@ -189,6 +259,7 @@ export class ConversationView {
         if (Array.isArray(m.content)) {
           for (const block of m.content) {
             if (block.type === "image" && block.data) {
+              flushLines();
               this.addInlineImage(block.data, block.mimeType ?? "image/png");
             }
           }
@@ -197,11 +268,22 @@ export class ConversationView {
         if (m.images && Array.isArray(m.images)) {
           for (const img of m.images) {
             if (img && typeof img === "object" && img.data) {
+              flushLines();
               this.addInlineImage(img.data, img.mimeType ?? "image/png");
             }
           }
         }
       } else if (m.role === "assistant") {
+        if (m.thinking) {
+          lines.push(c.dim("[thinking] ") + c.dim(String(m.thinking).slice(0, 500)));
+        }
+        if (Array.isArray(m.tools)) {
+          for (const tool of m.tools) {
+            const icon = tool.isError ? c.red("✗") : c.cyan("✓");
+            const result = tool.result ? c.dim(" → ") + toolResultPreview(tool.result) : "";
+            lines.push(`${icon} ${c.cyan(tool.name)} ${c.dim(tool.args ?? "")}${result}`);
+          }
+        }
         const content = m.content;
         if (Array.isArray(content)) {
           for (const block of content) {
@@ -212,17 +294,27 @@ export class ConversationView {
             } else if (block.type === "toolCall") {
               lines.push(` ${c.cyan("⚙")} ${c.cyan(block.name)} ${c.dim(toolArgsPreview(block.arguments))}`);
             } else if (block.type === "image" && block.data) {
+              flushLines();
               this.addInlineImage(block.data, block.mimeType ?? "image/png");
             }
           }
         } else if (typeof content === "string") {
-          lines.push(c.magenta.bold("agent ›") + "\n" + content);
+          if (content) lines.push(c.magenta.bold("agent ›") + "\n" + content);
         }
+        if (Array.isArray(m.images)) {
+          for (const img of m.images) {
+            if (img && typeof img === "object" && img.data) {
+              flushLines();
+              this.addInlineImage(img.data, img.mimeType ?? "image/png");
+            }
+          }
+        }
+      } else if (m.role === "agent" && m.agentActivity) {
+        flushLines();
+        this.upsertAgentActivity(m.agentActivity);
       }
     }
-    if (lines.length > 0) {
-      this.pushText(lines.join("\n"));
-    }
+    flushLines();
     this.render();
   }
 
@@ -305,6 +397,39 @@ export class ConversationView {
   addInfo(text: string): void {
     this.pushText(c.dim(text));
     this.render();
+  }
+
+  upsertAgentActivity(activity: AgentActivity): void {
+    const statusColor = activity.state === "completed"
+      ? c.green
+      : activity.state === "failed"
+        || activity.state === "terminated"
+        || activity.state === "killed"
+        ? c.red
+        : activity.state === "waiting" || activity.state === "stopped"
+          ? c.yellow
+          : c.cyan;
+    const plain = formatAgentActivityForTui(activity);
+    const [header, ...details] = plain.split("\n");
+    const headerMatch = header.match(/^(\S+\s+.+?)\s{2}(.+)$/);
+    const content = headerMatch
+      ? `${statusColor(headerMatch[1])}  ${c.dim(headerMatch[2])}\n${details.map((line) => c.dim(line)).join("\n")}`
+      : `${statusColor(header)}\n${details.map((line) => c.dim(line)).join("\n")}`;
+    const index = this.blocks.findIndex(
+      (block) => block.type === "agent" && block.agentId === activity.agentId,
+    );
+    const block: ContentBlock = {
+      type: "agent",
+      agentId: activity.agentId,
+      content,
+    };
+    if (index >= 0) {
+      this.blocks[index] = block;
+      this.rerenderStaticBlocks();
+    } else {
+      this.blocks.push(block);
+      this.render();
+    }
   }
 
   addWarning(text: string): void {
@@ -505,6 +630,18 @@ export class ConversationView {
     this.blocks.push({ type: "text", content });
   }
 
+  private rerenderStaticBlocks(): void {
+    for (const component of this.liveComponents) {
+      this.box.removeChild(component);
+    }
+    this.liveComponents = [];
+    while (this.box.children.length > 0) {
+      this.box.removeChild(this.box.children[0]);
+    }
+    this.renderedBlockCount = 0;
+    this.render();
+  }
+
   private renderPermPrompt(): string[] {
     const lines: string[] = [];
     const maxLineLen = 60;
@@ -599,7 +736,7 @@ export class ConversationView {
 
     for (let i = this.renderedBlockCount; i < totalBlocks; i++) {
       const block = this.blocks[i];
-      if (block.type === "text") {
+      if (block.type === "text" || block.type === "agent") {
         this.box.addChild(new Text(block.content));
       } else {
         this.box.addChild(block.img);

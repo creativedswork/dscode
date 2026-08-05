@@ -62,3 +62,9 @@ export async function ocrImages(images: ImageContent[], signal?: AbortSignal): P
   }
   return { hasText: true, content: results.join("\n\n---\n\n") };
 }
+
+export async function shutdownOcr(): Promise<void> {
+  const activeWorker = worker;
+  worker = null;
+  if (activeWorker) await activeWorker.terminate();
+}

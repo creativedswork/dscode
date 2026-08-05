@@ -1,8 +1,8 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { ImageCache } from "./cache.js";
-import { ocrImages } from "./ocr.js";
+import { ocrImages, shutdownOcr } from "./ocr.js";
 import { resolveVisionModel, describeImagesViaVisionModel } from "./client.js";
-import type { VisionConfig, ImageRef, ProcessResult, ProcessOptions, ProgressFn } from "./types.js";
+import type { VisionConfig, ProcessResult, ProcessOptions, ProgressFn } from "./types.js";
 
 
 export interface ImagePipelineConfig {
@@ -22,6 +22,10 @@ export class ImagePipeline {
     this.onWarning = config.onWarning;
   }
 
+  async shutdown(): Promise<void> {
+    await shutdownOcr();
+  }
+
   /**
    * Process images through the vision→OCR→fallback chain.
    *
@@ -37,6 +41,10 @@ export class ImagePipeline {
   ): Promise<ProcessResult> {
     const onProgress: ProgressFn | undefined = options?.onProgress;
     const signal = options?.signal;
+    const warn = (message: string) => {
+      this.onWarning(message);
+      options?.onWarning?.(message);
+    };
 
     // Normalize: ensure every image has type: "image" and proper fields
     const normalizedImages: ImageContent[] = images.map((img) => ({
@@ -59,11 +67,22 @@ export class ImagePipeline {
     if (signal?.aborted) throw new DOMException("The operation was aborted", "AbortError");
 
     // Try vision model
-    const vision = resolveVisionModel(this.visionConfig, this.fallbackApiKey, this.onWarning);
+    const selectedVisionConfig = options?.visionConfig ?? this.visionConfig;
+    const fallbackApiKey = options?.visionConfig ? undefined : this.fallbackApiKey;
+    const vision = resolveVisionModel(selectedVisionConfig, fallbackApiKey, warn);
     if (vision) {
       try {
         onProgress?.({ phase: "describing", cachedRefs });
-        const description = await describeImagesViaVisionModel(compressedImages, vision.model, vision.apiKey, signal);
+        const description = await describeImagesViaVisionModel(
+          compressedImages,
+          vision.model,
+          vision.apiKey,
+          {
+            systemPrompt: options?.systemPrompt ?? "Analyze the provided images accurately.",
+            userPrompt: options?.visionPrompt ?? "Describe the provided images.",
+          },
+          signal,
+        );
         if (!description || description.trim().length === 0) {
           // Vision model returned empty description — fall through to OCR
           throw new Error("Vision model returned empty description");
@@ -78,7 +97,7 @@ export class ImagePipeline {
           throw err; // re-throw abort immediately, no fallback
         }
         const errMsg = err instanceof Error ? err.message : String(err);
-        this.onWarning(`Vision model failed: ${errMsg}. Falling back to OCR.`);
+        warn(`Vision model failed: ${errMsg}. Falling back to OCR.`);
       }
     }
 
@@ -102,7 +121,7 @@ export class ImagePipeline {
       if (err instanceof DOMException && err.name === "AbortError") {
         throw err; // re-throw abort immediately, no fallback
       }
-      this.onWarning(`OCR failed: ${err instanceof Error ? err.message : String(err)}.`);
+      warn(`OCR failed: ${err instanceof Error ? err.message : String(err)}.`);
       // Both vision and OCR failed
       const fallbackText = text
         ? `${text}\n\n[Image(s) could not be processed]`

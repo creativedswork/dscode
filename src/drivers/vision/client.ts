@@ -16,6 +16,11 @@ export interface VisionCallbacks {
   onWarning: (message: string) => void;
 }
 
+export interface VisionPrompt {
+  systemPrompt: string;
+  userPrompt: string;
+}
+
 /**
  * Resolve a vision model from configuration.
  * Returns null if no vision model is configured, the model doesn't support images,
@@ -53,12 +58,17 @@ export async function describeImagesViaVisionModel(
   images: ImageContent[],
   visionModel: Model<Api>,
   apiKey: string,
+  prompt: VisionPrompt,
   signal?: AbortSignal,
 ): Promise<string> {
   const ctx: Context = {
-    systemPrompt: "You are an image description assistant. Describe the image in detail, including text, layout, and visual elements. Be thorough but concise.",
+    systemPrompt: prompt.systemPrompt,
     messages: [
-      { role: "user", content: [{ type: "text", text: "请详细描述这张图片的内容，包括文字、布局和视觉元素。" }, ...images], timestamp: Date.now() },
+      {
+        role: "user",
+        content: [{ type: "text", text: prompt.userPrompt }, ...images],
+        timestamp: Date.now(),
+      },
     ],
     tools: [],
   };

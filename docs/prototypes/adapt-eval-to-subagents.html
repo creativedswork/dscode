@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DSCode Eval - CHIEF Multi-Agent Prototype</title>
+<style>
+:root {
+  --color-bg: #f7f5f1;
+  --color-surface: #fffdf9;
+  --color-surface-hover: #f0ede7;
+  --color-border: #ded9d0;
+  --color-text: #292622;
+  --color-text-muted: #77716a;
+  --color-accent: #ad6900;
+  --color-accent-bg: #f7e9cf;
+  --color-success-text: #397a4a;
+  --color-success: #e5f1e8;
+  --color-warning-text: #9a6a00;
+  --color-warning: #f8edce;
+  --color-error-text: #a43e38;
+  --color-error: #f7e5e3;
+  --color-main: #3d6f91;
+  --color-main-bg: #e2edf4;
+  --bg: var(--color-bg);
+  --surface: var(--color-surface);
+  --surface-2: var(--color-surface-hover);
+  --border: var(--color-border);
+  --text: var(--color-text);
+  --muted: var(--color-text-muted);
+  --accent: var(--color-accent);
+  --accent-soft: var(--color-accent-bg);
+  --ok: var(--color-success-text);
+  --ok-soft: var(--color-success);
+  --warn: var(--color-warning-text);
+  --warn-soft: var(--color-warning);
+  --danger: var(--color-error-text);
+  --danger-soft: var(--color-error);
+  --main: var(--color-main);
+  --main-soft: var(--color-main-bg);
+  --shadow: 0 18px 48px rgba(58, 47, 35, .08);
+  --sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --serif: "Iowan Old Style", "Charter", Georgia, serif;
+  --mono: "SFMono-Regular", Consolas, monospace;
+}
+
+body.dark {
+  --color-bg: #191815;
+  --color-surface: #22211d;
+  --color-surface-hover: #2b2924;
+  --color-border: #3a3731;
+  --color-text: #eee9df;
+  --color-text-muted: #9d968d;
+  --color-accent: #d18a18;
+  --color-accent-bg: #3c2d16;
+  --color-success-text: #70b37d;
+  --color-success: #203226;
+  --color-warning-text: #d6aa45;
+  --color-warning: #3a301c;
+  --color-error-text: #e1746d;
+  --color-error: #3a2423;
+  --color-main: #7ba9c7;
+  --color-main-bg: #21323e;
+  --shadow: 0 18px 48px rgba(0, 0, 0, .24);
+}
+
+* { box-sizing: border-box; }
+html { min-width: 320px; }
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 var(--sans);
+  transition: background .18s ease, color .18s ease;
+}
+button { color: inherit; font: inherit; }
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(14px);
+}
+.brand { display: flex; align-items: center; gap: 9px; font-weight: 650; }
+.brand-mark { width: 9px; height: 9px; border-radius: 2px; background: var(--accent); transform: rotate(45deg); }
+.top-actions { display: flex; gap: 7px; }
+.icon-button {
+  width: 30px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  cursor: pointer;
+}
+.page { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 34px 0 64px; }
+.hero { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
+.eyebrow { color: var(--accent); font-size: 11px; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
+h1 { margin: 5px 0 4px; font: 400 32px/1.1 var(--serif); }
+.subtitle { color: var(--muted); max-width: 690px; font-size: 13px; }
+.scenarios {
+  display: flex;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+}
+.scenario {
+  padding: 5px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.scenario.active { background: var(--surface-2); color: var(--text); }
+.notice {
+  display: none;
+  margin: 0 0 16px;
+  padding: 11px 14px;
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 12px;
+}
+body[data-state="missing"] .notice { display: block; }
+.metrics {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.metric { min-width: 0; padding: 15px 17px; border-right: 1px solid var(--border); }
+.metric:last-child { border-right: 0; }
+.metric-label { color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.metric-value { margin: 4px 0 1px; font: 600 22px var(--mono); }
+.metric-detail { overflow: hidden; color: var(--muted); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(290px, .8fr); gap: 18px; margin-top: 18px; }
+.stack { display: grid; gap: 18px; align-content: start; }
+.panel { overflow: hidden; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); }
+.panel-head {
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+}
+.panel-title { font: 500 17px var(--serif); }
+.panel-kicker { color: var(--muted); font: 10px var(--mono); }
+.processes { padding: 8px 16px 13px; }
+.process-row {
+  display: grid;
+  grid-template-columns: 142px minmax(0, 1fr) 78px;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+.process-row:last-child { border-bottom: 0; }
+.identity { min-width: 0; }
+.application { overflow: hidden; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+.agent-id { color: var(--muted); font: 10px var(--mono); }
+.lane { position: relative; height: 26px; border-radius: 6px; background: var(--surface-2); }
+.segment {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: 4px;
+  background: var(--main-soft);
+  border: 1px solid color-mix(in srgb, var(--main) 45%, transparent);
+}
+.segment.bad { background: var(--danger-soft); border-color: color-mix(in srgb, var(--danger) 50%, transparent); }
+.segment.warn { background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 50%, transparent); }
+.time { color: var(--muted); text-align: right; font: 10px var(--mono); }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; padding: 0 16px 15px; color: var(--muted); font-size: 10px; }
+.dot { width: 7px; height: 7px; display: inline-block; margin-right: 4px; border-radius: 50%; background: var(--main); }
+.dot.warn { background: var(--warn); }
+.dot.bad { background: var(--danger); }
+.causal { padding: 16px; }
+.causal-chain { display: grid; grid-template-columns: 1fr 32px 1fr 32px 1fr; align-items: stretch; }
+.cause {
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+.cause.root { border-color: var(--danger); background: var(--danger-soft); }
+.cause.recovered { border-color: var(--ok); background: var(--ok-soft); opacity: .75; }
+.cause-label { color: var(--muted); font: 9px var(--mono); text-transform: uppercase; }
+.cause-title { margin: 4px 0; font-weight: 680; }
+.cause-copy { color: var(--muted); font-size: 11px; }
+.arrow { display: grid; place-items: center; color: var(--muted); font: 18px var(--mono); }
+.oracle-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; margin-top: 12px; }
+.oracle { padding: 10px; border: 1px solid var(--border); border-radius: 7px; }
+.oracle-level { color: var(--accent); font: 9px var(--mono); text-transform: uppercase; }
+.oracle-value { margin-top: 3px; font-size: 11px; }
+.verdict { padding: 17px; border-left: 3px solid var(--danger); }
+.verdict-app { margin: 7px 0 2px; font: 600 21px var(--serif); }
+.verdict-id { color: var(--danger); font: 11px var(--mono); }
+.verdict-copy { margin: 12px 0 0; color: var(--muted); font-size: 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 12px; }
+.chip { padding: 3px 7px; border-radius: 999px; background: var(--surface-2); color: var(--muted); font: 9px var(--mono); }
+.confidence { padding: 15px 17px; }
+.bar { height: 7px; margin: 7px 0 5px; overflow: hidden; border-radius: 99px; background: var(--surface-2); }
+.bar > span { display: block; width: 86%; height: 100%; background: var(--danger); }
+.reason-list { padding: 7px 17px 14px; }
+.reason { display: grid; grid-template-columns: 14px 1fr; gap: 7px; padding: 7px 0; color: var(--muted); font-size: 11px; }
+.reason strong { color: var(--text); }
+.empty-process { display: none; padding: 35px 18px; color: var(--muted); text-align: center; }
+body[data-state="single"] .subagent-only { display: none; }
+body[data-state="single"] .empty-process { display: block; }
+body[data-state="single"] .processes { display: none; }
+body[data-state="single"] .causal-chain { grid-template-columns: 1fr 32px 1fr; }
+body[data-state="single"] .cause[data-single-hide],
+body[data-state="single"] .arrow[data-single-hide] { display: none; }
+body[data-state="missing"] .process-row.missing .lane { outline: 1px dashed var(--warn); }
+body[data-state="missing"] .process-row.missing .segment { width: 16% !important; background: repeating-linear-gradient(135deg, var(--warn-soft), var(--warn-soft) 5px, transparent 5px, transparent 9px); }
+
+@media (max-width: 900px) {
+  .metrics { grid-template-columns: repeat(3, 1fr); }
+  .metric { border-bottom: 1px solid var(--border); }
+  .grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 650px) {
+  .page { width: calc(100% - 24px); padding-top: 24px; }
+  .hero { align-items: flex-start; flex-direction: column; }
+  .metrics { grid-template-columns: repeat(2, 1fr); }
+  .process-row { grid-template-columns: 1fr 62px; }
+  .lane { grid-column: 1 / -1; grid-row: 2; }
+  .causal-chain { grid-template-columns: 1fr; gap: 7px; }
+  .arrow { transform: rotate(90deg); }
+  .oracle-grid { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; }
+}
+</style>
+</head>
+<body data-state="complete">
+<header class="topbar">
+  <div class="brand"><span class="brand-mark"></span><span>eval / CHIEF</span></div>
+  <div class="top-actions"><button class="icon-button" type="button" onclick="toggleTheme()" aria-label="切换主题">Aa</button></div>
+</header>
+
+<main class="page">
+  <section class="hero">
+    <div>
+      <div class="eyebrow">Multi-Agent failure attribution</div>
+      <h1>从进程轨迹回溯真实责任边界</h1>
+      <div class="subtitle">目标 Session 00MQCGO6。统一分析 Main Agent、SubAgent transcript、跨进程控制流与数据流，不再把工具名当作 Agent。</div>
+    </div>
+    <div class="scenarios" aria-label="原型场景">
+      <button class="scenario active" data-state="complete" onclick="setState('complete')">完整轨迹</button>
+      <button class="scenario" data-state="missing" onclick="setState('missing')">记录缺失</button>
+      <button class="scenario" data-state="single" onclick="setState('single')">单 Agent</button>
+    </div>
+  </section>
+
+  <div class="notice"><strong>轨迹不完整：</strong>Vision Agent 只有 Session 摘要，AgentProcess transcript 未找到。归因继续执行，但相关边降低置信度且不作为唯一根因。</div>
+
+  <section class="metrics" aria-label="评估指标">
+    <div class="metric"><div class="metric-label">Agents</div><div class="metric-value" id="agentCount">4</div><div class="metric-detail" id="agentDetail">1 main + 3 subagents</div></div>
+    <div class="metric"><div class="metric-label">Steps</div><div class="metric-value" id="stepCount">42</div><div class="metric-detail">按全局时间稳定排序</div></div>
+    <div class="metric"><div class="metric-label">Transcripts</div><div class="metric-value" id="transcriptCount">3/3</div><div class="metric-detail" id="transcriptDetail">SubAgent records complete</div></div>
+    <div class="metric"><div class="metric-label">Candidate scope</div><div class="metric-value">3</div><div class="metric-detail">subtask, agent, step</div></div>
+    <div class="metric"><div class="metric-label">Confidence</div><div class="metric-value" id="confidenceTop">86%</div><div class="metric-detail">progressive screening</div></div>
+  </section>
+
+  <div class="grid">
+    <div class="stack">
+      <section class="panel">
+        <div class="panel-head">
+          <div><div class="panel-kicker">EXECUTION TOPOLOGY</div><div class="panel-title">Agent Process Lanes</div></div>
+          <div class="panel-kicker">S0 - S42</div>
+        </div>
+        <div class="processes">
+          <div class="process-row">
+            <div class="identity"><div class="application">Main Agent</div><div class="agent-id">main id: 81b9e4</div></div>
+            <div class="lane"><span class="segment" style="left:0;width:100%"></span><span class="segment warn" style="left:39%;width:18%"></span></div>
+            <div class="time">4m 18s</div>
+          </div>
+          <div class="process-row subagent-only">
+            <div class="identity"><div class="application">Explorer</div><div class="agent-id">agent id: 8f31ad</div></div>
+            <div class="lane"><span class="segment bad" style="left:22%;width:28%"></span></div>
+            <div class="time">34s</div>
+          </div>
+          <div class="process-row subagent-only missing">
+            <div class="identity"><div class="application">Vision</div><div class="agent-id">agent id: dd3e1f</div></div>
+            <div class="lane"><span class="segment" style="left:53%;width:17%"></span></div>
+            <div class="time">9s</div>
+          </div>
+          <div class="process-row subagent-only">
+            <div class="identity"><div class="application">Reviewer</div><div class="agent-id">agent id: b217c4</div></div>
+            <div class="lane"><span class="segment" style="left:72%;width:19%"></span></div>
+            <div class="time">21s</div>
+          </div>
+        </div>
+        <div class="empty-process">该 Session 没有 SubAgent 记录，CHIEF 以兼容模式分析 Main Agent 轨迹。</div>
+        <div class="legend"><span><i class="dot"></i>正常执行</span><span><i class="dot warn"></i>控制流异常</span><span><i class="dot bad"></i>根因候选</span></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <div><div class="panel-kicker">CAUSAL PATH</div><div class="panel-title">错误传播与恢复</div></div>
+          <div class="panel-kicker">oracle-guided</div>
+        </div>
+        <div class="causal">
+          <div class="causal-chain">
+            <div class="cause root">
+              <div class="cause-label">S18 / Explorer 8f31ad</div>
+              <div class="cause-title">忽略 Session v3 关联约束</div>
+              <div class="cause-copy">读取旧字段后生成错误缓存判断，首次污染数据流。</div>
+            </div>
+            <div class="arrow">-&gt;</div>
+            <div class="cause">
+              <div class="cause-label">S23 / Main 81b9e4</div>
+              <div class="cause-title">消费错误结论</div>
+              <div class="cause-copy">输入已被上游污染，当前步骤表现为症状而非起点。</div>
+            </div>
+            <div class="arrow" data-single-hide>-&gt;</div>
+            <div class="cause recovered" data-single-hide>
+              <div class="cause-label">S31 / Reviewer b217c4</div>
+              <div class="cause-title">发现并修正</div>
+              <div class="cause-copy">恢复有效，但发生在错误已影响 Dashboard 之后。</div>
+            </div>
+          </div>
+          <div class="oracle-grid">
+            <div class="oracle"><div class="oracle-level">Subtask backtrack</div><div class="oracle-value">2 / 6 子任务未满足 Acceptance Criteria</div></div>
+            <div class="oracle"><div class="oracle-level">Agent backtrack</div><div class="oracle-value">Explorer 与 Main 进入候选集</div></div>
+            <div class="oracle"><div class="oracle-level">Step backtrack</div><div class="oracle-value">S18 是最早不可逆数据污染点</div></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <aside class="stack">
+      <section class="panel">
+        <div class="panel-head"><div class="panel-title">Root Cause</div><div class="panel-kicker">single attribution</div></div>
+        <div class="verdict">
+          <div class="panel-kicker">RESPONSIBLE PROCESS</div>
+          <div class="verdict-app">Explorer</div>
+          <div class="verdict-id">agent 8f31ad / step S18</div>
+          <p class="verdict-copy">Local Attribution 排除 Main 的下游症状；Data-Flow Attribution 定位到 Explorer 首次生成错误缓存结论；Final Screening 确认后续修复未消除已产生的影响。</p>
+          <div class="chips"><span class="chip">data-flow</span><span class="chip">irrecoverable</span><span class="chip">recovered-late</span></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head"><div class="panel-title">Evidence Quality</div><div class="panel-kicker" id="confidenceLabel">86%</div></div>
+        <div class="confidence">
+          <div class="metric-label">Attribution confidence</div>
+          <div class="bar"><span id="confidenceBar"></span></div>
+          <div class="metric-detail" id="confidenceCopy">所有责任进程均有完整 transcript</div>
+        </div>
+        <div class="reason-list">
+          <div class="reason"><span>1</span><div><strong>真实身份</strong><br>Agent 节点使用 agentId 与 Application，不使用工具名。</div></div>
+          <div class="reason"><span>2</span><div><strong>控制边</strong><br>spawn、prompt、output 与父子关系形成进程依赖。</div></div>
+          <div class="reason"><span>3</span><div><strong>数据边</strong><br>Tool input/output 保留为 Step Edge 证据。</div></div>
+        </div>
+      </section>
+    </aside>
+  </div>
+</main>
+
+<script>
+const states = {
+  complete: { agents: "4", detail: "1 main + 3 subagents", steps: "42", transcripts: "3/3", transcriptDetail: "SubAgent records complete", confidence: "86%", width: "86%" },
+  missing: { agents: "4", detail: "1 main + 3 subagents", steps: "36", transcripts: "2/3", transcriptDetail: "1 summary-only record", confidence: "68%", width: "68%" },
+  single: { agents: "1", detail: "Main Agent only", steps: "27", transcripts: "0/0", transcriptDetail: "legacy-compatible input", confidence: "79%", width: "79%" }
+};
+
+function setState(state) {
+  const data = states[state];
+  document.body.dataset.state = state;
+  document.querySelectorAll(".scenario").forEach((button) => {
+    button.classList.toggle("active", button.dataset.state === state);
+  });
+  document.getElementById("agentCount").textContent = data.agents;
+  document.getElementById("agentDetail").textContent = data.detail;
+  document.getElementById("stepCount").textContent = data.steps;
+  document.getElementById("transcriptCount").textContent = data.transcripts;
+  document.getElementById("transcriptDetail").textContent = data.transcriptDetail;
+  document.getElementById("confidenceTop").textContent = data.confidence;
+  document.getElementById("confidenceLabel").textContent = data.confidence;
+  document.getElementById("confidenceBar").style.width = data.width;
+  document.getElementById("confidenceCopy").textContent = state === "missing"
+    ? "Vision transcript 缺失，相关因果边已降权"
+    : state === "single"
+      ? "无 SubAgent 时保留 Main Agent 兼容路径"
+      : "所有责任进程均有完整 transcript";
+}
+
+function toggleTheme() {
+  document.body.classList.toggle("dark");
+}
+</script>
+</body>
+</html>

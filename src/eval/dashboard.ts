@@ -2,19 +2,23 @@
 import type { CascadeEdge } from "./focus/types.js";
 // Generates a dark-themed, self-contained HTML diagnostic dashboard.
 
-import { writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { writeFileSync, mkdirSync, existsSync, renameSync, rmSync } from "node:fs";
 import { exec } from "node:child_process";
-import { join, dirname } from "node:path";
+import { randomUUID } from "node:crypto";
+import { dirname } from "node:path";
 import type { EvalResult } from "./types.js";
-import type { CausalGraphSnapshot, Attribution, RecoveryArc } from "./schemas.js";
+import type { ChiefAttribution } from "./chief/types.js";
+
+type DashboardAttribution = NonNullable<EvalResult["attribution"]>;
+type DashboardRecoveryArc = NonNullable<EvalResult["recoveryArcs"]>[number];
 
 
 // ── Recovery Timeline Generator ──
 
-function generateRecoveryTimelineHTML(recoveryArcs: RecoveryArc[]): string {
+function generateRecoveryTimelineHTML(recoveryArcs: DashboardRecoveryArc[]): string {
   if (!recoveryArcs || recoveryArcs.length === 0) return "";
 
-  const rows = recoveryArcs.map((arc, i) => {
+  const rows = recoveryArcs.map((arc) => {
     const effectiveColor = arc.effective ? COLORS.ok : "rgba(210,153,29,0.5)";
     const effectiveIcon = arc.effective ? "✅" : "⚠️";
     const detectionLabel: Record<string, string> = {
@@ -23,6 +27,7 @@ function generateRecoveryTimelineHTML(recoveryArcs: RecoveryArc[]): string {
       test_failure: "测试失败",
       screenshot_divergence: "截图偏离",
       self_correction: "Agent 自纠",
+      agent_review: "Agent 审查",
     };
     const detLabel = detectionLabel[arc.detectionType] ?? arc.detectionType;
 
@@ -74,7 +79,7 @@ export function escapeHtml(text: string | null | undefined): string {
 // ── Color utilities ──
 
 const COLORS = {
-  ok: "#5ca860",
+  ok: "#3fb950",
   warn: "#d4a017",
   danger: "#e05553",
   bg: "#1e1c19",
@@ -97,6 +102,165 @@ function statusEmoji(status: "ok" | "warn" | "danger"): string {
   }
 }
 
+function shortAgentId(agentId: string): string {
+  return agentId.startsWith("agent-")
+    ? agentId.slice(6, 12)
+    : agentId.startsWith("main-")
+      ? agentId.slice(5, 11)
+      : agentId.slice(0, 6);
+}
+
+function isChiefAttribution(
+  attribution: DashboardAttribution,
+): attribution is ChiefAttribution {
+  return "mistakeAgentId" in attribution;
+}
+
+function generateEvidenceHTML(result: EvalResult): string {
+  const evidence = result.trajectoryEvidence;
+  if (!evidence) return "";
+  const actors = new Map((result.actors ?? []).map((actor) => [actor.agentId, actor]));
+  const affected = evidence.affectedAgentIds.map((agentId) => {
+    const actor = actors.get(agentId);
+    return actor
+      ? `${escapeHtml(actor.application)} (${escapeHtml(shortAgentId(agentId))}, ${actor.evidenceQuality})`
+      : escapeHtml(shortAgentId(agentId));
+  });
+  const warning = evidence.completeness === "partial"
+    ? `<div style="margin-top:10px;color:${COLORS.warn};font-size:12px;">
+        Partial evidence limits Step-level attribution for: ${affected.join(", ") || "unknown actors"}.
+      </div>`
+    : `<div style="margin-top:10px;color:${COLORS.ok};font-size:12px;">All indexed SubAgent transcripts are available.</div>`;
+  return `
+<div class="phase-detail" data-evidence-status="${evidence.completeness}">
+  <div class="phase-header">
+    <span class="phase-label">Transcript Evidence: ${escapeHtml(evidence.completeness)}</span>
+    <span class="phase-range">${evidence.fullTranscripts} full / ${evidence.summaryTranscripts} summary / ${evidence.missingTranscripts} missing</span>
+  </div>
+  ${warning}
+</div>`;
+}
+
+function generateProcessLanesHTML(result: EvalResult): string {
+  const actors = result.actors ?? [];
+  if (actors.length === 0) return "";
+  const steps = result.trajectory?.steps ?? [];
+  const maxStep = Math.max(0, ...steps.map((step) => step.stepId));
+  const denominator = Math.max(1, maxStep + 1);
+  const lanes = actors.map((actor) => {
+    const actorSteps = steps.filter((step) => step.agentId === actor.agentId);
+    const ids = actorSteps.map((step) => step.stepId);
+    const start = ids.length > 0 ? Math.min(...ids) : undefined;
+    const end = ids.length > 0 ? Math.max(...ids) : undefined;
+    const left = start === undefined ? 0 : (start / denominator) * 100;
+    const width = start === undefined || end === undefined
+      ? 100
+      : Math.max(2, ((end - start + 1) / denominator) * 100);
+    const state = actor.state ?? (actor.role === "main" ? "main" : "unknown");
+    const duration = actor.startedAt !== undefined && actor.endedAt !== undefined
+      ? `${Math.max(0, actor.endedAt - actor.startedAt)} ms`
+      : "duration unavailable";
+    const range = start === undefined ? "no internal Steps" : `Steps ${start}-${end}`;
+    const color = actor.role === "main" ? COLORS.accent : COLORS.ok;
+    return `
+  <div class="process-lane" data-agent-id="${escapeHtml(actor.agentId)}" data-application="${escapeHtml(actor.application)}">
+    <div style="display:flex;justify-content:space-between;gap:12px;margin-bottom:6px;">
+      <div>
+        <strong>${escapeHtml(actor.application)}</strong>
+        <span style="font-family:monospace;color:${COLORS.accent};">(${escapeHtml(shortAgentId(actor.agentId))})</span>
+        <span style="font-size:11px;color:${COLORS.textMuted};">${actor.role} · ${escapeHtml(actor.evidenceQuality)}</span>
+      </div>
+      <span style="font-size:11px;color:${COLORS.textMuted};">${escapeHtml(state)} · ${range} · ${duration}</span>
+    </div>
+    <div style="position:relative;height:12px;background:${COLORS.bg};border-radius:6px;overflow:hidden;">
+      <div style="position:absolute;left:${left.toFixed(2)}%;width:${width.toFixed(2)}%;height:100%;background:${color};border-radius:6px;"></div>
+    </div>
+  </div>`;
+  }).join("");
+  const mainOnly = actors.every((actor) => actor.role === "main")
+    ? `<div class="no-issues">Main-only trajectory: no task SubAgents were recorded.</div>`
+    : "";
+  return `
+<h2>Agent Process Lanes</h2>
+<div style="background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:8px;padding:16px;">
+  ${mainOnly}
+  ${lanes}
+</div>`;
+}
+
+function generateDependencyHTML(result: EvalResult): string {
+  const edges = [
+    ...(result.trajectory?.controlEdges ?? []),
+    ...(result.trajectory?.dataEdges ?? []),
+  ].filter((edge) => edge.fromAgentId !== edge.toAgentId);
+  if (edges.length === 0) return "";
+  const actors = new Map((result.actors ?? []).map((actor) => [actor.agentId, actor]));
+  const actorLabel = (agentId: string) => {
+    const actor = actors.get(agentId);
+    return actor
+      ? `${actor.application} (${shortAgentId(agentId)})`
+      : shortAgentId(agentId);
+  };
+  return `
+<h3>Cross-Agent Dependencies</h3>
+<div style="background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:6px;padding:12px;margin-bottom:16px;">
+${edges.map((edge) => `
+  <div data-edge-type="${edge.type}" style="font-size:12px;padding:5px 8px;color:${COLORS.textMuted};">
+    <span style="color:${COLORS.text};">${escapeHtml(actorLabel(edge.fromAgentId))}</span>
+    <span style="color:${COLORS.accent};"> --${escapeHtml(edge.type)}--&gt; </span>
+    <span style="color:${COLORS.text};">${escapeHtml(actorLabel(edge.toAgentId))}</span>
+    · Step ${edge.fromStep} to Step ${edge.toStep} · ${escapeHtml(edge.label)}
+  </div>`).join("")}
+</div>`;
+}
+
+function generateBacktrackingHTML(result: EvalResult): string {
+  const attribution = result.attribution;
+  if (!attribution || !isChiefAttribution(attribution) || !attribution.screeningStages) {
+    return "";
+  }
+  const screening = attribution.screeningStages;
+  const steps = new Map((result.trajectory?.steps ?? []).map((step) => [step.stepId, step]));
+  const candidateRows = screening.stepCandidates.map((candidate) => {
+    const step = steps.get(Number(candidate.id));
+    const actor = step
+      ? `${step.application} (${shortAgentId(step.agentId)})`
+      : "unknown actor";
+    return `<div style="font-size:12px;padding:4px 0;color:${COLORS.textMuted};">
+      Step ${escapeHtml(candidate.id)} · ${escapeHtml(actor)} · ${(candidate.score * 100).toFixed(0)}% · ${escapeHtml(candidate.reason)}
+    </div>`;
+  }).join("");
+  return `
+<h2>Hierarchical Backtracking</h2>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:12px;">
+  <div class="stat-card"><div class="stat-value">${screening.subtaskCandidates.length}/${screening.screenedSubtasks.length}</div><div class="stat-label">Subtask Candidates</div></div>
+  <div class="stat-card"><div class="stat-value">${screening.agentCandidates.length}/${screening.screenedAgentIds.length}</div><div class="stat-label">Agent Candidates</div></div>
+  <div class="stat-card"><div class="stat-value">${screening.stepCandidates.length}</div><div class="stat-label">Step Candidates</div></div>
+</div>
+<div class="phase-detail">${candidateRows || '<div class="no-issues">No Step-level candidate was justified.</div>'}</div>`;
+}
+
+function generateAttributionHTML(result: EvalResult): string {
+  const attribution = result.attribution;
+  if (!attribution || !isChiefAttribution(attribution)) return "";
+  const location = attribution.mistakeStep === null
+    ? `${attribution.granularity} granularity`
+    : `Step ${attribution.mistakeStep}`;
+  return `
+<h2>CHIEF Attribution</h2>
+<div class="root-cause" data-agent-id="${escapeHtml(attribution.mistakeAgentId)}">
+  <div class="root-cause-title">
+    ${escapeHtml(attribution.mistakeApplication)}
+    <span style="font-family:monospace;color:${COLORS.accent};">(${escapeHtml(shortAgentId(attribution.mistakeAgentId))})</span>
+    @ ${escapeHtml(location)}
+  </div>
+  <div class="root-cause-desc">${escapeHtml(attribution.reason)}</div>
+  <div class="root-cause-evidence">
+    Confidence ${(attribution.confidence * 100).toFixed(0)}% · ${escapeHtml(attribution.granularity)} granularity · ${escapeHtml(attribution.evidenceQuality)} evidence · ${escapeHtml(attribution.mistakeSubtaskId)}
+  </div>
+</div>`;
+}
+
 // ── Causal Graph SVG Generator ──
 
 function generateCausalGraphHTML(result: EvalResult): string {
@@ -117,6 +281,12 @@ function generateCausalGraphHTML(result: EvalResult): string {
       ${e.keyDataTransfers.length > 0 ? ` · data: ${e.keyDataTransfers.map(escapeHtml).join(", ")}` : ""}
       ${e.failureModeSummary ? ` · ⚠ ${escapeHtml(e.failureModeSummary)}` : ""}
     </div>`).join("");
+  const agentNodes = graph.agentSummaries.map((agent) => `
+    <div style="background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:6px;padding:10px 12px;">
+      <strong>${escapeHtml(agent.agent)}</strong>
+      <div style="font-size:11px;color:${COLORS.textMuted};">${escapeHtml(agent.subtaskId)} · Steps ${agent.stepIds.join(", ")}</div>
+      <div style="font-size:12px;color:${COLORS.textMuted};margin-top:4px;">${escapeHtml(agent.keyAction)}</div>
+    </div>`).join("");
 
   const flowRows = graph.dataFlows.slice(0, 10).map((f) => `
     <tr>
@@ -129,6 +299,11 @@ function generateCausalGraphHTML(result: EvalResult): string {
 <h2>Causal Graph</h2>
 <div class="phase-bar" style="margin-bottom:8px;">
   ${barHTML}
+</div>
+
+<h3>Agent Nodes</h3>
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px;margin-bottom:16px;">
+  ${agentNodes || '<div class="no-issues">No Agent nodes</div>'}
 </div>
 
 <h3>Subtask Dependencies</h3>
@@ -152,7 +327,7 @@ function generateCausalGraphHTML(result: EvalResult): string {
 
 // ── Rule Chain Generator ──
 
-function generateRuleChainHTML(attribution: Attribution, rulesApplied: string[]): string {
+function generateRuleChainHTML(attribution: DashboardAttribution, rulesApplied: string[]): string {
   const ruleDescriptions: Record<string, string> = {
     "Rule1": "Control Flow / Loop adjudication — determines whether the agent entered an unjustified repair loop, or whether an action within a loop caused irreversible damage",
     "Rule2": "Data Flow traceback — traces key data from source to final consumer; identifies whether data was misinterpreted, fabricated, or misused",
@@ -169,7 +344,7 @@ function generateRuleChainHTML(attribution: Attribution, rulesApplied: string[])
 <h2>Rule Reasoning Chain</h2>
 <div style="background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:6px;padding:16px;margin-bottom:16px;">
   <div style="font-size:14px;margin-bottom:12px;">
-    <strong>Root Cause</strong>: ${escapeHtml(attribution.mistakeAgent)} at Step ${attribution.mistakeStep}
+    <strong>Root Cause</strong>: ${escapeHtml(attribution.mistakeAgent)} at ${attribution.mistakeStep === null ? "Agent granularity" : `Step ${attribution.mistakeStep}`}
   </div>
   <div style="font-size:13px;color:${COLORS.textMuted};margin-bottom:16px;">
     ${escapeHtml(attribution.reason)}
@@ -249,6 +424,8 @@ h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #e8e4dd; }
 .stat-card { background: ${COLORS.card}; border: 1px solid ${COLORS.border}; border-radius: 8px; padding: 20px; text-align: center; }
 .stat-value { font-size: 36px; font-weight: 700; }
 .stat-label { font-size: 12px; color: ${COLORS.textMuted}; margin-top: 4px; text-transform: uppercase; letter-spacing: 0.5px; }
+.process-lane { padding: 12px 0; border-bottom: 1px solid ${COLORS.border}; }
+.process-lane:last-child { border-bottom: 0; }
 .phase-bar { display: flex; height: 32px; border-radius: 4px; overflow: hidden; margin-bottom: 16px; }
 .phase-segment { display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; color: #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 4px; cursor: default; }
 .phase-segment:hover { filter: brightness(1.2); }
@@ -282,7 +459,7 @@ h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #e8e4dd; }
     ${escapeHtml(metadata.sessionId)}
   </div>
   <div style="margin-top:8px;">
-    <span style="background:${COLORS.ok};color:#000;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">🤖 CHIFF Causal Graph Analysis</span>
+    <span style="background:${COLORS.ok};color:#000;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">CHIEF Multi-Agent Causal Analysis</span>
   </div>
   <div class="header-meta">
     <div class="meta-item">
@@ -343,14 +520,30 @@ h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #e8e4dd; }
     <div class="stat-value" style="color:${rules.length > 0 ? COLORS.warn : COLORS.ok}">${rules.length}</div>
     <div class="stat-label">Triggered Rules</div>
   </div>
+  ${result.agentStats ? `
+  <div class="stat-card">
+    <div class="stat-value" style="color:${COLORS.accent}">${result.agentStats.totalActors}</div>
+    <div class="stat-label">Agents / ${result.agentStats.applications} Apps</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value" style="color:${COLORS.ok}">${result.agentStats.processSuccessRate}</div>
+    <div class="stat-label">Process Success</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-value" style="color:${result.agentStats.missingTranscripts > 0 ? COLORS.warn : COLORS.ok}">${result.agentStats.fullTranscripts}/${result.agentStats.summaryTranscripts}/${result.agentStats.missingTranscripts}</div>
+    <div class="stat-label">Full / Summary / Missing</div>
+  </div>` : ""}
 </div>
+
+${generateEvidenceHTML(result)}
+${generateProcessLanesHTML(result)}
 
 <!-- Phase Timeline -->
 <h2>Phase Timeline</h2>
 ${phases.length > 0 ? `
 <div class="phase-bar">
   ${phases.map((p) => {
-    const total = metadata.totalMessages || 1;
+    const total = result.trajectory?.steps.length || metadata.totalMessages || 1;
     const width = ((p.endIdx - p.startIdx + 1) / total * 100).toFixed(1);
     return `<div class="phase-segment" style="width:${width}%;background:${statusColor(p.status)};" title="${escapeHtml(p.label)} (M${p.startIdx}–M${p.endIdx})">${escapeHtml(p.label)}</div>`;
   }).join("")}
@@ -369,11 +562,14 @@ ${phases.map((p) => `
 
 <!-- Causal Graph (LLM mode only) -->
 ${result.causalGraph ? generateCausalGraphHTML(result) : ""}
+${generateDependencyHTML(result)}
 
 ${result.recoveryArcs && result.recoveryArcs.length > 0 ? `<!-- Recovery Timeline -->
 ${generateRecoveryTimelineHTML(result.recoveryArcs)}` : ""}
 
 <!-- Rule Reasoning Chain (LLM mode only) -->
+${generateBacktrackingHTML(result)}
+${generateAttributionHTML(result)}
 
 <!-- Cascade Path (focus pipeline only) -->
 ${result.cascadePath ? generateCascadePathHTML(result.cascadePath) : ""}
@@ -385,7 +581,7 @@ ${rootCauses.length > 0 ? rootCauses.map((rc) => `
 <div class="root-cause ${rc.severity}">
   <div class="root-cause-title">${rc.severity === "primary" ? "🔴" : "🟡"} ${escapeHtml(rc.title)}</div>
   <div class="root-cause-desc">${escapeHtml(rc.description)}</div>
-  <div class="root-cause-evidence">Evidence: M${rc.evidenceIndices.map((i) => i).join(", M")}</div>
+  <div class="root-cause-evidence">${rc.evidenceIndices.length > 0 ? `Evidence: Step ${rc.evidenceIndices.join(", Step ")}` : "Evidence: Agent-level attribution"}</div>
 </div>
 `).join("") : `<div class="no-issues">No significant issues detected ✓</div>`}
 
@@ -428,8 +624,6 @@ ${catRules.map((r: any) => {
   const sevLabel = r.severity >= 1 ? 'ERROR' : r.severity >= 0.6 ? 'WARN' : 'INFO';
   const sevColor = r.severity >= 1 ? COLORS.danger : r.severity >= 0.6 ? COLORS.warn : COLORS.accent;
   const evidenceCount = r.evidence ? r.evidence.length : 0;
-  const lastEvidence = evidenceCount > 0 ? r.evidence[r.evidence.length - 1] : null;
-  const lastDate = lastEvidence?.timestamp ? new Date(lastEvidence.timestamp).toISOString().slice(0, 10) : "-";
   const mergedCount = r.mergedFrom ? r.mergedFrom.length : 0;
 
   return `
@@ -438,6 +632,7 @@ ${catRules.map((r: any) => {
     <span class="badge" style="background:${sevColor};font-size:10px;padding:2px 6px;border-radius:3px;">${sevLabel}</span>
     <strong>${escapeHtml(r.id)}</strong>
     <span style="color:${COLORS.textMuted};font-size:11px;">→ ${escapeHtml(r.targetLayer)}</span>
+    ${r.targetScope === "application" ? `<span style="color:${COLORS.accent};font-size:10px;">Application: ${escapeHtml(r.targetApplication ?? "unknown")}</span>` : `<span style="color:${COLORS.textMuted};font-size:10px;">Shared Harness</span>`}
     ${evidenceCount > 0 ? `<span style="color:${COLORS.textMuted};font-size:10px;">📊 ${evidenceCount} sessions</span>` : ""}
     ${mergedCount > 0 ? `<span style="color:${COLORS.accent};font-size:10px;" title="Merged from: ${escapeHtml((r.mergedFrom as string[]).join(", "))}">🔗 合并自 ${mergedCount} 条规则</span>` : ""}
   </div>
@@ -480,13 +675,36 @@ ${timeline.map((e) => `
 
 // ── File generation ──
 
-export function generateDashboard(result: EvalResult, outputPath: string): string {
-  const html = generateDashboardHTML(result);
-  const dir = dirname(outputPath);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
+export function writeDashboardArtifacts(
+  html: string,
+  outputPaths: readonly string[],
+): void {
+  for (const outputPath of outputPaths) {
+    const dir = dirname(outputPath);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+    const temporaryPath = `${outputPath}.${process.pid}.${randomUUID()}.tmp`;
+    try {
+      writeFileSync(temporaryPath, html, "utf8");
+      renameSync(temporaryPath, outputPath);
+    } finally {
+      rmSync(temporaryPath, { force: true });
+    }
   }
-  writeFileSync(outputPath, html, "utf8");
+}
+
+export function generateDashboardArtifacts(
+  result: EvalResult,
+  outputPaths: readonly string[],
+): string {
+  const html = generateDashboardHTML(result);
+  writeDashboardArtifacts(html, outputPaths);
+  return html;
+}
+
+export function generateDashboard(result: EvalResult, outputPath: string): string {
+  generateDashboardArtifacts(result, [outputPath]);
   return outputPath;
 }
 

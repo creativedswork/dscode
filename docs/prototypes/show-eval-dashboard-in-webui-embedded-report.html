@@ -1,0 +1,594 @@
+<!-- change: show-eval-dashboard-in-webui | generated: 2026-08-04 -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DSCode WebUI - Embedded Eval Report</title>
+<style>
+:root {
+  --color-bg: #f8f7f5;
+  --color-surface: #f3f2ef;
+  --color-surface-hover: #ebe9e5;
+  --color-border: #e6e4e0;
+  --color-text: #2d2a26;
+  --color-text-muted: #8a8580;
+  --color-text-secondary: #6b6560;
+  --color-accent: #b87503;
+  --color-accent-hover: #946002;
+  --color-accent-bg: rgba(184, 117, 3, .12);
+  --color-success: #edf4ed;
+  --color-success-text: #347539;
+  --color-error: #fdebec;
+  --color-error-text: #9f2f2d;
+  --color-warning: #fbf3db;
+  --color-warning-text: #8a6500;
+  --font-sans: "Geist", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", "SFMono-Regular", Consolas, monospace;
+  --font-display: "Iowan Old Style", "Charter", Georgia, serif;
+}
+
+html.dark {
+  --color-bg: #1e1c19;
+  --color-surface: #282622;
+  --color-surface-hover: #322e2a;
+  --color-border: #3a3732;
+  --color-text: #e8e4dd;
+  --color-text-muted: #8a8580;
+  --color-text-secondary: #9a9590;
+  --color-accent: #c98605;
+  --color-accent-hover: #e5a50a;
+  --color-accent-bg: rgba(201, 134, 5, .15);
+  --color-success: #1a2e1a;
+  --color-success-text: #5ca860;
+  --color-error: #3a1a1a;
+  --color-error-text: #e05553;
+  --color-warning: #3a2e10;
+  --color-warning-text: #d5a72a;
+}
+
+* { box-sizing: border-box; }
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+body {
+  color: var(--color-text);
+  background: var(--color-bg);
+  font: 14px/1.5 var(--font-sans);
+}
+button { color: inherit; font: inherit; }
+.app { height: 100vh; display: flex; flex-direction: column; }
+.topbar {
+  height: 38px;
+  flex: 0 0 38px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.brand { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.brand-mark {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 8px;
+  border-radius: 2px;
+  transform: rotate(45deg);
+  background: var(--color-accent);
+}
+.brand-title { overflow: hidden; font: 500 14px var(--font-display); text-overflow: ellipsis; white-space: nowrap; }
+.mode-switcher {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--color-surface-hover);
+}
+.mode-btn {
+  position: relative;
+  padding: 3px 10px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--color-text-muted);
+  background: transparent;
+  font-size: 12px;
+  cursor: pointer;
+}
+.mode-btn:hover { color: var(--color-text); }
+.mode-btn.active { color: var(--color-text); background: var(--color-surface); }
+.mode-btn:disabled { opacity: .4; cursor: not-allowed; }
+.mode-btn:disabled:hover { color: var(--color-text-muted); }
+.mode-btn.has-report::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  right: 4px;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--color-accent);
+}
+.top-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
+.connected {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 8px;
+  border-radius: 8px;
+  color: var(--color-success-text);
+  background: var(--color-success);
+  font-size: 11px;
+}
+.connected::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+.icon-btn {
+  min-width: 28px;
+  height: 26px;
+  padding: 0 7px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+  cursor: pointer;
+}
+.workspace { flex: 1; min-height: 0; display: flex; }
+.sidebar {
+  width: 214px;
+  flex: 0 0 214px;
+  padding: 12px 8px;
+  border-right: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.sidebar-label {
+  padding: 4px 8px 8px;
+  color: var(--color-text-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.session {
+  margin-bottom: 3px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  cursor: default;
+}
+.session.active { color: var(--color-text); background: var(--color-accent-bg); }
+.session-title { overflow: hidden; font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.session-meta { margin-top: 2px; color: var(--color-text-muted); font: 9px var(--font-mono); }
+.main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.eval-view { flex: 1; min-height: 0; display: flex; flex-direction: column; background: var(--color-bg); }
+.eval-toolbar {
+  min-height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+.eval-heading { min-width: 0; flex: 1; }
+.eval-title { display: flex; align-items: center; gap: 8px; font-size: 16px; font-weight: 650; }
+.chief-badge {
+  padding: 2px 7px;
+  border-radius: 5px;
+  color: var(--color-accent);
+  background: var(--color-accent-bg);
+  font: 700 11px var(--font-mono);
+  letter-spacing: .06em;
+}
+.eval-meta {
+  margin-top: 2px;
+  overflow: hidden;
+  color: var(--color-text-muted);
+  font: 12px var(--font-mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 9px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 650;
+}
+.status-chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.status-chip.complete { color: var(--color-success-text); background: var(--color-success); }
+.status-chip.running { color: var(--color-warning-text); background: var(--color-warning); }
+.status-chip.failed { color: var(--color-error-text); background: var(--color-error); }
+body[data-state="starting"] .external-open,
+body[data-state="running"] .external-open { display: none; }
+.eval-stage { flex: 1; min-height: 0; position: relative; }
+.state-panel { display: none; width: 100%; height: 100%; }
+body[data-state="starting"] .state-starting,
+body[data-state="complete"] .state-complete,
+body[data-state="running"] .state-running,
+body[data-state="failed"] .state-failed { display: flex; }
+.report-frame { width: 100%; height: 100%; border: 0; background: #1e1c19; }
+.starting-wrap, .progress-wrap {
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 16px;
+}
+.starting-card, .progress-card, .failed-card {
+  width: 100%;
+  min-height: 100%;
+  overflow: auto;
+  padding: 24px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+}
+.starting-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+.progress-card { display: flex; flex-direction: column; }
+.starting-spinner {
+  width: 24px;
+  height: 24px;
+  margin: 0 auto 14px;
+  border: 2px solid var(--color-border);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.progress-eyebrow { color: var(--color-accent); font: 700 12px var(--font-mono); letter-spacing: .08em; }
+.progress-title, .failed-title { margin: 5px 0 4px; font: 500 26px var(--font-display); }
+.progress-copy, .failed-copy { color: var(--color-text-muted); font-size: 14px; line-height: 1.55; }
+.run-overview {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  margin-top: 18px;
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+.run-stat { min-width: 0; padding: 11px 13px; border-right: 1px solid var(--color-border); }
+.run-stat:last-child { border-right: 0; }
+.run-stat-label { color: var(--color-text-muted); font-size: 10px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.run-stat-value { margin-top: 2px; overflow: hidden; font: 600 14px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.worker-strip {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  color: var(--color-text-secondary);
+  background: var(--color-accent-bg);
+  font-size: 12px;
+}
+.worker-pulse {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: var(--color-accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse { 50% { opacity: .35; transform: scale(.8); } }
+.worker-strip code { font: 600 12px var(--font-mono); }
+.worker-strip .attempt { margin-left: auto; color: var(--color-text-muted); font: 11px var(--font-mono); }
+.stages { flex: 1; align-content: start; margin-top: 20px; display: grid; gap: 7px; }
+.stage {
+  display: grid;
+  grid-template-columns: 23px 160px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  min-height: 38px;
+  padding: 6px 9px;
+  border-radius: 6px;
+}
+.stage.active { background: var(--color-accent-bg); }
+.stage-index {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--color-border);
+  border-radius: 50%;
+  color: var(--color-text-muted);
+  font: 10px var(--font-mono);
+}
+.stage.done .stage-index { color: var(--color-success-text); border-color: var(--color-success-text); background: var(--color-success); }
+.stage.active .stage-index { color: var(--color-accent); border-color: var(--color-accent); }
+.stage-name { font: 600 13px var(--font-mono); }
+.stage-description { overflow: hidden; color: var(--color-text-muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.stage-time { color: var(--color-text-muted); font: 11px var(--font-mono); }
+.failed-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border-color: color-mix(in srgb, var(--color-error-text) 35%, var(--color-border));
+}
+.failed-mark {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: var(--color-error-text);
+  background: var(--color-error);
+  font-weight: 800;
+}
+.failed-actions { display: flex; gap: 8px; margin-top: 18px; }
+.failed-report-wrap { min-width: 0; min-height: 0; flex-direction: column; }
+.failed-report-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid color-mix(in srgb, var(--color-error-text) 30%, var(--color-border));
+  color: var(--color-error-text);
+  background: var(--color-error);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.failed-report-notice strong, .failed-report-notice span { display: block; }
+.failed-report-notice code { font: 650 11px var(--font-mono); }
+.failed-report-error { margin: 2px 0; color: var(--color-text-secondary); }
+.failed-report-actions { display: flex; flex: 0 0 auto; gap: 6px; margin-left: auto; }
+.action-btn {
+  padding: 7px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  color: var(--color-text-secondary);
+  background: var(--color-bg);
+  font-size: 12px;
+  cursor: pointer;
+}
+.action-btn.primary { color: #fff; border-color: var(--color-accent); background: var(--color-accent); }
+.readonly-bar {
+  min-height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 14px;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  background: var(--color-surface);
+  font-size: 12px;
+}
+.readonly-bar code { color: var(--color-text-secondary); font: 11px var(--font-mono); }
+.prototype-controls {
+  position: fixed;
+  z-index: 30;
+  right: 12px;
+  bottom: 44px;
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+}
+.prototype-controls button {
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--color-text-muted);
+  background: transparent;
+  font-size: 10px;
+  cursor: pointer;
+}
+.prototype-controls button.active { color: var(--color-text); background: var(--color-surface-hover); }
+
+@media (max-width: 760px) {
+  .sidebar { display: none; }
+  .topbar { grid-template-columns: auto 1fr auto; padding: 0 9px; }
+  .brand-title, .connected { display: none; }
+  .mode-switcher { justify-self: center; }
+  .mode-btn { padding-inline: 8px; }
+  .eval-toolbar { align-items: flex-start; flex-wrap: wrap; }
+  .eval-heading { flex-basis: calc(100% - 78px); }
+  .open-label { display: none; }
+  .readonly-bar span:last-child { display: none; }
+  .starting-wrap, .progress-wrap { padding: 10px; }
+  .starting-card, .progress-card, .failed-card { padding: 18px 14px; }
+  .failed-report-notice { flex-wrap: wrap; padding-inline: 10px; }
+  .failed-report-actions { width: 100%; margin-left: 28px; }
+  .stage { grid-template-columns: 23px minmax(100px, 1fr) auto; }
+  .stage-description { display: none; }
+  .run-overview { grid-template-columns: repeat(2, 1fr); }
+  .run-stat:nth-child(2) { border-right: 0; }
+  .run-stat:nth-child(-n+2) { border-bottom: 1px solid var(--color-border); }
+}
+</style>
+</head>
+<body data-state="running">
+<div class="app">
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark"></span>
+      <span class="brand-title" id="shellTitle">eval · 00MSE9R8</span>
+    </div>
+    <nav class="mode-switcher" aria-label="View mode">
+      <button class="mode-btn" data-view="chat">Chat</button>
+      <button class="mode-btn" data-view="dashboard" disabled title="Return to Chat before opening Session Dashboard">Dashboard</button>
+      <button class="mode-btn active has-report" data-view="eval">Eval</button>
+    </nav>
+    <div class="top-actions">
+      <button class="icon-btn" id="themeButton" title="Toggle theme">◐</button>
+      <span class="connected">Connected</span>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <aside class="sidebar">
+      <div class="sidebar-label">Sessions</div>
+      <div class="session active">
+        <div class="session-title">Multi-Agent CHIEF migration</div>
+        <div class="session-meta">00MSE9R8 · 2 agents</div>
+      </div>
+      <div class="session">
+        <div class="session-title">Dashboard cache review</div>
+        <div class="session-meta">00MQ7TWS · main only</div>
+      </div>
+      <div class="session">
+        <div class="session-title">Vision pipeline verification</div>
+        <div class="session-meta">00MSE3HD · 1 subagent</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <section class="eval-view">
+        <div class="eval-toolbar">
+          <div class="eval-heading">
+            <div class="eval-title">
+              CHIEF Multi-Agent Evaluation
+              <span class="chief-badge">CHIEF</span>
+            </div>
+            <div class="eval-meta" id="evalMeta">target 00MSE9R8 · run e4ac2f · 3 actors · 5 Steps · complete evidence</div>
+          </div>
+          <span class="status-chip running" id="statusChip">Running</span>
+          <button class="icon-btn external-open" title="Open report in external browser">↗ <span class="open-label">Open</span></button>
+        </div>
+
+        <div class="eval-stage">
+          <div class="state-panel state-starting starting-wrap">
+            <div class="starting-card">
+              <div class="starting-spinner"></div>
+              <div class="progress-eyebrow">OPENING EVAL MODE</div>
+              <div class="progress-title">Preparing the evaluation target</div>
+              <div class="progress-copy">Resolving the requested Session and freezing its Main/SubAgent membership before any evaluator worker starts.</div>
+            </div>
+          </div>
+          <div class="state-panel state-complete">
+            <iframe class="report-frame" id="reportFrame" title="CHIEF evaluation report" sandbox="allow-same-origin"></iframe>
+          </div>
+          <div class="state-panel state-running progress-wrap">
+            <div class="progress-card">
+              <div class="progress-eyebrow">CHIEF EVALUATION · RUN E4AC2F</div>
+              <div class="progress-title">Tracing the causal path</div>
+              <div class="progress-copy">This can take several minutes. The view updates from structured lifecycle events while the validated report remains unavailable until every required stage completes.</div>
+              <div class="run-overview">
+                <div class="run-stat"><div class="run-stat-label">Elapsed</div><div class="run-stat-value" id="elapsed">01:42</div></div>
+                <div class="run-stat"><div class="run-stat-label">Target</div><div class="run-stat-value">00MSE9R8</div></div>
+                <div class="run-stat"><div class="run-stat-label">Trajectory</div><div class="run-stat-value">3 actors · 5 steps</div></div>
+                <div class="run-stat"><div class="run-stat-label">Evidence</div><div class="run-stat-value">complete</div></div>
+              </div>
+              <div class="worker-strip">
+                <span class="worker-pulse"></span>
+                <span>Active worker</span>
+                <code>chief-backtrack (4a1b9c)</code>
+                <span class="attempt">attempt 1/2</span>
+              </div>
+              <div class="stages">
+                <div class="stage done"><span class="stage-index">✓</span><span class="stage-name">prepare</span><span class="stage-description">Trajectory frozen</span><span class="stage-time">0.1s</span></div>
+                <div class="stage done"><span class="stage-index">✓</span><span class="stage-name">chief-graph</span><span class="stage-description">Causal graph validated</span><span class="stage-time">4.2s</span></div>
+                <div class="stage done"><span class="stage-index">✓</span><span class="stage-name">chief-oracle</span><span class="stage-description">Virtual Oracle synthesized</span><span class="stage-time">2.8s</span></div>
+                <div class="stage active"><span class="stage-index">4</span><span class="stage-name">chief-backtrack</span><span class="stage-description">Screening Agent candidates</span><span class="stage-time">…</span></div>
+                <div class="stage"><span class="stage-index">5</span><span class="stage-name">attribution</span><span class="stage-description">Waiting</span><span class="stage-time">—</span></div>
+                <div class="stage"><span class="stage-index">6</span><span class="stage-name">rules</span><span class="stage-description">Waiting</span><span class="stage-time">—</span></div>
+                <div class="stage"><span class="stage-index">7</span><span class="stage-name">dashboard</span><span class="stage-description">Waiting</span><span class="stage-time">—</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="state-panel state-failed failed-report-wrap">
+            <div class="failed-report-notice">
+              <div class="failed-mark">!</div>
+              <div>
+                <strong>Current evaluation failed at chief-attribution</strong>
+                <span class="failed-report-error">The worker returned an unknown Step reference after one fresh-process retry.</span>
+                <span>Showing the last complete report for this target: run <code>e4ac2f</code> · 2026-08-04 21:18</span>
+              </div>
+              <div class="failed-report-actions">
+                <button class="action-btn primary">Retry</button>
+                <button class="action-btn">Back to chat</button>
+              </div>
+            </div>
+            <iframe class="report-frame" id="failedReportFrame" title="Historical CHIEF evaluation report" sandbox="allow-same-origin"></iframe>
+          </div>
+        </div>
+
+        <footer class="readonly-bar">
+          <span id="readonlyLabel">Read-only eval artifact · report input cannot modify this HTML</span>
+          <code id="readonlyIdentity">00MSE9R8:e4ac2f</code>
+        </footer>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div class="prototype-controls" aria-label="Prototype state">
+  <button data-state-button="starting">Starting</button>
+  <button class="active" data-state-button="running">Running</button>
+  <button data-state-button="complete">Complete</button>
+  <button data-state-button="failed">Failed</button>
+</div>
+
+<script>
+const reportHtml = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#1e1c19;--surface:#282622;--surface2:#322e2a;--border:#3a3732;--text:#e8e4dd;--muted:#9a9590;--accent:#c98605;--good:#5ca860;--bad:#e05553;--warn:#d5a72a}
+*{box-sizing:border-box}body{margin:0;padding:28px;color:var(--text);background:var(--bg);font:13px/1.5 system-ui,sans-serif}main{width:min(1050px,100%);margin:auto}.eyebrow{color:var(--accent);font:700 10px ui-monospace,monospace;letter-spacing:.09em}h1{margin:5px 0 3px;font:400 27px Georgia,serif}.sub{color:var(--muted);font-size:11px}.metrics{display:grid;grid-template-columns:repeat(5,1fr);margin-top:20px;border:1px solid var(--border);border-radius:8px;overflow:hidden}.metric{padding:13px;border-right:1px solid var(--border);background:var(--surface)}.metric:last-child{border:0}.label{color:var(--muted);font-size:9px;text-transform:uppercase}.value{margin-top:4px;font:600 19px ui-monospace,monospace}.grid{display:grid;grid-template-columns:1.5fr .8fr;gap:14px;margin-top:14px}.panel{border:1px solid var(--border);border-radius:8px;background:var(--surface);overflow:hidden}.head{padding:11px 13px;border-bottom:1px solid var(--border);font:500 15px Georgia,serif}.body{padding:13px}.lane{display:grid;grid-template-columns:135px 1fr 45px;gap:9px;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)}.lane:last-child{border:0}.id{color:var(--muted);font:9px ui-monospace,monospace}.track{height:18px;border-radius:5px;background:var(--surface2);overflow:hidden}.bar{height:100%;border:1px solid #465b68;border-radius:5px;background:#293e4a}.bar.bad{width:62%;margin-left:18%;border-color:#74413f;background:#492827}.time{color:var(--muted);font:9px ui-monospace,monospace}.root{padding:14px;border-left:3px solid var(--bad);background:#352321}.root strong{display:block;margin:5px 0;font:500 19px Georgia,serif}.root p{margin:0;color:var(--muted);font-size:11px}.confidence{margin-top:13px}.confidence span{color:var(--bad);font:600 20px ui-monospace,monospace}.flow{display:flex;align-items:center;gap:7px}.node{flex:1;padding:10px;border:1px solid var(--border);border-radius:6px;background:var(--surface2);font-size:10px}.node.bad{border-color:var(--bad)}.arrow{color:var(--muted)}@media(max-width:700px){body{padding:16px}.metrics{grid-template-columns:repeat(2,1fr)}.metric{border-bottom:1px solid var(--border)}.grid{grid-template-columns:1fr}}
+</style></head><body><main>
+<div class="eyebrow">CHIEF MULTI-AGENT EVALUATION</div><h1>Causal attribution report</h1><div class="sub">Session 00MSE9R8 · Generated 2026-08-04 21:18 · complete transcript evidence</div>
+<section class="metrics"><div class="metric"><div class="label">Actors</div><div class="value">3</div></div><div class="metric"><div class="label">Applications</div><div class="value">2</div></div><div class="metric"><div class="label">Steps</div><div class="value">5</div></div><div class="metric"><div class="label">Evidence</div><div class="value">100%</div></div><div class="metric"><div class="label">Confidence</div><div class="value">88%</div></div></section>
+<div class="grid"><div>
+<section class="panel"><div class="head">Agent Process Lanes</div><div class="body">
+<div class="lane"><div><b>main</b><div class="id">a9e977</div></div><div class="track"><div class="bar" style="width:100%"></div></div><div class="time">42.1s</div></div>
+<div class="lane"><div><b>vision</b><div class="id">98b515</div></div><div class="track"><div class="bar bad"></div></div><div class="time">35.0s</div></div>
+<div class="lane"><div><b>vision</b><div class="id">dd3e1f</div></div><div class="track"><div class="bar" style="width:39%;margin-left:48%"></div></div><div class="time">19.2s</div></div>
+</div></section>
+<section class="panel" style="margin-top:14px"><div class="head">Cross-Agent Data Flow</div><div class="body flow"><div class="node">main · Step 0<br><span class="id">spawn vision</span></div><div class="arrow">→</div><div class="node bad">vision · Step 2<br><span class="id">misread evidence</span></div><div class="arrow">→</div><div class="node">main · Step 4<br><span class="id">result consumed</span></div></div></section>
+</div><aside class="panel"><div class="head">Root Cause</div><div class="body"><div class="root"><div class="label">STEP GRANULARITY</div><strong>vision · 98b515</strong><div class="id">Step 2 · primary</div><p>Visual evidence was interpreted without validating the task constraint, contaminating the result returned to Main.</p></div><div class="confidence"><div class="label">Attribution confidence</div><span>88%</span></div></div></aside></div>
+</main></body></html>`;
+
+const frame = document.getElementById("reportFrame");
+frame.srcdoc = reportHtml;
+document.getElementById("failedReportFrame").srcdoc = reportHtml;
+
+document.querySelectorAll("[data-state-button]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const state = button.dataset.stateButton;
+    document.body.dataset.state = state;
+    document.querySelectorAll("[data-state-button]").forEach((candidate) => {
+      candidate.classList.toggle("active", candidate === button);
+    });
+    const chip = document.getElementById("statusChip");
+    chip.className = "status-chip " + (state === "starting" ? "running" : state);
+    chip.textContent =
+      state === "starting" ? "Preparing" :
+      state === "complete" ? "Completed" :
+      state === "running" ? "Running" : "Failed · Previous report";
+    document.getElementById("evalMeta").textContent =
+      state === "starting"
+        ? "request current Session · resolving target · run pending"
+        : state === "failed"
+          ? "target 00MSE9R8 · failed run f31a90 · showing complete run e4ac2f"
+          : "target 00MSE9R8 · run e4ac2f · 3 actors · 5 Steps · complete evidence";
+    document.getElementById("readonlyLabel").textContent =
+      state === "failed"
+        ? "Read-only historical eval artifact · current run failed"
+        : "Read-only eval artifact · report input cannot modify this HTML";
+    document.getElementById("readonlyIdentity").textContent =
+      state === "failed"
+        ? "00MSE9R8:e4ac2f · failed f31a90"
+        : "00MSE9R8:e4ac2f";
+  });
+});
+
+let elapsedSeconds = 102;
+setInterval(() => {
+  if (document.body.dataset.state !== "running") return;
+  elapsedSeconds += 1;
+  const minutes = String(Math.floor(elapsedSeconds / 60)).padStart(2, "0");
+  const seconds = String(elapsedSeconds % 60).padStart(2, "0");
+  document.getElementById("elapsed").textContent = minutes + ":" + seconds;
+}, 1000);
+
+document.getElementById("themeButton").addEventListener("click", () => {
+  document.documentElement.classList.toggle("dark");
+});
+</script>
+</body>
+</html>

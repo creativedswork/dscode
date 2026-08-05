@@ -374,6 +374,14 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
     disabledSkills,
     mcp,
     appHost: { enabled: true },
+    agents: {
+      enabled: process.env.DSCODE_AGENTS_ENABLED !== undefined
+        ? process.env.DSCODE_AGENTS_ENABLED !== "false"
+        : (merged.agents as { enabled?: boolean } | undefined)?.enabled ?? true,
+    },
+    managedAgentsDir: typeof (process.env.DSCODE_MANAGED_AGENTS_DIR ?? merged.managedAgentsDir) === "string"
+      ? resolve(String(process.env.DSCODE_MANAGED_AGENTS_DIR ?? merged.managedAgentsDir))
+      : undefined,
     atFile: {
       maxFiles: (merged.atFileMaxFiles as number) ?? 5,
       maxFileSize: (merged.atFileMaxFileSize as number) ?? 50 * 1024,
@@ -382,6 +390,7 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
     },
     agentsMdContent: loadAgentsMd(projectPath),
     vision,
+    agentModelAliases: merged.agentModelAliases as HarnessConfig["agentModelAliases"],
     retry,
   };
 

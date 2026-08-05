@@ -10,13 +10,19 @@
  * LLM API prompt prefix caching by keeping the system prompt static.
  */
 
+import { getAgentContext } from "../agents/process/context.js";
+
 interface InvalidationEvent {
   filePath: string;
   lineCount: number;
   fileVersion: string;
 }
 
-let pendingEvents: InvalidationEvent[] = [];
+const pendingEvents = new Map<string, InvalidationEvent[]>();
+
+function namespace(): string {
+  return getAgentContext()?.agentId ?? "__main__";
+}
 
 /**
  * Record that a file was fully rewritten, invalidating all its anchors.
@@ -26,13 +32,15 @@ export function recordInvalidation(
   lineCount: number,
   fileVersion: string,
 ): void {
+  const events = pendingEvents.get(namespace()) ?? [];
   // Deduplicate: if the same file is already pending, replace with latest
-  const existing = pendingEvents.findIndex(e => e.filePath === filePath);
+  const existing = events.findIndex(e => e.filePath === filePath);
   if (existing >= 0) {
-    pendingEvents[existing] = { filePath, lineCount, fileVersion };
+    events[existing] = { filePath, lineCount, fileVersion };
   } else {
-    pendingEvents.push({ filePath, lineCount, fileVersion });
+    events.push({ filePath, lineCount, fileVersion });
   }
+  pendingEvents.set(namespace(), events);
 }
 
 /**
@@ -41,12 +49,14 @@ export function recordInvalidation(
  * Events are cleared after consumption (one-shot delivery).
  */
 export function consumePendingNotices(): string | null {
-  if (pendingEvents.length === 0) return null;
+  const key = namespace();
+  const events = pendingEvents.get(key) ?? [];
+  if (events.length === 0) return null;
 
   const parts: string[] = [];
   parts.push("⚠️  ANCHOR INVALIDATION NOTICE — The following file(s) were fully rewritten:");
 
-  for (const event of pendingEvents) {
+  for (const event of events) {
     parts.push(
       `  • ${event.filePath} (${event.lineCount} lines, fv: ${event.fileVersion})`
     );
@@ -55,14 +65,14 @@ export function consumePendingNotices(): string | null {
   parts.push(
     "ALL previous hash anchors for these files are INVALID.",
     "Before calling edit on any of these files, you MUST run:",
-    pendingEvents.map(e => `  read_file({ path: "${e.filePath}", hashes: true })`).join("\n"),
+    events.map(e => `  read_file({ path: "${e.filePath}", hashes: true })`).join("\n"),
   );
 
-  pendingEvents = [];
+  pendingEvents.delete(key);
   return parts.join("\n");
 }
 
 /** Clear all pending events without consuming (for testing/cleanup). */
 export function clearPendingEvents(): void {
-  pendingEvents = [];
+  pendingEvents.delete(namespace());
 }

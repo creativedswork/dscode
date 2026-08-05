@@ -1,19 +1,19 @@
 ## Purpose
 
-Vision model orchestration — image caching, vision API calls, OCR fallback; now consumed by ImagePipeline module.
+Vision model orchestration — image caching, Vision Agent execution, and OCR fallback.
 ## Requirements
 ### Requirement: Vision Call Logging
-When vision model is used to describe images, the system SHALL log the call details into the session. The vision model call SHALL be made through `ImagePipeline.process()`, which handles logging internally.
+When the Vision Agent processes images, the system SHALL write a generic child Agent record to the parent session and a complete execution record to AgentProcessStore.
 
 #### Scenario: Vision model invoked
-- **WHEN** `ImagePipeline.process()` calls the vision model successfully
-- **THEN** the system SHALL create a `VisionMessage` with: input `ImageRef[]`, `description` text, `modelProvider`, `modelId`, `timestamp`, `turnIndex`
-- **AND** append it to a `visionMessages` array in the session
+- **WHEN** the Vision Agent calls the configured model successfully
+- **THEN** the parent session SHALL contain an `agentMessages` entry with `role: "subagent"`, the Vision Agent ID, image attachments, prompt, output, and message association
+- **AND** the session SHALL NOT receive a new `visionMessages` entry
 
 #### Scenario: Vision model failure
-- **WHEN** `ImagePipeline.process()` vision call fails
-- **THEN** the system SHALL NOT create a `VisionMessage` entry (no partial log)
-- **AND** proceed to OCR fallback as before
+- **WHEN** the Vision Agent model call fails
+- **THEN** the same Agent process SHALL proceed to OCR fallback
+- **AND** its final state and execution source SHALL be persisted in the same generic `agentMessages` record
 
 ### Requirement: Image Caching Before Vision Call
 Before sending images to the vision model, the system SHALL first cache them through ImagePipeline's internal ImageCache.
@@ -22,7 +22,7 @@ Before sending images to the vision model, the system SHALL first cache them thr
 - **WHEN** images are sent to the vision model via `ImagePipeline.process()`
 - **THEN** the system SHALL first pass them through `ImageCache.put()`
 - **AND** use the cached (compressed) image data for the vision API call
-- **AND** include the resulting `ImageRef[]` in the `VisionMessage` log
+- **AND** include the resulting `ImageRef[]` in the Vision Agent's generic input attachments
 
 
 ### Requirement: Vision/OCR Fallback for MCP Tool Result Images
@@ -37,7 +37,7 @@ When a tool result contains `ImageContent` blocks and the main model does not su
 - **WHEN** an MCP tool result contains image content AND the main model's `input` does NOT include `"image"` AND a vision model is configured
 - **THEN** the system SHALL call `ImagePipeline.process()` with the image data
 - **AND** replace the `ImageContent` blocks in the result with `TextContent` containing the vision model's description
-- **AND** log a `VisionMessage` entry with the cached `ImageRef[]` and description
+- **AND** log an `AgentSessionMessage` entry with the cached `ImageRef[]` and description
 
 #### Scenario: Vision model fails, fall back to OCR
 - **WHEN** the vision model call within `ImagePipeline.process()` fails for MCP tool images
@@ -63,5 +63,4 @@ Before sending MCP tool result images to the vision model, the system SHALL firs
 - **WHEN** MCP tool result images are sent to the vision model via `ImagePipeline.process()`
 - **THEN** the system SHALL first pass each image through `ImageCache.put()`
 - **AND** use the cached (compressed) image data for the vision API call
-- **AND** include the resulting `ImageRef[]` in the `VisionMessage` log
-
+- **AND** include the resulting `ImageRef[]` in the Vision Agent's generic input attachments

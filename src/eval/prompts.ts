@@ -1,12 +1,12 @@
-// ── CHIFF Analysis Prompts ──
-// Prompt templates for each step of the CHIFF 6-step causal graph pipeline.
+// ── CHIEF Analysis Prompts ──
+// Prompt templates for each step of the CHIEF 6-step causal graph pipeline.
 // Each function builds a prompt string that instructs the LLM to output structured JSON.
 
 import type { Subtask, AgentNode, CandidateSet, CausalGraphSnapshot, RecoveryArc, HistoryStep } from "./schemas.js";
 
 // ── System Prompt ──
 
-export const CHIFF_SYSTEM_PROMPT = `You are a session quality auditor for dscode — a digital studio for content-driven creation. dscode is not a generic coding bot. It functions as a creative studio that writes, designs, builds, and edits: code, visual concepts, branding, interactive experiences, interfaces, and narrative content. Its sessions span coding, design, storytelling, and editorial work.
+export const CHIEF_SYSTEM_PROMPT = `You are a session quality auditor for dscode — a digital studio for content-driven creation. dscode is not a generic coding bot. It functions as a creative studio that writes, designs, builds, and edits: code, visual concepts, branding, interactive experiences, interfaces, and narrative content. Its sessions span coding, design, storytelling, and editorial work.
 
 Your role: Analyze a dscode session log to construct a causal graph and identify the ROOT CAUSE of any failure or quality degradation. Failures in dscode sessions are not limited to code bugs — they include:
 - Creative direction drift (output diverges from the intended aesthetic, brand, or tone)
@@ -455,6 +455,20 @@ export function buildStep7Prompt(
   const attribText = attribution
     ? `Root cause: ${attribution.mistakeAgent} at Step ${attribution.mistakeStep}\nReason: ${attribution.reason}\nRules applied: ${attribution.rulesApplied.join(", ")}`
     : "(no attribution available)";
+  const recoveryText = recoveryArcs && recoveryArcs.length > 0
+    ? `\nRECOVERY ARCS:
+${recoveryArcs.map((arc) =>
+    `- error=${arc.errorAgent}@Step${arc.errorStep} -> detected by ${arc.detectionType}@Step${arc.detectionStep} -> corrected by ${arc.correctionAgent}@Step${arc.correctionStep}
+  effective=${arc.effective}, stepsToRecover=${arc.stepsToRecover}, misdiagnosis=${arc.misdiagnosisCount}
+  Root cause hypothesis: ${arc.rootCauseHypothesis}`
+  ).join("\n")}
+
+Recovery-informed rule guidance:
+- misdiagnosisCount >= 2 with test_failure may justify a diagnostic workflow rule.
+- detectionType === "user_complaint" may justify a perception/taste self-check rule.
+- rootCauseHypothesis mentions "didn't read" may justify a read-before-write rule.
+`
+    : "";
 
   return `STEP 7: AGENT CONFIG RULE ATTRIBUTION
 
@@ -475,6 +489,7 @@ ${sessionFragments}
 
 CURRENT AGENT CONFIGURATION (key excerpts):
 ${configExcerpts}
+${recoveryText}
 
 INSTRUCTIONS:
 Analyze the above and identify Agent CONFIGURATION-LEVEL issues — problems with the Agent's system prompt, tool registry, skills, or AGENTS.md that contributed to the session's failures or quality degradation.

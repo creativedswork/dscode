@@ -1,5 +1,5 @@
-// ── CHIFF Schemas ──
-// TypeScript types for the CHIFF causal graph analysis pipeline.
+// ── CHIEF Schemas ──
+// TypeScript types for the CHIEF causal graph analysis pipeline.
 // All types map to the dscode session format: thinking → toolCall → toolResult.
 
 import type { SerializedSession } from "../session/types.js";
@@ -720,6 +720,8 @@ export interface HarnessRuleOutput {
   id: string;
   category: string;
   targetLayer: string;
+  targetScope: "application" | "shared";
+  targetApplication?: string;
   abstract: string;
   rawDescription: string;
   severity: number;
@@ -734,6 +736,14 @@ export function validateHarnessRuleOutput(obj: unknown): ValidationResult<Harnes
   const categoryRaw = optionalString(obj, "category");
   const category = VALID_CATEGORIES.includes(categoryRaw) ? categoryRaw : "other";
   const targetLayer = requiredString(obj, errors, "targetLayer") || optionalString(obj, "target_layer");
+  const targetScopeRaw = optionalString(obj, "targetScope") || optionalString(obj, "target_scope");
+  const targetScope = targetScopeRaw === "application" ? "application" : "shared";
+  const targetApplication = optionalString(obj, "targetApplication")
+    || optionalString(obj, "target_application")
+    || undefined;
+  if (targetScope === "application" && !targetApplication) {
+    errors.push("Application-scoped rule requires targetApplication");
+  }
   const abstract = requiredString(obj, errors, "abstract");
   const rawDescription = requiredString(obj, errors, "rawDescription") || optionalString(obj, "raw_description");
   const severity = requiredNumber(obj, errors, "severity");
@@ -746,7 +756,7 @@ export function validateHarnessRuleOutput(obj: unknown): ValidationResult<Harnes
   return {
     ok: true,
     value: {
-      id, category, targetLayer, abstract, rawDescription,
+      id, category, targetLayer, targetScope, targetApplication, abstract, rawDescription,
       severity: Math.max(0, Math.min(1, severity)),
       suggestion: suggestion!,
     },
@@ -801,4 +811,3 @@ export function validateMergeDecisions(obj: unknown): ValidationResult<MergeDeci
   }
   return allErrors.length === 0 ? { ok: true, value: results } : { ok: false, errors: allErrors };
 }
-

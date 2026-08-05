@@ -265,27 +265,12 @@ const COMMANDS: SlashCommandDef[] = [
         case "load": {
           const id = rest[0];
           if (!id) { (ctx.ui as any).addError("Usage: /session load <id>"); return; }
-          const sessions = ctx.harness.sessionManager.listSessions();
-          const matches = sessions.filter((s) => s.id.startsWith(id));
-          if (matches.length === 0) {
-            (ctx.ui as any).addError(`Session not found: ${id}`);
-            return;
-          }
-          if (matches.length > 1) {
-            const matchLines = matches.map((s) =>
-              `  ${s.id.slice(0, 8)} "${s.title.slice(0, 60)}"  ${s.modelProvider}/${s.modelId}  ${s.messageCount} msgs`,
-            );
-            (ctx.ui as any).addError(
-              `Ambiguous session ID prefix. Matching sessions:\n${matchLines.join("\n")}`,
-            );
-            return;
-          }
-          const match = matches[0];
-          const result = await ctx.harness.sessionManager.loadSession(match.id, ctx.harness.agent);
-          if (!result.success) {
-            (ctx.ui as any).addError(`Failed to load session: ${result.error}`);
-            return;
-          }
+          const pendingPermission = (ctx.ui as any).takePendingPermission?.();
+          const result = await ctx.harness.switchSession({
+            sessionIdOrPrefix: id,
+            pendingPermission,
+          });
+          const match = result.session;
           const lines = [
             `Loaded session: ${match.id.slice(0, 8)}`,
             `  Title:    "${match.title}"`,
@@ -456,7 +441,7 @@ const COMMANDS: SlashCommandDef[] = [
   },
   {
     name: "eval",
-    description: "Analyze a session using CHIFF causal graph analysis (/eval [session_id])",
+    description: "Analyze Main/SubAgent trajectories with CHIEF (/eval [session_id])",
     execute: async (args, ctx) => {
       const sessionId = args.trim() || null;
       await runEval(sessionId, ctx);
@@ -688,28 +673,25 @@ export function getSlashCommandAutocomplete(customCommands?: CommandManifest[]):
 export function executeSlashCommand(
   text: string,
   ctx: SlashCommandContext,
-): string | undefined {
-  if (!text.startsWith("/")) return undefined;
+): Promise<string | undefined> {
+  if (!text.startsWith("/")) return Promise.resolve(undefined);
   const spaceIdx = text.indexOf(" ");
   const commandName = spaceIdx === -1 ? text.slice(1) : text.slice(1, spaceIdx);
   const args = spaceIdx === -1 ? "" : text.slice(spaceIdx + 1).trim();
 
   // Built-in commands take priority on name conflict
   const cmd = COMMANDS.find((c) => c.name === commandName);
-  if (!cmd) return undefined;
+  if (!cmd) return Promise.resolve(undefined);
 
-  try {
-    const result = cmd.execute(args, ctx);
-    if (result instanceof Promise) {
-      result.catch((err) => {
-        (ctx.ui as any).addError(`${commandName}: ${err instanceof Error ? err.message : String(err)}`);
-      });
+  return (async () => {
+    try {
+      await cmd.execute(args, ctx);
+      return commandName;
+    } catch (err) {
+      (ctx.ui as any).addError(`${commandName}: ${err instanceof Error ? err.message : String(err)}`);
+      return commandName;
     }
-    return commandName;
-  } catch (err) {
-    (ctx.ui as any).addError(`${commandName}: ${err instanceof Error ? err.message : String(err)}`);
-    return commandName;
-  }
+  })();
 }
 
 /** Execute a custom command: resolve $input placeholder and return the expanded prompt text */

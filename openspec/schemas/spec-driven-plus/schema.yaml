@@ -138,12 +138,16 @@ artifacts:
       changes — it blocks task creation until complete.
 
       For UI changes (new components, pages, visual interaction, style changes):
-      - Reference HTML prototype files from `docs/prototypes/` that were created
-        during explore (e.g., `docs/prototypes/<change-name>-*.html`)
+      - At least one self-contained HTML prototype in `docs/prototypes/` is
+        **required** (e.g., `docs/prototypes/<change-name>-*.html`)
+      - If no matching HTML prototype exists, STOP artifact generation and
+        generate one with the `prototype-workflow` skill before continuing
       - List each prototype file path with a summary of the visual direction and
         key design decisions confirmed during visual iteration
-      - If no HTML prototype was created during explore but the change involves
-        UI, provide a brief visual direction description based on design.md
+      - A text-only visual direction, wireframe, or `prototype.md` without an
+        HTML file reference is invalid and MUST NOT unblock tasks
+      - Do not use a "No prototype needed" stub for any change that affects
+        visible UI, rendering, layout, CSS, interaction, or user-facing states
 
       For non-UI changes (backend-only, config, refactoring):
       - Write a stub: "No prototype needed — <one-line reason>"
@@ -151,8 +155,9 @@ artifacts:
         config loader module."
 
       The prototype artifact is the bridge between explore's visual exploration
-      and the implementation tasks. HTML prototypes are created during explore
-      (not here) — this artifact references and summarizes them.
+      and the implementation tasks. Prefer creating HTML prototypes during
+      explore; if one is missing when propose runs, propose MUST create and
+      validate it before writing this manifest.
     requires:
       - design
 

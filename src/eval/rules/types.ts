@@ -1,6 +1,6 @@
 // ── Harness Rule Types ──
 // LLM-autonomous rule attribution: the LLM generates rules freely from
-// the full CHIFF context. No pre-defined catalog, no detector registry.
+// the full CHIEF context. No pre-defined catalog, no detector registry.
 // Cross-session accumulation via LLM semantic merge.
 
 // ── Rule Category ──
@@ -14,6 +14,9 @@ export interface RuleEvidence {
   timestamp: number;
   occurrences: number;
   sampleSteps: number[];
+  agentIds?: string[];
+  applications?: string[];
+  evidenceQuality?: "full" | "summary" | "missing";
 }
 
 // ── Rule Suggestion ──
@@ -34,6 +37,10 @@ export interface HarnessRule {
   id: string;
   category: RuleCategory;
   targetLayer: string;
+  targetScope?: "application" | "shared";
+  targetApplication?: string;
+  targetApplicationSource?: string;
+  targetApplicationDigest?: string;
   abstract: string;
   rawDescription: string;
   severity: number;

@@ -34,13 +34,24 @@
 
 <table>
 <tr>
+<td colspan="2" valign="top">
+
+### 🧠 Agent as OS
+
+dscode 被设计为 Agent 的操作系统：Harness 是 Kernel，Main Agent 是 PID 1，SubAgent 是进程，`Agent.md` 是 Application，Session 是 TTY，Drivers 是设备接口，MCP Server 是外部设备。执行链因此保持通用和可组合——新增 Agent 能力依靠配置，而非专用 Runtime。
+
+**Application 由配置定义。Agent 即进程。Session 即 TTY。**
+
+</td>
+</tr>
+<tr>
 <td width="50%" valign="top">
 
 ### 🔌 MCP-First
 
-数字工作室不用一个工具，而是十个。MCP 把每一个工具变成 API —— dscode 就是编排它们的 Agent。Blender 做 3D 建模、PlayCanvas 做实时渲染、浏览器自动化做测试、文档做规约、电子表格做数据。只要你的创作工具有 MCP Server，dscode 就能把它接入工作流。
+数字工作室不用一个工具，而是十个。MCP 把每一个工具变成 API —— dscode 是编排它们的 Agent 系统。Blender 做 3D 建模、PlayCanvas 做实时渲染、浏览器自动化做测试、文档做规约、电子表格做数据。只要你的创作工具有 MCP Server，dscode 就能把它接入工作流。
 
-**你的工具链。一个 Agent。全通过 MCP。**
+**你的工具链。Agent 协同。全通过 MCP。**
 
 </td>
 <td width="50%" valign="top">
@@ -90,7 +101,7 @@ dscode 不是一个带有暗色主题的聊天机器人。它是一个**数字�
 </td>
 <td width="33%" valign="top">
   <strong>🛡 Agent Harness</strong><br />
-  <sub>权限控制、上下文压缩（1M token 窗口）、会话持久化、跨会话记忆、指数退避重试。</sub>
+  <sub>OS 风格 Agent 进程、Agent.md 应用配置、前后台执行、进程控制、Worktree 隔离、权限和持久化。</sub>
 </td>
 </tr>
 <tr>
@@ -99,8 +110,8 @@ dscode 不是一个带有暗色主题的聊天机器人。它是一个**数字�
   <sub>通过 SKILL.md 声明式定义第三方扩展。按需激活。用户级 + 项目级双重作用域。</sub>
 </td>
 <td width="33%" valign="top">
-  <strong>👁 Vision Pipeline</strong><br />
-  <sub>自动路由到 vision 模型。tesseract OCR 回退（中英文）。支持拖拽、粘贴、@文件 引入图片。</sub>
+  <strong>⚙️ SubAgents</strong><br />
+  <sub>兼容 Claude Code Agent.md，支持前后台执行、对话内活动、进程控制和结果持久化。</sub>
 </td>
 <td width="33%" valign="top">
   <strong>🔧 Open Design</strong><br />
@@ -124,6 +135,20 @@ dscode 不是一个带有暗色主题的聊天机器人。它是一个**数字�
 </table>
 
 > **提示：** TUI 中粘贴剪贴板图片用 `Ctrl+V`（macOS）或 `/image clipboard`。
+
+---
+
+## Agent as OS
+
+Main Agent 作为 PID 1 运行，并将任务委派给独立的 SubAgent 进程。Application
+使用**兼容 Claude Code 的 `Agent.md` 文件**定义；除原生 `.dscode/agents` 外，
+dscode 还会自动发现用户级和项目级 `.claude/agents`。Terminal 与 Web 对话会
+实时展示前台和后台进程活动，并保留执行结果。
+
+内置 [`vision.md`](resources/agents/vision.md) 使用同一套 SubAgent Runtime，
+需要时回退到 Tesseract OCR。支持字段、发现优先级和进程工具详见
+[Agent.md 配置与使用](docs/AGENT_MD.md)，完整设计见
+[Agent as OS 架构](docs/ARCHITECTURE.md#设计哲学)。
 
 ---
 
@@ -288,6 +313,8 @@ dscode 使用两层 `settings.json`，项目级配置覆盖用户级配置：
 | `DSCODE_CONFIG_HOME` | 自定义配置目录（默认：`~/.dscode`） |
 | `DSCODE_DATA_HOME` | 自定义数据目录 |
 | `DSCODE_PROJECT_PATH` | 项目目录 |
+| `DSCODE_AGENTS_ENABLED` | Agent 进程工具开关，设为 `false` 回退单 Agent |
+| `DSCODE_MANAGED_AGENTS_DIR` | 最高优先级的受管 Agent Application 目录 |
 | `DSCODE_RETRY_MAX_RETRIES` | 重试最大次数 |
 | `DSCODE_RETRY_BASE_DELAY_MS` | 重试基础延迟 |
 | `DSCODE_RETRY_MAX_DELAY_MS` | 重试最大延迟 |
@@ -333,8 +360,6 @@ npm install
 }
 ```
 
-> **注意：** Open Design 对 dscode 的集成目前位于 `add-dscode-agent` 分支，尚未向上游提交 PR。该集成提供了 dscode 专属的 installer 目标和 agent 配置。关注进展请访问 [github.com/wangcan26/open-design](https://github.com/wangcan26/open-design)。
-
 ---
 
 ## 参与方式
@@ -350,9 +375,10 @@ dscode 目前是单人 SDD 开发项目，暂不接受直接的代码贡献（Pu
 | 文档 | 内容 |
 |------|------|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | 完整架构：Agent as OS、6 层设计、Driver/Skill 模型、源码树 |
-| [ROADMAP.md](docs/ROADMAP.md) | 路线图：Sub-Agent 系统、System Prompt 模块化、Diff-based 编辑 |
+| [AGENT_MD.md](docs/AGENT_MD.md) | Agent.md 配置、支持字段、Claude Code 兼容和进程工具 |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | 贡献指南：理念对齐、OpenSpec SDD 流程、编码规范 |
 | [STYLE.md](docs/STYLE.md) | TypeScript 编码风格：命名、导入、模块结构、错误处理 |
+| [文档归档](docs/archive/README.md) | 历史方案与调研，不作为当前行为的事实来源 |
 
 ---
 
@@ -362,7 +388,7 @@ dscode 站在以下工作的肩膀上：
 
 - **[OpenSpec](https://github.com/Fission-AI/OpenSpec)** — 规约驱动开发框架，塑造了我们的整个工作流
 
-- **[pi-ai](https://www.npmjs.com/package/@mariozechner/pi-ai) / [pi-agent-core](https://www.npmjs.com/package/@mariozechner/pi-agent-core)** — Mario Zechner 的 agent 循环与模型抽象基础
+- **[@earendil-works/pi-ai](https://www.npmjs.com/package/@earendil-works/pi-ai) / [pi-agent-core](https://www.npmjs.com/package/@earendil-works/pi-agent-core)** — Agent 循环与模型抽象基础
 - **[taste-skill](https://github.com/Leonxlnx/taste-skill)** — Leonxlnx 的设计品味技能系统，启发了我们的 skills 架构
 - **[@_can1357](https://x.com/_can1357/status/2021828033640911196)** — hash-anchor 编辑协议，成为我们 `edit` 工具的基石
 

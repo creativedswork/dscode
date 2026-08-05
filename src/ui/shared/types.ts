@@ -136,19 +136,56 @@ export interface ToolCallEntry {
 
 // ── Conversation messages ──
 
+export type AgentActivityState =
+  | "created"
+  | "running"
+  | "waiting"
+  | "stopped"
+  | "completed"
+  | "failed"
+  | "terminated"
+  | "killed";
+
+export interface AgentActivityProgress {
+  phase?: string;
+  current?: number;
+  total?: number;
+  message?: string;
+}
+
+export interface AgentActivity {
+  agentId: string;
+  parentAgentId?: string;
+  parentSessionId: string;
+  application: string;
+  attachment: "foreground" | "background";
+  state: AgentActivityState;
+  input: string;
+  output?: string;
+  error?: string;
+  progress?: AgentActivityProgress;
+  createdAt: number;
+  startedAt?: number;
+  endedAt?: number;
+}
+
 export interface ConversationMessage {
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "agent";
   content: string;
   thinking?: string;
   tools?: ToolCallEntry[];
+  images?: ImageAttachment[];
+  createdAt?: number;
+  agentActivity?: AgentActivity;
 }
 
 export interface UIMessage {
   id: string;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "agent";
   content: string;
   thinking?: string;
   tools?: ToolCallEntry[];
+  agentActivity?: AgentActivity;
   isStreaming?: boolean;
   images?: (ImageAttachment | ImageRef)[];
   createdAt?: number; // epoch ms
@@ -173,6 +210,71 @@ export interface PermOption {
   label: string;
   key: string;
 }
+
+// ── Eval Dashboard ──
+
+export type EvalDashboardStage =
+  | "prepare"
+  | "graph"
+  | "oracle"
+  | "backtrack"
+  | "attribution"
+  | "rules"
+  | "dashboard";
+
+export interface EvalDashboardEvidenceSummary {
+  totalActors: number;
+  subagentCount: number;
+  fullTranscripts: number;
+  summaryTranscripts: number;
+  missingTranscripts: number;
+  completeness: "complete" | "partial";
+  affectedAgentIds: string[];
+}
+
+export type EvalDashboardServerEvent =
+  | {
+      type: "eval_dashboard";
+      status: "starting";
+      requestedSessionId?: string;
+      startedAt: number;
+    }
+  | {
+      type: "eval_dashboard";
+      status: "running";
+      targetSessionId: string;
+      runId: string;
+      stage: EvalDashboardStage;
+      stageStatus: "running" | "done" | "failed";
+      index: number;
+      total: number;
+      application: string;
+      workerAgentId?: string;
+      retryCount?: number;
+      durationMs?: number;
+      message: string;
+      startedAt: number;
+      actorCount: number;
+      stepCount: number;
+      evidence: EvalDashboardEvidenceSummary;
+    }
+  | {
+      type: "eval_dashboard";
+      status: "completed";
+      targetSessionId: string;
+      runId: string;
+      html: string;
+      generatedAt: number;
+    }
+  | {
+      type: "eval_dashboard";
+      status: "failed";
+      requestedSessionId?: string;
+      targetSessionId?: string;
+      runId?: string;
+      stage?: EvalDashboardStage;
+      error: string;
+    };
 
 // ── Wire protocol ──
 
@@ -203,6 +305,7 @@ export type ClientCommand =
 
 export type ServerEvent =
   | { type: "ready"; model: string; config: ConfigData; messages: ConversationMessage[] }
+  | { type: "agent_activity"; activity: AgentActivity }
   | { type: "user_message"; text: string; images?: ImageAttachment[] }
   | { type: "assistant_start" }
   | { type: "thinking_delta"; delta: string }
@@ -234,6 +337,6 @@ export type ServerEvent =
   | { type: "artifact_start" }
   | { type: "artifact_delta"; delta: string }
   | { type: "artifact_end" }
+  | EvalDashboardServerEvent
   | { type: "cache_size"; totalBytes: number; fileCount: number; sessionCount: number }
   | { type: "mcp_open_browser" }
-

@@ -3,6 +3,7 @@ import { promisify } from "node:util";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
+import { resolveAgentPath } from "../agents/process/context.js";
 
 const bashParams = Type.Object({
   command: Type.String({ description: "Shell command to execute" }),
@@ -20,6 +21,7 @@ export const bashTool: AgentTool<typeof bashParams> = {
     const timeoutMs = timeout ?? 30000;
     try {
       const { stdout } = await execAsync(command, {
+        cwd: resolveAgentPath("."),
         timeout: timeoutMs,
         encoding: "utf8",
         maxBuffer: 1024 * 1024,

@@ -37,10 +37,16 @@ When ready to implement, run /opsx:apply
    matching the change name (e.g., `<change-name>-*.html`):
    - **If found**: Read the prototype HTML files — they are the design source-of-truth
      from explore. These will be referenced in the prototype artifact.
-   - **If not found and the change involves UI**: Offer to generate a prototype first
-     using the `prototype-workflow` skill, or proceed if the user prefers to skip.
+   - **If not found and the change involves UI**: STOP proposal artifact generation.
+     Load `prototype-workflow`, generate and browser-validate a self-contained HTML
+     prototype in `docs/prototypes/`, then continue. A text-only visual direction
+     or user preference to skip MUST NOT substitute for HTML.
    - **If not found and the change is non-UI**: Proceed — a non-UI stub prototype
      artifact will be created during artifact generation.
+
+   A change counts as UI if it affects visible components, rendering, layout,
+   CSS, interaction, or user-facing states. Only strictly non-UI changes may use
+   the "No prototype needed" stub.
 
 3. **Create the change directory**
    ```bash

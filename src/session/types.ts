@@ -2,6 +2,8 @@
 // Pure data model for session persistence and vision pipeline.
 // Consumed by: harness.ts (inference), store.ts (I/O), display.ts (UI)
 
+import type { AgentActivity } from "../ui/shared/types.js";
+
 // --- Image ---
 
 export interface ImageRef {
@@ -21,6 +23,32 @@ export interface VisionMessage {
   timestamp: number;
   latencyMs?: number;
   tokensUsed?: number;
+}
+
+export type AgentSessionAttachment =
+  | { type: "image"; data: ImageRef }
+  | { type: "file"; uri: string }
+  | { type: "text"; text: string };
+
+export interface AgentSessionMessage {
+  role: "subagent";
+  agentId: string;
+  parentAgentId?: string;
+  application: string;
+  state: "completed" | "failed" | "terminated" | "killed";
+  input: {
+    prompt: string;
+    attachments?: AgentSessionAttachment[];
+  };
+  output?: {
+    text?: string;
+    source?: string;
+    error?: string;
+  };
+  messageIndex?: number;
+  createdAt: number;
+  startedAt?: number;
+  endedAt: number;
 }
 
 // --- Session ---
@@ -50,19 +78,41 @@ export interface SessionMetadata {
 }
 
 export interface SerializedSession {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   metadata: SessionMetadata;
   messages: unknown[];
+  agentMessages?: AgentSessionMessage[];
+  /** Read-only compatibility with sessions written before generic SubAgents. */
   visionMessages?: VisionMessage[];
   compactedPrefix?: string;
+}
+
+export interface PreparedSessionLoad {
+  id: string;
+  metadata: SessionMetadata;
+  messages: unknown[];
+  agentMessages: AgentSessionMessage[];
+}
+
+export interface SwitchSessionRequest {
+  sessionIdOrPrefix: string;
+  pendingPermission?: PendingPermission;
+}
+
+export interface SwitchSessionResult {
+  session: SessionMetadata;
+  messages: unknown[];
+  agentMessages: AgentSessionMessage[];
 }
 
 // --- Display (forward-declared, implemented in display.ts) ---
 
 export interface DisplayMessage {
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "agent";
   content: string;
   images?: { data: string; mimeType: string }[];
   thinking?: string;
   tools?: { name: string; args: string; result: string; isError: boolean }[];
+  createdAt?: number;
+  agentActivity?: AgentActivity;
 }
