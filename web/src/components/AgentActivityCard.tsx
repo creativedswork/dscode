@@ -9,6 +9,7 @@ import {
 
 import type { AgentActivity, AgentActivityState } from "../types";
 import { formatAgentDisplayId } from "../../../src/ui/shared/agent-id.js";
+import { Markdown } from "./Markdown";
 
 const INPUT_SUMMARY_LENGTH = 140;
 const RESULT_SUMMARY_LENGTH = 220;
@@ -121,8 +122,22 @@ export function AgentActivityCard({ activity }: { activity: AgentActivity }) {
       )}
 
       {resultSummary && (
-        <div className={`agent-activity-result${activity.error ? " error" : ""}`}>
-          {resultSummary}
+        <div
+          id={detailsId}
+          className={[
+            "agent-activity-result",
+            activity.error ? "error" : "",
+            hasDetails && !expanded ? "collapsed" : "",
+            expanded ? "expanded" : "",
+          ].filter(Boolean).join(" ")}
+          tabIndex={expanded ? 0 : undefined}
+        >
+          <Markdown
+            className="agent-activity-markdown"
+            isStreaming={isLive(activity.state)}
+          >
+            {result}
+          </Markdown>
         </div>
       )}
 
@@ -141,11 +156,6 @@ export function AgentActivityCard({ activity }: { activity: AgentActivity }) {
         )}
       </footer>
 
-      {hasDetails && expanded && (
-        <pre id={detailsId} className="agent-activity-details" tabIndex={0}>
-          {result}
-        </pre>
-      )}
     </article>
   );
 }

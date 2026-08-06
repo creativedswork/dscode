@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { HarnessAPI } from "../core/harness-api.js";
 import type { UiBackend } from "../ui/backend.js";
+import { formatAgentDisplayId } from "../ui/shared/agent-id.js";
 import type { SerializedSession } from "../session/types.js";
 import { Logger } from "../utils/logger.js";
 import { computeStats } from "./stats.js";
@@ -109,7 +110,7 @@ export async function runEval(
     activeRun = run;
     const reportProgress = (event: ChiefProgressEvent) => {
       const marker = event.status === "done" ? "OK" : event.status === "failed" ? "FAILED" : "...";
-      const worker = event.workerAgentId ? ` (${event.workerAgentId.slice(0, 6)})` : "";
+      const worker = event.workerAgentId ? ` (${formatAgentDisplayId(event.workerAgentId)})` : "";
       onLog(`[${event.index}/${event.total}] ${event.application}${worker} ${marker}`);
       harness.events.emit({
         type: "eval:dashboard",

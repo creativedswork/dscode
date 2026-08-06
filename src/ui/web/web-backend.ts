@@ -27,6 +27,7 @@ import { rebuildDisplayMessages } from "../../session/display.js";
 import { formatToolResultForUI } from "../shared/tool-result-formatter.js";
 import { AgentActivityProjector } from "../shared/agent-activity.js";
 import { formatAgentDisplayId } from "../shared/agent-id.js";
+import { serializeArtifactThemeVariables } from "../shared/artifact-theme.js";
 import { resolveBuiltResource } from "../../resources/runtime.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
 import type { EvalDashboardState } from "../../core/events.js";
@@ -46,6 +47,15 @@ import type { ImageAttachment } from "./protocol.js";
 
 export const DASHBOARD_AGENT_TASK_SUMMARY_LIMIT = 100;
 export const DASHBOARD_AGENT_OUTCOME_SUMMARY_LIMIT = 120;
+
+export function buildDashboardThemeContract(): string {
+  return `DESIGN SYSTEM THEME CONTRACT:
+- Define these exact CSS custom properties in :root with the light defaults below:
+${serializeArtifactThemeVariables("light", "  ")}
+- Use these variables for EVERY theme-dependent color declaration, including inline styles
+- Never hard-code a theme color outside the :root declarations
+- The WebUI overrides these variables at runtime so the same Dashboard follows light and dark mode`;
+}
 
 export function projectEvalDashboardState(
   state: EvalDashboardState,
@@ -1724,29 +1734,19 @@ export class WebUiBackend implements UiBackend {
         // graceful fallback
       }
 
-      // Build DESIGN SYSTEM COLORS block
-      const designColors = `DESIGN SYSTEM COLORS (MUST use these exact hex values for EVERY color in your HTML):
-- Background:  #f8f7f5
-- Surface:     #f3f2ef
-- Border:      #e6e4e0
-- Text:        #2d2a26
-- Muted Text:  #8a8580
-- Accent:      #ca8a04 (warm amber/gold — use for highlights, progress bars, headings)
-- Success:     #347539 text on #edf4ed background
-- Error:       #9f2f2d text on #fdebec background
-- Warning:     #956400 text on #fbf3db background
-- User Bubble: #ca8a04 background, #ffffff text`;
+      // The WebUI injects current values for these variables into the iframe.
+      const designColors = buildDashboardThemeContract();
 
       // Build default style constraints (used when .dscode/html_output_skill absent)
       const defaultStyleConstraints = `CRITICAL STYLE RULES:
-- Use the exact hex colors from DESIGN SYSTEM COLORS above — do NOT substitute with other greens, reds, or blues
+- Use only the semantic variables from DESIGN SYSTEM THEME CONTRACT for theme colors
 - Flat design: 1px solid var(--border) borders, no box-shadow, no gradients
 - Border-radius: 8px for cards/panels, 6px for buttons, 12px for large containers
 - Typography: system-ui, -apple-system, sans-serif for labels; monospace for data values
 - Emoji for visual markers, CSS conic-gradient or inline SVG for chart-like elements
-- Background MUST be #f8f7f5, never white (#fff) or transparent
-- Text MUST be #2d2a26, never pure black (#000) or cold gray
-- The accent color MUST be #ca8a04 (warm amber), never blue`;
+- Background MUST be var(--bg), never white, black, or transparent
+- Text MUST be var(--text), never a hard-coded color
+- Accent elements MUST use var(--accent), never blue`;
 
       // Build system prompt
       const systemPrompt = `You are an expert HTML dashboard designer. Generate a single, self-contained HTML file.

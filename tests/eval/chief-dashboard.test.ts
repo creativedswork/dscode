@@ -267,6 +267,18 @@ function result(): EvalResult {
 }
 
 describe("CHIEF dashboard", () => {
+  it("emits the shared light and dark theme contract", () => {
+    const html = generateDashboardHTML(result());
+
+    expect(html).toContain('data-dscode-theme-contract="1"');
+    expect(html).toContain("@media (prefers-color-scheme: dark)");
+    expect(html).toContain("--bg: #f8f7f5");
+    expect(html).toContain("--bg: #1e1c19");
+    expect(html).toContain("background: var(--bg)");
+    expect(html).toContain("color: var(--text)");
+    expect(html).toContain("background:var(--success)");
+  });
+
   it("renders process lanes, short IDs, dependencies, evidence, and backtracking", () => {
     const html = generateDashboardHTML(result());
 

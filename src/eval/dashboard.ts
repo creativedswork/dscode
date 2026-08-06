@@ -1,11 +1,12 @@
 // ── Dashboard HTML Generator ──
 import type { CascadeEdge } from "./focus/types.js";
-// Generates a dark-themed, self-contained HTML diagnostic dashboard.
+// Generates a theme-aware, self-contained HTML diagnostic dashboard.
 
 import { writeFileSync, mkdirSync, existsSync, renameSync, rmSync } from "node:fs";
 import { exec } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
+import { serializeArtifactThemeVariables } from "../ui/shared/artifact-theme.js";
 import type { EvalResult } from "./types.js";
 import type { ChiefAttribution } from "./chief/types.js";
 
@@ -19,7 +20,9 @@ function generateRecoveryTimelineHTML(recoveryArcs: DashboardRecoveryArc[]): str
   if (!recoveryArcs || recoveryArcs.length === 0) return "";
 
   const rows = recoveryArcs.map((arc) => {
-    const effectiveColor = arc.effective ? COLORS.ok : "rgba(210,153,29,0.5)";
+    const effectiveColor = arc.effective
+      ? COLORS.ok
+      : "color-mix(in srgb, var(--warning) 50%, transparent)";
     const effectiveIcon = arc.effective ? "✅" : "⚠️";
     const detectionLabel: Record<string, string> = {
       tool_error: "工具报错",
@@ -34,20 +37,20 @@ function generateRecoveryTimelineHTML(recoveryArcs: DashboardRecoveryArc[]): str
     return `
     <div style="background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:6px;padding:14px 16px;margin-bottom:12px;">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px;">
-        <span style="background:${COLORS.danger};color:#fff;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:600;white-space:nowrap;">🔴 Step ${arc.errorStep}</span>
+        <span style="background:${COLORS.danger};color:${COLORS.statusText};padding:4px 10px;border-radius:4px;font-size:12px;font-weight:600;white-space:nowrap;">🔴 Step ${arc.errorStep}</span>
         <span style="color:${COLORS.textMuted};font-size:14px;">→</span>
-        <span style="background:${COLORS.warn};color:#000;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:600;white-space:nowrap;">🔍 Step ${arc.detectionStep}</span>
+        <span style="background:${COLORS.warn};color:${COLORS.statusText};padding:4px 10px;border-radius:4px;font-size:12px;font-weight:600;white-space:nowrap;">🔍 Step ${arc.detectionStep}</span>
         <span style="color:${COLORS.textMuted};font-size:14px;">→</span>
-        <span style="background:${effectiveColor};color:#000;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:600;white-space:nowrap;">${effectiveIcon} Step ${arc.correctionStep}</span>
-        <span style="background:rgba(212,151,8,0.15);padding:2px 8px;border-radius:4px;font-size:11px;color:${COLORS.accent};">${detLabel}</span>
+        <span style="background:${effectiveColor};color:${COLORS.statusText};padding:4px 10px;border-radius:4px;font-size:12px;font-weight:600;white-space:nowrap;">${effectiveIcon} Step ${arc.correctionStep}</span>
+        <span style="background:color-mix(in srgb, var(--accent) 15%, transparent);padding:2px 8px;border-radius:4px;font-size:11px;color:${COLORS.accent};">${detLabel}</span>
         <span style="font-size:11px;color:${COLORS.textMuted};">${arc.stepsToRecover} steps</span>
-        ${arc.misdiagnosisCount > 0 ? `<span style="background:rgba(210,153,29,0.15);padding:2px 8px;border-radius:4px;font-size:11px;color:${COLORS.warn};">${arc.misdiagnosisCount} 次误判</span>` : ""}
+        ${arc.misdiagnosisCount > 0 ? `<span style="background:color-mix(in srgb, var(--warning) 15%, transparent);padding:2px 8px;border-radius:4px;font-size:11px;color:${COLORS.warn};">${arc.misdiagnosisCount} 次误判</span>` : ""}
       </div>
       <div style="font-size:13px;color:${COLORS.text};margin-bottom:4px;">
         <span style="color:${COLORS.danger};">${escapeHtml(arc.errorAgent)}</span>: ${escapeHtml(arc.errorSummary)}
         → <span style="color:${effectiveColor};">${escapeHtml(arc.correctionAgent)}</span>: ${escapeHtml(arc.correctionSummary)}
       </div>
-      <div style="font-size:12px;color:${COLORS.accent};font-style:italic;padding:8px 12px;background:rgba(212,151,8,0.08);border-radius:4px;border-left:3px solid ${COLORS.accent};margin-top:8px;">
+      <div style="font-size:12px;color:${COLORS.accent};font-style:italic;padding:8px 12px;background:color-mix(in srgb, var(--accent) 8%, transparent);border-radius:4px;border-left:3px solid ${COLORS.accent};margin-top:8px;">
         💡 根因假说: ${escapeHtml(arc.rootCauseHypothesis)}
       </div>
     </div>`;
@@ -79,15 +82,16 @@ export function escapeHtml(text: string | null | undefined): string {
 // ── Color utilities ──
 
 const COLORS = {
-  ok: "#3fb950",
-  warn: "#d4a017",
-  danger: "#e05553",
-  bg: "#1e1c19",
-  card: "#282622",
-  border: "#3a3732",
-  text: "#e8e4dd",
-  textMuted: "#8a8580",
-  accent: "#d49708",
+  ok: "var(--success)",
+  warn: "var(--warning)",
+  danger: "var(--error)",
+  bg: "var(--bg)",
+  card: "var(--surface)",
+  border: "var(--border)",
+  text: "var(--text)",
+  textMuted: "var(--muted)",
+  accent: "var(--accent)",
+  statusText: "var(--status-text)",
 };
 
 function statusColor(status: "ok" | "warn" | "danger"): string {
@@ -335,7 +339,7 @@ function generateRuleChainHTML(attribution: DashboardAttribution, rulesApplied: 
   };
 
   const ruleItems = rulesApplied.map((r) => `
-    <div style="padding:8px 12px;margin:4px 0;background:${r === "Rule3" ? "rgba(224,85,83,0.15)" : "rgba(212,151,8,0.1)"};border-left:3px solid ${r === "Rule3" ? COLORS.danger : COLORS.accent};border-radius:4px;">
+    <div style="padding:8px 12px;margin:4px 0;background:${r === "Rule3" ? "color-mix(in srgb, var(--error) 15%, transparent)" : "color-mix(in srgb, var(--accent) 10%, transparent)"};border-left:3px solid ${r === "Rule3" ? COLORS.danger : COLORS.accent};border-radius:4px;">
       <strong style="color:${COLORS.accent};font-size:13px;">${escapeHtml(r)}</strong>
       <div style="font-size:12px;color:${COLORS.textMuted};margin-top:2px;">${escapeHtml(ruleDescriptions[r] ?? "")}</div>
     </div>`).join("");
@@ -371,11 +375,11 @@ function generateCascadePathHTML(cascadePath: CascadeEdge[]): string {
     const mechanismLabel = CASCADE_MECHANISM_LABELS[e.mechanism] ?? e.mechanism;
     return `
     <div style="display:flex;align-items:center;gap:12px;padding:10px 14px;background:${COLORS.card};border:1px solid ${COLORS.border};border-radius:6px;margin-bottom:8px;">
-      <span style="background:${COLORS.danger};color:#fff;padding:4px 8px;border-radius:4px;font-size:11px;font-weight:600;">🔴 根因</span>
+      <span style="background:${COLORS.danger};color:${COLORS.statusText};padding:4px 8px;border-radius:4px;font-size:11px;font-weight:600;">🔴 根因</span>
       <span style="font-family:monospace;font-size:13px;color:${COLORS.accent};">${escapeHtml(e.fromZoneId)}:${e.fromStepId}</span>
       <span style="color:${COLORS.textMuted};font-size:18px;">→</span>
       <span style="font-family:monospace;font-size:13px;">${escapeHtml(e.toZoneId)}:${e.toStepId}</span>
-      <span style="background:rgba(212,151,8,0.15);padding:2px 8px;border-radius:4px;font-size:11px;color:${COLORS.accent};">${mechanismLabel}</span>
+      <span style="background:color-mix(in srgb, var(--accent) 15%, transparent);padding:2px 8px;border-radius:4px;font-size:11px;color:${COLORS.accent};">${mechanismLabel}</span>
       <span style="font-size:11px;color:${COLORS.textMuted};">数据: ${escapeHtml(e.dataItem)}</span>
     </div>`;
   }).join("");
@@ -396,12 +400,22 @@ export function generateDashboardHTML(result: EvalResult): string {
   const { metadata, stats, phases, deviations, rootCauses, rules, timeline } = result;
 
   return `<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-dscode-theme-contract="1">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Eval Dashboard — ${escapeHtml(metadata.sessionId.slice(0, 8))}</title>
 <style>
+:root {
+  color-scheme: light;
+${serializeArtifactThemeVariables("light", "  ")}
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+${serializeArtifactThemeVariables("dark", "    ")}
+  }
+}
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
@@ -412,9 +426,9 @@ body {
   max-width: 1200px;
   margin: 0 auto;
 }
-h1 { font-size: 28px; font-weight: 600; margin-bottom: 4px; color: #e8e4dd; }
-h2 { font-size: 20px; font-weight: 600; margin: 32px 0 16px; color: #e8e4dd; border-bottom: 1px solid ${COLORS.border}; padding-bottom: 8px; }
-h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #e8e4dd; }
+h1 { font-size: 28px; font-weight: 600; margin-bottom: 4px; color: ${COLORS.text}; }
+h2 { font-size: 20px; font-weight: 600; margin: 32px 0 16px; color: ${COLORS.text}; border-bottom: 1px solid ${COLORS.border}; padding-bottom: 8px; }
+h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: ${COLORS.text}; }
 .header { background: ${COLORS.card}; border: 1px solid ${COLORS.border}; border-radius: 8px; padding: 24px; margin-bottom: 24px; }
 .header-meta { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; margin-top: 16px; }
 .meta-item { }
@@ -427,7 +441,7 @@ h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #e8e4dd; }
 .process-lane { padding: 12px 0; border-bottom: 1px solid ${COLORS.border}; }
 .process-lane:last-child { border-bottom: 0; }
 .phase-bar { display: flex; height: 32px; border-radius: 4px; overflow: hidden; margin-bottom: 16px; }
-.phase-segment { display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; color: #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 4px; cursor: default; }
+.phase-segment { display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 600; color: ${COLORS.statusText}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 4px; cursor: default; }
 .phase-segment:hover { filter: brightness(1.2); }
 .phase-detail { background: ${COLORS.card}; border: 1px solid ${COLORS.border}; border-radius: 6px; padding: 16px; margin-bottom: 12px; }
 .phase-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
@@ -459,7 +473,7 @@ h3 { font-size: 16px; font-weight: 600; margin-bottom: 8px; color: #e8e4dd; }
     ${escapeHtml(metadata.sessionId)}
   </div>
   <div style="margin-top:8px;">
-    <span style="background:${COLORS.ok};color:#000;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">CHIEF Multi-Agent Causal Analysis</span>
+    <span style="background:${COLORS.ok};color:${COLORS.statusText};padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;">CHIEF Multi-Agent Causal Analysis</span>
   </div>
   <div class="header-meta">
     <div class="meta-item">
@@ -619,7 +633,7 @@ ${(() => {
   }
 
   return Object.entries(grouped).map(([cat, catRules]) => `
-<h3 style="font-size:15px;font-weight:600;margin:24px 0 12px;color:#e8e4dd;">${escapeHtml(catLabels[cat] ?? cat)}</h3>
+<h3 style="font-size:15px;font-weight:600;margin:24px 0 12px;color:${COLORS.text};">${escapeHtml(catLabels[cat] ?? cat)}</h3>
 ${catRules.map((r: any) => {
   const sevLabel = r.severity >= 1 ? 'ERROR' : r.severity >= 0.6 ? 'WARN' : 'INFO';
   const sevColor = r.severity >= 1 ? COLORS.danger : r.severity >= 0.6 ? COLORS.warn : COLORS.accent;
@@ -629,7 +643,7 @@ ${catRules.map((r: any) => {
   return `
 <div class="deviation-card" style="border-left:3px solid ${sevColor};margin-bottom:16px;">
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
-    <span class="badge" style="background:${sevColor};font-size:10px;padding:2px 6px;border-radius:3px;">${sevLabel}</span>
+    <span class="badge" style="background:${sevColor};color:${COLORS.statusText};font-size:10px;padding:2px 6px;border-radius:3px;">${sevLabel}</span>
     <strong>${escapeHtml(r.id)}</strong>
     <span style="color:${COLORS.textMuted};font-size:11px;">→ ${escapeHtml(r.targetLayer)}</span>
     ${r.targetScope === "application" ? `<span style="color:${COLORS.accent};font-size:10px;">Application: ${escapeHtml(r.targetApplication ?? "unknown")}</span>` : `<span style="color:${COLORS.textMuted};font-size:10px;">Shared Harness</span>`}
@@ -640,7 +654,7 @@ ${catRules.map((r: any) => {
   ${r.rawDescription ? `
   <details style="margin-bottom:8px;">
     <summary style="font-size:11px;color:${COLORS.accent};cursor:pointer;">📝 详细描述</summary>
-    <p style="font-size:12px;color:${COLORS.textMuted};margin:4px 0;padding:8px;background:rgba(212,151,8,0.05);border-radius:4px;white-space:pre-wrap;">${escapeHtml(r.rawDescription)}</p>
+    <p style="font-size:12px;color:${COLORS.textMuted};margin:4px 0;padding:8px;background:color-mix(in srgb, var(--accent) 5%, transparent);border-radius:4px;white-space:pre-wrap;">${escapeHtml(r.rawDescription)}</p>
   </details>` : ""}
   ${r.severity >= 1 ? `<div style="font-size:11px;color:${COLORS.danger};margin-bottom:6px;">⚠ 建议持久化到 Agent 配置 (${escapeHtml(r.targetLayer)})</div>` : ""}
   <div style="background:${COLORS.card};border-radius:4px;padding:10px 12px;">

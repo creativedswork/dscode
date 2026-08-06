@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { SessionManager } from "../../src/session/manager.js";
 import type { AgentSessionMessage } from "../../src/session/types.js";
 import {
+  buildDashboardThemeContract,
   buildDashboardSubagentSummary,
   buildSessionDashboardUserPrompt,
   DASHBOARD_AGENT_OUTCOME_SUMMARY_LIMIT,
@@ -229,6 +230,17 @@ describe("Session Dashboard SubAgent summary", () => {
     expect(prompt).toContain("Do NOT copy full SubAgent input/output");
     expect(prompt).toContain("must not be duplicated in Dashboard");
     expect(prompt).toContain('{"subagents":{"total":1}}');
+  });
+
+  it("requires generated Dashboard colors to use runtime theme tokens", () => {
+    const source = buildDashboardThemeContract();
+
+    expect(source).toContain("DESIGN SYSTEM THEME CONTRACT");
+    expect(source).toContain("--bg: #f8f7f5");
+    expect(source).toContain("--surface: #f3f2ef");
+    expect(source).toContain("Use these variables for EVERY theme-dependent color");
+    expect(source).toContain("follows light and dark mode");
+    expect(source).not.toContain("DESIGN SYSTEM COLORS");
   });
 
   it("rejects cached dashboards created before the overview-only format", () => {

@@ -6,9 +6,49 @@ import { describe, expect, it, vi } from "vitest";
 import { ArtifactContainer } from "../../web/src/components/ArtifactContainer.js";
 import { EvalDashboardView } from "../../web/src/components/EvalDashboardView.js";
 import { ViewModeSelector } from "../../web/src/components/ViewModeSelector.js";
+import {
+  applyArtifactTheme,
+  normalizeLegacyEvalTheme,
+} from "../../web/src/utils/artifactTheme.js";
 import { openEvalDashboardHtml } from "../../web/src/utils/evalExternalOpen.js";
 
 describe("Eval Dashboard artifact presentation", () => {
+  it("maps legacy Eval palette colors only inside CSS", () => {
+    const legacy = `<!doctype html><html><head><style>
+      body { background: #1e1c19; color: #e8e4dd; }
+      .card { background: #282622; border-color: #3a3732; }
+    </style></head><body>
+      <div style="color:#d49708;background:rgba(212,151,8,0.15)">Legacy #1e1c19 report</div>
+      <span style="color:#000">Status</span>
+    </body></html>`;
+    const normalized = normalizeLegacyEvalTheme(legacy);
+
+    expect(normalized).toContain("background: var(--bg)");
+    expect(normalized).toContain("color: var(--text)");
+    expect(normalized).toContain("background: var(--surface)");
+    expect(normalized).toContain("border-color: var(--border)");
+    expect(normalized).toContain("color:var(--accent)");
+    expect(normalized).toContain("color-mix(in srgb, var(--accent) 15%, transparent)");
+    expect(normalized).toContain('style="color:var(--status-text)"');
+    expect(normalized).toContain("Legacy #1e1c19 report");
+  });
+
+  it("overrides cached Dashboard theme tokens after artifact styles", () => {
+    const source = "<!doctype html><html><head><style>:root{--bg:#f8f7f5}</style></head><body>Dashboard</body></html>";
+    const darkHtml = applyArtifactTheme(source, "dark");
+    const lightHtml = applyArtifactTheme(darkHtml, "light");
+
+    expect(darkHtml.indexOf("--bg:#f8f7f5")).toBeLessThan(
+      darkHtml.indexOf("--bg: #1e1c19"),
+    );
+    expect(darkHtml).toContain("color-scheme: dark");
+    expect(darkHtml).toContain("--surface: #282622");
+    expect(lightHtml).toContain("color-scheme: light");
+    expect(lightHtml).toContain("--surface: #f3f2ef");
+    expect(lightHtml).not.toContain("--bg: #1e1c19");
+    expect(lightHtml.match(/id="dscode-artifact-theme"/g)).toHaveLength(1);
+  });
+
   it("uses srcDoc with a script-free sandbox", () => {
     const markup = renderToStaticMarkup(createElement(ArtifactContainer, {
       presentation: {
@@ -16,11 +56,14 @@ describe("Eval Dashboard artifact presentation", () => {
         html: "<!doctype html><html><script>window.bad=true</script></html>",
         loading: false,
       },
+      theme: "dark",
     }));
 
     expect(markup).toContain('sandbox="allow-same-origin"');
     expect(markup).not.toContain("allow-scripts");
     expect(markup).toContain("window.bad=true");
+    expect(markup).toContain("--bg: #1e1c19");
+    expect(markup).toContain("color-scheme:dark");
     expect(markup).toContain('title="CHIEF evaluation report"');
   });
 
@@ -35,6 +78,7 @@ describe("Eval Dashboard artifact presentation", () => {
         html: "<!doctype html><html><body>complete report</body></html>",
         generatedAt: 2,
       },
+      theme: "light",
       onBackToChat: vi.fn(),
       onRetry: vi.fn(),
       onOpenExternal: vi.fn(),
@@ -57,6 +101,7 @@ describe("Eval Dashboard artifact presentation", () => {
         activeStage: "attribution",
         error: "<img src=x onerror=alert(1)>",
       },
+      theme: "light",
       onBackToChat: vi.fn(),
       onRetry: vi.fn(),
       onOpenExternal: vi.fn(),
@@ -81,6 +126,7 @@ describe("Eval Dashboard artifact presentation", () => {
         workerAgentId: "agent-9f8e7d66",
         retryCount: 1,
       },
+      theme: "light",
       onBackToChat: vi.fn(),
       onRetry: vi.fn(),
       onOpenExternal: vi.fn(),
@@ -109,6 +155,7 @@ describe("Eval Dashboard artifact presentation", () => {
         accessedAt: 3,
         html: "<!doctype html><title>previous complete report</title>",
       },
+      theme: "dark",
       onBackToChat: vi.fn(),
       onRetry: vi.fn(),
       onOpenExternal: vi.fn(),
@@ -141,6 +188,7 @@ describe("Eval Dashboard artifact presentation", () => {
         accessedAt: 3,
         html: "<!doctype html><title>unrelated report</title>",
       },
+      theme: "light",
       onBackToChat: vi.fn(),
       onRetry: vi.fn(),
       onOpenExternal: vi.fn(),
@@ -241,6 +289,7 @@ describe("Eval Dashboard artifact presentation", () => {
 
     const url = openEvalDashboardHtml(
       "<html>received report</html>",
+      "dark",
       objectUrlApi,
       opener,
     );
@@ -252,6 +301,8 @@ describe("Eval Dashboard artifact presentation", () => {
       "noopener,noreferrer",
     );
     expect(blob?.type).toBe("text/html;charset=utf-8");
-    expect(await blob?.text()).toBe("<html>received report</html>");
+    expect(await blob?.text()).toContain("received report");
+    expect(await blob?.text()).toContain("color-scheme: dark");
+    expect(await blob?.text()).toContain("--bg: #1e1c19");
   });
 });

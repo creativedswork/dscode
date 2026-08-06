@@ -204,6 +204,7 @@ export class TuiApp {
   // Absolute path shown when cursor is on a [file:xxx] placeholder
   private hoveredFilePath: string | null = null;
   private lastPasteTime = 0;
+  private pendingImageLoads = 0;
   // ── Kitty protocol multi-chunk buffer ──
   // Kitty transmits large images in chunks. Accumulate base64 payloads here
   // keyed by a synthetic ID until the final chunk (v=8) arrives.
@@ -610,10 +611,11 @@ export class TuiApp {
       // ── Attachment bar: display-only, scroll via arrows ──
       const fileCount = this.fileTracker.count;
       const imageCount = this.imagePasteHandler.imageCount;
-      if (fileCount > 0 || imageCount > 0) {
+      if (fileCount > 0 || imageCount > 0 || this.pendingImageLoads > 0) {
         if (matchesKey(data, Key.escape)) {
           this.fileTracker.clear();
           this.imagePasteHandler.clear();
+          this.flushKittyBuffer();
           this.attachmentScrollOffset = 0;
           // Strip [file:xxx] markers from editor text
           const currentText = this.editor.getText();
@@ -646,7 +648,7 @@ export class TuiApp {
     const filePaths = this.fileTracker.getDisplayPaths();
     const fileAbsPaths = this.fileTracker.getAll();
 
-    if (imageCount === 0 && filePaths.length === 0) {
+    if (imageCount === 0 && filePaths.length === 0 && this.pendingImageLoads === 0) {
       this.imageStatus.setText("");
       this.tui.requestRender(true);
       return;
@@ -660,6 +662,13 @@ export class TuiApp {
 
     if (imageCount > 0) {
       const label = ` \u{1F5BC} ${imageCount} image${imageCount > 1 ? "s" : ""} `;
+      parts.push(c.bgBlue(label));
+    }
+
+    if (this.pendingImageLoads > 0) {
+      const label = this.pendingImageLoads === 1
+        ? " Preparing image... "
+        : ` Preparing ${this.pendingImageLoads} images... `;
       parts.push(c.bgBlue(label));
     }
 
@@ -682,6 +691,16 @@ export class TuiApp {
       : "";
     this.imageStatus.setText(`${chipsLine}${hoverLine}\n${hintLine}`);
     this.tui.requestRender(true);
+  }
+
+  private beginPendingImageLoad(): void {
+    this.pendingImageLoads += 1;
+    this.updateAttachmentBar();
+  }
+
+  private endPendingImageLoad(): void {
+    this.pendingImageLoads = Math.max(0, this.pendingImageLoads - 1);
+    this.updateAttachmentBar();
   }
   openMcpBrowser(): void {
     if (!this.deps.mcpManager) {
@@ -894,10 +913,13 @@ export class TuiApp {
       return { consume: true };
     }
     this.lastPasteTime = now;
+    this.beginPendingImageLoad();
     readClipboardImageNonBlocking().then((img) => {
       if (img) {
         this.imagePasteHandler.addImage(img);
       }
+    }).finally(() => {
+      this.endPendingImageLoad();
     });
 
     // If there's extractable printable text, pass it through to the editor
@@ -982,6 +1004,9 @@ export class TuiApp {
       clearTimeout(this.kittyChunkBuffer.timer);
     }
     const prevB64 = this.kittyChunkBuffer?.base64 ?? "";
+    if (!this.kittyChunkBuffer) {
+      this.beginPendingImageLoad();
+    }
     this.kittyChunkBuffer = {
       base64: prevB64 + chunkB64,
       timer: setTimeout(() => {
@@ -999,6 +1024,7 @@ export class TuiApp {
     if (this.kittyChunkBuffer) {
       clearTimeout(this.kittyChunkBuffer.timer);
       this.kittyChunkBuffer = null;
+      this.endPendingImageLoad();
     }
   }
 
@@ -1024,17 +1050,30 @@ export class TuiApp {
     const now = Date.now();
     if (now - this.lastPasteTime < 100) return;
     this.lastPasteTime = now;
+    this.beginPendingImageLoad();
     const tryRead = (attempt: number) => {
-      readClipboardImageNonBlocking().then((img) => {
-        if (img) {
-          this.imagePasteHandler.addImage(img);
-          setTimeout(() => this.tui.requestRender(true), 0);
-        } else if (attempt < 1) {
-          setTimeout(() => tryRead(attempt + 1), 1500);
-        } else {
-          this.conversation.addInfo(c.dim("No image found in clipboard. Use /image <path> to attach an image file."));
-        }
-      });
+      readClipboardImageNonBlocking().then(
+        (img) => {
+          if (img) {
+            this.imagePasteHandler.addImage(img);
+            this.endPendingImageLoad();
+            setTimeout(() => this.tui.requestRender(true), 0);
+          } else if (attempt < 1) {
+            setTimeout(() => tryRead(attempt + 1), 1500);
+          } else {
+            this.endPendingImageLoad();
+            this.conversation.addInfo(c.dim("No image found in clipboard. Use /image <path> to attach an image file."));
+          }
+        },
+        () => {
+          if (attempt < 1) {
+            setTimeout(() => tryRead(attempt + 1), 1500);
+          } else {
+            this.endPendingImageLoad();
+            this.conversation.addInfo(c.dim("Could not read the clipboard image."));
+          }
+        },
+      );
     };
     tryRead(0);
   }

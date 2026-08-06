@@ -355,8 +355,8 @@ export function App() {
     if (evalObjectUrlRef.current) {
       URL.revokeObjectURL(evalObjectUrlRef.current);
     }
-    evalObjectUrlRef.current = openEvalDashboardHtml(html);
-  }, []);
+    evalObjectUrlRef.current = openEvalDashboardHtml(html, theme);
+  }, [theme]);
 
   const handleRetryEval = useCallback(() => {
     const target = evalStateRef.current?.targetSessionId
@@ -497,10 +497,18 @@ export function App() {
             <TransitionCanvas artifactReady={!sessionArtifactLoading && sessionArtifactHtml !== ""} onComplete={handleTransitionComplete} scrollContainerRef={chatContainerRef} />
           )}
           {viewMode === "session_dashboard" && transitionPhase === "idle" ? (
-            <ArtifactContainer presentation={{ kind: "session_dashboard", html: sessionArtifactHtml, loading: sessionArtifactLoading }} />
+            <ArtifactContainer
+              presentation={{
+                kind: "session_dashboard",
+                html: sessionArtifactHtml,
+                loading: sessionArtifactLoading,
+              }}
+              theme={theme}
+            />
           ) : viewMode === "eval_dashboard" && evalState ? (
             <EvalDashboardView
               state={evalState}
+              theme={theme}
               latestSuccessful={latestSuccessfulEval}
               onBackToChat={() => handleViewModeChange("chat")}
               onRetry={handleRetryEval}

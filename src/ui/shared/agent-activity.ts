@@ -44,6 +44,9 @@ export class AgentActivityProjector {
     const agentId = event.type === "agent:exit" ? event.result.agentId : event.agentId;
     const process = this.supervisor.get(agentId);
     if (!process || process.role !== "subagent") return undefined;
+    // Process-only workers belong to isolated workflows such as Eval. Their
+    // progress is projected by the owning workflow, not the Chat conversation.
+    if (process.recording === "process-only") return undefined;
     if (process.parentSessionId !== this.visibleSessionId()) return undefined;
 
     if (event.type === "agent:spawned") {

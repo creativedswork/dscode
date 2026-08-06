@@ -15,6 +15,7 @@ function processFixture(
     role: "subagent",
     state: "created",
     attachment: "foreground",
+    recording: "session",
     contextMode: "minimal",
     context: {},
     runtime: {},
@@ -185,6 +186,34 @@ describe("Web Agent Activity projection", () => {
     events.emit(progress);
     events.emit(progress);
     expect(agentActivities(broadcast)).toHaveLength(1);
+  });
+
+  it("keeps process-only Eval workers out of the Chat conversation", () => {
+    const process = processFixture({
+      application: { name: "chief-graph" } as AgentProcess["application"],
+      recording: "process-only",
+    });
+    const { events, broadcast } = setup(process);
+
+    events.emit({
+      type: "agent:spawned",
+      agentId: process.agentId,
+      parentAgentId: process.parentAgentId,
+      application: "chief-graph",
+      attachment: "foreground",
+      input: "Build the CHIEF graph",
+    });
+    process.state = "completed";
+    process.exit = {
+      agentId: process.agentId,
+      state: "completed",
+      output: "Eval-only output",
+      startedAt: 1100,
+      endedAt: 5000,
+    };
+    events.emit({ type: "agent:exit", result: process.exit });
+
+    expect(agentActivities(broadcast)).toHaveLength(0);
   });
 
   it("always forwards terminal snapshots", () => {

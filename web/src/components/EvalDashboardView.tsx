@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowSquareOut, Check, LockSimple, Warning } from "@phosphor-icons/react";
-import { ArtifactContainer } from "./ArtifactContainer";
+import {
+  ArtifactContainer,
+  type ArtifactTheme,
+} from "./ArtifactContainer";
 import type { EvalDashboardCacheEntry } from "../utils/evalDashboardCache";
 import type {
   EvalDashboardStageState,
@@ -10,6 +13,7 @@ import { formatAgentDisplayId } from "../../../src/ui/shared/agent-id.js";
 
 interface EvalDashboardViewProps {
   state: EvalDashboardViewState;
+  theme: ArtifactTheme;
   latestSuccessful?: EvalDashboardCacheEntry;
   onBackToChat: () => void;
   onRetry: () => void;
@@ -123,6 +127,7 @@ function StageRow({ stage }: { stage: EvalDashboardStageState }) {
 
 export function EvalDashboardView({
   state,
+  theme,
   latestSuccessful,
   onBackToChat,
   onRetry,
@@ -243,6 +248,7 @@ export function EvalDashboardView({
               html: state.html,
               loading: false,
             }}
+            theme={theme}
           />
         )}
 
@@ -274,6 +280,7 @@ export function EvalDashboardView({
                 html: historicalReport.html,
                 loading: false,
               }}
+              theme={theme}
             />
           </div>
         )}

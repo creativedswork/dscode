@@ -27,6 +27,7 @@ function processFixture(
     role: "subagent",
     state: "created",
     attachment: "background",
+    recording: "session",
     contextMode: "minimal",
     context: {},
     runtime: {},
@@ -113,6 +114,27 @@ describe("TUI Agent Activity", () => {
         error: "Timed out",
       }),
     );
+  });
+
+  it("does not render process-only Eval workers in the TUI conversation", () => {
+    const process = processFixture({
+      application: { name: "chief-attribution" } as AgentProcess["application"],
+      recording: "process-only",
+    });
+    const { events, tui } = setup(process);
+
+    spawn(events, process);
+    process.state = "completed";
+    process.exit = {
+      agentId: process.agentId,
+      state: "completed",
+      output: "Eval-only output",
+      startedAt: 1100,
+      endedAt: 5000,
+    };
+    events.emit({ type: "agent:exit", result: process.exit });
+
+    expect(tui.upsertAgentActivity).not.toHaveBeenCalled();
   });
 
   it("formats compact duration, input, progress, output, and error summaries", () => {

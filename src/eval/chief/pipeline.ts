@@ -1,4 +1,5 @@
 import type { HarnessAPI } from "../../core/harness-api.js";
+import { formatAgentDisplayId } from "../../ui/shared/agent-id.js";
 import type { Logger } from "../../utils/logger.js";
 import type { CausalGraphSnapshot } from "../schemas.js";
 import { attributeRulesWithAgent } from "../rules/extraction.js";
@@ -195,7 +196,7 @@ function toSnapshot(
   const subtaskIds = new Set(graph.subtasks.map((subtask) => subtask.id));
   const displayActor = (agentId: string) => {
     const actor = actorById.get(agentId);
-    return actor ? `${actor.application} (${agentId.slice(0, 6)})` : agentId;
+    return actor ? `${actor.application} (${formatAgentDisplayId(agentId)})` : agentId;
   };
   return {
     subtasks: graph.subtasks.map((subtask) => {
@@ -397,7 +398,7 @@ export async function runChiefPipeline(
             index,
             status: "running",
             retryCount,
-            message: `${application} (${agentId.slice(0, 6)}) is running`,
+            message: `${application} (${formatAgentDisplayId(agentId)}) is running`,
           });
         },
       });
@@ -497,7 +498,7 @@ export async function runChiefPipeline(
             index: 6,
             status: "running",
             retryCount: rulesRetryCount,
-            message: `eval-rule-attribution (${agentId.slice(0, 6)}) is running`,
+            message: `eval-rule-attribution (${formatAgentDisplayId(agentId)}) is running`,
           });
         },
       });

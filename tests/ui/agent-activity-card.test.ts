@@ -1,10 +1,13 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { createElement } from "../../web/node_modules/react/index.js";
+import { renderToStaticMarkup } from "../../web/node_modules/react-dom/server.node.js";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AgentActivity } from "../../src/ui/shared/types.js";
 import {
   AGENT_STATUS_LABELS,
+  AgentActivityCard,
   formatAgentDuration,
   summarizeAgentText,
 } from "../../web/src/components/AgentActivityCard.js";
@@ -64,7 +67,26 @@ describe("AgentActivityCard", () => {
     expect(source).toContain('type="button"');
   });
 
-  it("exposes progress semantics and a bounded details scroll container", () => {
+  it("renders Agent output as Markdown in both preview and details", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const markup = renderToStaticMarkup(
+      createElement(AgentActivityCard, {
+        activity: activity({
+          state: "completed",
+          output: "**Bold result**\n\n- first item\n- second item",
+          endedAt: 3000,
+        }),
+      }),
+    );
+    consoleError.mockRestore();
+
+    expect(markup).toContain("<strong>Bold result</strong>");
+    expect(markup).toContain("<li>first item</li>");
+    expect(markup).toContain("<li>second item</li>");
+    expect(markup).not.toContain("**Bold result**");
+  });
+
+  it("exposes progress semantics and a bounded Markdown details container", () => {
     const source = readFileSync(
       resolve("web/src/components/AgentActivityCard.tsx"),
       "utf8",
@@ -74,7 +96,9 @@ describe("AgentActivityCard", () => {
     expect(source).toContain('role="progressbar"');
     expect(source).toContain("aria-valuenow={progressPercent}");
     expect(source).toContain("progress.message");
-    expect(css).toMatch(/\.agent-activity-details\s*\{[^}]*max-height:\s*240px;[^}]*overflow-y:\s*auto;/s);
+    expect(source).toContain("<Markdown");
+    expect(source).not.toContain("<pre id={detailsId}");
+    expect(css).toMatch(/\.agent-activity-result\.expanded\s*\{[^}]*max-height:\s*320px;[^}]*overflow-y:\s*auto;/s);
   });
 
   it("freezes terminal duration at endedAt", () => {

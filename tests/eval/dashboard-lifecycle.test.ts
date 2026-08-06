@@ -165,6 +165,7 @@ beforeEach(() => {
       targetSessionId,
       stage: "prepare",
       application: "coordinator",
+      workerAgentId: "agent-abcdef123",
       index: 1,
       total: 7,
       status: "done",
@@ -239,6 +240,12 @@ describe("Eval Dashboard lifecycle", () => {
     expect(mocks.generateArtifacts).toHaveBeenCalledOnce();
     expect(mocks.generateArtifacts.mock.calls[0][1]).toHaveLength(2);
     expect(mocks.openDashboard).not.toHaveBeenCalled();
+    expect(ui.addInfo).toHaveBeenCalledWith(
+      expect.stringContaining("[1/7] coordinator (abcdef) OK"),
+    );
+    expect(ui.addInfo).not.toHaveBeenCalledWith(
+      expect.stringContaining("(agent-)"),
+    );
   });
 
   it("publishes failed without generating or presenting partial HTML", async () => {

@@ -1,8 +1,11 @@
 const COLLIDER_BLOCK_SELECTOR = "p,li,blockquote,th,td,h1,h2,h3,h4";
+let annotationRun = 0;
 
 export function annotateVisibleTextLines(root: HTMLElement): void {
+  const runId = annotationRun++;
   const blocks = root.querySelectorAll<HTMLElement>(COLLIDER_BLOCK_SELECTOR);
-  blocks.forEach((block) => {
+  blocks.forEach((block, blockIndex) => {
+    const blockId = `${runId}:${blockIndex}`;
     const walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT);
     const textNodes: Text[] = [];
     let node = walker.nextNode();
@@ -48,6 +51,7 @@ export function annotateVisibleTextLines(root: HTMLElement): void {
         if (end <= start) return;
         const span = document.createElement("span");
         span.dataset.collider = "text-line";
+        span.dataset.colliderBlock = blockId;
         span.dataset.colliderGenerated = "true";
         span.textContent = text.slice(start, end);
         fragment.appendChild(span);
