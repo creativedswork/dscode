@@ -70,7 +70,7 @@ Agent Process
 
 ```text
 Agent → read_file(path) → schema / ToolRegistry → fs Driver → 文件系统 / 磁盘
-Agent → mcp_<server>_<tool> → schema / ToolRegistry → MCP Driver → MCP Server → 外部资源
+Agent → mcp__<server>__<tool> → schema / ToolRegistry → MCP Driver → MCP Server → 外部资源
 ```
 
 ### 能力与隔离
@@ -329,9 +329,13 @@ Driver 是工具提供者，分为 builtin 和 MCP 两类：
 | `search` | builtin | `grep`, `glob` |
 | `edit` | builtin | `edit`（基于 hash anchor 的文件编辑） |
 | `discovery` | builtin | `search_tools`（延迟工具发现） |
-| `<mcp-server>` | mcp | MCP Server 提供的工具，命名空间: `mcp_<server>_<tool>` |
+| `<mcp-server>` | mcp | MCP Server 提供的工具，命名空间: `mcp__<server>__<tool>` |
 
-`DriverRegistry` 管理所有驱动。builtin 驱动始终激活，MCP 驱动由 `MCPManager` 动态注册。
+`DriverRegistry` 管理所有驱动。builtin 驱动始终激活，MCP 驱动由 `MCPManager`
+动态注册。每个 Harness 实例持有一个 `MCPManager`，统一管理用户级与项目级
+`.mcp.json` 合并后的 MCP Server 连接；Main Agent 和 SubAgent 共享连接，
+再通过各自 capability 决定可见的 MCP Tool。这里的“唯一”是 Harness 实例级，
+不是整个操作系统进程或所有 dscode 实例共享的全局单例。
 
 ### Skill（用户态程序，按需激活）
 

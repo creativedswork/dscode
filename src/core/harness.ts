@@ -302,11 +302,7 @@ export class Harness implements HarnessAPI {
       this.processStore,
       this.events,
       this.logger,
-      () => [
-        ...this.driverRegistry.getAllTools().map((tool) => tool.name),
-        "skill",
-        ...AGENT_PROCESS_TOOL_NAMES,
-      ],
+      () => this.getAvailableAgentToolNames(),
       1,
       fallbackRegistry,
     );
@@ -316,11 +312,7 @@ export class Harness implements HarnessAPI {
     const mainContext = createMainAgentContext(
       this.config.projectPath,
       session.id,
-      [
-        ...this.driverRegistry.getAllTools().map((tool) => tool.name),
-        "skill",
-        ...AGENT_PROCESS_TOOL_NAMES,
-      ],
+      this.getAvailableAgentToolNames(),
       this.config.permissions.denyPatterns,
     );
     const mainProcess = this.agentSupervisor.registerMain(
@@ -725,6 +717,21 @@ export class Harness implements HarnessAPI {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private getAvailableAgentToolNames(): string[] {
+    return [...new Set([
+      ...this.driverRegistry.getAllTools().map((tool) => tool.name),
+      "skill",
+      ...AGENT_PROCESS_TOOL_NAMES,
+    ])];
+  }
+
+  private async refreshMainAgentCapabilities(): Promise<void> {
+    await this.agentSupervisor.updateMainCapabilities(
+      this.mainAgentId,
+      this.getAvailableAgentToolNames(),
+    );
   }
 
   private createSubagentRuntime(
@@ -1234,6 +1241,7 @@ export class Harness implements HarnessAPI {
         this.toolRegistry.initialize(this.makeSkillTool());
         this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
       }
+      await this.refreshMainAgentCapabilities();
 
       // Start periodic auto-save (15s interval) after MCP/agent initialization
       this.startAutoSave();
@@ -1379,6 +1387,7 @@ export class Harness implements HarnessAPI {
 
     // Update agent tools after driver changes
     this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
+    await this.refreshMainAgentCapabilities();
 
     // Refresh system prompt with new project memories and skills
     const memories = this.memoryManager.getRelevantMemories();

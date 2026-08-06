@@ -158,6 +158,36 @@ Claude Code 风格的 `haiku`、`sonnet`、`opus` 不绑定固定 provider，需
 
 ## 工具、权限与隔离
 
+### MCP 工具
+
+MCP Server 由 Harness 统一连接，不由单个 Agent Process 各自启动。每个 Harness
+持有一个 `MCPManager`，合并 `~/.mcp.json` 与 `<project>/.mcp.json` 中的
+`mcpServers`；同名 Server 以项目级配置为准。可以将其理解为外部设备通过统一的
+MCP/USB 总线接入 Harness，再由 Harness 将设备能力注册为 Tool。
+
+Agent.md 负责声明 Process 可以使用哪些已注册 Tool。MCP Tool 使用完整规范名
+`mcp__<server>__<tool>`，可以直接写入 `tools`：
+
+```yaml
+tools:
+  - Read
+  - mcp__github__search_repos
+  - mcp__github__get_file_contents
+```
+
+该写法受以下边界约束：
+
+- MCP Server 必须已通过 `.mcp.json` 配置、成功连接并注册对应 Tool；
+- `tools` 使用精确 Tool 名，当前不支持 `mcp__github__*` 这类 Server 级通配符；
+- `tools: ["*"]` 或省略 `tools` 会继承父 Process 允许的全部 Tool，包括 MCP；
+- `tools: []` 表示不授予任何 Tool，MCP Tool 也不会隐式加入；
+- `disallowedTools`、父 Process deny 与 permission rules 对 MCP 和内置 Tool 一视同仁；
+- Agent.md 中的非空 `mcpServers` 尚未支持，Server 连接配置必须放在 `.mcp.json`。
+
+因此，`tools: [mcp__github__search_repos]` 是当前支持的 MCP capability 声明；
+它授权 Application 使用 Harness 已连接的 GitHub MCP Tool，但不会创建新的
+GitHub MCP Server 连接。
+
 SubAgent 的最终 capability 是以下约束的交集：
 
 1. Main Agent 当前可用工具；

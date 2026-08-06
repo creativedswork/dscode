@@ -158,7 +158,7 @@ discovery priority, and process tools, or read the full
 ## MCP in 30 seconds
 
 ```jsonc
-// ~/.dscode/settings.json
+// ~/.mcp.json
 {
   "mcpServers": {
     "blender": {
@@ -173,7 +173,11 @@ discovery priority, and process tools, or read the full
 }
 ```
 
-dscode auto-connects on launch. Tools appear as `mcp_blender_*` and `mcp_playwright_*`. MCP servers can also serve sandboxed UI via the App Host — no boilerplate, no SDK, no glue code.
+dscode auto-connects on launch. Tools appear as `mcp__blender__*` and
+`mcp__playwright__*`. Agent.md Applications can allow an exact connected tool,
+such as `tools: [mcp__github__search_repos]`; MCP Server definitions remain in
+`.mcp.json`. MCP servers can also serve sandboxed UI via the App Host — no
+boilerplate, no SDK, no glue code.
 
 ### See what MCP can do
 

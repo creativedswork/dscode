@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { Type } from "@earendil-works/pi-ai";
 
 import { buildMcpServers } from "../../src/ui/mcp-browser.js";
@@ -76,40 +76,31 @@ describe("MCPManager registerDrivers reconnect", () => {
     url: "https://example.com/mcp",
   };
 
-  it("reconnects when listTools fails on a connected server", async () => {
+  it("reconnects after backoff when listTools fails on a connected server", async () => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(0);
     const manager = new MCPManager([baseConfig]);
     const registry = new DriverRegistry();
 
-    const failClient = makeMockClient({
-      listTools: async () => { throw new Error("connection lost"); },
-    });
-    manager["clients"].set("test-server", failClient);
-    manager["states"].set("test-server", {
-      config: baseConfig,
-      status: "connected",
-      toolCount: 5,
-    });
+    try {
+      const failClient = makeMockClient({
+        listTools: async () => { throw new Error("connection lost"); },
+      });
+      manager["clients"].set("test-server", failClient);
+      manager["states"].set("test-server", {
+        config: baseConfig,
+        status: "connected",
+        toolCount: 5,
+      });
 
-    let connectCalled = false;
-    const successClient = makeMockClient({
-      connect: async () => { connectCalled = true; },
-      listTools: async () => [{ name: "tool1", inputSchema: {} }] as any,
-    });
+      let connectCalled = false;
+      const successClient = makeMockClient({
+        connect: async () => { connectCalled = true; },
+        listTools: async () => [{ name: "tool1", inputSchema: {} }] as any,
+      });
 
-    let reconnectAttempted = false;
-    manager["reconnectServer"] = async (name: string) => {
-      reconnectAttempted = true;
-      const state = manager["states"].get(name)!;
-      const oldClient = manager["clients"].get(name);
-      if (oldClient) {
-        try { await oldClient.close(); } catch {}
-        manager["clients"].delete(name);
-      }
-      if (manager["driverRegistry"]) {
-        manager["driverRegistry"].unregister(`mcp_${name}`);
-      }
-      state.status = "connecting";
-      try {
+      const reconnectServer = vi.fn(async (name: string) => {
+        const state = manager["states"].get(name)!;
         await successClient.connect();
         manager["clients"].set(name, successClient);
         const tools = await successClient.listTools();
@@ -121,22 +112,26 @@ describe("MCPManager registerDrivers reconnect", () => {
         state.refreshError = undefined;
         state.lastRefreshAt = Date.now();
         return true;
-      } catch (err: any) {
-        state.status = "error";
-        state.error = err.message;
-        state.refreshState = "error";
-        state.refreshError = err.message;
-        return false;
-      }
-    };
+      });
+      manager["reconnectServer"] = reconnectServer;
 
-    await manager.registerDrivers(registry);
+      await manager.registerDrivers(registry);
 
-    expect(reconnectAttempted).toBe(true);
-    expect(connectCalled).toBe(true);
-    const state = manager.getState("test-server")!;
-    expect(state.status).toBe("connected");
-    expect(state.toolCount).toBe(1);
+      expect(manager.getState("test-server")!.status).toBe("reconnecting");
+      expect(reconnectServer).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(reconnectServer).toHaveBeenCalledOnce();
+      expect(reconnectServer).toHaveBeenCalledWith("test-server");
+      expect(connectCalled).toBe(true);
+      const state = manager.getState("test-server")!;
+      expect(state.status).toBe("connected");
+      expect(state.toolCount).toBe(1);
+    } finally {
+      random.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it("does not reconnect when server status is disconnected", async () => {

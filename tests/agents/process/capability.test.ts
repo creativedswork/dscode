@@ -47,6 +47,17 @@ describe("Agent capability monotonicity", () => {
     expect(context.deniedTools).toContain("spawn_agent");
   });
 
+  it("supports exact MCP tool names in an Agent Application allowlist", () => {
+    const context = deriveAgentContext({
+      application: application({ tools: ["mcp__demo__read"] }),
+      parent: { ...parent, deniedTools: [] },
+      availableTools: [...parent.allowedTools],
+      attachment: "foreground",
+    });
+
+    expect(context.allowedTools).toEqual(["mcp__demo__read"]);
+  });
+
   it("removes mutating tools from plan and unisolated background Agents", () => {
     const planContext = deriveAgentContext({
       application: application({ permissionMode: "plan" }),

@@ -233,6 +233,30 @@ export class AgentSupervisor {
     }
   }
 
+  async updateMainCapabilities(
+    agentId: string,
+    availableTools: readonly string[],
+  ): Promise<void> {
+    const agentProcess = this.require(agentId);
+    if (agentProcess.role !== "main") {
+      throw new Error(`Agent process ${agentId} is not the Main Process`);
+    }
+    const previousContext = agentProcess.context;
+    const denied = new Set(previousContext.deniedTools);
+    agentProcess.context = Object.freeze({
+      ...previousContext,
+      allowedTools: Object.freeze(
+        [...new Set(availableTools)].filter((tool) => !denied.has(tool)),
+      ),
+    });
+    try {
+      await this.lifecycle.persistRequired(agentProcess);
+    } catch (error) {
+      agentProcess.context = previousContext;
+      throw error;
+    }
+  }
+
   require(agentId: string): AgentProcess {
     const agentProcess = this.get(agentId);
     if (!agentProcess) throw new Error(`Unknown Agent process: ${agentId}`);

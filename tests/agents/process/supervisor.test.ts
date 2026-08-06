@@ -70,7 +70,10 @@ class StatefulRuntime extends ImmediateRuntime {
   }
 }
 
-function setup(runtime: AgentProcessRuntime): {
+function setup(
+  runtime: AgentProcessRuntime,
+  availableTools: () => readonly string[] = () => ["read_file"],
+): {
   supervisor: AgentSupervisor;
   mainAgentId: string;
   events: string[];
@@ -97,6 +100,7 @@ function setup(runtime: AgentProcessRuntime): {
         state: value.state,
         parentSessionId: value.parentSessionId,
         contextParentSessionId: value.context.parentSessionId,
+        allowedTools: value.context.allowedTools,
         recording: value.recording,
         runtimeSnapshot: value.runtimeSnapshot,
       });
@@ -114,7 +118,7 @@ function setup(runtime: AgentProcessRuntime): {
     store as any,
     eventBus,
     logger as any,
-    () => ["read_file"],
+    availableTools,
   );
   const main = supervisor.registerMain(
     application("main"),
@@ -259,6 +263,32 @@ describe("AgentSupervisor", () => {
     expect(saves).toContainEqual(expect.objectContaining({
       parentSessionId: "session-2",
       contextParentSessionId: "session-2",
+    }));
+  });
+
+  it("refreshes Main capabilities for MCP tools registered after initialization", async () => {
+    const tools = ["read_file"];
+    const { supervisor, mainAgentId, saves } = setup(
+      new ImmediateRuntime(),
+      () => tools,
+    );
+    tools.push("mcp__github__search_repos");
+
+    await supervisor.updateMainCapabilities(mainAgentId, tools);
+    const spawned = await supervisor.spawn({
+      application: "general",
+      input: { prompt: "search repositories" },
+      parentAgentId: mainAgentId,
+    });
+
+    expect(supervisor.require(mainAgentId).context.allowedTools).toContain(
+      "mcp__github__search_repos",
+    );
+    expect(supervisor.require(spawned.agentId).context.allowedTools).toContain(
+      "mcp__github__search_repos",
+    );
+    expect(saves).toContainEqual(expect.objectContaining({
+      allowedTools: ["read_file", "mcp__github__search_repos"],
     }));
   });
 
