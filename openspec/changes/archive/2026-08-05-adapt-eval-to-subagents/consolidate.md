@@ -117,4 +117,4 @@
 - `src/eval/` 增加 trajectory、CHIEF workspace/runner/pipeline/validation，统一 stats、rules、progress 和 dashboard；旧 Focus 执行文件只保留确定性兼容逻辑。
 - `resources/agents/` 和构建资源清单增加六个只读 Applications。
 - Session v3 格式与 Main 推理上下文保持兼容；SubAgent transcript 不注入 Main messages。
-- UI 依据 `docs/prototypes/adapt-eval-to-subagents.html` 升级生成式 eval Dashboard。
+- UI 依据 `docs/prototypes/archive/2026-08-05-adapt-eval-to-subagents/adapt-eval-to-subagents.html` 升级生成式 eval Dashboard。

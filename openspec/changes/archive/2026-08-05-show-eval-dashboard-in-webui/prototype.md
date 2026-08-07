@@ -1,6 +1,6 @@
 ## Prototype Files
 
-- `docs/prototypes/show-eval-dashboard-in-webui-embedded-report.html` — WebUI shell with shell-level `Chat / Dashboard / Eval` navigation and an Eval-only main area containing an embedded sandbox-style CHIEF report. Confirmed decisions:
+- `docs/prototypes/archive/2026-08-05-show-eval-dashboard-in-webui/show-eval-dashboard-in-webui-embedded-report.html` — WebUI shell with shell-level `Chat / Dashboard / Eval` navigation and an Eval-only main area containing an embedded sandbox-style CHIEF report. Confirmed decisions:
   - Eval owns the entire main content area; the prototype no longer mocks or explains Chat and Session Dashboard content inside Eval.
   - Chat / Dashboard / Eval controls always remain visible. Clicking Eval with no state or a Completed/Failed/cached report sends the standard `/eval` slash command for a new current-Session run. Only Starting/Running is reopened without starting a concurrent duplicate.
   - Session Dashboard is disabled while Eval is active; users must return to a non-empty Chat view before entering it, and stale Chat → Dashboard transitions cannot override Eval.
@@ -28,3 +28,9 @@
 - Verified the report iframe occupies the full remaining Eval content height rather than its intrinsic default height.
 - Verified light/dark theme switching and captured full-page screenshots for running, failed and completed states.
 - Browser console showed no prototype JavaScript exception; the only observed message was a navigation-aborted request produced by the automation tool reloading the same URL.
+
+## Prototype Retention
+
+| File | Decision | Rationale |
+|---|---|---|
+| `docs/prototypes/archive/2026-08-05-show-eval-dashboard-in-webui/show-eval-dashboard-in-webui-embedded-report.html` | `archive` | 定义 Eval 独占主区域、完整生命周期、历史回退和响应式布局的可执行 UI 契约，主 Spec 与后续评审仍需引用。 |

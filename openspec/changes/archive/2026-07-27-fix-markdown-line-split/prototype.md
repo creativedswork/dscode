@@ -1,3 +1,11 @@
-## Prototype Files
+## Prototype Status
 
-- `docs/prototypes/markdown-line-split-fix.html` — Side-by-side comparison of the broken and fixed Markdown rendering. Left panel shows the current `split('\n')` approach destroying code blocks, lists, and tables. Right panel shows the fix: single Markdown render with DOM post-processing to inject `data-collider` spans. Confirmed: `data-collider="text-line"` and `data-collider="code-line"` spans are injected without visual layout shift. Three view modes: side-by-side, broken-only, fixed-only. Debug toggle to visualize span outlines.
+The side-by-side prototype confirmed that rendering Markdown once and
+post-processing the DOM preserves code blocks, lists, and tables while adding
+the required collider markers without visual layout shift.
+
+## Prototype Retention
+
+The HTML was a one-off rendering bug reproduction. The implementation and
+regression tests now preserve the behavior, so the prototype was deleted after
+implementation.

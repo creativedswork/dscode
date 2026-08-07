@@ -26,4 +26,4 @@ _None._ This change is about tooling/workflow conventions, not product spec beha
 - System Prompt / AGENTS.md — replace old `prototype.md` paragraph
 - `openspec/config.yaml` — update prototype artifact description
 - `docs/prototypes/prototype.md` — new constraint file
-- `docs/prototypes/mcp-toolcard-execution-view-prototype.html` — moved from root
+- `docs/prototypes/archive/2026-07-14-fix-explore-prototype-html/mcp-toolcard-execution-view-prototype.html` — moved from root

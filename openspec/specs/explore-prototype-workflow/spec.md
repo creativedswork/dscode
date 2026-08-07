@@ -2,7 +2,8 @@
 
 Defines the mandatory HTML-first prototype workflow for UI changes — including
 output directory conventions, naming rules, constraint files, skill loading,
-artifact gating, and canonical command/skill distribution.
+artifact gating, post-implementation retention, archive handling, and canonical
+command/skill distribution.
 ## Requirements
 ### Requirement: HTML prototype output directory
 HTML prototypes generated during explore mode SHALL be placed in `docs/prototypes/` with the naming convention `<change-name>-<descriptor>.html`.
@@ -20,7 +21,7 @@ HTML prototypes generated during explore mode SHALL be placed in `docs/prototype
 
 #### Scenario: Constraint file content
 - **WHEN** the constraint file is read
-- **THEN** it specifies at minimum: output directory (`docs/prototypes/`), file format (self-contained HTML), naming convention, style alignment rules (read `web/index.css` `--color-*` variables), required skill (`html-output`), and lifecycle (retained for future reference)
+- **THEN** it specifies at minimum: staging directory (`docs/prototypes/`), file format (self-contained HTML), naming convention, style alignment rules (read `web/index.css` `--color-*` variables), required skill (`html-output`), and apply/archive lifecycle
 
 #### Scenario: Constraint file is read before generation
 - **WHEN** an agent is about to generate an HTML prototype
@@ -57,12 +58,33 @@ The System Prompt (AGENTS.md) SHALL describe the HTML prototype workflow consist
 - **WHEN** the System Prompt describes the prototype workflow
 - **THEN** it SHALL reference session 00MRIZMZQJ as a canonical example
 
-### Requirement: Existing prototype migration
-The existing `mcp-toolcard-execution-view-prototype.html` at the project root SHALL be moved to `docs/prototypes/mcp-toolcard-execution-view-prototype.html`.
+#### Scenario: Lifecycle alignment
+- **WHEN** the System Prompt describes `docs/prototypes/`
+- **THEN** it SHALL identify the root as staging and direct apply/archive to the `prototype-workflow` retention policy
 
-#### Scenario: File moved
-- **WHEN** this change is applied
-- **THEN** `docs/prototypes/mcp-toolcard-execution-view-prototype.html` exists and the project root copy is removed
+### Requirement: Prototype staging lifecycle
+
+`docs/prototypes/` SHALL be a temporary explore/propose staging directory.
+After implementation and validation complete, apply SHALL classify each HTML
+prototype as `archive` or `delete` using the `prototype-workflow` long-term
+value and validity gates. Uncertain prototypes SHALL default to `delete`.
+
+#### Scenario: Disposable prototype
+- **WHEN** a prototype is a one-off bug reproduction, superseded variant, implementation snapshot, or fully represented by code, tests, and specs
+- **THEN** apply SHALL mark it `delete`, remove the HTML and README index entry, and eliminate stale references
+
+#### Scenario: Durable prototype
+- **WHEN** a current, browser-validated prototype preserves reusable interaction contracts, an otherwise inexpressible state matrix, or executable evidence needed by future design work
+- **THEN** apply SHALL mark it `archive` with a concrete rationale
+
+#### Scenario: Archive durable prototype
+- **WHEN** an OpenSpec change with an `archive` prototype is archived
+- **THEN** archive SHALL move it to `docs/prototypes/archive/YYYY-MM-DD-<change-name>/`
+- **AND** update repository references so no staging path remains
+
+#### Scenario: Pending decision blocks completion
+- **WHEN** a spec-driven-plus implementation has a missing or `pending` prototype retention decision
+- **THEN** apply SHALL NOT report the change ready to archive
 
 ### Requirement: OpenSpec config alignment
 `openspec/config.yaml` SHALL describe the prototype artifact as mandatory and blocking tasks, consistent with the schema-level gate.
@@ -104,6 +126,7 @@ MUST NOT satisfy this requirement.
 #### Scenario: UI change prototype artifact
 - **WHEN** the change involves UI and HTML prototypes exist in `docs/prototypes/`
 - **THEN** `prototype.md` SHALL list each prototype file path, summarize the visual direction, and reference the design decisions confirmed during explore
+- **AND** initialize one `Prototype Retention` row per file with decision `pending`
 
 #### Scenario: UI change without HTML prototype
 - **WHEN** the change involves UI but no matching HTML prototype exists
@@ -118,6 +141,7 @@ layout, CSS, interaction, or user-facing state impact. Such changes MAY use a
 #### Scenario: Non-UI change prototype stub
 - **WHEN** the change is backend-only, config, or refactoring with no UI impact
 - **THEN** `prototype.md` SHALL contain a "No prototype needed" section with a brief reason (e.g., "backend-only change affecting X module")
+- **AND** state that prototype retention is not applicable
 
 ### Requirement: Unconditional explore to propose flow
 The explore command SHALL always direct the user to `/opsx:propose` as the next step after exploration. The explore command SHALL NEVER suggest `/opsx:apply` directly.
@@ -162,3 +186,7 @@ and skills through relative symbolic links rather than duplicated files.
 - **WHEN** `.trae` workflow entries are inspected
 - **THEN** `.trae/commands/opsx` SHALL resolve to `.dscode/commands/opsx`
 - **AND** each `.trae/skills/openspec-*` directory SHALL resolve to its matching `.dscode/skills/openspec-*` directory
+
+#### Scenario: Apply and archive lifecycle parity
+- **WHEN** canonical apply/archive commands and Skills are inspected
+- **THEN** both entry types SHALL enforce the same prototype retention and archive lifecycle

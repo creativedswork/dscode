@@ -1,6 +1,6 @@
 ## Prototype Files
 
-- [`docs/prototypes/include-subagents-in-session-dashboard-overview.html`](../../../docs/prototypes/include-subagents-in-session-dashboard-overview.html)
+- [`docs/prototypes/archive/2026-08-04-include-subagents-in-session-dashboard/include-subagents-in-session-dashboard-overview.html`](../../../../docs/prototypes/archive/2026-08-04-include-subagents-in-session-dashboard/include-subagents-in-session-dashboard-overview.html)
   — Self-contained Session Dashboard prototype with SubAgent headline metrics,
   Agent Processes records, outcome mix, and explicit Healthy, Failure, and No agents
   data states.
@@ -31,3 +31,9 @@ Browser-validated on 2026-08-04:
 - Light/dark theme switching renders with the matching semantic tokens.
 - Full-page screenshots were inspected for populated, failed, and empty states.
 - Browser console reported no errors on a clean load or after interactions.
+
+## Prototype Retention
+
+| File | Decision | Rationale |
+|---|---|---|
+| `docs/prototypes/archive/2026-08-04-include-subagents-in-session-dashboard/include-subagents-in-session-dashboard-overview.html` | `archive` | 保留 Healthy、Failure、No agents 三态及 Dashboard 信息密度契约，仍可用于后续 Session 指标设计评审。 |

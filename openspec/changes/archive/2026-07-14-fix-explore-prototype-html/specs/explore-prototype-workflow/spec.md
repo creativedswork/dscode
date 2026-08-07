@@ -49,11 +49,11 @@ The System Prompt (AGENTS.md) SHALL describe the HTML prototype workflow consist
 - **THEN** it SHALL reference session 00MRIZMZQJ as a canonical example
 
 ### Requirement: Existing prototype migration
-The existing `mcp-toolcard-execution-view-prototype.html` at the project root SHALL be moved to `docs/prototypes/mcp-toolcard-execution-view-prototype.html`.
+The existing `mcp-toolcard-execution-view-prototype.html` at the project root SHALL be moved to `docs/prototypes/archive/2026-07-14-fix-explore-prototype-html/mcp-toolcard-execution-view-prototype.html`.
 
 #### Scenario: File moved
 - **WHEN** this change is applied
-- **THEN** `docs/prototypes/mcp-toolcard-execution-view-prototype.html` exists and the project root copy is removed
+- **THEN** `docs/prototypes/archive/2026-07-14-fix-explore-prototype-html/mcp-toolcard-execution-view-prototype.html` exists and the project root copy is removed
 
 ### Requirement: OpenSpec config alignment
 `openspec/config.yaml` SHALL describe the prototype artifact in terms consistent with the HTML-first workflow.

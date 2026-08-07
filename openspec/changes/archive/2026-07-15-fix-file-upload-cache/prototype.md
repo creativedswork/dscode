@@ -62,7 +62,7 @@
 
 ## Design References
 
-- 原型: `docs/prototypes/settings-cache-management.html`
+- 原型: `docs/prototypes/archive/2026-07-15-fix-file-upload-cache/settings-cache-management.html`
 - 现有 SettingsPanel: `web/src/components/Sidebar.tsx` lines 403-686
 - Design tokens: `web/src/index.css`
 
@@ -71,3 +71,9 @@
 - Clear 按钮使用 `--color-error-text` 红色，在亮/暗模式下对比度均达标
 - 禁用状态 opacity 0.4 作为视觉提示，同时 `cursor: not-allowed`
 - loading/clearing 状态用 CSS animation（无闪烁风险）
+
+## Prototype Retention
+
+| File | Decision | Rationale |
+|---|---|---|
+| `docs/prototypes/archive/2026-07-15-fix-file-upload-cache/settings-cache-management.html` | `archive` | 保留 empty、normal、warning、loading、clearing 五态及 Settings 面板交互契约，可用于后续缓存管理演进。 |

@@ -1,0 +1,779 @@
+<!DOCTYPE html>
+<!--
+  Change: redesign-tui-execution-hierarchy
+  Date: 2026-08-07
+  Descriptor: turn-and-execution-tree
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DSCode TUI Execution Hierarchy</title>
+<style>
+  :root {
+    --color-bg: #f8f7f5;
+    --color-surface: #f3f2ef;
+    --color-surface-hover: #ebe9e5;
+    --color-border: #e6e4e0;
+    --color-text: #2d2a26;
+    --color-text-muted: #8a8580;
+    --color-text-secondary: #6b6560;
+    --color-accent: #b87503;
+    --color-accent-hover: #946002;
+    --color-accent-bg: rgba(184, 117, 3, 0.12);
+    --color-success: #edf4ed;
+    --color-success-text: #347539;
+    --color-error: #fdebec;
+    --color-error-text: #9f2f2d;
+    --color-warning: #fbf3db;
+    --color-warning-text: #8a6500;
+    --terminal-bg: #252932;
+    --terminal-surface: #2d323c;
+    --terminal-border: #5d6470;
+    --terminal-text: #d8dce4;
+    --terminal-muted: #8f96a3;
+    --terminal-accent: #83c6bd;
+    --terminal-main: #c69ac8;
+    --terminal-success: #8fc59a;
+    --terminal-warning: #d5b76e;
+    --terminal-error: #e38d8d;
+    --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-mono: "Geist Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  body.dark {
+    --color-bg: #1e1c19;
+    --color-surface: #282622;
+    --color-surface-hover: #322e2a;
+    --color-border: #3a3732;
+    --color-text: #e8e4dd;
+    --color-text-muted: #8a8580;
+    --color-text-secondary: #9a9590;
+    --color-accent: #c98605;
+    --color-accent-hover: #e5a50a;
+    --color-accent-bg: rgba(201, 134, 5, 0.15);
+    --color-success: #1a2e1a;
+    --color-success-text: #5ca860;
+    --color-error: #3a1a1a;
+    --color-error-text: #e05553;
+    --color-warning: #3a2e10;
+    --color-warning-text: #d5a72a;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { min-height: 100%; margin: 0; }
+  body {
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    padding: 28px;
+  }
+
+  button { font: inherit; }
+  button:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  .page {
+    width: min(1180px, 100%);
+    margin: 0 auto;
+  }
+
+  .header {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 24px;
+    align-items: start;
+    margin-bottom: 18px;
+  }
+
+  .eyebrow {
+    color: var(--color-accent);
+    font: 700 10px/1 var(--font-mono);
+    letter-spacing: .09em;
+    text-transform: uppercase;
+  }
+
+  h1 {
+    margin: 8px 0 6px;
+    font-size: 24px;
+    letter-spacing: -.02em;
+  }
+
+  .intro {
+    max-width: 720px;
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: 13px;
+    line-height: 1.65;
+  }
+
+  .controls {
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  .control {
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    background: var(--color-surface);
+    color: var(--color-text-secondary);
+    font: 600 10px/1 var(--font-mono);
+    cursor: pointer;
+  }
+
+  .control:hover { background: var(--color-surface-hover); }
+  .control.active {
+    border-color: var(--color-accent);
+    background: var(--color-accent-bg);
+    color: var(--color-accent);
+  }
+
+  .principles {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+
+  .principle {
+    padding: 10px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-surface);
+    font-size: 11px;
+    line-height: 1.45;
+    color: var(--color-text-secondary);
+  }
+
+  .principle strong {
+    display: block;
+    margin-bottom: 3px;
+    color: var(--color-text);
+    font-size: 11px;
+  }
+
+  .terminal-shell {
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--terminal-bg);
+  }
+
+  .terminal-head {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 13px;
+    border-bottom: 1px solid #3b414c;
+    background: #20242c;
+    color: var(--terminal-muted);
+    font: 10px var(--font-mono);
+  }
+
+  .terminal-head i {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #555c68;
+  }
+
+  .terminal-head .title { margin-left: 4px; }
+  .terminal-head .mode {
+    margin-left: auto;
+    color: var(--terminal-accent);
+  }
+
+  .terminal-viewport {
+    max-width: 100%;
+    min-height: 660px;
+    padding: 22px 24px 24px;
+    color: var(--terminal-text);
+    font: 12px/1.55 var(--font-mono);
+    transition: width .2s ease;
+  }
+
+  .terminal-shell.compact .terminal-viewport {
+    width: 720px;
+    margin: 0 auto;
+  }
+
+  .turn {
+    display: grid;
+    gap: 14px;
+  }
+
+  .user-line {
+    display: grid;
+    grid-template-columns: 68px 1fr;
+    gap: 12px;
+  }
+
+  .prompt-label {
+    color: var(--terminal-success);
+    font-weight: 700;
+  }
+
+  .main-flow {
+    display: grid;
+    grid-template-columns: 68px minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .actor {
+    color: var(--terminal-main);
+    font-weight: 700;
+  }
+
+  .main-content {
+    min-width: 0;
+    display: grid;
+    gap: 10px;
+  }
+
+  .thinking-row {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--terminal-muted);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .disclosure {
+    width: 16px;
+    color: var(--terminal-muted);
+    text-align: center;
+    transition: transform .15s ease;
+  }
+
+  .thinking-summary { color: var(--terminal-muted); }
+  .thinking-detail {
+    display: none;
+    margin-left: 25px;
+    padding-left: 12px;
+    border-left: 1px solid var(--terminal-border);
+    color: var(--terminal-muted);
+    white-space: pre-wrap;
+  }
+
+  .show-thinking .thinking-detail { display: block; }
+  .show-thinking .thinking-row .disclosure { transform: rotate(90deg); }
+
+  .main-text {
+    color: var(--terminal-text);
+    white-space: pre-wrap;
+  }
+
+  .delegation-label {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    color: var(--terminal-muted);
+  }
+
+  .delegation-label::before {
+    content: "";
+    width: 16px;
+    border-top: 1px solid var(--terminal-border);
+  }
+
+  .agent-card {
+    border: 1px solid var(--terminal-border);
+    border-radius: 7px;
+    overflow: hidden;
+    background: rgba(255,255,255,.015);
+  }
+
+  .agent-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto auto;
+    gap: 10px;
+    align-items: center;
+    padding: 10px 12px;
+    border-bottom: 1px solid #464c57;
+  }
+
+  .agent-state {
+    color: var(--terminal-accent);
+    font-weight: 700;
+  }
+
+  .agent-name {
+    color: var(--terminal-accent);
+    font-weight: 700;
+  }
+
+  .agent-meta, .agent-time { color: var(--terminal-muted); }
+  .agent-meta { white-space: nowrap; }
+
+  .agent-body {
+    display: grid;
+    gap: 10px;
+    padding: 11px 12px 12px;
+  }
+
+  .task {
+    color: var(--terminal-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .tools-toggle {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--terminal-muted);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .tools-summary {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tools-lock {
+    display: none;
+    margin-left: auto;
+    color: var(--terminal-warning);
+    font-size: 10px;
+  }
+
+  .state-permission .tools-lock { display: inline; }
+  .state-permission .tools-toggle { cursor: default; }
+
+  .tool-details {
+    display: none;
+  }
+
+  .show-tools .tool-details {
+    display: grid;
+    gap: 4px;
+    padding-left: 2px;
+  }
+
+  .show-tools .tools-toggle .disclosure { transform: rotate(90deg); }
+
+  .tool-row {
+    display: grid;
+    grid-template-columns: 17px 82px minmax(0, 1fr) auto;
+    gap: 7px;
+    align-items: baseline;
+    color: var(--terminal-muted);
+  }
+
+  .tool-mark { color: var(--terminal-muted); }
+  .tool-name { color: var(--terminal-accent); }
+  .tool-detail {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tool-status {
+    color: var(--terminal-muted);
+    white-space: nowrap;
+  }
+
+  .tool-row.active .tool-mark,
+  .tool-row.active .tool-name { color: var(--terminal-warning); }
+  .tool-row.done .tool-mark { color: var(--terminal-success); }
+  .tool-row.failed .tool-mark { color: var(--terminal-error); }
+
+  .permission {
+    display: none;
+    margin: 3px 0 2px 24px;
+    padding: 9px 10px;
+    border-left: 2px solid var(--terminal-warning);
+    background: rgba(213,183,110,.06);
+  }
+
+  .state-permission .permission { display: block; }
+
+  .permission-title {
+    margin-bottom: 4px;
+    color: var(--terminal-warning);
+  }
+
+  .permission-actions {
+    display: flex;
+    gap: 14px;
+    color: var(--terminal-muted);
+  }
+
+  .permission-actions b { color: var(--terminal-text); }
+
+  .result {
+    display: none;
+    padding-top: 8px;
+    border-top: 1px solid #464c57;
+    white-space: pre-wrap;
+  }
+
+  .state-completed .result,
+  .state-failed .result { display: block; }
+
+  .state-completed .result { color: var(--terminal-success); }
+  .state-failed .result { color: var(--terminal-error); }
+  .state-completed .agent-state { color: var(--terminal-success); }
+  .state-failed .agent-state { color: var(--terminal-error); }
+
+  .state-completed .running-only,
+  .state-failed .running-only { display: none; }
+
+  .state-permission .agent-state { color: var(--terminal-warning); }
+
+  .agent-footer {
+    display: flex;
+    gap: 14px;
+    color: var(--terminal-muted);
+    font-size: 10px;
+  }
+
+  .response {
+    padding-top: 2px;
+    color: var(--terminal-text);
+    white-space: pre-wrap;
+  }
+
+  .state-running .response,
+  .state-permission .response { opacity: .35; }
+
+  .statusline {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-top: 20px;
+    padding-top: 10px;
+    border-top: 1px solid #3b414c;
+    color: var(--terminal-muted);
+  }
+
+  .statusline .pulse {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--terminal-accent);
+    animation: pulse 1.3s ease-in-out infinite;
+  }
+
+  .state-completed .statusline .pulse { background: var(--terminal-success); animation: none; }
+  .state-failed .statusline .pulse { background: var(--terminal-error); animation: none; }
+
+  .notes {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 18px;
+  }
+
+  .note {
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 13px 14px;
+    background: var(--color-surface);
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .note strong { color: var(--color-text); }
+  .note code {
+    color: var(--color-accent);
+    font: 11px var(--font-mono);
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: .35; }
+    50% { opacity: 1; }
+  }
+
+  @media (max-width: 820px) {
+    body { padding: 16px; }
+    .header { grid-template-columns: 1fr; }
+    .controls { justify-content: flex-start; }
+    .principles { grid-template-columns: 1fr 1fr; }
+    .terminal-viewport { padding: 17px 14px; }
+    .user-line, .main-flow { grid-template-columns: 1fr; gap: 5px; }
+    .agent-head { grid-template-columns: auto 1fr auto; }
+    .agent-meta { display: none; }
+    .tool-row { grid-template-columns: 17px 72px minmax(0, 1fr); }
+    .tool-status { display: none; }
+    .notes { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body class="dark">
+<main class="page">
+  <header class="header">
+    <div>
+      <div class="eyebrow">TUI information architecture</div>
+      <h1>Turn → Execution → Tool</h1>
+      <p class="intro">主对话按 Turn 组织，SubAgent 是 Main execution 下的子执行容器。Tool、Permission 和 Result 都必须归属具体执行上下文，避免继续堆成没有层级的全局日志。</p>
+    </div>
+    <div class="controls" aria-label="Prototype controls">
+      <button class="control state active" data-state="running">Running</button>
+      <button class="control state" data-state="permission">Permission</button>
+      <button class="control state" data-state="completed">Completed</button>
+      <button class="control state" data-state="failed">Failed</button>
+      <button class="control" id="thinkingButton">Thinking</button>
+      <button class="control active" id="toolsButton">Tools</button>
+      <button class="control" id="widthButton">80 cols</button>
+      <button class="control" id="themeButton">Theme</button>
+    </div>
+  </header>
+
+  <section class="principles" aria-label="Design principles">
+    <div class="principle"><strong>一个事实，一个位置</strong>spawn_agent 不再重复显示为普通 Tool 行。</div>
+    <div class="principle"><strong>Tool 必须有 owner</strong>Main Tool 与 child Tool 根据 executionId 分流。</div>
+    <div class="principle"><strong>Permission 原位解决</strong>审批出现在所属 Tool 下，完成后折叠。</div>
+    <div class="principle"><strong>全局状态降级</strong>有具体活动时不再显示模糊的 Waiting。</div>
+  </section>
+
+  <section class="terminal-shell" id="terminal">
+    <div class="terminal-head">
+      <i></i><i></i><i></i>
+      <span class="title">dscode · xiaohongshu-visual-post</span>
+      <span class="mode">execution tree</span>
+    </div>
+    <div class="terminal-viewport">
+      <div class="turn state-running show-tools" id="turn">
+        <div class="user-line">
+          <span class="prompt-label">you ›</span>
+          <span>按 Skill 流程核实论文事实，并生成小红书视觉稿。</span>
+        </div>
+
+        <div class="main-flow">
+          <span class="actor">agent ›</span>
+          <div class="main-content">
+            <button class="thinking-row" id="thinkingToggle" aria-expanded="false">
+              <span class="disclosure">›</span>
+              <span>Thinking</span>
+              <span class="thinking-summary">已确定三阶段编排：研究 → 内容 → 视觉</span>
+            </button>
+            <div class="thinking-detail">可用 Application 中没有专用 Researcher。
+按 Skill 约束选择 general，并保持 fresh transcript。</div>
+
+            <div class="main-text">先启动 Researcher 核实关键事实；完成后再推进内容和视觉阶段。</div>
+
+            <div class="delegation-label">Delegated execution · 1 active</div>
+
+            <article class="agent-card">
+              <div class="agent-head">
+                <span class="agent-state" id="stateIcon">◆</span>
+                <span class="agent-name">General Agent · Researcher</span>
+                <span class="agent-meta" id="stateMeta">running · foreground</span>
+                <span class="agent-time" id="stateTime">27s</span>
+              </div>
+              <div class="agent-body">
+                <div class="task">核实 MemGPT 论文关键事实，并产出 .work/research.md</div>
+
+                <button class="tools-toggle" id="toolsToggle" aria-expanded="true">
+                  <span class="disclosure">›</span>
+                  <span class="tools-summary" id="toolsSummary">Tools · 3 total · 2 done · 1 running</span>
+                  <span class="tools-lock">approval required</span>
+                </button>
+
+                <div class="tool-details">
+                  <div class="tool-timeline">
+                    <div class="tool-row done">
+                      <span class="tool-mark">✓</span>
+                      <span class="tool-name">read_file</span>
+                      <span class="tool-detail">SKILL.md · orchestration contract</span>
+                      <span class="tool-status">done · 34ms</span>
+                    </div>
+                    <div class="tool-row done">
+                      <span class="tool-mark">✓</span>
+                      <span class="tool-name">web_search</span>
+                      <span class="tool-detail">MemGPT paper architecture and benchmarks</span>
+                      <span class="tool-status">done · 2.1s</span>
+                    </div>
+                    <div class="tool-row active" id="activeToolRow">
+                      <span class="tool-mark" id="activeToolMark">◌</span>
+                      <span class="tool-name">bash</span>
+                      <span class="tool-detail">write .work/research.md</span>
+                      <span class="tool-status" id="toolStatus">running · 8s</span>
+                    </div>
+
+                    <div class="permission">
+                      <div class="permission-title">Permission required · bash</div>
+                      <div>Write <strong>.work/research.md</strong> in the project workspace.</div>
+                      <div class="permission-actions"><b>Enter</b> Allow once <b>A</b> Always allow <b>Esc</b> Deny</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="result" id="result">Research complete · 8 verified facts, 3 source links, 2 uncertainty notes.
+Output: .work/research.md</div>
+
+                <div class="agent-footer">
+                  <span>agent-3f67a7</span>
+                  <span>fresh context</span>
+                  <span id="footerState">3 tools · 2 done · 1 running</span>
+                </div>
+              </div>
+            </article>
+
+            <div class="response" id="response">Researcher 完成后，Main 将读取其结果并启动 Content Strategist。</div>
+          </div>
+        </div>
+
+        <div class="statusline">
+          <span class="pulse"></span>
+          <span id="statusText">Researcher · bash · running 8s</span>
+          <span>Esc to interrupt</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="notes">
+    <div class="note"><strong>需要改变事件协议。</strong>当前 <code>tool:start</code>、Permission prompt 和 processing 状态没有 execution owner。系统设计应引入 <code>turnId</code>、<code>executionId</code>、<code>toolCallId</code>，否则只能继续靠 UI 猜归属。</div>
+    <div class="note"><strong>需要改变持久化模型。</strong>Conversation 不应再保存扁平 text/agent block，而应投影稳定的 Turn Tree；TUI 只是这个结构的一种紧凑 renderer，Web 可以用同一数据展开更多细节。</div>
+  </section>
+</main>
+
+<script>
+  const turn = document.getElementById("turn");
+  const terminal = document.getElementById("terminal");
+  const stateButtons = [...document.querySelectorAll(".control.state")];
+  const stateIcon = document.getElementById("stateIcon");
+  const stateMeta = document.getElementById("stateMeta");
+  const stateTime = document.getElementById("stateTime");
+  const toolStatus = document.getElementById("toolStatus");
+  const toolsSummary = document.getElementById("toolsSummary");
+  const activeToolRow = document.getElementById("activeToolRow");
+  const activeToolMark = document.getElementById("activeToolMark");
+  const footerState = document.getElementById("footerState");
+  const result = document.getElementById("result");
+  const response = document.getElementById("response");
+  const statusText = document.getElementById("statusText");
+  const thinkingToggle = document.getElementById("thinkingToggle");
+  const toolsToggle = document.getElementById("toolsToggle");
+  const thinkingButton = document.getElementById("thinkingButton");
+  const toolsButton = document.getElementById("toolsButton");
+  let currentState = "running";
+  let thinkingExpanded = false;
+  let toolsExpanded = true;
+
+  const states = {
+    running: {
+      icon: "◆", meta: "running · foreground", time: "27s",
+      tool: "running · 8s", footer: "3 tools · 2 done · 1 running",
+      tools: "Tools · 3 total · 2 done · 1 running",
+      toolRow: "tool-row active", toolMark: "◌", defaultTools: true,
+      result: "Research complete · 8 verified facts, 3 source links, 2 uncertainty notes.\nOutput: .work/research.md",
+      response: "Researcher 完成后，Main 将读取其结果并启动 Content Strategist。",
+      status: "Researcher · bash · running 8s"
+    },
+    permission: {
+      icon: "◇", meta: "waiting · foreground", time: "29s",
+      tool: "permission", footer: "3 tools · 2 done · 1 awaiting approval",
+      tools: "Tools · 3 total · 2 done",
+      toolRow: "tool-row active", toolMark: "◇", defaultTools: true,
+      result: "", response: "Researcher 等待本次 bash 写入授权。",
+      status: "Researcher · bash · permission required"
+    },
+    completed: {
+      icon: "✓", meta: "completed · foreground", time: "41s",
+      tool: "done · 14s", footer: "3 tools · all completed",
+      tools: "Tools · 3 total · all completed",
+      toolRow: "tool-row done", toolMark: "✓", defaultTools: false,
+      result: "Research complete · 8 verified facts, 3 source links, 2 uncertainty notes.\nOutput: .work/research.md",
+      response: "Researcher 已完成。Main 正在读取 research.md，并准备启动 Content Strategist。",
+      status: "Researcher completed · Main resumed"
+    },
+    failed: {
+      icon: "✗", meta: "failed · foreground", time: "31s",
+      tool: "failed", footer: "3 tools · 1 failed",
+      tools: "Tools · 3 total · 1 failed",
+      toolRow: "tool-row failed", toolMark: "✗", defaultTools: true,
+      result: "bash failed · write denied for .work/research.md\nNo partial artifact was accepted.",
+      response: "Researcher 未产出有效结果。Main 将说明失败原因，不会伪造后续内容。",
+      status: "Researcher failed · Main requires recovery decision"
+    }
+  };
+
+  function renderDisclosureState() {
+    turn.classList.toggle("show-thinking", thinkingExpanded);
+    turn.classList.toggle("show-tools", toolsExpanded);
+    thinkingToggle.setAttribute("aria-expanded", String(thinkingExpanded));
+    toolsToggle.setAttribute("aria-expanded", String(toolsExpanded));
+    thinkingButton.classList.toggle("active", thinkingExpanded);
+    toolsButton.classList.toggle("active", toolsExpanded);
+  }
+
+  function toggleThinking() {
+    thinkingExpanded = !thinkingExpanded;
+    renderDisclosureState();
+  }
+
+  function toggleTools() {
+    if (currentState === "permission") return;
+    toolsExpanded = !toolsExpanded;
+    renderDisclosureState();
+  }
+
+  function setState(state) {
+    const value = states[state];
+    currentState = state;
+    thinkingExpanded = false;
+    toolsExpanded = value.defaultTools;
+    turn.className = `turn state-${state}`;
+    stateIcon.textContent = value.icon;
+    stateMeta.textContent = value.meta;
+    stateTime.textContent = value.time;
+    toolStatus.textContent = value.tool;
+    toolsSummary.textContent = value.tools;
+    activeToolRow.className = value.toolRow;
+    activeToolMark.textContent = value.toolMark;
+    footerState.textContent = value.footer;
+    result.textContent = value.result;
+    response.textContent = value.response;
+    statusText.textContent = value.status;
+    stateButtons.forEach((button) => button.classList.toggle("active", button.dataset.state === state));
+    renderDisclosureState();
+  }
+
+  stateButtons.forEach((button) => {
+    button.addEventListener("click", () => setState(button.dataset.state));
+  });
+
+  thinkingToggle.addEventListener("click", toggleThinking);
+  toolsToggle.addEventListener("click", toggleTools);
+  thinkingButton.addEventListener("click", toggleThinking);
+  toolsButton.addEventListener("click", toggleTools);
+
+  document.getElementById("widthButton").addEventListener("click", (event) => {
+    terminal.classList.toggle("compact");
+    event.currentTarget.classList.toggle("active", terminal.classList.contains("compact"));
+    event.currentTarget.textContent = terminal.classList.contains("compact") ? "120 cols" : "80 cols";
+  });
+
+  document.getElementById("themeButton").addEventListener("click", (event) => {
+    document.body.classList.toggle("dark");
+    event.currentTarget.classList.toggle("active", document.body.classList.contains("dark"));
+  });
+</script>
+</body>
+</html>

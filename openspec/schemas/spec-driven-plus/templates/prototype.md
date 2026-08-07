@@ -15,6 +15,21 @@ this artifact.
   Confirmed: swipe gestures for tab switching.
 -->
 
+## Prototype Retention
+
+<!--
+For UI changes add one row per HTML file. Use `pending` during propose; apply
+MUST replace it with `archive` or `delete` after implementation. Do not decide
+retention before the final implementation can be compared with the prototype.
+
+For strictly non-UI changes, replace the table with:
+Prototype retention: not applicable.
+-->
+
+| File | Decision | Rationale |
+|---|---|---|
+| `docs/prototypes/<change-name>-main-view.html` | `pending` | Finalize after implementation |
+
 ## Prototype Status
 
 <!--

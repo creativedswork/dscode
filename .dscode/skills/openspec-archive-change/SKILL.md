@@ -9,6 +9,8 @@ metadata:
   generatedBy: "1.3.1"
 ---
 
+# Archive OpenSpec Change
+
 Archive a completed change in the experimental workflow.
 
 **Input**: Optionally specify a change name. If omitted, check if it can be inferred from conversation context. If vague or ambiguous you MUST prompt for available changes.
@@ -78,7 +80,29 @@ Archive a completed change in the experimental workflow.
    - Schema is not `spec-driven-plus`
    - consolidate.md already exists
 
-5. **Perform the archive**
+5. **Finalize prototype lifecycle**
+
+   For `spec-driven-plus`, read `<changeRoot>/prototype.md`.
+
+   - If it is a non-UI stub, continue.
+   - If the `## Prototype Retention` table is missing, incomplete, or still
+     contains `pending`, load `prototype-workflow` and make the final
+     per-file `archive` or `delete` decision before proceeding.
+   - For `delete`, remove any remaining staging HTML, remove its
+     `docs/prototypes/README.md` entry, and remove or rewrite stale references.
+   - For `archive`, create
+     `docs/prototypes/archive/YYYY-MM-DD-<change-name>/`, move the HTML there,
+     update `prototype.md`, `design.md`, specs, docs, and all other repository
+     references from the staging path to the archived path, and remove the old
+     README entry.
+   - Do not overwrite an existing archive file. Stop and resolve the conflict.
+   - Verify no current-change HTML remains directly under `docs/prototypes/`
+     and a repository search finds no references to its old staging path.
+
+   This step is mandatory even when apply was skipped or completed before the
+   lifecycle policy existed.
+
+6. **Perform the archive**
 
    Create the archive directory if it doesn't exist:
    ```bash
@@ -95,7 +119,7 @@ Archive a completed change in the experimental workflow.
    mv openspec/changes/<name> openspec/changes/archive/YYYY-MM-DD-<name>
    ```
 
-6. **Display summary**
+7. **Display summary**
 
    Show archive completion summary including:
    - Change name
@@ -113,6 +137,7 @@ Archive a completed change in the experimental workflow.
 **Schema:** <schema-name>
 **Archived to:** openspec/changes/archive/YYYY-MM-DD-<name>/
 **Specs:** ✓ Synced to main specs (or "No delta specs" or "Sync skipped")
+**Prototypes:** <archived paths, deleted paths, or not applicable>
 
 All artifacts complete. All tasks complete.
 ```
@@ -125,3 +150,5 @@ All artifacts complete. All tasks complete.
 - Show clear summary of what happened
 - If sync is requested, use openspec-sync-specs approach (agent-driven)
 - If delta specs exist, always run the sync assessment and show the combined summary before prompting
+- Never leave completed-change prototypes in the `docs/prototypes/` staging root
+- Never archive a prototype without updating all references to its final path

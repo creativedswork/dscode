@@ -9,6 +9,8 @@ metadata:
   generatedBy: "1.3.1"
 ---
 
+# Apply OpenSpec Change
+
 Implement tasks from an OpenSpec change.
 
 **Input**: Optionally specify a change name. If omitted, check if it can be inferred from conversation context. If vague or ambiguous you MUST prompt for available changes.
@@ -46,7 +48,8 @@ Implement tasks from an OpenSpec change.
 
    **Handle states:**
    - If `state: "blocked"` (missing artifacts): show message, suggest using openspec-continue-change
-   - If `state: "all_done"`: congratulate, suggest archive
+   - If `state: "all_done"`: skip implementation tasks, but still run the
+     prototype-retention and consolidate completion steps below before suggesting archive
    - Otherwise: proceed to implementation
 
 4. **Read context files**
@@ -78,6 +81,22 @@ Implement tasks from an OpenSpec change.
    - Implementation reveals a design issue → suggest updating artifacts
    - Error or blocker encountered → report and wait for guidance
    - User interrupts
+
+   After all tasks are complete and the schema is `spec-driven-plus`, finalize
+   prototype retention before generating consolidate:
+
+   - Read `<changeRoot>/prototype.md`. If it is a non-UI stub, record
+     `Prototype retention: not applicable` and continue.
+   - If it references HTML files, load `prototype-workflow` and apply its
+     long-term-value and validity gates to every file.
+   - Add or update the `## Prototype Retention` table with one final
+     `archive` or `delete` decision and a concrete rationale per file.
+   - For every `delete` decision, immediately delete the HTML from
+     `docs/prototypes/`, remove its `docs/prototypes/README.md` index entry,
+     and replace or remove references in the current change so no broken link remains.
+   - Leave `archive` files in the staging directory until `/opsx:archive`.
+   - Verify every referenced prototype has a final decision and every deleted
+     path no longer exists.
 
    After all tasks are complete and the schema is `spec-driven-plus`, check for the consolidate artifact:
    ```bash
@@ -119,6 +138,7 @@ All tasks complete! Run `/opsx:archive` to archive this change.
 **Change:** <change-name>
 **Schema:** <schema-name>
 **Progress:** 7/7 tasks complete ✓
+**Prototypes:** <N archived later, M deleted, or not applicable>
 
 ### Completed This Session
 - [x] Task 1
@@ -157,6 +177,8 @@ What would you like to do?
 - Update task checkbox immediately after completing each task
 - Pause on errors, blockers, or unclear requirements - don't guess
 - Use contextFiles from CLI output, don't assume specific file names
+- Do not report a spec-driven-plus change complete while prototype retention is pending
+- Delete disposable prototypes only after implementation and validation are complete
 
 **Fluid Workflow Integration**
 

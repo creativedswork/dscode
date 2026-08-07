@@ -1,6 +1,7 @@
 # Prototypes
 
-本目录存放 explore 阶段生成的 HTML 前端原型。
+本目录根层是 explore/propose 阶段生成 HTML 前端原型的暂存区。
+长期保留的原型位于 [`archive/`](archive/)。
 
 ## 规范
 
@@ -12,16 +13,21 @@
 - 格式: 自包含单文件 HTML
 - 风格: 对齐 `web/src/index.css` 的 `--color-*` design tokens
 - 工具: 自动加载 `html-output` skill
+- 生命周期: apply 完成后逐文件决定 `archive` 或 `delete`；不确定时默认删除
+- 归档位置: `archive/YYYY-MM-DD-<change-name>/`
 
-## 文件
+完整的长期价值、有效性和断链检查规则只在 `prototype-workflow` Skill 中维护。
 
-- `adapt-eval-to-subagents.html` — `/eval` 基于 CHIEF 评估 Main/SubAgent 统一轨迹的交互原型，覆盖完整 transcript、记录缺失和单 Agent 兼容状态
-- `builtin-tool-result-rendering-fix-v5.html` — 内置工具结果展示修复原型
-- `include-subagents-in-session-dashboard-overview.html` — Session Dashboard 展示 SubAgent 执行指标、记录和空/失败状态的交互原型
-- `mcp-toolcard-execution-view-prototype.html` — Session 00MRIZMZQJ，MCP 工具执行视图的原型设计
-- `markdown-line-split-fix.html` — 修复 content.split('\n') 破坏多行 Markdown 结构的原型
-- `settings-cache-management.html` — Settings 缓存管理界面原型
-- `show-eval-dashboard-in-webui-embedded-report.html` — WebUI Eval-only 主区域，覆盖 `/eval` 即时跳转、长时 CHIEF 进度、完成/失败状态及只读报告嵌入
-- `show-subagents-in-conversation.html` — SubAgent 在 Web/TUI 对话流中的 Agent Activity Card 交互原型
-- `tui-execution-hierarchy-redesign.html` — TUI Turn → Execution → Tool 信息架构原型，覆盖 SubAgent 内嵌 Tool、原位 Permission、状态切换与宽窄终端
-- `web-ui-redesign-editorial-workshop-v3.html` — Editorial Workshop Web UI 视觉原型
+## 暂存原型
+
+当前无暂存原型。
+
+## 已归档原型
+
+- [`2026-07-14-fix-explore-prototype-html`](archive/2026-07-14-fix-explore-prototype-html/) — MCP ToolCard Execution View 标准流程案例
+- [`2026-07-15-fix-file-upload-cache`](archive/2026-07-15-fix-file-upload-cache/) — Settings 缓存管理状态
+- [`2026-08-04-include-subagents-in-session-dashboard`](archive/2026-08-04-include-subagents-in-session-dashboard/) — Session Dashboard SubAgent 概览
+- [`2026-08-04-show-subagents-in-conversation`](archive/2026-08-04-show-subagents-in-conversation/) — Agent Activity Card 交互
+- [`2026-08-05-adapt-eval-to-subagents`](archive/2026-08-05-adapt-eval-to-subagents/) — CHIEF Multi-Agent Eval Dashboard
+- [`2026-08-05-show-eval-dashboard-in-webui`](archive/2026-08-05-show-eval-dashboard-in-webui/) — WebUI Eval 主视图
+- [`2026-08-07-tui-execution-hierarchy-redesign`](archive/2026-08-07-tui-execution-hierarchy-redesign/) — Turn → Execution → Tool 信息架构
