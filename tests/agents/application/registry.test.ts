@@ -220,4 +220,45 @@ Hooked
       source: { kind: "project-claude" },
     });
   });
+
+  it("refreshes the Application catalog when the project path changes", async () => {
+    const paths = await fixture();
+    const nextProject = join(paths.root, "next-project");
+    await Promise.all([
+      writeBundledVision(paths.bundled),
+      mkdir(join(nextProject, ".dscode", "agents"), { recursive: true }),
+      writeFile(join(paths.project, ".dscode", "agents", "reviewer.md"), `---
+name: reviewer
+description: Review final artifacts
+---
+Review
+`),
+    ]);
+    await writeFile(join(nextProject, ".dscode", "agents", "researcher.md"), `---
+name: researcher
+description: Research source material
+---
+Research
+`);
+    const registry = new AgentApplicationRegistry({
+      projectPath: paths.project,
+      configDir: paths.config,
+      bundledDir: paths.bundled,
+      homeDir: paths.root,
+    });
+
+    await registry.load();
+    const firstCatalog = registry.list();
+    expect(Object.isFrozen(firstCatalog)).toBe(true);
+    expect(firstCatalog.map(({ name, description }) => ({ name, description }))).toEqual([
+      { name: "reviewer", description: "Review final artifacts" },
+      { name: "vision", description: "" },
+    ]);
+
+    await registry.updateProjectPath(nextProject);
+    expect(registry.list().map(({ name, description }) => ({ name, description }))).toEqual([
+      { name: "researcher", description: "Research source material" },
+      { name: "vision", description: "" },
+    ]);
+  });
 });

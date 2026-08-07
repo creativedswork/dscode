@@ -36,11 +36,15 @@ Return findings ordered by severity with file and line references.
 使用 reviewer Agent 审查当前改动，重点检查行为回归。
 ```
 
-Main Agent 会通过 `spawn_agent` 启动 `reviewer`。foreground 任务完成后直接返回
-结果；background 任务立即返回 Agent ID，并继续在对话中更新 Activity。
+Main Agent 会通过 `spawn_agent` 启动 `reviewer`。Agent.md 的 `background` 是用户
+配置的调度默认值；Main Agent 也可以根据本次委派是否存在结果依赖显式覆盖。
+foreground 任务完成后直接返回结果；background 任务立即返回 Agent ID，并在完成时
+通过事件和 Session 通知自动回传结果。当前 Session 的 Main Agent 会在安全边界自动
+继续任务，不需要用户再次输入。
 
-> dscode 当前不会隐式提供 `general`、`explore`、`plan` 或 `reviewer`。
-> 除内置 `vision` 外，使用前必须先创建对应的 Agent.md。
+> dscode 内置 `general` 和 `vision`。`explore`、`plan`、`reviewer` 等名称不是内置类型，
+> 使用前必须存在对应 Agent.md。`spawn_agent` 仍要求显式选择 Application，不会因省略名称
+> 隐式启动 `general` 或 `fork`。
 
 ## 文件格式
 
@@ -89,6 +93,10 @@ Registry 在启动时加载；切换项目路径时会重新加载项目级配�
 后，重启 dscode 可确保新配置生效。运行中的 Process 持有启动时的不可变 snapshot，
 后续配置变化不会修改该 Process。
 
+Main Agent 可在 `spawn_agent` 的工具描述中看到 Registry 当前所有有效 Application 的
+名称与 description。执行专业任务时应优先选择职责匹配的 Agent.md；没有匹配项时显式使用
+`general`，通过本次任务 Prompt 定义动态角色。
+
 ## Claude Code 兼容
 
 dscode 可直接读取 `~/.claude/agents` 和 `<project>/.claude/agents`，并转换常用
@@ -122,7 +130,7 @@ Claude Code 工具名：
 | `maxTurns` | 正整数；达到上限后终止 Agent loop |
 | `skills` | 启动时将已安装 Skill 的说明注入 Application prompt |
 | `memory` | `user`、`project`、`local` Application Memory |
-| `background` | 内部 spawn API 的缺省 attachment；`spawn_agent.background` 显式值优先 |
+| `background` | 用户配置的缺省调度方式；单次 `spawn_agent.background` 显式值优先 |
 | `isolation` | 当前仅支持 `worktree` |
 | `fallback` | 当前仅注册 `ocr` handler 与指定失败事件 |
 | `initialPrompt` | 已解析并保存，当前 `spawn_agent` 仍要求显式 `input.prompt` |
@@ -211,8 +219,10 @@ tools: [Read, Write, Edit, Glob, Grep, Bash]
 isolation: worktree
 ```
 
-启动时还必须让 Main Agent 在 `spawn_agent` 调用中显式传入 `background: true`。
-frontmatter 的 `background` 只作为内部 spawn API 缺省值，不覆盖显式调用参数。
+启动时必须由 Agent.md 的 `background: true` 或本次 `spawn_agent` 的
+`background: true` 使后台模式生效。Agent.md 表达用户默认决策；Main Agent 可根据
+本次动态委派显式覆盖。后续步骤依赖 SubAgent 结果时使用 `background: false`；
+任务可独立执行时才使用 `background: true`。
 
 有改动的 Worktree 会保留在退出结果中；无改动的 Worktree 自动清理。
 
@@ -222,18 +232,49 @@ Main Agent 可使用以下进程工具：
 
 | 工具 | 用途 |
 |---|---|
-| `spawn_agent` | 启动指定 Application |
+| `spawn_agent` | 启动指定 Application，并可覆盖本次委派的 foreground/background |
 | `list_agents` | 查看子进程及状态 |
-| `wait_agent` | 等待指定进程退出 |
-| `get_agent_output` | 查询当前状态或最终输出 |
 | `background_agent` | 将 foreground Process detach 到后台，不重启 Runtime |
 | `send_agent_message` | 向运行中的 Process 发送补充要求 |
 | `terminate_agent` | 请求协作式终止 |
 | `kill_agent` | 立即中止 |
 | `suspend_agent`, `continue_agent` | Runtime 支持时暂停或继续；Pi Runtime 当前不支持 suspend |
 
+模型不使用 `wait_agent` 或 `get_agent_output` 轮询。foreground 结果由
+`spawn_agent` 直接返回；background 结果通过 `agent:exit` 和父 Session 通知自动
+传递，并在当前 Main turn 结束后的安全边界自动触发 continuation。Supervisor 内部仍
+可等待或查询进程，供 Runtime、UI、测试和系统调度使用。
+
 `spawn_agent` 默认使用 minimal context。`selected` context 可显式选择消息、工具结果、
 文件或 diff；`fork` context 当前仍被 evaluation gate 禁用。
+
+将项目内刚生成的图片传给 SubAgent 时，使用 `file` attachment 的 `uri` 指向父 Agent cwd
+内的本地路径或 `file://` URI。`spawn_agent` 会校验真实路径、20MB 大小上限并写入
+ImageCache，再向 Runtime 传递标准 ImageRef。`image_ref.hash` 只接受已经存在的缓存文件名，
+不能填写本地路径或 `file://` URI。
+
+## General Application
+
+dscode 随发行包提供 [`resources/agents/general.md`](../resources/agents/general.md)。
+`general` 是普通 bundled Agent.md，不是专用 Runtime 或 Application 类型：
+
+- `model: inherit` 使用 Main 当前选择的 provider/model；
+- `tools: ["*"]` 请求继承父 Process 允许的 capability，最终仍经过 deny、权限、attachment
+  和隔离规则过滤；
+- 每次启动创建独立 Runtime 和 fresh transcript；
+- 不复制 Main system prompt 或父 transcript；
+- 父 Agent 通过任务 Prompt、文件路径、attachment 或 selected context 提供必要输入；
+- SubAgent 默认不能再次调用 `spawn_agent`。
+
+Skill 可以把 Researcher、Reviewer 等作为逻辑角色：先选择 Registry 中 description 匹配的
+专业 Agent.md，否则启动 `general`。Skill 负责任务图、串并行依赖、产物和归并；Harness
+只负责发现、隔离、运行和返回结果。
+
+每次调用 `spawn_agent` 时，`description` 使用 `<Role>: <purpose>`，例如
+`Researcher: verify paper claims`。Agent Activity Card 显示 `Researcher`，而
+`general` 仅作为内部 Application 保留在 Process Store 和诊断数据中。旧 Session
+缺少持久化 description 时，显示层会优先从原始 `spawn_agent` Tool Call 恢复角色；
+内置 vision Application 显示为 `Vision`，其余仍无法恢复的角色统一显示 `SubAgent`。
 
 ## Vision Application
 
@@ -246,7 +287,8 @@ Vision 不是专用 Pipeline Runtime，而是普通 Agent Process：
 - 模型不可用、请求失败或输出为空时，在同一 agentId 下执行 OCR fallback；
 - Activity 与其他 SubAgent 一样显示在 Terminal 和 Web 对话中。
 
-当前发行包只内置 `vision` Application。
+当前发行包内置 `general` 和 `vision` Application；CHIEF Eval workers 也以 bundled
+Agent.md 发行，但只服务对应 Eval 流程。
 
 ## 启用、数据与诊断
 

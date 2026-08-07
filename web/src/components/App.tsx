@@ -1,5 +1,18 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { UIMessage, ServerEvent, ConfigData, SessionInfo, McpServerInfo, SkillInfo, ImageAttachment, FileListItem, ContextWindowData, EvalDashboardServerEvent, ViewMode } from "../types";
+import type {
+  UIMessage,
+  ServerEvent,
+  ConfigData,
+  SessionInfo,
+  McpServerInfo,
+  SkillInfo,
+  ImageAttachment,
+  FileListItem,
+  ContextWindowData,
+  EvalDashboardServerEvent,
+  PermissionPrompt,
+  ViewMode,
+} from "../types";
 import { conversationReducer } from "@dscode/shared/reducer";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { ChatView } from "./ChatView";
@@ -95,7 +108,7 @@ export function App() {
   const [processing, setProcessing] = useState(false);
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [model, setModel] = useState("");
-  const [permissionPrompt, setPermissionPrompt] = useState<{ toolName: string; preview: string; fuzzyPattern?: string | null; fuzzyArgDesc?: string | null; llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[] } | null>(null);
+  const [permissionPrompt, setPermissionPrompt] = useState<PermissionPrompt | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<DetailPanel>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -207,7 +220,17 @@ export function App() {
       }
       case "warning": addToast({ type: "warning", text: event.text }); break;
       case "error": addToast({ type: "error", text: event.text }); setProcessing(false); turnStartRef.current = 0; break;
-      case "permission_prompt": setPermissionPrompt({ toolName: event.toolName, preview: event.preview, fuzzyPattern: (event as any).fuzzyPattern ?? null, fuzzyArgDesc: (event as any).fuzzyArgDesc ?? null, llmSuggestions: (event as any).llmSuggestions ?? undefined }); break;
+      case "permission_prompt":
+        setPermissionPrompt({
+          toolName: event.toolName,
+          preview: event.preview,
+          agentId: event.agentId,
+          toolCallId: event.toolCallId,
+          fuzzyPattern: event.fuzzyPattern ?? null,
+          fuzzyArgDesc: event.fuzzyArgDesc ?? null,
+          llmSuggestions: event.llmSuggestions,
+        });
+        break;
       case "loader":
         setProcessing(event.state === "show");
         if (event.state === "show") {

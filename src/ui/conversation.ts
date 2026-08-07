@@ -1,5 +1,14 @@
 import type { TUI, Component } from "@earendil-works/pi-tui";
-import { Text, Box, Image, getCapabilities, hyperlink } from "@earendil-works/pi-tui";
+import {
+  Text,
+  Box,
+  Image,
+  getCapabilities,
+  hyperlink,
+  truncateToWidth,
+  visibleWidth,
+  wrapTextWithAnsi,
+} from "@earendil-works/pi-tui";
 import type { ImageTheme } from "@earendil-works/pi-tui";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -8,24 +17,147 @@ import { c } from "./theme.js";
 import { convertJpegToPng, detectImageFormat } from "../utils/image-convert.js";
 import type { AgentActivity, PermissionPrompt } from "./shared/types.js";
 import { formatAgentDisplayId } from "./shared/agent-id.js";
+import { formatToolArgsForDisplay } from "./shared/tool-args-formatter.js";
 
 interface ToolEntry {
+  toolCallId: string;
   name: string;
   args: unknown;
   result: unknown;
   isError: boolean;
+  suppressOnSuccess?: boolean;
+}
+
+interface AgentActivityBlock {
+  type: "agent";
+  agentId: string;
+  activity: AgentActivity;
+  toolsExpanded: boolean;
+  manualToolsExpanded?: boolean;
 }
 
 type ContentBlock =
   | { type: "text"; content: string }
-  | { type: "agent"; agentId: string; content: string }
+  | { type: "thinking"; content: string; expanded: boolean }
+  | AgentActivityBlock
   | { type: "image"; img: Image };
+
+interface AgentCardOptions {
+  toolsExpanded?: boolean;
+  selected?: boolean;
+  permissionLines?: string[];
+  contentWidth?: number;
+}
+
+export class TuiAgentActivityCard implements Component {
+  constructor(
+    private readonly source: string | AgentActivity,
+    private readonly options: AgentCardOptions = {},
+  ) {}
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    const contentWidth = Math.max(1, width - 4);
+    const content = typeof this.source === "string"
+      ? this.source
+      : formatAgentActivityForTui(this.source, Date.now(), {
+          ...this.options,
+          contentWidth,
+        });
+    if (width < 6) {
+      return wrapTextWithAnsi(content, Math.max(1, width));
+    }
+    const lines = wrapTextWithAnsi(
+      content.replace(/\t/g, "   "),
+      contentWidth,
+    );
+    const horizontal = "─".repeat(width - 2);
+    return [
+      c.dim(`╭${horizontal}╮`),
+      ...lines.map((line) => {
+        const padding = " ".repeat(Math.max(0, contentWidth - visibleWidth(line)));
+        return `${c.dim("│")} ${line}${padding} ${c.dim("│")}`;
+      }),
+      c.dim(`╰${horizontal}╯`),
+    ];
+  }
+}
+
+export class TuiThinkingBlock implements Component {
+  constructor(
+    private readonly content: string,
+    private readonly expanded: boolean,
+  ) {}
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    const safeWidth = Math.max(1, width);
+    if (!this.expanded) {
+      const label = "› Thinking";
+      const hint = safeWidth >= visibleWidth(label) + 10 ? "  [Ctrl+R]" : "";
+      const summaryWidth = Math.max(
+        0,
+        safeWidth - visibleWidth(label) - visibleWidth(hint) - 2,
+      );
+      const summary = truncateSummary(this.content, summaryWidth);
+      const separator = summary ? "  " : "";
+      return [c.dim(`${label}${separator}${summary}${hint}`)];
+    }
+    const contentWidth = Math.max(1, safeWidth - 2);
+    const allLines = wrapTextWithAnsi(
+      this.content.replace(/\t/g, "   "),
+      contentWidth,
+    );
+    const visibleLines = allLines.slice(0, MAX_TUI_DETAIL_LINES);
+    const hidden = allLines.length - visibleLines.length;
+    const header = safeWidth >= 20 ? "⌄ Thinking  [Ctrl+R]" : "⌄ Thinking";
+    const detail = [
+      c.dim(header),
+      ...visibleLines.map((line) => c.dim(`  ${line}`)),
+      ...(hidden > 0
+        ? [c.dim(`  … ${hidden} more lines · full thinking retained in Session`)]
+        : []),
+    ];
+    return detail.flatMap((line) => wrapTextWithAnsi(line, safeWidth));
+  }
+}
 
 function truncateSummary(text: string, length: number): string {
   const normalized = text.replace(/\s+/g, " ").trim();
+  if (length <= 0) return "";
+  if (normalized.length > length && length <= 3) return ".".repeat(length);
   return normalized.length <= length
     ? normalized
     : `${normalized.slice(0, Math.max(0, length - 3)).trimEnd()}...`;
+}
+
+const MAX_TUI_AGENT_OUTPUT = 2_000;
+const MAX_TUI_DETAIL_LINES = 16;
+
+function formatAgentOutput(text: string, contentWidth = 120): {
+  lines: string[];
+  truncated: boolean;
+} {
+  const value = text.trim();
+  const characterBounded = value.slice(0, MAX_TUI_AGENT_OUTPUT);
+  const allVisibleLines = wrapTextWithAnsi(
+    characterBounded.replace(/\t/g, "   "),
+    Math.max(1, contentWidth - 4),
+  );
+  const visibleLines = allVisibleLines.slice(0, MAX_TUI_DETAIL_LINES);
+  const truncated = value.length > MAX_TUI_AGENT_OUTPUT
+    || allVisibleLines.length > visibleLines.length;
+  const [first = "", ...rest] = visibleLines;
+  return {
+    lines: [
+      `  ↳ ${first}`,
+      ...rest.map((line) => `    ${line}`),
+      ...(truncated ? ["    …"] : []),
+    ],
+    truncated,
+  };
 }
 
 function formatActivityDuration(activity: AgentActivity, now = Date.now()): string {
@@ -37,13 +169,8 @@ function formatActivityDuration(activity: AgentActivity, now = Date.now()): stri
     : `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
 }
 
-function formatApplicationName(application: string): string {
-  if (application.toLowerCase() === "general") return "General Agent";
-  return application
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    .map((part) => part[0].toUpperCase() + part.slice(1))
-    .join(" ");
+function formatAgentLabel(activity: AgentActivity): string {
+  return activity.label?.trim() || "SubAgent";
 }
 
 function activitySymbol(activity: AgentActivity): string {
@@ -57,19 +184,78 @@ function activitySymbol(activity: AgentActivity): string {
   return "◆";
 }
 
+function defaultToolsExpanded(activity: AgentActivity): boolean {
+  return activity.state !== "completed";
+}
+
 export function formatAgentActivityForTui(
   activity: AgentActivity,
   now = Date.now(),
+  options: AgentCardOptions = {},
 ): string {
-  const application = formatApplicationName(activity.application);
+  const label = formatAgentLabel(activity);
+  const selection = options.selected ? "› " : "";
   const lines = [
-    `${activitySymbol(activity)} ${application}  ${activity.state} · ${activity.attachment} · ${formatActivityDuration(activity, now)}`,
+    `${selection}${activitySymbol(activity)} ${label}  ${activity.state} · ${activity.attachment} · ${formatActivityDuration(activity, now)}`,
     `  ${truncateSummary(activity.input, 100) || "(no input)"}`,
   ];
+  if (activity.tools?.length) {
+    const completed = activity.tools.filter((tool) => tool.status === "completed").length;
+    const failed = activity.tools.filter((tool) => tool.status === "failed").length;
+    const active = activity.tools.length - completed - failed;
+    const summary = [
+      `${activity.tools.length} total`,
+      completed > 0 ? `${completed} done` : "",
+      failed > 0 ? `${failed} failed` : "",
+      active > 0 ? `${active} active` : "",
+    ].filter(Boolean).join(" · ");
+    const expanded = activity.permission ? true : options.toolsExpanded ?? false;
+    lines.push(`  ${expanded ? "⌄" : "›"} Tools · ${summary}`);
+    if (expanded) {
+      const visibleTools = activity.tools.slice(-MAX_TUI_DETAIL_LINES);
+      const hidden = activity.tools.length - visibleTools.length;
+      if (hidden > 0) {
+        lines.push(`    … ${hidden} earlier tools retained`);
+      }
+      for (const tool of visibleTools) {
+        const symbol = tool.status === "completed"
+          ? "✓"
+          : tool.status === "failed"
+            ? "✗"
+            : tool.status === "permission"
+              ? "◇"
+              : "◌";
+        const prefix = `    ${symbol} `;
+        const suffix = `  ${tool.status}`;
+        const detail = tool.summary ? `  ${tool.summary}` : "";
+        const toolWidth = Math.max(
+          1,
+          (options.contentWidth ?? 120)
+            - visibleWidth(prefix)
+            - visibleWidth(suffix),
+        );
+        lines.push(
+          `${prefix}${truncateToWidth(`${tool.name}${detail}`, toolWidth, "…")}${suffix}`,
+        );
+      }
+      if (activity.permission) {
+        lines.push(`    Permission required · ${activity.permission.toolName}`);
+        if (activity.permission.preview) {
+          lines.push(`      ${truncateSummary(activity.permission.preview, 100)}`);
+        }
+        for (const line of options.permissionLines ?? []) {
+          lines.push(`    ${line}`);
+        }
+      }
+    }
+  }
+  let outputTruncated = false;
   if (activity.error) {
     lines.push(`  ↳ ${truncateSummary(activity.error, 120)}`);
   } else if (activity.output) {
-    lines.push(`  ↳ ${truncateSummary(activity.output, 120)}`);
+    const output = formatAgentOutput(activity.output, options.contentWidth);
+    lines.push(...output.lines);
+    outputTruncated = output.truncated;
   } else if (activity.progress) {
     const count = activity.progress.current != null
       ? `${activity.progress.current}${activity.progress.total != null ? `/${activity.progress.total}` : ""} · `
@@ -77,10 +263,13 @@ export function formatAgentActivityForTui(
     const detail = activity.progress.message ?? activity.progress.phase ?? "working";
     lines.push(`  ↳ ${count}${truncateSummary(detail, 120)}`);
   }
-  const terminalNote = activity.endedAt
-    ? " · full output retained in Agent Process Store"
+  const terminalNote = outputTruncated
+    ? " · output truncated; full output retained in Agent Process Store"
     : "";
-  lines.push(`  agent id: ${formatAgentDisplayId(activity.agentId)}${terminalNote}`);
+  const controlHint = options.selected ? " · Ctrl+O tools · Ctrl+N next" : "";
+  lines.push(
+    `  agent id: ${formatAgentDisplayId(activity.agentId)}${controlHint}${terminalNote}`,
+  );
   return lines.join("\n");
 }
 
@@ -123,14 +312,8 @@ function tryParseJson(text: string): unknown | null {
   try { return JSON.parse(trimmed); } catch { return null; }
 }
 
-function toolArgsPreview(args: unknown): string {
-  if (typeof args === "string") return args.slice(0, 60);
-  try {
-    const s = JSON.stringify(args);
-    return s.length > 60 ? s.slice(0, 57) + "..." : s;
-  } catch {
-    return String(args).slice(0, 60);
-  }
+function toolArgsPreview(name: string, args: unknown): string {
+  return formatToolArgsForDisplay(name, args, 160);
 }
 
 function toolResultPreview(result: unknown): string {
@@ -198,7 +381,10 @@ export class ConversationView {
   private thinkingBuffer = "";
   private currentAssistantText = "";
   private toolEntries: ToolEntry[] = [];
-  private renderedToolCount = 0;
+  private assistantTurnActive = false;
+  private pendingAgentBlocks = new Map<string, AgentActivityBlock>();
+  private selectedAgentId: string | null = null;
+  private liveThinkingExpanded = false;
   private tui: TUI;
   private draftBlocks = new Map<number, { startIndex: number; count: number }>();
 
@@ -229,7 +415,10 @@ export class ConversationView {
     this.thinkingBuffer = "";
     this.currentAssistantText = "";
     this.toolEntries = [];
-    this.renderedToolCount = 0;
+    this.assistantTurnActive = false;
+    this.pendingAgentBlocks.clear();
+    this.selectedAgentId = null;
+    this.liveThinkingExpanded = false;
     this._activePermission = null;
     this.permSelected = 0;
     this.permSubMode = false;
@@ -275,7 +464,8 @@ export class ConversationView {
         }
       } else if (m.role === "assistant") {
         if (m.thinking) {
-          lines.push(c.dim("[thinking] ") + c.dim(String(m.thinking).slice(0, 500)));
+          flushLines();
+          this.pushThinking(String(m.thinking));
         }
         if (Array.isArray(m.tools)) {
           for (const tool of m.tools) {
@@ -288,11 +478,12 @@ export class ConversationView {
         if (Array.isArray(content)) {
           for (const block of content) {
             if (block.type === "thinking" && block.thinking) {
-              lines.push(c.dim("[thinking] ") + c.dim(String(block.thinking).slice(0, 500)));
+              flushLines();
+              this.pushThinking(String(block.thinking));
             } else if (block.type === "text" && block.text) {
               lines.push(c.magenta.bold("agent ›") + "\n" + block.text);
             } else if (block.type === "toolCall") {
-              lines.push(` ${c.cyan("⚙")} ${c.cyan(block.name)} ${c.dim(toolArgsPreview(block.arguments))}`);
+              lines.push(` ${c.cyan("⚙")} ${c.cyan(block.name)} ${c.dim(toolArgsPreview(block.name, block.arguments))}`);
             } else if (block.type === "image" && block.data) {
               flushLines();
               this.addInlineImage(block.data, block.mimeType ?? "image/png");
@@ -324,10 +515,11 @@ export class ConversationView {
   }
 
   startAssistantMessage(): void {
+    this.assistantTurnActive = true;
     this.currentAssistantText = "";
     this.thinkingBuffer = "";
     this.toolEntries = [];
-    this.renderedToolCount = 0;
+    this.liveThinkingExpanded = false;
     this.tui.requestRender(true);
   }
 
@@ -341,13 +533,24 @@ export class ConversationView {
     this.renderLive();
   }
 
-  toolStart(name: string, args: unknown): void {
-    this.toolEntries.push({ name, args, result: "" as unknown, isError: false });
+  toolStart(name: string, args: unknown, toolCallId = `${name}-${this.toolEntries.length}`): void {
+    this.toolEntries.push({
+      toolCallId,
+      name,
+      args,
+      result: "" as unknown,
+      isError: false,
+      suppressOnSuccess: name === "spawn_agent",
+    });
     this.renderLive();
   }
 
-  toolEnd(_name: string, result: unknown, isError: boolean): void {
-    const entry = this.toolEntries[this.toolEntries.length - 1];
+  toolEnd(name: string, result: unknown, isError: boolean, toolCallId?: string): void {
+    const entry = toolCallId
+      ? this.toolEntries.find((tool) => tool.toolCallId === toolCallId)
+      : [...this.toolEntries].reverse().find(
+          (tool) => tool.name === name && tool.result === ("" as unknown),
+        );
     if (entry) {
       entry.result = result;
       entry.isError = isError;
@@ -370,16 +573,17 @@ export class ConversationView {
   finishAssistantMessage(): void {
     const lines: string[] = [];
     if (this.thinkingBuffer) {
-      lines.push(c.dim("[thinking] ") + c.dim(this.thinkingBuffer.slice(0, 500)));
+      this.pushThinking(this.thinkingBuffer, this.liveThinkingExpanded);
     }
     if (this.currentAssistantText) {
       lines.push(c.magenta.bold("agent ›") + "\n" + this.currentAssistantText);
     }
-    if (this.toolEntries.length > 0) {
-      for (const t of this.toolEntries) {
+    const visibleTools = this.visibleMainTools();
+    if (visibleTools.length > 0) {
+      for (const t of visibleTools) {
         const icon = t.isError ? c.red("✗") : c.cyan("✓");
         const preview = toolResultPreview(t.result);
-        const argsStr = toolArgsPreview(t.args);
+        const argsStr = toolArgsPreview(t.name, t.args);
         const previewPart = preview ? c.dim(" → ") + preview : "";
         lines.push(`${icon} ${c.cyan(t.name)} ${c.dim(argsStr)}${previewPart}`);
       }
@@ -387,10 +591,15 @@ export class ConversationView {
     if (lines.length > 0) {
       this.pushText(lines.join("\n"));
     }
+    for (const block of this.pendingAgentBlocks.values()) {
+      this.blocks.push(block);
+    }
+    this.pendingAgentBlocks.clear();
+    this.assistantTurnActive = false;
     this.currentAssistantText = "";
     this.thinkingBuffer = "";
     this.toolEntries = [];
-    this.renderedToolCount = 0;
+    this.liveThinkingExpanded = false;
     this.render();
   }
 
@@ -400,36 +609,96 @@ export class ConversationView {
   }
 
   upsertAgentActivity(activity: AgentActivity): void {
-    const statusColor = activity.state === "completed"
-      ? c.green
-      : activity.state === "failed"
-        || activity.state === "terminated"
-        || activity.state === "killed"
-        ? c.red
-        : activity.state === "waiting" || activity.state === "stopped"
-          ? c.yellow
-          : c.cyan;
-    const plain = formatAgentActivityForTui(activity);
-    const [header, ...details] = plain.split("\n");
-    const headerMatch = header.match(/^(\S+\s+.+?)\s{2}(.+)$/);
-    const content = headerMatch
-      ? `${statusColor(headerMatch[1])}  ${c.dim(headerMatch[2])}\n${details.map((line) => c.dim(line)).join("\n")}`
-      : `${statusColor(header)}\n${details.map((line) => c.dim(line)).join("\n")}`;
     const index = this.blocks.findIndex(
       (block) => block.type === "agent" && block.agentId === activity.agentId,
     );
-    const block: ContentBlock = {
+    const existing = index >= 0 && this.blocks[index].type === "agent"
+      ? this.blocks[index] as AgentActivityBlock
+      : this.pendingAgentBlocks.get(activity.agentId);
+    const toolsExpanded = activity.permission
+      ? true
+      : existing?.manualToolsExpanded !== undefined
+        ? existing.manualToolsExpanded
+        : defaultToolsExpanded(activity);
+    const block: AgentActivityBlock = {
       type: "agent",
       agentId: activity.agentId,
-      content,
+      activity,
+      toolsExpanded,
+      manualToolsExpanded: existing?.manualToolsExpanded,
     };
+    this.selectedAgentId ??= activity.agentId;
     if (index >= 0) {
       this.blocks[index] = block;
       this.rerenderStaticBlocks();
+    } else if (this.assistantTurnActive) {
+      this.pendingAgentBlocks.set(activity.agentId, block);
+      this.renderLive();
     } else {
       this.blocks.push(block);
       this.render();
     }
+  }
+
+  toggleThinking(): boolean {
+    if (this.assistantTurnActive && this.thinkingBuffer) {
+      this.liveThinkingExpanded = !this.liveThinkingExpanded;
+      this.renderLive();
+      return this.liveThinkingExpanded;
+    }
+    const block = [...this.blocks].reverse().find(
+      (item): item is Extract<ContentBlock, { type: "thinking" }> =>
+        item.type === "thinking",
+    );
+    if (!block) return false;
+    block.expanded = !block.expanded;
+    this.rerenderStaticBlocks();
+    return block.expanded;
+  }
+
+  selectNextAgent(): string | undefined {
+    const blocks = this.allAgentBlocks();
+    if (blocks.length === 0) return undefined;
+    const currentIndex = blocks.findIndex((block) => block.agentId === this.selectedAgentId);
+    const next = blocks[(currentIndex + 1 + blocks.length) % blocks.length];
+    this.selectedAgentId = next.agentId;
+    this.rerenderStaticBlocks();
+    return next.agentId;
+  }
+
+  toggleSelectedAgentTools(): boolean | undefined {
+    const blocks = this.allAgentBlocks();
+    const selected = blocks.find((block) => block.agentId === this.selectedAgentId)
+      ?? blocks.at(-1);
+    if (!selected) return undefined;
+    this.selectedAgentId = selected.agentId;
+    if (selected.activity.permission) return selected.toolsExpanded;
+    selected.toolsExpanded = !selected.toolsExpanded;
+    selected.manualToolsExpanded = selected.toolsExpanded;
+    this.rerenderStaticBlocks();
+    return selected.toolsExpanded;
+  }
+
+  getActiveExecutionStatus(): string | undefined {
+    const activity = [...this.allAgentBlocks()]
+      .reverse()
+      .map((block) => block.activity)
+      .find((item) =>
+        item.permission
+        || item.state === "running"
+        || item.state === "waiting"
+        || item.state === "stopped",
+      );
+    if (!activity) return undefined;
+    const label = formatAgentLabel(activity);
+    if (activity.permission) {
+      return `${label} · ${activity.permission.toolName} · permission required`;
+    }
+    const activeTool = [...(activity.tools ?? [])].reverse().find(
+      (tool) => tool.status === "running" || tool.status === "permission",
+    );
+    if (activeTool) return `${label} · ${activeTool.name} · ${activeTool.status}`;
+    return `${label} · ${activity.progress?.message ?? activity.state}`;
   }
 
   addWarning(text: string): void {
@@ -554,18 +823,31 @@ export class ConversationView {
     this.render();
   }
 
-  showPermissionPrompt(toolName: string, preview: string, fuzzyPattern?: string | null, fuzzyArgDesc?: string | null): void {
-    this._activePermission = { toolName, preview, fuzzyPattern: fuzzyPattern ?? null, fuzzyArgDesc: fuzzyArgDesc ?? null };
+  showPermissionPrompt(
+    toolName: string,
+    preview: string,
+    fuzzyPattern?: string | null,
+    fuzzyArgDesc?: string | null,
+    context?: { agentId?: string; toolCallId?: string },
+  ): void {
+    this._activePermission = {
+      toolName,
+      preview,
+      agentId: context?.agentId,
+      toolCallId: context?.toolCallId,
+      fuzzyPattern: fuzzyPattern ?? null,
+      fuzzyArgDesc: fuzzyArgDesc ?? null,
+    };
     this.permSelected = 0;
     this.permSubMode = false;
     this._permSubModeType = "save";
     this.permSubSelected = 0;
-    this.render();
+    this.rerenderStaticBlocks();
   }
 
   permNavigate(direction: -1 | 1): void {
     this.permSelected = navigatePermSelection(this.permSelected, direction);
-    this.render();
+    this.rerenderStaticBlocks();
   }
 
   permSelect(): PermOption | null {
@@ -589,14 +871,14 @@ export class ConversationView {
     this._permSubModeType = type;
     this.permSubSelected = 0;
     this.lastSubNavAt = 0;
-    this.render();
+    this.rerenderStaticBlocks();
   }
 
   cancelSubMode(): void {
     this.permSubMode = false;
     this.permSubSelected = 0;
     this.lastCancelSubAt = Date.now();
-    this.render();
+    this.rerenderStaticBlocks();
   }
 
   /** True if sub-mode was cancelled within the last 200ms — used to debounce double-firing Escape. */
@@ -612,7 +894,7 @@ export class ConversationView {
     const llm = this._activePermission?.llmSuggestions;
     const count = (fa ? 3 : 2) + (llm ? llm.length : 0);
     this.permSubSelected = (this.permSubSelected + direction + count) % count;
-    this.render();
+    this.rerenderStaticBlocks();
   }
 
   permSubSelect(): number {
@@ -624,10 +906,30 @@ export class ConversationView {
     this.permSelected = 0;
     this.permSubMode = false;
     this.permSubSelected = 0;
+    this.rerenderStaticBlocks();
   }
 
   private pushText(content: string): void {
     this.blocks.push({ type: "text", content });
+  }
+
+  private pushThinking(content: string, expanded = false): void {
+    this.blocks.push({ type: "thinking", content, expanded });
+  }
+
+  private allAgentBlocks(): AgentActivityBlock[] {
+    return [
+      ...this.blocks.filter(
+        (block): block is AgentActivityBlock => block.type === "agent",
+      ),
+      ...this.pendingAgentBlocks.values(),
+    ];
+  }
+
+  private visibleMainTools(): ToolEntry[] {
+    return this.toolEntries.filter(
+      (tool) => !tool.suppressOnSuccess || tool.isError,
+    );
   }
 
   private rerenderStaticBlocks(): void {
@@ -736,8 +1038,12 @@ export class ConversationView {
 
     for (let i = this.renderedBlockCount; i < totalBlocks; i++) {
       const block = this.blocks[i];
-      if (block.type === "text" || block.type === "agent") {
+      if (block.type === "text") {
         this.box.addChild(new Text(block.content));
+      } else if (block.type === "thinking") {
+        this.box.addChild(new TuiThinkingBlock(block.content, block.expanded));
+      } else if (block.type === "agent") {
+        this.box.addChild(this.makeAgentCard(block));
       } else {
         this.box.addChild(block.img);
       }
@@ -755,37 +1061,38 @@ export class ConversationView {
     }
     this.liveComponents = [];
 
-    const liveLines: string[] = [];
     if (this.thinkingBuffer) {
-      liveLines.push(c.dim("[thinking] " + this.thinkingBuffer.slice(0, 500)));
+      const thinking = new TuiThinkingBlock(
+        this.thinkingBuffer,
+        this.liveThinkingExpanded,
+      );
+      this.box.addChild(thinking);
+      this.liveComponents.push(thinking);
     }
+
+    const liveLines: string[] = [];
     if (this.currentAssistantText) {
       liveLines.push(c.magenta.bold("agent ›") + "\n" + this.currentAssistantText);
     }
-    if (this.toolEntries.length > this.renderedToolCount) {
-      if (this.renderedToolCount === 0) {
-        liveLines.push("");
-        liveLines.push(c.dim("──── ⚙ Tools ────────────────────────"));
-      }
-      for (let i = this.renderedToolCount; i < this.toolEntries.length; i++) {
-        const t = this.toolEntries[i];
+    const visibleTools = this.visibleMainTools();
+    if (visibleTools.length > 0) {
+      liveLines.push("");
+      liveLines.push(c.dim("──── ⚙ Main Tools ───────────────────"));
+      for (const t of visibleTools) {
         const hasResult = t.result !== ("" as unknown);
         if (hasResult) {
           const icon = t.isError ? c.red("✗") : c.cyan("✓");
           const preview = toolResultPreview(t.result);
-          const argsStr = toolArgsPreview(t.args);
+          const argsStr = toolArgsPreview(t.name, t.args);
           liveLines.push(
             ` ${icon} ${c.cyan(t.name)} ${c.dim(argsStr)}${preview ? c.dim(" → ") + preview : ""}`,
           );
         } else {
           liveLines.push(
-            ` ${c.yellow("⟳")} ${c.cyan(t.name)} ${c.dim(toolArgsPreview(t.args))} ${c.dim("...")}`,
+            ` ${c.yellow("⟳")} ${c.cyan(t.name)} ${c.dim(toolArgsPreview(t.name, t.args))} ${c.dim("...")}`,
           );
         }
       }
-      this.renderedToolCount = this.toolEntries.filter(
-        (t) => t.result !== ("" as unknown),
-      ).length;
     }
 
     if (liveLines.length > 0) {
@@ -794,12 +1101,42 @@ export class ConversationView {
       this.liveComponents.push(liveText);
     }
 
-    if (this._activePermission) {
+    for (const block of this.pendingAgentBlocks.values()) {
+      const card = this.makeAgentCard(block);
+      this.box.addChild(card);
+      this.liveComponents.push(card);
+    }
+
+    const permissionHasAgentCard = this._activePermission
+      ? this.allAgentBlocks().some((block) => this.permissionMatchesAgentBlock(block))
+      : false;
+    if (this._activePermission && !permissionHasAgentCard) {
       const permText = new Text(this.renderPermPrompt().join("\n"));
       this.box.addChild(permText);
       this.liveComponents.push(permText);
     }
 
     this.tui.requestRender(false);
+  }
+
+  private makeAgentCard(block: AgentActivityBlock): TuiAgentActivityCard {
+    const permissionLines = this.permissionMatchesAgentBlock(block)
+      ? this.renderPermPrompt()
+      : undefined;
+    return new TuiAgentActivityCard(block.activity, {
+      toolsExpanded: block.toolsExpanded,
+      selected: block.agentId === this.selectedAgentId,
+      permissionLines,
+    });
+  }
+
+  private permissionMatchesAgentBlock(block: AgentActivityBlock): boolean {
+    const active = this._activePermission;
+    if (!active) return false;
+    if (active.agentId === block.agentId) return true;
+    return Boolean(
+      active.toolCallId
+      && block.activity.permission?.toolCallId === active.toolCallId,
+    );
   }
 }

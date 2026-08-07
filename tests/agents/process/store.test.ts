@@ -23,6 +23,7 @@ describe("AgentProcessStore", () => {
       agentId: "agent-1",
       parentAgentId: "main-1",
       parentSessionId: "session-1",
+      description: "Researcher: inspect implementation",
       application: {
         name: "general",
         description: "General",
@@ -66,6 +67,7 @@ describe("AgentProcessStore", () => {
       version: 1,
       agentId: "agent-1",
       recording: "process-only",
+      description: "Researcher: inspect implementation",
       application: {
         digest: "a".repeat(64),
         registryGeneration: 2,
@@ -84,6 +86,7 @@ describe("AgentProcessStore", () => {
     expect(JSON.parse(indexRaw)).toEqual([
       expect.objectContaining({
         agentId: "agent-1",
+        description: "Researcher: inspect implementation",
         state: "completed",
         recording: "process-only",
       }),

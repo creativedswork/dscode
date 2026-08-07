@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 describe("Bundled Agent Application packaging", () => {
-  it("ships CHIEF workers and vision with build validation", async () => {
+  it("ships CHIEF workers, general, and vision with build validation", async () => {
     const root = process.cwd();
     const directory = join(root, "resources", "agents");
     const files = (await readdir(directory)).filter((name) => name.endsWith(".md"));
@@ -14,14 +14,24 @@ describe("Bundled Agent Application packaging", () => {
       "chief-oracle.md",
       "eval-rule-attribution.md",
       "eval-rule-merge.md",
+      "general.md",
       "vision.md",
     ]);
-    for (const name of files.filter((name) => name !== "vision.md")) {
+    for (const name of files.filter((name) =>
+      name.startsWith("chief-") || name.startsWith("eval-rule-")
+    )) {
       const content = await readFile(join(directory, name), "utf8");
       expect(content).toContain(`name: ${name.slice(0, -3)}`);
       expect(content).toContain("permissionMode: plan");
       expect(content.split("---").at(-1)?.trim().length).toBeGreaterThan(0);
     }
+    const general = await readFile(join(directory, "general.md"), "utf8");
+    expect(general).toContain("name: general");
+    expect(general).toContain("model: inherit");
+    expect(general).toContain('tools: ["*"]');
+    expect(general).toContain("fresh conversation");
+    expect(general.split("---").at(-1)?.trim().length).toBeGreaterThan(0);
+
     const content = await readFile(join(directory, "vision.md"), "utf8");
     expect(content).toContain("name: vision");
     expect(content).toContain("model: vision");

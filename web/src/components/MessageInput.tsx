@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useLayoutEffect } from "react";
 import type { ImageAttachment, FileAttachment, FileListItem, ViewMode } from "../types";
 import { PaperPlaneTilt, Folder, File, Image, TextAlignLeft, Video, SpeakerHigh, FilePdf, Archive, X } from "@phosphor-icons/react";
 
@@ -110,6 +110,15 @@ function formatFileSize(bytes: number): string {
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_TOTAL_SIZE = 50 * 1024 * 1024; // 50 MB
 
+export function syncTextareaHeight(
+  textarea: Pick<HTMLTextAreaElement, "scrollHeight" | "style">,
+  hasContent: boolean,
+): void {
+  textarea.style.height = "";
+  if (!hasContent) return;
+  textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+}
+
 export function MessageInput({
   onSend,
   onAbort,
@@ -151,6 +160,12 @@ export function MessageInput({
       pendingImageUrlsRef.current.clear();
     };
   }, []);
+
+  useLayoutEffect(() => {
+    if (textareaRef.current) {
+      syncTextareaHeight(textareaRef.current, text.length > 0);
+    }
+  }, [text]);
 
   const finishPendingImage = useCallback((id: number): boolean => {
     const previewUrl = pendingImageUrlsRef.current.get(id);
@@ -216,6 +231,9 @@ export function MessageInput({
     const uploadPayload = uploadedFiles.length > 0
       ? uploadedFiles.map(f => ({ name: f.name, content: f.content }))
       : undefined;
+    if (textareaRef.current) {
+      syncTextareaHeight(textareaRef.current, false);
+    }
     onSend(trimmed, images.length > 0 ? images : undefined, undefined, uploadPayload);
     setText("");
     setImages([]);
@@ -559,8 +577,7 @@ export function MessageInput({
   const adjustHeight = () => {
     const ta = textareaRef.current;
     if (ta) {
-      ta.style.height = "auto";
-      ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
+      syncTextareaHeight(ta, ta.value.length > 0);
     }
   };
 

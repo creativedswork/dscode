@@ -137,9 +137,13 @@ resources/agents/vision.md        # 当前唯一随发行版本提供的 Agent.m
 所有 AgentProcess 通过 `PiAgentRuntimeAdapter` 持有独立 Pi Agent。Application
 只能配置 Prompt、模型和 capability，不能选择内部 Runtime。
 
-进程通过 `spawn_agent`、`list_agents`、`wait_agent`、`terminate_agent`、
-`kill_agent` 和 `send_agent_message` 管理。后台写进程必须使用 Git Worktree，
-相对路径和 Checkpoint 通过 AsyncLocalStorage 中的 AgentContext 隔离。
+Agent.md 可声明用户配置的 foreground/background 默认值，Main Agent 通过
+`spawn_agent` 为单次动态委派显式覆盖，并可使用 `list_agents`、`terminate_agent`、
+`kill_agent` 和 `send_agent_message` 管理后台进程。foreground 结果由工具直接返回，
+background 结果由 `agent:exit` 和父 Session 通知自动传递，并在 Main turn 的安全
+边界事件驱动 continuation；不向模型暴露等待或输出轮询工具。后台写进程必须使用
+Git Worktree，相对路径和 Checkpoint 通过
+AsyncLocalStorage 中的 AgentContext 隔离。
 
 ## 分层架构
 

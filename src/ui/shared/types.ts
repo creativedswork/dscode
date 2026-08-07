@@ -153,10 +153,34 @@ export interface AgentActivityProgress {
   message?: string;
 }
 
+export type AgentToolActivityState =
+  | "running"
+  | "permission"
+  | "completed"
+  | "failed";
+
+export interface AgentToolActivity {
+  toolCallId: string;
+  name: string;
+  status: AgentToolActivityState;
+  summary?: string;
+  startedAt: number;
+  endedAt?: number;
+  isError?: boolean;
+}
+
+export interface AgentPermissionActivity {
+  toolName: string;
+  preview: string;
+  toolCallId?: string;
+}
+
 export interface AgentActivity {
   agentId: string;
+  executionId?: string;
   parentAgentId?: string;
   parentSessionId: string;
+  label?: string;
   application: string;
   attachment: "foreground" | "background";
   state: AgentActivityState;
@@ -164,6 +188,8 @@ export interface AgentActivity {
   output?: string;
   error?: string;
   progress?: AgentActivityProgress;
+  tools?: AgentToolActivity[];
+  permission?: AgentPermissionActivity;
   createdAt: number;
   startedAt?: number;
   endedAt?: number;
@@ -200,6 +226,8 @@ export type PermissionDecision = "allow" | "deny" | "ask";
 export interface PermissionPrompt {
   toolName: string;
   preview: string;
+  agentId?: string;
+  toolCallId?: string;
   fuzzyPattern?: string | null;
   fuzzyArgDesc?: string | null;
   llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[];
@@ -320,7 +348,20 @@ export type ServerEvent =
   | { type: "warning"; text: string }
   | { type: "error"; text: string }
   | { type: "retry"; info: { attempt: number; maxRetries: number; delayMs: number; error: string; level: "stream" | "turn" } }
-  | { type: "permission_prompt"; toolName: string; preview: string; fuzzyPattern?: string | null; fuzzyArgDesc?: string | null; llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[] }
+  | {
+      type: "permission_prompt";
+      toolName: string;
+      preview: string;
+      agentId?: string;
+      toolCallId?: string;
+      fuzzyPattern?: string | null;
+      fuzzyArgDesc?: string | null;
+      llmSuggestions?: {
+        label: string;
+        toolPattern: string | null;
+        argPattern: string | null;
+      }[];
+    }
   | { type: "loader"; state: "show" | "hide"; text?: string }
   | { type: "config"; data: ConfigData }
   | { type: "sessions"; data: SessionInfo[]; currentSessionId?: string; isProcessing?: boolean }

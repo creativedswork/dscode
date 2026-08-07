@@ -69,6 +69,7 @@ export function computeSessionContentHash(
     .map((message) => ({
       agentId: message.agentId,
       application: message.application,
+      description: message.description,
       state: message.state,
       prompt: message.input.prompt,
       output: message.output?.text,

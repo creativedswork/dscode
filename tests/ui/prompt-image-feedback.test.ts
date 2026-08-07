@@ -3,10 +3,22 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { TuiApp } from "../../src/ui/tui-app.js";
+import { syncTextareaHeight } from "../../web/src/components/MessageInput.js";
 
 const ROOT = process.cwd();
 
 describe("prompt image attachment feedback", () => {
+  it("resets an empty composer after sending a long prompt", () => {
+    const textarea = {
+      scrollHeight: 200,
+      style: { height: "200px" },
+    };
+
+    syncTextareaHeight(textarea as any, false);
+
+    expect(textarea.style.height).toBe("");
+  });
+
   it("shows a WebUI preview before image reading and compression completes", () => {
     const source = readFileSync(
       join(ROOT, "web/src/components/MessageInput.tsx"),

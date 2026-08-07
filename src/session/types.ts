@@ -35,6 +35,7 @@ export interface AgentSessionMessage {
   agentId: string;
   parentAgentId?: string;
   application: string;
+  description?: string;
   state: "completed" | "failed" | "terminated" | "killed";
   input: {
     prompt: string;

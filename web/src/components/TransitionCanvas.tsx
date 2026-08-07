@@ -300,7 +300,11 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         let width = rect.width;
 
         // ── Content-tight width for text-like colliders ──
-        if (colliderType === "text-line" || colliderType === "code-line" || colliderType === "tool-result-line") {
+        if (
+          colliderType === "text-block"
+          || colliderType === "code-line"
+          || colliderType === "tool-result-line"
+        ) {
           const text = el.textContent || "";
           const computedStyle = getComputedStyle(el);
           measureCtx.font = `${computedStyle.fontWeight || "400"} ${computedStyle.fontSize} "${computedStyle.fontFamily.split(",")[0].replace(/"/g, "")}", sans-serif`;
@@ -835,7 +839,7 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
     function destroyByType(el: HTMLElement, impactX: number, impactY: number): void {
       const type = el.getAttribute("data-collider");
       switch (type) {
-        case "text-line":
+        case "text-block":
           destroyTextLine(el);
           break;
         case "code-line":

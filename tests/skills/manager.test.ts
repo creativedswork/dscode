@@ -3,7 +3,10 @@ import { mkdtempSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { SkillManager } from "../../src/skills/manager.js";
+import {
+  formatLoadedSkill,
+  SkillManager,
+} from "../../src/skills/manager.js";
 import { DriverRegistry } from "../../src/drivers/registry.js";
 
 function createSkillDir(baseDir: string, name: string, content: string): string {
@@ -191,6 +194,29 @@ tools: [bash]
     expect(manager.getTools()).toEqual([]);
   });
 
+  it("reminds the model that loading a Skill must continue into execution", () => {
+    const text = formatLoadedSkill({
+      name: "visual-post",
+      description: "Create a visual post",
+      source: "project",
+      path: "/project/.dscode/skills/visual-post/SKILL.md",
+      instructions: "Use spawn_agent before creating artifacts.",
+    });
+
+    expect(text).toContain(
+      "Resource root: /project/.dscode/skills/visual-post",
+    );
+    expect(text).toContain(
+      "Resolve every relative file reference in this Skill against the exact resource root",
+    );
+    expect(text).toContain(
+      "Never guess or substitute `.claude`, `.trae`, `.dscode`",
+    );
+    expect(text).toContain("Loading this document does not complete the Skill");
+    expect(text).toContain("Do not stop at a plan, summary, or redundant confirmation");
+    expect(text).toContain("call it before ending the turn");
+  });
+
   it("should generate system prompt section with available and active skills", () => {
     createSkillDir(userSkillsDir, "skill-a", `---
 name: skill-a
@@ -204,8 +230,8 @@ tools: [read_file]
     const section = manager.getSystemPromptSection();
     expect(section).toContain("Available Skills");
     expect(section).toContain("skill-a");
-    expect(section).toContain("active");
     expect(section).toContain("Active Skills");
+    expect(section).toContain("### skill-a");
     expect(section).toContain("Allowed tools: read_file");
   });
 

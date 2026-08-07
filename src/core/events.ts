@@ -75,8 +75,8 @@ export type HarnessEvent =
   | { type: "llm:usage"; inputTokens: number; outputTokens: number }
 
   // Tool execution
-  | { type: "tool:start"; name: string; args: unknown }
-  | { type: "tool:end"; name: string; result: unknown; isError: boolean }
+  | { type: "tool:start"; executionId?: string; toolCallId: string; name: string; args: unknown }
+  | { type: "tool:end"; executionId?: string; toolCallId: string; name: string; result: unknown; isError: boolean }
 
   // Turn lifecycle
   | { type: "turn:start" }
@@ -90,7 +90,7 @@ export type HarnessEvent =
   | { type: "processing:stop" }
 
   // Agent process lifecycle
-  | { type: "agent:spawned"; agentId: string; parentAgentId?: string; application: string; attachment: "foreground" | "background"; input: string }
+  | { type: "agent:spawned"; agentId: string; parentAgentId?: string; application: string; description?: string; attachment: "foreground" | "background"; input: string }
   | { type: "agent:state"; agentId: string; previous: AgentProcessState; state: AgentProcessState }
   | { type: "agent:progress"; agentId: string; phase: string; progress?: number; total?: number; message?: string; details?: unknown }
   | { type: "agent:output"; agentId: string; text: string }

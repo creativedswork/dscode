@@ -1,8 +1,39 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { dirname } from "node:path";
 
 import type { DriverRegistry } from "../drivers/registry.js";
 import type { Skill, SkillManifest } from "../core/types.js";
 import { scanSkillDirs } from "./loader.js";
+
+export function formatLoadedSkill(manifest: SkillManifest): string {
+  const resourceRoot = dirname(manifest.path);
+  const lines: string[] = [
+    `# ${manifest.name}`,
+    `Description: ${manifest.description}`,
+    `Source: ${manifest.source}`,
+    `Resource root: ${resourceRoot}`,
+    manifest.tools && manifest.tools.length > 0
+      ? `Allowed tools: ${manifest.tools.join(", ")}`
+      : "Allowed tools: all driver tools",
+  ];
+  if (manifest.instructions) {
+    lines.push("", "## Instructions", manifest.instructions);
+  }
+  lines.push(
+    "",
+    "## Resource resolution contract",
+    `- Resolve every relative file reference in this Skill against the exact resource root: \`${resourceRoot}\`.`,
+    "- Use the resolved absolute path when calling file tools.",
+    "- Never guess or substitute `.claude`, `.trae`, `.dscode`, or another compatibility directory.",
+    "",
+    "## Runtime continuation contract",
+    "- Loading this document does not complete the Skill.",
+    "- Continue execution in this turn when the request and supplied material satisfy the prerequisites.",
+    "- Do not stop at a plan, summary, or redundant confirmation unless an essential decision is missing or the Skill explicitly requires confirmation.",
+    "- When the Skill requires SubAgents and `spawn_agent` is available, call it before ending the turn.",
+  );
+  return lines.join("\n");
+}
 
 export class SkillManager {
   private manifests = new Map<string, SkillManifest>();

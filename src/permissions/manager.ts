@@ -16,6 +16,16 @@ interface SessionGrant {
   regex: RegExp | null;
 }
 
+export class PermissionPromptQueue {
+  private tail: Promise<void> = Promise.resolve();
+
+  enqueue<T>(prompt: () => Promise<T>): Promise<T> {
+    const result = this.tail.then(prompt);
+    this.tail = result.then(() => undefined, () => undefined);
+    return result;
+  }
+}
+
 export class PermissionManager {
   private rules: PermissionRule[];
   private denyRegexes: { pattern: string; regex: RegExp }[];
@@ -49,7 +59,7 @@ export class PermissionManager {
   }
 
   async check(
-    context: { toolCall: { name: string }; args: unknown },
+    context: { toolCall: { id?: string; name: string }; args: unknown },
     _signal?: AbortSignal,
   ): Promise<{ block: boolean; reason: string } | undefined> {
     const toolName = context.toolCall.name;
@@ -86,7 +96,9 @@ export class PermissionManager {
       case "ask": {
         this.onBeforePrompt?.();
         const preview = this.formatPreview(toolName, context.args);
-        const result = await this.promptUser(toolName, preview, context.args);
+        const result = await this.promptUser(toolName, preview, context.args, {
+          toolCallId: context.toolCall.id,
+        });
         if (result.persistRule) {
           this.persistRule(result.persistRule);
           this.rules.push({

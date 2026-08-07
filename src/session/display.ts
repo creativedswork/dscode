@@ -1,5 +1,7 @@
 import type { AgentSessionMessage, DisplayMessage } from "./types.js";
 import { ImageCache } from "../utils/image-cache.js";
+import { formatSubagentLabel } from "../ui/shared/agent-label.js";
+import { formatToolArgsForDisplay } from "../ui/shared/tool-args-formatter.js";
 import { formatToolResultForUI } from "../ui/shared/tool-result-formatter.js";
 
 // ── Helpers ──
@@ -36,12 +38,7 @@ function extractToolsFromContent(blocks: any[]): { name: string; args: string; r
   const tools: { name: string; args: string; result: string; isError: boolean }[] = [];
   for (const b of blocks) {
     if (b && b.type === "toolCall" && b.name) {
-      let args = "";
-      try {
-        args = JSON.stringify(b.arguments ?? {}).slice(0, 80);
-      } catch {
-        args = String(b.arguments ?? "").slice(0, 80);
-      }
+      const args = formatToolArgsForDisplay(b.name, b.arguments);
       tools.push({ name: b.name, args, result: "", isError: false });
     }
   }
@@ -55,6 +52,40 @@ function extractToolResultText(blocks: any[], toolName: string): string {
     .map((b: any) => b.text)
     .join("\n");
   return formatToolResultForUI(toolName, raw);
+}
+
+function isInternalAgentNotification(message: any): boolean {
+  return message?.role === "user"
+    && extractText(message.content).trimStart().startsWith("<agent_notifications>");
+}
+
+function recoverSubagentDescriptions(messages: any[]): Map<string, string> {
+  const descriptionsByCall = new Map<string, string>();
+  const descriptionsByAgent = new Map<string, string>();
+
+  for (const message of messages) {
+    if (message?.role === "assistant" && Array.isArray(message.content)) {
+      for (const block of message.content) {
+        const description = block?.arguments?.description;
+        if (
+          block?.type === "toolCall"
+          && block.name === "spawn_agent"
+          && typeof block.id === "string"
+          && typeof description === "string"
+        ) {
+          descriptionsByCall.set(block.id, description);
+        }
+      }
+    }
+    if (message?.role !== "toolResult") continue;
+    const description = descriptionsByCall.get(message.toolCallId);
+    const agentId = message.details?.agentId;
+    if (description && typeof agentId === "string") {
+      descriptionsByAgent.set(agentId, description);
+    }
+  }
+
+  return descriptionsByAgent;
 }
 
 // ── Main ──
@@ -78,6 +109,7 @@ export function rebuildDisplayMessages(
   agentMessages: AgentSessionMessage[],
   parentSessionId = "unknown",
 ): DisplayMessage[] {
+  const recoveredDescriptions = recoverSubagentDescriptions(messages);
   const agentMap = new Map<number, AgentSessionMessage>();
   for (const message of agentMessages) {
     if (message.messageIndex !== undefined) {
@@ -107,12 +139,7 @@ export function rebuildDisplayMessages(
       const toolCalls: { id: string; name: string; args: string }[] = [];
       for (const b of contentArr) {
         if (b && b.type === "toolCall" && b.name && b.id) {
-          let args = "";
-          try {
-            args = JSON.stringify(b.arguments ?? {}).slice(0, 80);
-          } catch {
-            args = String(b.arguments ?? "").slice(0, 80);
-          }
+          const args = formatToolArgsForDisplay(b.name, b.arguments);
           toolCalls.push({ id: b.id, name: b.name, args });
         }
       }
@@ -152,7 +179,7 @@ export function rebuildDisplayMessages(
       }
     } else {
       // UserMessage or any other role: always emit
-      output.add(i);
+      if (!isInternalAgentNotification(m)) output.add(i);
       lastAssistantToolIds = null;
     }
   }
@@ -271,8 +298,14 @@ export function rebuildDisplayMessages(
       createdAt: agentMessage.createdAt,
       agentActivity: {
         agentId: agentMessage.agentId,
+        executionId: agentMessage.agentId,
         parentAgentId: agentMessage.parentAgentId,
         parentSessionId,
+        label: formatSubagentLabel(
+          agentMessage.description
+          ?? recoveredDescriptions.get(agentMessage.agentId),
+          agentMessage.application,
+        ),
         application: agentMessage.application,
         attachment: "foreground",
         state: agentMessage.state,

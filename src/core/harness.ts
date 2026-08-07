@@ -18,9 +18,12 @@ import { MemoryManager } from "../memory/manager.js";
 import { DriverRegistry } from "../drivers/registry.js";
 import { ToolRegistry } from "../drivers/tool-registry.js";
 import { makeDiscoveryDriver } from "../drivers/discovery.js";
-import { SkillManager } from "../skills/manager.js";
+import { formatLoadedSkill, SkillManager } from "../skills/manager.js";
 import { CommandManager } from "../commands/manager.js";
-import { PermissionManager } from "../permissions/manager.js";
+import {
+  PermissionManager,
+  PermissionPromptQueue,
+} from "../permissions/manager.js";
 import { MCPManager } from "../mcp/manager.js";
 import type { MCPClientEvent } from "../mcp/types.js";
 import { AppHostManager } from "../mcp/app/host.js";
@@ -57,12 +60,16 @@ import { AgentProcessStore } from "../agents/process/store.js";
 import { AgentSupervisor } from "../agents/process/supervisor.js";
 import { AgentFallbackRegistry } from "../agents/process/fallback.js";
 import { createMainAgentContext } from "../agents/process/context.js";
-import type { AgentContext as ProcessAgentContext } from "../agents/process/types.js";
+import type {
+  AgentContext as ProcessAgentContext,
+  AgentExitResult,
+} from "../agents/process/types.js";
 import { checkAgentCapability } from "../agents/process/capability.js";
 import {
   AGENT_PROCESS_TOOL_NAMES,
   makeAgentProcessTools,
 } from "../agents/tools/process-tools.js";
+import { formatSubagentLabel } from "../ui/shared/agent-label.js";
 
 const MAIN_PROCESS_APPLICATION: AgentApplicationSnapshot = Object.freeze({
   name: "main",
@@ -118,6 +125,9 @@ export class Harness implements HarnessAPI {
   private lastSavedMessageCount: number = 0;
   private activeMainTurn: Promise<void> | null = null;
   private sessionSwitchInProgress = false;
+  private readonly permissionPromptQueue = new PermissionPromptQueue();
+  private readonly pendingBackgroundContinuationSessions = new Set<string>();
+  private backgroundContinuationDrain: Promise<void> | null = null;
 
   get agent(): PiAgentRuntime {
     return this.piAgentRuntime;
@@ -145,7 +155,9 @@ export class Harness implements HarnessAPI {
     this.skillManager = new SkillManager(config.userSkillsDir, config.projectSkillsDir);
     this.permissionManager = new PermissionManager(
       config.permissions,
-      (toolName, preview, args) => this.ui.getPromptPermission()(toolName, preview, args),
+      (toolName, preview, args) => this.permissionPromptQueue.enqueue(
+        () => this.ui.getPromptPermission()(toolName, preview, args),
+      ),
       config.projectPath,
       () => {},
     );
@@ -228,13 +240,7 @@ export class Harness implements HarnessAPI {
           if (notifications.length > 0) {
             msgs.unshift({
               role: "user",
-              content: [
-                "<agent_notifications>",
-                ...notifications.map((notice) =>
-                  `${notice.agentId} ${notice.state}: ${(notice.output ?? notice.error ?? "").slice(0, 4000)}`,
-                ),
-                "</agent_notifications>",
-              ].join("\n"),
+              content: self.formatAgentNotifications(notifications),
             } as AgentMessage);
           }
           // S2b: Inject anchor invalidation notices into conversation (NOT system prompt)
@@ -308,6 +314,7 @@ export class Harness implements HarnessAPI {
     );
     this.events.on("agent:exit", (event) => {
       this.recordSubagentExit(event.result.agentId);
+      this.scheduleBackgroundAgentContinuation(event.result.agentId);
     });
     const mainContext = createMainAgentContext(
       this.config.projectPath,
@@ -448,6 +455,118 @@ export class Harness implements HarnessAPI {
     return tracked;
   }
 
+  private formatAgentNotifications(notifications: AgentExitResult[]): string {
+    const entries = notifications.map((notice) => {
+      const process = this.agentSupervisor.get(notice.agentId);
+      const label = formatSubagentLabel(
+        process?.description,
+        process?.application.name,
+      );
+      const result = (notice.output ?? notice.error ?? "(no output)").slice(0, 4000);
+      return [
+        `## ${label} (${notice.agentId})`,
+        `State: ${notice.state}`,
+        result,
+      ].join("\n");
+    });
+    return [
+      "<agent_notifications>",
+      "Background SubAgent work completed:",
+      ...entries,
+      "",
+      "Resume the current user task using these results.",
+      "If a dependency is now satisfied, continue to the next planned step immediately.",
+      "Do not merely acknowledge this notification or wait for another user message.",
+      "</agent_notifications>",
+    ].join("\n");
+  }
+
+  private scheduleBackgroundAgentContinuation(agentId: string): void {
+    const process = this.agentSupervisor.get(agentId);
+    if (
+      !process
+      || process.role !== "subagent"
+      || process.recording !== "session"
+      || process.attachment !== "background"
+      || !process.exit
+    ) return;
+    this.pendingBackgroundContinuationSessions.add(process.parentSessionId);
+    this.startBackgroundContinuationDrain();
+  }
+
+  private startBackgroundContinuationDrain(): void {
+    if (
+      this.backgroundContinuationDrain
+      || this.shuttingDown
+      || this.sessionSwitchInProgress
+      || this.pendingBackgroundContinuationSessions.size === 0
+    ) return;
+
+    let drain: Promise<void>;
+    drain = Promise.resolve()
+      .then(() => this.drainBackgroundAgentContinuations())
+      .finally(() => {
+        if (this.backgroundContinuationDrain === drain) {
+          this.backgroundContinuationDrain = null;
+        }
+        const currentSessionId = this.sessionManager.getCurrentSessionId();
+        if (
+          !this.shuttingDown
+          && !this.sessionSwitchInProgress
+          && currentSessionId
+          && this.pendingBackgroundContinuationSessions.has(currentSessionId)
+        ) {
+          this.startBackgroundContinuationDrain();
+        }
+      });
+    this.backgroundContinuationDrain = drain;
+  }
+
+  private async drainBackgroundAgentContinuations(): Promise<void> {
+    while (!this.shuttingDown && !this.sessionSwitchInProgress) {
+      const sessionId = this.sessionManager.getCurrentSessionId();
+      if (
+        !sessionId
+        || !this.pendingBackgroundContinuationSessions.has(sessionId)
+      ) return;
+
+      const activeTurn = this.activeMainTurn;
+      if (activeTurn) {
+        try {
+          await activeTurn;
+        } catch {
+          // A failed user turn still leaves the background notification pending.
+        }
+        continue;
+      }
+      if (
+        this.sessionSwitchInProgress
+        || this.sessionManager.getCurrentSessionId() !== sessionId
+      ) continue;
+
+      const notifications = this.agentSupervisor.consumeNotifications(sessionId);
+      this.pendingBackgroundContinuationSessions.delete(sessionId);
+      if (notifications.length === 0) continue;
+
+      this.events.emit({ type: "processing:start" });
+      try {
+        await this.runMainTurn(() =>
+          this.promptAndSaveInternal(this.formatAgentNotifications(notifications))
+        );
+      } catch (error) {
+        this.logger.error(
+          "AgentContinuation",
+          `Failed to resume Main Agent: ${String(error)}`,
+        );
+        this.events.emit({
+          type: "ui:error",
+          text: `Failed to resume after SubAgent completion: ${String(error)}`,
+        });
+        this.events.emit({ type: "processing:stop" });
+      }
+    }
+  }
+
   async switchSession(request: SwitchSessionRequest): Promise<SwitchSessionResult> {
     if (this.sessionSwitchInProgress) {
       throw new Error("A session switch is already in progress");
@@ -483,6 +602,7 @@ export class Harness implements HarnessAPI {
       };
     } finally {
       this.sessionSwitchInProgress = false;
+      this.startBackgroundContinuationDrain();
     }
   }
 
@@ -575,6 +695,7 @@ export class Harness implements HarnessAPI {
       agentId,
       parentAgentId: agentProcess.parentAgentId,
       application: agentProcess.application.name,
+      description: agentProcess.description,
       state: agentProcess.exit.state,
       input: { prompt },
       output: {
@@ -609,6 +730,7 @@ export class Harness implements HarnessAPI {
       agentId: result.agentId,
       parentAgentId: agentProcess.parentAgentId,
       application: agentProcess.application.name,
+      description: agentProcess.description,
       state: agentProcess.exit.state,
       input: {
         prompt,
@@ -782,7 +904,45 @@ export class Harness implements HarnessAPI {
           ? "deny"
           : this.config.permissions.defaultDecision,
       },
-      (toolName, preview, args) => this.ui.getPromptPermission()(toolName, preview, args),
+      async (toolName, preview, args, promptContext) => {
+        const toolCallId = promptContext?.toolCallId;
+        this.events.emit({
+          type: "agent:progress",
+          agentId,
+          phase: "permission",
+          message: `Permission required for ${toolName}`,
+          details: {
+            kind: "permission",
+            status: "waiting",
+            executionId: agentId,
+            toolCallId,
+            toolName,
+            preview,
+          },
+        });
+        try {
+          return await this.permissionPromptQueue.enqueue(
+            () => this.ui.getPromptPermission()(toolName, preview, args, {
+              agentId,
+              toolCallId,
+            }),
+          );
+        } finally {
+          this.events.emit({
+            type: "agent:progress",
+            agentId,
+            phase: "permission",
+            message: `Permission resolved for ${toolName}`,
+            details: {
+              kind: "permission",
+              status: "resolved",
+              executionId: agentId,
+              toolCallId,
+              toolName,
+            },
+          });
+        }
+      },
       context.cwd,
     );
     const backgroundPermissions = new PermissionManager(
@@ -981,6 +1141,7 @@ export class Harness implements HarnessAPI {
       const spawned = await this.agentSupervisor.spawn({
         application: "vision",
         parentAgentId: this.mainAgentId,
+        description: "Vision: analyze attached images",
         input: {
           prompt: text,
           displayPrompt: options?.displayPrompt ?? text,
@@ -1483,6 +1644,8 @@ You are working in: ${this.config.projectPath}.
 - When multiple tool calls have no data dependency on each other, batch them in a single response for parallel execution. When one call depends on the output of another, split them across sequential responses.
 - Prefer file tools over shell: use write_file, edit, read_file, and grep for file operations. Reserve bash for actual shell commands — tests, builds, git, package management — not for sed, cat, or awk on project files.
 - Activate Skills first: if a task falls within the domain of any Skill listed in "Active Skills", call the skill tool to load its full instructions before proceeding.
+- Loading a Skill is not execution. After loading it, continue through its required tools and deliverables in the same turn when the request has enough information. Do not stop at a plan, summary, or redundant confirmation.
+- If a loaded Skill requires SubAgents and \`spawn_agent\` is available, the Skill has not started until you actually call \`spawn_agent\`. Do not end the turn before that call unless essential user input is missing or the Skill explicitly requires confirmation.
 - If a task relates to tools listed in the "Discoverable Tools" section below, use \`search_tools\` to discover and load the relevant tools first, before falling back to other methods.
 - Answer in the user's language. Be concise and direct.
 - When writing code, produce complete, working implementations. Do not leave placeholders or TODOs.
@@ -1580,23 +1743,8 @@ __DEFERRED_HINT__`;
           };
         }
 
-        const lines: string[] = [];
-        lines.push(`# ${manifest.name}`);
-        lines.push(`Description: ${manifest.description}`);
-        lines.push(`Source: ${manifest.source}`);
-        if (manifest.tools && manifest.tools.length > 0) {
-          lines.push(`Allowed tools: ${manifest.tools.join(", ")}`);
-        } else {
-          lines.push("Allowed tools: all driver tools");
-        }
-        if (manifest.instructions) {
-          lines.push("");
-          lines.push("## Instructions");
-          lines.push(manifest.instructions);
-        }
-
         return {
-          content: [{ type: "text", text: lines.join("\n") }],
+          content: [{ type: "text", text: formatLoadedSkill(manifest) }],
           details: { name: manifest.name },
         };
       },
@@ -1749,13 +1897,26 @@ __DEFERRED_HINT__`;
           break;
         }
         case "tool_execution_start":
-          this.events.emit({ type: "tool:start", name: event.toolName, args: event.args });
+          this.events.emit({
+            type: "tool:start",
+            executionId: this.mainAgentId,
+            toolCallId: event.toolCallId,
+            name: event.toolName,
+            args: event.args,
+          });
           break;
         case "tool_execution_update": {
           // Partial tool result: show images immediately before vision/OCR
           const payload = this.getToolPayload(event.partialResult);
           const effectiveIsError = this.getEffectiveToolError(event.partialResult, false);
-          this.events.emit({ type: "tool:end", name: event.toolName, result: payload, isError: effectiveIsError });
+          this.events.emit({
+            type: "tool:end",
+            executionId: this.mainAgentId,
+            toolCallId: event.toolCallId,
+            name: event.toolName,
+            result: payload,
+            isError: effectiveIsError,
+          });
           break;
         }
         case "tool_execution_end": {
@@ -1763,6 +1924,8 @@ __DEFERRED_HINT__`;
           const effectiveIsError = this.getEffectiveToolError(event.result, event.isError);
           this.events.emit({
             type: "tool:end",
+            executionId: this.mainAgentId,
+            toolCallId: event.toolCallId,
             name: event.toolName,
             result: payload,
             isError: effectiveIsError,

@@ -9,6 +9,7 @@ import type { UiBackend } from "../backend.js";
 import type {
   AgentSessionMessage,
   HarnessConfig,
+  PermissionPromptContext,
   PermissionPromptResult,
 } from "../../core/types.js";
 import type { ConfigWatch } from "../../core/config-watch.js";
@@ -28,6 +29,7 @@ import { formatToolResultForUI } from "../shared/tool-result-formatter.js";
 import { AgentActivityProjector } from "../shared/agent-activity.js";
 import { formatAgentDisplayId } from "../shared/agent-id.js";
 import { serializeArtifactThemeVariables } from "../shared/artifact-theme.js";
+import { stageAttachedFiles } from "../shared/file-attachments.js";
 import { resolveBuiltResource } from "../../resources/runtime.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
 import type { EvalDashboardState } from "../../core/events.js";
@@ -567,8 +569,9 @@ export class WebUiBackend implements UiBackend {
     toolName: string,
     preview: string,
     args: unknown,
+    context?: PermissionPromptContext,
   ) => Promise<PermissionPromptResult> {
-    return (toolName, preview, args) => {
+    return (toolName, preview, args, context) => {
       return new Promise<PermissionPromptResult>((resolve) => {
         this.currentPermissionTool = toolName;
         this.currentPermissionArgs = args;
@@ -577,10 +580,23 @@ export class WebUiBackend implements UiBackend {
         const fuzzy = deriveFuzzyPattern(toolName);
         const fuzzyArgDesc = describeFuzzyArgPattern(toolName, args);
         const llmSuggestions = getLlmSuggestions(toolName, args);
-        this.broadcast({ type: "permission_prompt", toolName, preview, fuzzyPattern: fuzzy, fuzzyArgDesc, llmSuggestions: llmSuggestions.length > 0 ? llmSuggestions : undefined });
+        this.broadcast({
+          type: "permission_prompt",
+          toolName,
+          preview,
+          agentId: context?.agentId,
+          toolCallId: context?.toolCallId,
+          fuzzyPattern: fuzzy,
+          fuzzyArgDesc,
+          llmSuggestions: llmSuggestions.length > 0 ? llmSuggestions : undefined,
+        });
         // Prefetch for next time
-        const model = resolveModel(this.config.provider, this.config.modelId);
-        prefetchLlmSuggestions(model, toolName, args, preview);
+        try {
+          const model = resolveModel(this.config.provider, this.config.modelId);
+          prefetchLlmSuggestions(model, toolName, args, preview);
+        } catch {
+          // Permission interaction must not depend on best-effort suggestions.
+        }
       });
     };
   }
@@ -769,45 +785,28 @@ export class WebUiBackend implements UiBackend {
           }
         }
 
-        // Handle fileRefs (TUI drag-and-drop: absolute filesystem paths)
+        // Stage explicit filesystem attachments inside the project sandbox so
+        // Main and SubAgents can read the same paths.
         if (cmd.fileRefs && cmd.fileRefs.length > 0) {
-          const imageRefs = cmd.fileRefs.filter(f => isImagePath(f));
-          const nonImageRefs = cmd.fileRefs.filter(f => !isImagePath(f));
-          // Non-image files from TUI: inject path references only (files exist on filesystem)
-          if (nonImageRefs.length > 0) {
-            const pathLines = nonImageRefs.map(f => `- \`${f}\``).join('\n');
-            text = text ? `${text}\n\n📁 Attached files:\n${pathLines}` : `📁 Attached files:\n${pathLines}`;
+          let stagedFileRefs: string[];
+          try {
+            stagedFileRefs = stageAttachedFiles(
+              this.config.projectPath,
+              this.harness.sessionManager.getCurrentSessionId?.() ?? "default",
+              cmd.fileRefs,
+            );
+          } catch (error) {
+            client.send({
+              type: "error",
+              text: error instanceof Error ? error.message : String(error),
+            });
+            return;
           }
-          // Image files from TUI: resolve normally from filesystem
-          if (imageRefs.length > 0) {
-            const refsResolved = resolveFileRefs(this.config.projectPath, imageRefs, this.config.atFile ?? {});
-            if (!refsResolved.reject) {
-              if (refsResolved.text) {
-                text = text ? `${text}\n\n${refsResolved.text}` : refsResolved.text;
-              }
-              if (refsResolved.images.length > 0) {
-                const refImages = refsResolved.images.map((img) => ({
-                  data: img.data,
-                  mimeType: img.mimeType,
-                }));
-                images = [...(images ?? []), ...refImages];
-              }
-            }
-            for (const warn of refsResolved.warnings) {
-              client.send({ type: "info", display: "toast", text: `${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}` });
-            }
-          }
-        }
-        // Split fileRefs by type: images vs non-images
-        if (cmd.fileRefs && cmd.fileRefs.length > 0) {
-          const imageRefs = cmd.fileRefs.filter(f => isImagePath(f));
-          const nonImageRefs = cmd.fileRefs.filter(f => !isImagePath(f));
-          // Non-image files: inject path references only
-          if (nonImageRefs.length > 0) {
-            const pathLines = nonImageRefs.map(f => `- \`${f}\``).join('\n');
-            text = text ? `${text}\n\n📁 Attached files:\n${pathLines}` : `📁 Attached files:\n${pathLines}`;
-          }
-          // Image files: resolve normally
+          const imageRefs = stagedFileRefs.filter(f => isImagePath(f));
+          const pathLines = stagedFileRefs.map(f => `- \`${f}\``).join('\n');
+          text = text
+            ? `${text}\n\n📁 Attached files:\n${pathLines}`
+            : `📁 Attached files:\n${pathLines}`;
           if (imageRefs.length > 0) {
             const refsResolved = resolveFileRefs(this.config.projectPath, imageRefs, this.config.atFile ?? {});
             if (!refsResolved.reject) {

@@ -17,6 +17,7 @@ const REQUIRED_AGENT_APPS = [
   "chief-oracle",
   "eval-rule-attribution",
   "eval-rule-merge",
+  "general",
   "vision",
 ];
 

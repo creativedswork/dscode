@@ -64,6 +64,7 @@ class MessagingRuntime extends BlockingRuntime {
 class StatefulRuntime extends ImmediateRuntime {
   async start(input: AgentProcessInput): Promise<AgentProcessOutput> {
     await input.onStateChange?.("waiting");
+    await input.onProgress?.({ phase: "tool", message: "Running read_file" });
     await input.onCheckpoint?.({ messages: ["checkpoint"], usage: { input: 1 } });
     await input.onStateChange?.("running");
     return super.start(input);
@@ -73,6 +74,7 @@ class StatefulRuntime extends ImmediateRuntime {
 function setup(
   runtime: AgentProcessRuntime,
   availableTools: () => readonly string[] = () => ["read_file"],
+  generalOverrides: Partial<AgentApplicationSnapshot> = {},
 ): {
   supervisor: AgentSupervisor;
   mainAgentId: string;
@@ -82,13 +84,16 @@ function setup(
 } {
   const apps = new Map([
     ["main", application("main")],
-    ["general", application("general")],
+    ["general", application("general", generalOverrides)],
   ]);
   const registry = {
     require(name: string) {
       const app = apps.get(name);
       if (!app) throw new Error(`missing ${name}`);
       return app;
+    },
+    list() {
+      return [...apps.values()].sort((a, b) => a.name.localeCompare(b.name));
     },
   };
   const saves: unknown[] = [];
@@ -109,7 +114,13 @@ function setup(
   const logger = { error: vi.fn() };
   const eventBus = new HarnessEventBus(logger as any);
   const events: string[] = [];
-  for (const type of ["agent:spawned", "agent:state", "agent:output", "agent:exit"] as const) {
+  for (const type of [
+    "agent:spawned",
+    "agent:state",
+    "agent:progress",
+    "agent:output",
+    "agent:exit",
+  ] as const) {
     eventBus.on(type, () => events.push(type));
   }
   const supervisor = new AgentSupervisor(
@@ -137,10 +148,25 @@ function setup(
 }
 
 describe("AgentSupervisor", () => {
+  it("exposes immutable Application summaries without runtime configuration", () => {
+    const { supervisor } = setup(new ImmediateRuntime());
+
+    const applications = supervisor.listApplications();
+
+    expect(applications).toEqual([
+      expect.objectContaining({ name: "general", description: "general" }),
+      expect.objectContaining({ name: "main", description: "main" }),
+    ]);
+    expect(applications[0]).not.toHaveProperty("systemPrompt");
+    expect(Object.isFrozen(applications)).toBe(true);
+    expect(Object.isFrozen(applications[0])).toBe(true);
+  });
+
   it("runs a foreground child with PID/PPID and emits lifecycle events", async () => {
     const { supervisor, mainAgentId, events, saves } = setup(new ImmediateRuntime());
     const spawned = await supervisor.spawn({
       application: "general",
+      description: "Researcher: inspect implementation",
       input: { prompt: "inspect" },
       parentAgentId: mainAgentId,
     });
@@ -148,6 +174,7 @@ describe("AgentSupervisor", () => {
     expect(spawned.result?.state).toBe("completed");
     expect(spawned.result?.output).toBe("done: inspect");
     const child = supervisor.require(spawned.agentId);
+    expect(child.description).toBe("Researcher: inspect implementation");
     expect(child.parentAgentId).toBe(mainAgentId);
     expect(child.parentSessionId).toBe("session-1");
     expect(child.recording).toBe("session");
@@ -156,6 +183,32 @@ describe("AgentSupervisor", () => {
     expect(events).toContain("agent:output");
     expect(events.at(-1)).toBe("agent:exit");
     expect(saves.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("uses the Application attachment default unless the caller overrides it", async () => {
+    const { supervisor, mainAgentId } = setup(
+      new ImmediateRuntime(),
+      () => ["read_file"],
+      { background: true },
+    );
+
+    const background = await supervisor.spawn({
+      application: "general",
+      input: { prompt: "independent" },
+      parentAgentId: mainAgentId,
+    });
+    expect(background.result).toBeUndefined();
+    expect(supervisor.require(background.agentId).attachment).toBe("background");
+    await supervisor.wait(background.agentId);
+
+    const foreground = await supervisor.spawn({
+      application: "general",
+      input: { prompt: "required" },
+      parentAgentId: mainAgentId,
+      attachment: "foreground",
+    });
+    expect(foreground.result?.output).toBe("done: required");
+    expect(supervisor.require(foreground.agentId).attachment).toBe("foreground");
   });
 
   it("persists process-only children while preserving lifecycle events", async () => {
@@ -360,7 +413,7 @@ describe("AgentSupervisor", () => {
   });
 
   it("persists waiting transitions and turn checkpoints", async () => {
-    const { supervisor, mainAgentId, saves } = setup(new StatefulRuntime());
+    const { supervisor, mainAgentId, saves, events } = setup(new StatefulRuntime());
     const spawned = await supervisor.spawn({
       application: "general",
       input: { prompt: "inspect" },
@@ -372,6 +425,7 @@ describe("AgentSupervisor", () => {
     expect(saves).toContainEqual(expect.objectContaining({
       runtimeSnapshot: { messages: ["checkpoint"], usage: { input: 1 } },
     }));
+    expect(events).toContain("agent:progress");
   });
 
   it("detaches a foreground process without restarting its Runtime", async () => {

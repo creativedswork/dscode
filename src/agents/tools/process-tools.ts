@@ -1,14 +1,23 @@
+import { realpath, stat } from "node:fs/promises";
+import { basename, isAbsolute, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 
+import { ImageCache } from "../../drivers/vision/cache.js";
+import { readImageFile } from "../../drivers/vision/reader.js";
+import { isImagePath } from "../../utils/at-file-resolver.js";
 import type { AgentSupervisor } from "../process/supervisor.js";
-import type { AgentExitResult, AgentProcess } from "../process/types.js";
+import type {
+  AgentExitResult,
+  AgentInputAttachment,
+  AgentProcess,
+} from "../process/types.js";
 
 export const AGENT_PROCESS_TOOL_NAMES = [
   "spawn_agent",
   "list_agents",
-  "wait_agent",
-  "get_agent_output",
   "terminate_agent",
   "kill_agent",
   "suspend_agent",
@@ -19,7 +28,9 @@ export const AGENT_PROCESS_TOOL_NAMES = [
 
 const spawnParams = Type.Object({
   application: Type.String({ description: "Configured Agent Application name" }),
-  description: Type.String({ description: "Short reason for launching this process" }),
+  description: Type.String({
+    description: "User-visible role and purpose in '<Role>: <purpose>' form, for example 'Researcher: verify paper claims'",
+  }),
   input: Type.Object({
     prompt: Type.String({ description: "Task prompt passed as argv/stdin" }),
     attachments: Type.Optional(Type.Array(Type.Union([
@@ -27,15 +38,29 @@ const spawnParams = Type.Object({
         type: Type.Literal("image"),
         data: Type.Object({
           type: Type.Literal("image_ref"),
-          hash: Type.String(),
+          hash: Type.String({
+            description: "Existing ImageCache filename; never pass a local path or file:// URI",
+          }),
           mimeType: Type.String(),
         }),
       }),
-      Type.Object({ type: Type.Literal("file"), uri: Type.String() }),
+      Type.Object({
+        type: Type.Literal("file"),
+        uri: Type.String({
+          description: "Project-local path or file:// URI; image files are cached before launch",
+        }),
+      }),
       Type.Object({ type: Type.Literal("text"), text: Type.String() }),
     ]))),
   }),
-  background: Type.Optional(Type.Boolean({ description: "Run as a background process" })),
+  background: Type.Optional(Type.Boolean({
+    description: [
+      "Optional scheduling override for this delegation.",
+      "Omit to honor the Application's user-configured default (foreground when unset).",
+      "Set false when the result is needed before continuing; set true only for independent work.",
+      "Background completion is delivered automatically without polling.",
+    ].join(" "),
+  })),
   context_mode: Type.Optional(Type.Union([
     Type.Literal("minimal"),
     Type.Literal("selected"),
@@ -76,11 +101,6 @@ const agentIdParams = Type.Object({
 
 const listParams = Type.Object({});
 
-const waitParams = Type.Object({
-  agentId: Type.String({ description: "Agent process ID" }),
-  timeoutMs: Type.Optional(Type.Number({ description: "Maximum wait time in milliseconds" })),
-});
-
 const messageParams = Type.Object({
   agentId: Type.String({ description: "Agent process ID" }),
   message: Type.String({ description: "Message sent to the running Agent process" }),
@@ -90,6 +110,7 @@ function processSummary(agentProcess: AgentProcess): Record<string, unknown> {
   return {
     agentId: agentProcess.agentId,
     parentAgentId: agentProcess.parentAgentId,
+    description: agentProcess.description,
     application: agentProcess.application.name,
     state: agentProcess.state,
     attachment: agentProcess.attachment,
@@ -106,23 +127,69 @@ function exitText(result: AgentExitResult): string {
   return `Agent ${result.agentId} ${result.state}`;
 }
 
-async function waitWithTimeout(
-  wait: Promise<AgentExitResult>,
-  timeoutMs?: number,
-): Promise<AgentExitResult> {
-  if (!timeoutMs) return wait;
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      wait,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error("Agent wait timed out")), timeoutMs);
-        timer.unref();
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
+function spawnAgentDescription(supervisor: AgentSupervisor): string {
+  const applications = supervisor.listApplications();
+  const catalog = applications.map((application) => {
+    const description = application.description.replace(/\s+/g, " ").trim()
+      || "No description provided";
+    return `- ${application.name}: ${description}`;
+  });
+  return [
+    "Launch a configured Agent Application as a fresh child process.",
+    "Select a matching specialized Application when available; otherwise use general.",
+    "Honor the Application's scheduling default unless this delegation needs an explicit override.",
+    "When choosing dynamically, use foreground if later work depends on the result and background only if the parent can continue independently.",
+    "Background completion is delivered automatically; do not poll for output or completion.",
+    "Available Applications:",
+    ...catalog,
+  ].join("\n");
+}
+
+const MAX_SPAWN_IMAGE_BYTES = 20 * 1024 * 1024;
+
+function isWithin(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+async function resolveProjectFile(uri: string, cwd: string): Promise<string> {
+  const value = uri.startsWith("file:") ? fileURLToPath(uri) : uri;
+  const candidate = resolve(cwd, value);
+  const [root, file] = await Promise.all([realpath(cwd), realpath(candidate)]);
+  if (!isWithin(root, file)) {
+    throw new Error(`Attachment path ${uri} is outside Agent cwd ${cwd}`);
   }
+  const info = await stat(file);
+  if (!info.isFile()) throw new Error(`Attachment is not a file: ${uri}`);
+  if (info.size > MAX_SPAWN_IMAGE_BYTES) {
+    throw new Error(`Image attachment exceeds ${MAX_SPAWN_IMAGE_BYTES} bytes: ${uri}`);
+  }
+  return file;
+}
+
+async function resolveSpawnAttachments(
+  attachments: AgentInputAttachment[] | undefined,
+  cwd: string,
+): Promise<AgentInputAttachment[] | undefined> {
+  if (!attachments) return undefined;
+  return Promise.all(attachments.map(async (attachment) => {
+    if (attachment.type === "image" && attachment.data.type === "image_ref") {
+      if (basename(attachment.data.hash) !== attachment.data.hash) {
+        throw new Error(
+          "image_ref.hash must be an existing ImageCache filename; use a file attachment for local images",
+        );
+      }
+      if (!await ImageCache.get(attachment.data)) {
+        throw new Error(`Unknown cached image reference: ${attachment.data.hash}`);
+      }
+      return attachment;
+    }
+    if (attachment.type !== "file" || !isImagePath(attachment.uri)) return attachment;
+    const path = await resolveProjectFile(attachment.uri, cwd);
+    const image = await readImageFile(path);
+    const data = await ImageCache.put(image);
+    return { type: "image" as const, data };
+  }));
 }
 
 function requireVisible(
@@ -154,7 +221,9 @@ export function makeAgentProcessTools(
   const spawnAgent: AgentTool<typeof spawnParams> = {
     name: "spawn_agent",
     label: "Spawn Agent",
-    description: "Launch a configured Agent Application as a child process.",
+    get description() {
+      return spawnAgentDescription(supervisor);
+    },
     parameters: spawnParams,
     execute: async (_id, params, signal) => {
       if (params.context_mode === "fork") {
@@ -166,11 +235,22 @@ export function makeAgentProcessTools(
       if (params.context_mode !== "selected" && params.selected_context) {
         throw new Error("selected_context requires context_mode=selected");
       }
+      const current = supervisor.require(currentAgentId);
+      const attachments = await resolveSpawnAttachments(
+        params.input.attachments,
+        current.context.cwd,
+      );
       const spawned = await supervisor.spawn({
         application: params.application,
         parentAgentId: currentAgentId,
-        input: params.input,
-        attachment: params.background ? "background" : "foreground",
+        description: params.description,
+        input: {
+          prompt: params.input.prompt,
+          attachments,
+        },
+        attachment: params.background === undefined
+          ? undefined
+          : params.background ? "background" : "foreground",
         contextMode: params.context_mode ?? "minimal",
         contextSelection: params.selected_context,
         signal,
@@ -192,36 +272,6 @@ export function makeAgentProcessTools(
       return {
         content: [{ type: "text", text: JSON.stringify(processes, null, 2) }],
         details: { processes },
-      };
-    },
-  };
-
-  const waitAgent: AgentTool<typeof waitParams> = {
-    name: "wait_agent",
-    label: "Wait for Agent",
-    description: "Wait for a child Agent process to exit.",
-    parameters: waitParams,
-    execute: async (_id, params) => {
-      requireVisible(supervisor, currentAgentId, params.agentId);
-      const wait = supervisor.wait(params.agentId);
-      const result = await waitWithTimeout(wait, params.timeoutMs);
-      return { content: [{ type: "text", text: exitText(result) }], details: result };
-    },
-  };
-
-  const getOutput: AgentTool<typeof agentIdParams> = {
-    name: "get_agent_output",
-    label: "Get Agent Output",
-    description: "Read current state and final output of an Agent process.",
-    parameters: agentIdParams,
-    execute: async (_id, { agentId }) => {
-      const agentProcess = requireVisible(supervisor, currentAgentId, agentId);
-      const text = agentProcess.exit
-        ? exitText(agentProcess.exit)
-        : `Agent ${agentId} is ${agentProcess.state}`;
-      return {
-        content: [{ type: "text", text }],
-        details: { process: processSummary(agentProcess), exit: agentProcess.exit },
       };
     },
   };
@@ -291,8 +341,6 @@ export function makeAgentProcessTools(
   return [
     spawnAgent,
     listAgents,
-    waitAgent,
-    getOutput,
     terminateAgent,
     killAgent,
     suspendAgent,

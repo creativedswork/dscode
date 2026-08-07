@@ -1,4 +1,8 @@
-import type { AgentProcessInput, AgentRuntimeSnapshot } from "../runtimes/runtime.js";
+import type {
+  AgentProcessInput,
+  AgentProcessProgress,
+  AgentRuntimeSnapshot,
+} from "../runtimes/runtime.js";
 import type { AgentProcessOutput } from "../runtimes/runtime.js";
 import { runWithAgentContext } from "./context.js";
 import type {
@@ -9,6 +13,7 @@ import type {
 
 interface ExecutionCallbacks {
   transition(agentProcess: AgentProcess, state: AgentProcessState): Promise<void>;
+  progress(agentProcess: AgentProcess, progress: AgentProcessProgress): void;
   output(agentProcess: AgentProcess, text: string): void;
   checkpoint(agentProcess: AgentProcess, snapshot: AgentRuntimeSnapshot): Promise<void>;
   finish(
@@ -103,6 +108,14 @@ export class AgentExecutionController {
         onStateChange: async (state) => {
           await input.onStateChange?.(state);
           await this.callbacks.transition(agentProcess, state);
+        },
+        onProgress: async (progress) => {
+          const identifiedProgress = {
+            ...progress,
+            executionId: progress.executionId ?? agentProcess.agentId,
+          };
+          await input.onProgress?.(identifiedProgress);
+          this.callbacks.progress(agentProcess, identifiedProgress);
         },
         onCheckpoint: async (snapshot) => {
           await input.onCheckpoint?.(snapshot);

@@ -26,7 +26,12 @@ import type { ToolRegistry } from "../drivers/tool-registry.js";
 import type { SkillManager } from "../skills/manager.js";
 import type { PermissionManager } from "../permissions/manager.js";
 import type { ContextManager } from "../context/manager.js";
-import type { HarnessConfig, PermissionPromptResult, PermissionRuleConfig } from "../core/types.js";
+import type {
+  HarnessConfig,
+  PermissionPromptContext,
+  PermissionPromptResult,
+  PermissionRuleConfig,
+} from "../core/types.js";
 import type { HarnessAPI } from "../core/harness-api.js";
 import { resolveModel } from "../models/index.js";
 import type { ConfigWatch } from "../core/config-watch.js";
@@ -44,6 +49,7 @@ import { readClipboardImageNonBlocking } from "../utils/image.js";
 import { ImageManager } from "./image-manager.js";
 import { ImagePasteHandler } from "./image-paste-handler.js";
 import { FileTracker } from "./shared/file-tracker.js";
+import { stageAttachedFiles } from "./shared/file-attachments.js";
 import { resolveFileRefs, isImagePath } from "../utils/at-file-resolver.js";
 import { existsSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
@@ -343,8 +349,10 @@ export class TuiApp {
   getPromptPermission(): (toolName: string,
     preview: string,
     args: unknown,
+    context?: PermissionPromptContext,
   ) => Promise<PermissionPromptResult> {
-    return (toolName, preview, args) => this.showPermissionPrompt(toolName, preview, args);
+    return (toolName, preview, args, context) =>
+      this.showPermissionPrompt(toolName, preview, args, context);
   }
 
   setMcpManager(mcpManager?: MCPManager): void {
@@ -358,13 +366,20 @@ export class TuiApp {
     toolName: string,
     preview: string,
     args: unknown,
+    context?: PermissionPromptContext,
   ): Promise<PermissionPromptResult> {
     this.pendingPermissionContext = { toolName, args };
     this.permissionExplainMode = false;
     const fuzzy = deriveFuzzyPattern(toolName);
     const fuzzyArgDesc = describeFuzzyArgPattern(toolName, args);
     const llmSuggestions = getLlmSuggestions(toolName, args);
-    this.conversation.showPermissionPrompt(toolName, preview, fuzzy, fuzzyArgDesc);
+    this.conversation.showPermissionPrompt(
+      toolName,
+      preview,
+      fuzzy,
+      fuzzyArgDesc,
+      context,
+    );
     if (llmSuggestions.length > 0) {
       const ap = this.conversation.activePermission;
       if (ap) ap.llmSuggestions = llmSuggestions;
@@ -386,14 +401,6 @@ export class TuiApp {
     this.permissionExplainMode = false;
     this.editor.disableSubmit = this.processing;
     this.conversation.clearPermissionPrompt();
-    const suffix = result.persistRule
-      ? c.dim(" (saved rule)")
-      : result.rememberForSession
-        ? c.dim(" (always)")
-        : "";
-    this.conversation.addInfo(
-      c.dim(`Permission: ${result.decision === "allow" ? c.green("allowed") : c.red("denied")}${suffix}`),
-    );
     this.tui.requestRender(true);
   }
 
@@ -586,6 +593,19 @@ export class TuiApp {
 
     if (this.mcpPanelVisible) {
       return this.handleMcpBrowserInput(data);
+    }
+
+    if (matchesKey(data, Key.ctrl("r"))) {
+      this.conversation.toggleThinking();
+      return true;
+    }
+    if (matchesKey(data, Key.ctrl("n"))) {
+      this.conversation.selectNextAgent();
+      return true;
+    }
+    if (matchesKey(data, Key.ctrl("o"))) {
+      this.conversation.toggleSelectedAgentTools();
+      return true;
     }
 
     if (this.processing) {
@@ -1120,14 +1140,14 @@ export class TuiApp {
     this.conversation.textDelta(delta);
   }
 
-  toolStart(name: string, args: unknown): void {
+  toolStart(name: string, args: unknown, toolCallId?: string): void {
     this.markActivity();
-    this.conversation.toolStart(name, args);
+    this.conversation.toolStart(name, args, toolCallId);
   }
 
-  toolEnd(name: string, result: unknown, isError: boolean): void {
+  toolEnd(name: string, result: unknown, isError: boolean, toolCallId?: string): void {
     this.markActivity();
-    this.conversation.toolEnd(name, result, isError);
+    this.conversation.toolEnd(name, result, isError, toolCallId);
   }
 
   finishAssistantMessage(usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number; cost: { total: number } }): void {
@@ -1193,12 +1213,17 @@ export class TuiApp {
       this.idleTimer = setInterval(() => {
         if (!this.processing) return;
         const elapsed = Date.now() - this.lastActivityTime;
+        const activeExecution = this.conversation.getActiveExecutionStatus();
         this.tipDuration += 500;
         if (this.tipDuration >= 4000) {
           this.showTip = !this.showTip;
           this.tipDuration = 0;
         }
-        if (this.showTip) {
+        if (activeExecution) {
+          this.loader.setMessage(
+            `${activeExecution}  ${c.dim(`(${this.formatElapsed(elapsed)})`)}`,
+          );
+        } else if (this.showTip) {
           const tips = [
             "Esc or Tab to abort",
             "Type exit to quit",
@@ -1402,8 +1427,19 @@ export class TuiApp {
     }
     // Split fileRefs by type: images vs non-images
     if (hasFiles) {
-      const imageRefs = fileRefs.filter(f => isImagePath(f));
-      const nonImageRefs = fileRefs.filter(f => !isImagePath(f));
+      let stagedFileRefs: string[];
+      try {
+        stagedFileRefs = stageAttachedFiles(
+          this.deps.config.projectPath,
+          this.deps.sessionManager.getCurrentSessionId() ?? "unscoped",
+          fileRefs,
+        );
+      } catch (error) {
+        this.addError(error instanceof Error ? error.message : String(error));
+        return;
+      }
+      const imageRefs = stagedFileRefs.filter(f => isImagePath(f));
+      const nonImageRefs = stagedFileRefs.filter(f => !isImagePath(f));
       // Non-image files: collect for path injection
       const promptFilePaths: string[] = nonImageRefs.length > 0 ? [...nonImageRefs] : [];
       // Image files: resolve with @path dedup
@@ -1532,6 +1568,7 @@ export class TuiApp {
   }
 
   upsertAgentActivity(activity: import("./shared/types.js").AgentActivity): void {
+    this.markActivity();
     this.conversation.upsertAgentActivity(activity);
   }
 

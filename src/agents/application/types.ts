@@ -74,4 +74,10 @@ export interface AgentApplicationDiagnostic {
   message: string;
 }
 
+export interface AgentApplicationSummary {
+  readonly name: string;
+  readonly description: string;
+  readonly source: Readonly<AgentApplicationSource>;
+}
+
 export type AgentApplicationSnapshot = Readonly<AgentApplication>;

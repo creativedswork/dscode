@@ -117,8 +117,10 @@ export class AgentApplicationRegistry {
     return application;
   }
 
-  list(): AgentApplicationSnapshot[] {
-    return [...this.applications.values()].sort((a, b) => a.name.localeCompare(b.name));
+  list(): readonly AgentApplicationSnapshot[] {
+    return Object.freeze(
+      [...this.applications.values()].sort((a, b) => a.name.localeCompare(b.name)),
+    );
   }
 
   getDiagnostics(): readonly AgentApplicationDiagnostic[] {

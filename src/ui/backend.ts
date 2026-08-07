@@ -1,4 +1,7 @@
-import type { PermissionPromptResult } from "../core/types.js";
+import type {
+  PermissionPromptContext,
+  PermissionPromptResult,
+} from "../core/types.js";
 
 /**
  * Minimal lifecycle + request-response interface for UI backends.
@@ -26,5 +29,6 @@ export interface UiBackend {
     toolName: string,
     preview: string,
     args: unknown,
+    context?: PermissionPromptContext,
   ) => Promise<PermissionPromptResult>;
 }

@@ -63,6 +63,58 @@ describe("permission prompt navigation", () => {
     expect(canNavigateMenu.call(state, "down")).toBe(true);
   });
 
+  it("routes disclosure shortcuts to Thinking and Agent Tools", () => {
+    const handleInput = TuiApp.prototype["handleInput"] as (
+      this: any,
+      data: string,
+    ) => boolean;
+    const conversation = {
+      toggleThinking: vi.fn(),
+      selectNextAgent: vi.fn(),
+      toggleSelectedAgentTools: vi.fn(),
+    };
+    const state = {
+      permissionExplainMode: false,
+      resolvePermission: null,
+      mcpPanelVisible: false,
+      conversation,
+    };
+
+    expect(handleInput.call(state, "\x12")).toBe(true);
+    expect(handleInput.call(state, "\x0e")).toBe(true);
+    expect(handleInput.call(state, "\x0f")).toBe(true);
+    expect(conversation.toggleThinking).toHaveBeenCalledOnce();
+    expect(conversation.selectNextAgent).toHaveBeenCalledOnce();
+    expect(conversation.toggleSelectedAgentTools).toHaveBeenCalledOnce();
+  });
+
+  it("resolves permission without appending a permanent conversation message", () => {
+    const resolvePermissionChoice = TuiApp.prototype["resolvePermissionChoice"] as (
+      this: any,
+      result: { decision: "allow" | "deny" },
+    ) => void;
+    const resolve = vi.fn();
+    const conversation = {
+      clearPermissionPrompt: vi.fn(),
+      addInfo: vi.fn(),
+    };
+    const state = {
+      resolvePermission: resolve,
+      pendingPermissionContext: { toolName: "bash", args: { command: "pwd" } },
+      permissionExplainMode: false,
+      processing: true,
+      editor: { disableSubmit: false },
+      conversation,
+      tui: { requestRender: vi.fn() },
+    };
+
+    resolvePermissionChoice.call(state, { decision: "allow" });
+
+    expect(resolve).toHaveBeenCalledWith({ decision: "allow" });
+    expect(conversation.clearPermissionPrompt).toHaveBeenCalled();
+    expect(conversation.addInfo).not.toHaveBeenCalled();
+  });
+
   it("submits input idea even while a tool call is waiting", async () => {
     const handleSubmit = TuiApp.prototype["handleSubmit"] as (this: any, text: string) => Promise<void>;
     const resolvePermissionChoice = vi.fn();
@@ -162,7 +214,7 @@ describe("permission prompt navigation", () => {
     expect(state.imagePasteHandler.updateStatus).toHaveBeenCalled();
     expect(prompt).toHaveBeenCalledWith("", [
       { type: "image", data: "abcd", mimeType: "image/png" },
-    ]);
+    ], "");
   });
 
   it("keeps empty submit as a no-op when there is no text or image", async () => {

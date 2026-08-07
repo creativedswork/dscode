@@ -3,7 +3,10 @@ import { randomUUID } from "node:crypto";
 import type { HarnessEventBus } from "../../core/events.js";
 import type { Logger } from "../../utils/logger.js";
 import type { AgentApplicationRegistry } from "../application/registry.js";
-import type { AgentApplicationSnapshot } from "../application/types.js";
+import type {
+  AgentApplicationSnapshot,
+  AgentApplicationSummary,
+} from "../application/types.js";
 import type { AgentProcessRuntime } from "../runtimes/runtime.js";
 import { deriveAgentContext } from "./context.js";
 import { ContextAssembler } from "./context-selection.js";
@@ -42,6 +45,7 @@ export class AgentSupervisor {
     this.lifecycle = new AgentProcessLifecycle(store, events, logger, this.worktrees);
     this.executionController = new AgentExecutionController({
       transition: (agentProcess, state) => this.lifecycle.transition(agentProcess, state),
+      progress: (agentProcess, progress) => this.lifecycle.progress(agentProcess, progress),
       output: (agentProcess, text) => this.lifecycle.output(agentProcess, text),
       checkpoint: (agentProcess, snapshot) =>
         this.lifecycle.checkpoint(agentProcess, snapshot),
@@ -139,6 +143,7 @@ export class AgentSupervisor {
       agentId,
       parentAgentId: parent.agentId,
       parentSessionId: parent.parentSessionId,
+      description: options.description,
       application,
       role: "subagent",
       state: "created",
@@ -157,6 +162,7 @@ export class AgentSupervisor {
       agentId,
       parentAgentId: parent.agentId,
       application: application.name,
+      description: options.description,
       attachment,
       input: options.input.displayPrompt ?? options.input.prompt,
     });
@@ -204,6 +210,16 @@ export class AgentSupervisor {
     return [...this.processes.values()]
       .filter((agentProcess) => !parentAgentId || agentProcess.parentAgentId === parentAgentId)
       .sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  listApplications(): readonly AgentApplicationSummary[] {
+    return Object.freeze(this.registry.list().map((application) =>
+      Object.freeze({
+        name: application.name,
+        description: application.description,
+        source: Object.freeze({ ...application.source }),
+      })
+    ));
   }
 
   get(agentId: string): AgentProcess | undefined {

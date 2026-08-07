@@ -1,28 +1,37 @@
 import React, { useEffect, useRef, useState, useCallback, useLayoutEffect } from "react";
-import type { UIMessage } from "../types";
+import type { PermissionPrompt, UIMessage } from "../types";
 import { ToolCard } from "./ToolCard";
 import { Markdown } from "./Markdown";
 import { Warning } from "@phosphor-icons/react";
 import { AgentActivityCard } from "./AgentActivityCard";
-
-interface PermissionPrompt {
-  toolName: string;
-  preview: string;
-  fuzzyPattern?: string | null;
-  fuzzyArgDesc?: string | null;
-  llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[];
-}
 
 interface ChatViewProps {
   messages: UIMessage[];
   processing: boolean;
   hasStreaming: boolean;
   sessionActiveMs: number;
-  permissionPrompt: ({ toolName: string; preview: string; fuzzyPattern?: string | null; fuzzyArgDesc?: string | null; llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[] }) | null;
+  permissionPrompt: PermissionPrompt | null;
   onPermission: (decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string, toolNamePattern?: string, fuzzyMode?: number) => void;
   containerRef?: React.RefObject<HTMLDivElement>;
   scrollLocked?: boolean;
 }
+
+export function findPermissionOwnerAgentId(
+  messages: UIMessage[],
+  permissionPrompt: PermissionPrompt | null,
+): string | undefined {
+  if (!permissionPrompt) return undefined;
+  return messages.find((message) => {
+    const activity = message.agentActivity;
+    if (message.role !== "agent" || !activity) return false;
+    if (permissionPrompt.agentId === activity.agentId) return true;
+    return Boolean(
+      permissionPrompt.toolCallId
+      && activity.permission?.toolCallId === permissionPrompt.toolCallId,
+    );
+  })?.agentActivity?.agentId;
+}
+
 export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, permissionPrompt, onPermission, containerRef, scrollLocked = false }: ChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -78,6 +87,11 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
     );
   }
 
+  const permissionOwnerAgentId = findPermissionOwnerAgentId(
+    messages,
+    permissionPrompt,
+  );
+
   return (
     <div ref={(el) => { (scrollContainerRef as React.MutableRefObject<HTMLDivElement | null>).current = el; if (containerRef) { (containerRef as React.MutableRefObject<HTMLDivElement | null>).current = el; } }} onScroll={handleChatScroll} className={"flex-1 overflow-y-auto min-h-0 px-4 py-4 space-y-4" + (scrollLocked ? " overflow-hidden pointer-events-none" : "")}>
       {messages.map((msg) => (
@@ -85,7 +99,26 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
           {msg.role === "user"
             ? <UserBubble message={msg} />
             : msg.role === "agent" && msg.agentActivity
-              ? <AgentActivityCard activity={msg.agentActivity} />
+              ? (
+                  <AgentActivityCard
+                    activity={msg.agentActivity}
+                    permissionControl={permissionPrompt
+                      && permissionOwnerAgentId === msg.agentActivity.agentId
+                      ? (
+                          <InlinePermission
+                            {...permissionPrompt}
+                            embedded
+                            onDecision={onPermission}
+                          />
+                        )
+                      : undefined}
+                    permissionToolCallId={permissionPrompt
+                      && permissionOwnerAgentId === msg.agentActivity.agentId
+                      ? permissionPrompt.toolCallId
+                        ?? msg.agentActivity.permission?.toolCallId
+                      : undefined}
+                  />
+                )
               : <AssistantMessage message={msg} />}
         </ErrorBoundary>
       ))}
@@ -94,13 +127,9 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
         <WaitingBubble sessionTime={sessionTime} />
       )}
 
-      {permissionPrompt && (
+      {permissionPrompt && !permissionOwnerAgentId && (
         <InlinePermission
-          toolName={permissionPrompt.toolName}
-          preview={permissionPrompt.preview}
-          fuzzyPattern={permissionPrompt.fuzzyPattern}
-          fuzzyArgDesc={permissionPrompt.fuzzyArgDesc}
-          llmSuggestions={permissionPrompt.llmSuggestions}
+          {...permissionPrompt}
           onDecision={onPermission}
         />
       )}
@@ -188,6 +217,7 @@ function InlinePermission({
   fuzzyPattern,
   fuzzyArgDesc,
   llmSuggestions,
+  embedded = false,
   onDecision,
 }: {
   toolName: string;
@@ -195,6 +225,7 @@ function InlinePermission({
   fuzzyPattern?: string | null;
   fuzzyArgDesc?: string | null;
   llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[];
+  embedded?: boolean;
   onDecision: (decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string, toolNamePattern?: string, fuzzyMode?: number) => void;
 }) {
   const [explainMode, setExplainMode] = useState(false);
@@ -223,10 +254,12 @@ function InlinePermission({
   };
 
   return (
-    <div className="flex justify-start animate-fade-up">
+    <div className={embedded ? "agent-activity-permission" : "flex justify-start animate-fade-up"}>
       <div
-        className="max-w-[85%] md:max-w-[75%] px-4 py-3"
-        data-collider="message-card"
+        className={embedded
+          ? "agent-activity-permission-panel"
+          : "max-w-[85%] md:max-w-[75%] px-4 py-3"}
+        data-collider={embedded ? undefined : "message-card"}
         style={{
           borderRadius: "12px",
           border: "1px solid var(--color-border)",

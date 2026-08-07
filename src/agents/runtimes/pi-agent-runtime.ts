@@ -52,15 +52,60 @@ export class PiAgentRuntimeAdapter implements AgentProcessRuntime {
 
   async start(input: AgentProcessInput, signal: AbortSignal): Promise<AgentProcessOutput> {
     const onAbort = () => this.agent.abort();
-    let activeTools = 0;
-    const unsubscribe = this.agent.subscribe(async (event) => {
-      if (event.type === "tool_execution_start" && activeTools++ === 0) {
-        await input.onStateChange?.("waiting");
-      } else if (event.type === "tool_execution_end" && --activeTools === 0) {
-        await input.onStateChange?.("running");
+    const activeToolsById = new Map<string, { name: string; startedAt: number }>();
+    const handleEvent = async (event: Parameters<Parameters<PiAgentRuntime["subscribe"]>[0]>[0]) => {
+      if (event.type === "tool_execution_start") {
+        const startedAt = Date.now();
+        const wasIdle = activeToolsById.size === 0;
+        activeToolsById.set(event.toolCallId, {
+          name: event.toolName,
+          startedAt,
+        });
+        if (wasIdle) await input.onStateChange?.("waiting");
+        await input.onProgress?.({
+          phase: "tool",
+          message: `Running ${event.toolName}`,
+          details: {
+            kind: "tool",
+            status: "running",
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            summary: summarizeToolArgs(event.args),
+            startedAt,
+          },
+        });
+      } else if (event.type === "tool_execution_end") {
+        const active = activeToolsById.get(event.toolCallId);
+        activeToolsById.delete(event.toolCallId);
+        const remaining = [...activeToolsById.values()].map((tool) => tool.name);
+        const endedAt = Date.now();
+        await input.onProgress?.({
+          phase: remaining.length > 0 ? "tool" : "model",
+          message: remaining.length > 0
+            ? `Running ${remaining.join(", ")}`
+            : `Finished ${event.toolName}; preparing result`,
+          details: {
+            kind: "tool",
+            status: event.isError ? "failed" : "completed",
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            startedAt: active?.startedAt ?? endedAt,
+            endedAt,
+            isError: event.isError,
+          },
+        });
+        if (active && activeToolsById.size === 0) {
+          await input.onStateChange?.("running");
+        }
       } else if (event.type === "turn_end") {
         await input.onCheckpoint?.(this.snapshot());
       }
+    };
+    let eventQueue = Promise.resolve();
+    const unsubscribe = this.agent.subscribe((event) => {
+      const operation = eventQueue.then(() => handleEvent(event));
+      eventQueue = operation.catch(() => {});
+      return operation;
     });
     signal.addEventListener("abort", onAbort, { once: true });
     try {
@@ -74,6 +119,9 @@ export class PiAgentRuntimeAdapter implements AgentProcessRuntime {
           : await ImageCache.get(data as ImageRef);
       }))).filter((image): image is ImageContent => image !== null);
       await this.agent.prompt(input.prompt, images);
+      // Pi's event emitter does not require subscribers to be awaited. Drain our
+      // serialized queue so Process state and checkpoints cannot lag behind prompt().
+      await eventQueue;
       const messages = this.agent.state.messages;
       const lastAssistant = [...messages].reverse().find((message) => message.role === "assistant");
       const assistant = lastAssistant as {
@@ -126,5 +174,18 @@ export class PiAgentRuntimeAdapter implements AgentProcessRuntime {
         ? (lastAssistant as { usage?: unknown }).usage
         : undefined,
     };
+  }
+}
+
+function summarizeToolArgs(args: unknown): string | undefined {
+  if (args == null) return undefined;
+  try {
+    const value = typeof args === "string" ? args : JSON.stringify(args);
+    const normalized = value.replace(/\s+/g, " ").trim();
+    return normalized.length > 160
+      ? `${normalized.slice(0, 157).trimEnd()}...`
+      : normalized;
+  } catch {
+    return undefined;
   }
 }

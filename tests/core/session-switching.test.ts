@@ -33,12 +33,16 @@ function createHarness(overrides: Record<string, unknown> = {}) {
   Object.assign(harness, {
     sessionSwitchInProgress: false,
     activeMainTurn: null,
+    pendingBackgroundContinuationSessions: new Set<string>(),
+    backgroundContinuationDrain: null,
+    shuttingDown: false,
     mainAgentId: "main-1",
     config: { projectPath: "/project" },
     piAgentRuntime: { state: { messages: [{ role: "user", content: "source" }] } },
     sessionManager: {
       listSessions: () => [target],
       listAllSessions: () => [target],
+      getCurrentSessionId: () => "SOURCE-SESSION",
       getCurrentMetadata: () => metadata("SOURCE-SESSION"),
       prepareLoad: vi.fn(async () => {
         order.push("prepare");

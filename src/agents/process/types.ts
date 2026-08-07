@@ -74,6 +74,7 @@ export interface AgentProcess<T = unknown> {
   agentId: string;
   parentAgentId?: string;
   parentSessionId: string;
+  description?: string;
   application: AgentApplicationSnapshot;
   role: "main" | "subagent";
   state: AgentProcessState;
@@ -95,6 +96,7 @@ export interface SerializedAgentProcess {
   agentId: string;
   parentAgentId?: string;
   parentSessionId: string;
+  description?: string;
   application: AgentApplicationSnapshot;
   role: "main" | "subagent";
   state: AgentProcessState;
@@ -119,6 +121,7 @@ export type AgentRuntimeFactory = (
 export interface SpawnAgentRequest {
   application: string;
   parentAgentId: string;
+  description?: string;
   input: {
     prompt: string;
     displayPrompt?: string;

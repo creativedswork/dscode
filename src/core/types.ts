@@ -186,8 +186,14 @@ export interface PermissionPromptResult {
   denyReason?: string;
 }
 
+export interface PermissionPromptContext {
+  agentId?: string;
+  toolCallId?: string;
+}
+
 export type PromptUserFn = (
   toolName: string,
   preview: string,
   args: unknown,
+  context?: PermissionPromptContext,
 ) => Promise<PermissionPromptResult>;

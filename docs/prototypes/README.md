@@ -23,4 +23,5 @@
 - `settings-cache-management.html` — Settings 缓存管理界面原型
 - `show-eval-dashboard-in-webui-embedded-report.html` — WebUI Eval-only 主区域，覆盖 `/eval` 即时跳转、长时 CHIEF 进度、完成/失败状态及只读报告嵌入
 - `show-subagents-in-conversation.html` — SubAgent 在 Web/TUI 对话流中的 Agent Activity Card 交互原型
+- `tui-execution-hierarchy-redesign.html` — TUI Turn → Execution → Tool 信息架构原型，覆盖 SubAgent 内嵌 Tool、原位 Permission、状态切换与宽窄终端
 - `web-ui-redesign-editorial-workshop-v3.html` — Editorial Workshop Web UI 视觉原型

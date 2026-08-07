@@ -37,6 +37,7 @@ for (const required of [
   "package/dist/resources/agents/chief-oracle.md",
   "package/dist/resources/agents/eval-rule-attribution.md",
   "package/dist/resources/agents/eval-rule-merge.md",
+  "package/dist/resources/agents/general.md",
   "package/dist/resources/agents/vision.md",
 ]) {
   if (!files.includes(required)) throw new Error(`Package is missing ${required}`);

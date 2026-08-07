@@ -118,21 +118,19 @@ describe("TransitionCanvas collider traversal", () => {
     expect(source).toContain('el.style.opacity = "0"');
   });
 
-  it("marks completed Markdown by measured visible lines", () => {
-    const source = readFileSync(
-      join(ROOT, "web/src/animation/markdownColliders.ts"),
-      "utf8",
-    );
-
-    expect(source).toContain("annotateVisibleTextLines");
-    expect(source).toContain("range.getBoundingClientRect()");
-    expect(source).toContain('span.dataset.collider = "text-line"');
-    expect(source).toContain("span.dataset.colliderBlock = blockId");
+  it("marks Markdown declaratively without replacing React-owned text nodes", () => {
     const componentSource = readFileSync(
       join(ROOT, "web/src/components/Markdown.tsx"),
       "utf8",
     );
-    expect(componentSource).toContain("annotateVisibleTextLines(rootRef.current)");
-    expect(componentSource).not.toContain("wrapCollider");
+    const transitionSource = readFileSync(
+      join(ROOT, "web/src/components/TransitionCanvas.tsx"),
+      "utf8",
+    );
+
+    expect(componentSource).toContain('data-collider="text-block"');
+    expect(componentSource).not.toContain("annotateVisibleTextLines");
+    expect(componentSource).not.toContain("replaceWith");
+    expect(transitionSource).toContain('case "text-block":');
   });
 });

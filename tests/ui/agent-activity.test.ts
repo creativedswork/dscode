@@ -11,6 +11,7 @@ function processFixture(
     agentId: "agent-1",
     parentAgentId: "main-1",
     parentSessionId: "session-1",
+    description: "Researcher: inspect implementation",
     application: { name: "general" },
     role: "subagent",
     state: "created",
@@ -116,6 +117,7 @@ describe("Web Agent Activity projection", () => {
     const activities = agentActivities(broadcast);
     expect(activities).toHaveLength(3);
     expect(activities[0].activity).toMatchObject({
+      label: "Researcher",
       state: "running",
       attachment: "foreground",
       input: "inspect the implementation",
@@ -131,6 +133,166 @@ describe("Web Agent Activity projection", () => {
       output: "Found two issues",
       endedAt: 5000,
     });
+  });
+
+  it("uses Vision as the built-in Vision Agent label", () => {
+    const process = processFixture({
+      description: undefined,
+      application: { name: "vision" } as AgentProcess["application"],
+    });
+    const { events, broadcast } = setup(process);
+
+    events.emit({
+      type: "agent:spawned",
+      agentId: process.agentId,
+      parentAgentId: process.parentAgentId,
+      application: "vision",
+      attachment: "foreground",
+      input: "describe the image",
+    });
+
+    expect(agentActivities(broadcast).at(-1)?.activity).toMatchObject({
+      label: "Vision",
+      application: "vision",
+    });
+  });
+
+  it("projects parallel tool lifecycle by toolCallId without duplicates", () => {
+    const process = processFixture({ state: "running", startedAt: 1100 });
+    const { events, broadcast } = setup(process);
+
+    const toolProgress = (
+      toolCallId: string,
+      toolName: string,
+      status: "running" | "completed",
+      startedAt: number,
+      endedAt?: number,
+    ) => events.emit({
+      type: "agent:progress",
+      agentId: process.agentId,
+      phase: "tool",
+      message: `${status} ${toolName}`,
+      details: {
+        kind: "tool",
+        status,
+        executionId: process.agentId,
+        toolCallId,
+        toolName,
+        startedAt,
+        endedAt,
+        isError: false,
+      },
+    });
+
+    toolProgress("call-1", "read_file", "running", 1200);
+    toolProgress("call-2", "bash", "running", 1300);
+    toolProgress("call-1", "read_file", "completed", 1200, 1400);
+    toolProgress("call-1", "read_file", "completed", 1200, 1400);
+
+    const activity = agentActivities(broadcast).at(-1)?.activity;
+    expect(activity.executionId).toBe(process.agentId);
+    expect(activity.tools).toEqual([
+      expect.objectContaining({
+        toolCallId: "call-1",
+        name: "read_file",
+        status: "completed",
+        endedAt: 1400,
+      }),
+      expect.objectContaining({
+        toolCallId: "call-2",
+        name: "bash",
+        status: "running",
+      }),
+    ]);
+    expect(activity.tools).toHaveLength(2);
+  });
+
+  it("binds and resolves permission on the matching active tool", () => {
+    const process = processFixture({ state: "waiting", startedAt: 1100 });
+    const { events, broadcast } = setup(process);
+    events.emit({
+      type: "agent:progress",
+      agentId: process.agentId,
+      phase: "tool",
+      details: {
+        kind: "tool",
+        status: "running",
+        toolCallId: "call-bash",
+        toolName: "bash",
+        startedAt: 1200,
+      },
+    });
+    events.emit({
+      type: "agent:progress",
+      agentId: process.agentId,
+      phase: "permission",
+      details: {
+        kind: "permission",
+        status: "waiting",
+        toolCallId: "call-bash",
+        toolName: "bash",
+        preview: "$ pwd",
+      },
+    });
+
+    expect(agentActivities(broadcast).at(-1)?.activity).toMatchObject({
+      permission: {
+        toolCallId: "call-bash",
+        toolName: "bash",
+        preview: "$ pwd",
+      },
+      tools: [
+        expect.objectContaining({
+          toolCallId: "call-bash",
+          status: "permission",
+        }),
+      ],
+    });
+
+    events.emit({
+      type: "agent:progress",
+      agentId: process.agentId,
+      phase: "permission",
+      details: {
+        kind: "permission",
+        status: "resolved",
+        toolCallId: "call-bash",
+        toolName: "bash",
+      },
+    });
+    expect(agentActivities(broadcast).at(-1)?.activity).toMatchObject({
+      permission: undefined,
+      tools: [
+        expect.objectContaining({
+          toolCallId: "call-bash",
+          status: "running",
+        }),
+      ],
+    });
+  });
+
+  it("preserves SubAgent identity in the Web permission prompt", async () => {
+    const process = processFixture({ state: "waiting", startedAt: 1100 });
+    const { backend, broadcast } = setup(process);
+
+    const pending = backend.getPromptPermission()(
+      "bash",
+      "$ pwd",
+      { command: "pwd" },
+      { agentId: process.agentId, toolCallId: "call-bash" },
+    );
+
+    expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({
+      type: "permission_prompt",
+      toolName: "bash",
+      preview: "$ pwd",
+      agentId: process.agentId,
+      toolCallId: "call-bash",
+    }));
+
+    (backend as any).permissionResolve({ decision: "deny" });
+    (backend as any).permissionResolve = null;
+    await expect(pending).resolves.toEqual({ decision: "deny" });
   });
 
   it("projects background failure without a completion toast", () => {

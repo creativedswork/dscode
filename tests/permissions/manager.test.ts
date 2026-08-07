@@ -2,7 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PermissionManager } from "../../src/permissions/manager.js";
+import {
+  PermissionManager,
+  PermissionPromptQueue,
+} from "../../src/permissions/manager.js";
 
 function createPromptFn() {
   return async (_toolName: string, _preview: string) => ({
@@ -29,6 +32,33 @@ describe("PermissionManager", () => {
     else process.env.DSCODE_CONFIG_HOME = originalConfigHome;
     if (originalDataHome === undefined) delete process.env.DSCODE_DATA_HOME;
     else process.env.DSCODE_DATA_HOME = originalDataHome;
+  });
+
+  it("serializes concurrent permission prompts", async () => {
+    const queue = new PermissionPromptQueue();
+    const started: string[] = [];
+    let resolveFirst!: (value: string) => void;
+    let resolveSecond!: (value: string) => void;
+
+    const first = queue.enqueue(() => new Promise<string>((resolve) => {
+      started.push("first");
+      resolveFirst = resolve;
+    }));
+    const second = queue.enqueue(() => new Promise<string>((resolve) => {
+      started.push("second");
+      resolveSecond = resolve;
+    }));
+
+    await Promise.resolve();
+    expect(started).toEqual(["first"]);
+
+    resolveFirst("allowed-first");
+    await expect(first).resolves.toBe("allowed-first");
+    await Promise.resolve();
+    expect(started).toEqual(["first", "second"]);
+
+    resolveSecond("allowed-second");
+    await expect(second).resolves.toBe("allowed-second");
   });
 
   it("should allow read_file by default", async () => {
@@ -171,6 +201,24 @@ describe("PermissionManager", () => {
     });
     expect(result).toBeUndefined();
     expect(prompted).toBe(true);
+  });
+
+  it("passes toolCallId to the permission prompt", async () => {
+    let promptContext: { toolCallId?: string } | undefined;
+    const pm = new PermissionManager(
+      defaultConfig,
+      async (_toolName, _preview, _args, context) => {
+        promptContext = context;
+        return { decision: "allow", rememberForSession: false };
+      },
+    );
+
+    await pm.check({
+      toolCall: { id: "call-bash-1", name: "bash" },
+      args: { command: "pwd" },
+    });
+
+    expect(promptContext).toEqual({ toolCallId: "call-bash-1" });
   });
 
   it("should deny when user denies prompt", async () => {

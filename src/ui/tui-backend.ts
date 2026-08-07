@@ -1,5 +1,8 @@
 import type { HarnessAPI } from "../core/harness-api.js";
-import type { PermissionPromptResult } from "../core/types.js";
+import type {
+  PermissionPromptContext,
+  PermissionPromptResult,
+} from "../core/types.js";
 import type { UiBackend } from "./backend.js";
 import { TuiApp } from "./tui-app.js";
 import { AgentActivityProjector } from "./shared/agent-activity.js";
@@ -28,8 +31,12 @@ export class TuiBackend implements UiBackend {
     deps.events.on("llm:text:delta", (e) => { this.tui.textDelta(e.delta); });
     deps.events.on("llm:thinking:delta", (e) => { this.tui.thinkingDelta(e.delta); });
     deps.events.on("llm:retry", (e) => { this.tui.addRetry({ attempt: e.attempt, maxRetries: e.maxRetries, delayMs: e.delayMs, error: e.error, level: e.level }); });
-    deps.events.on("tool:start", (e) => { this.tui.toolStart(e.name, e.args); });
-    deps.events.on("tool:end", (e) => { this.tui.toolEnd(e.name, e.result, e.isError); });
+    deps.events.on("tool:start", (e) => {
+      this.tui.toolStart(e.name, e.args, e.toolCallId);
+    });
+    deps.events.on("tool:end", (e) => {
+      this.tui.toolEnd(e.name, e.result, e.isError, e.toolCallId);
+    });
     deps.events.on("turn:streaming:start", () => { this.tui.startAssistantMessage(); });
     deps.events.on("turn:end", (e) => { this.tui.finishAssistantMessage(e.usage); });
     deps.events.on("message:user", (e) => { this.tui.addUserMessage(e.text); });
@@ -71,6 +78,7 @@ export class TuiBackend implements UiBackend {
     toolName: string,
     preview: string,
     args: unknown,
+    context?: PermissionPromptContext,
   ) => Promise<PermissionPromptResult> {
     return this.tui.getPromptPermission();
   }

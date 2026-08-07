@@ -77,6 +77,70 @@ describe("rebuildDisplayMessages — Agent Activity", () => {
     ]);
   });
 
+  it("recovers a delegated role from legacy spawn_agent messages", () => {
+    const result = rebuildDisplayMessages(
+      [
+        {
+          role: "assistant",
+          createdAt: 100,
+          content: [{
+            type: "toolCall",
+            id: "call-spawn",
+            name: "spawn_agent",
+            arguments: {
+              application: "general",
+              description: "Researcher: verify paper claims",
+              input: { prompt: "verify claims" },
+            },
+          }],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "call-spawn",
+          toolName: "spawn_agent",
+          details: { agentId: "agent-1" },
+          content: [{ type: "text", text: "Started background Agent agent-1" }],
+          createdAt: 110,
+        },
+      ],
+      [agentMessage({ createdAt: 120 })],
+      "session-1",
+    );
+
+    const activity = result.find((message) => message.role === "agent")
+      ?.agentActivity;
+    expect(activity?.label).toBe("Researcher");
+    expect(activity?.application).toBe("general");
+  });
+
+  it("keeps internal Agent notifications out of restored user messages", () => {
+    const result = rebuildDisplayMessages(
+      [
+        {
+          role: "user",
+          content: [{
+            type: "text",
+            text: "<agent_notifications>\nResearch complete\n</agent_notifications>",
+          }],
+          createdAt: 100,
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Proceeding to content strategy." }],
+          createdAt: 200,
+        },
+      ],
+      [],
+      "session-1",
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      role: "assistant",
+      content: "Proceeding to content strategy.",
+    });
+  });
+
   it("does not rewrite a linked Main message for a non-image Agent", () => {
     const result = rebuildDisplayMessages(
       [{ role: "user", content: "Main prompt", createdAt: 100 }],
@@ -138,6 +202,7 @@ describe("rebuildDisplayMessages — Agent Activity", () => {
     expect(result[1]).toMatchObject({
       role: "agent",
       agentActivity: {
+        label: "Vision",
         application: "vision",
         input: "describe image",
         parentSessionId: "session-legacy",

@@ -1,4 +1,5 @@
-import type { UIMessage, ToolCallEntry, ConversationMessage, ServerEvent, ImageAttachment } from "./types.js";
+import type { UIMessage, ToolCallEntry, ServerEvent } from "./types.js";
+import { formatToolArgsForDisplay } from "./tool-args-formatter.js";
 
 function normalizeContent(c: unknown): string {
   if (typeof c === "string") return c;
@@ -104,7 +105,7 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
           ...(msg.tools ?? []),
           {
             name: event.name,
-            args: typeof event.args === "string" ? event.args : JSON.stringify(event.args).slice(0, 80),
+            args: formatToolArgsForDisplay(event.name, event.args),
             result: "",
             isError: false,
             images: [],
