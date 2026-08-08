@@ -15,25 +15,22 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { c } from "./theme.js";
 import { convertJpegToPng, detectImageFormat } from "../utils/image-convert.js";
-import type { AgentActivity, PermissionPrompt } from "./shared/types.js";
+import type {
+  AgentActivity,
+  PermissionPrompt,
+  ServerEvent,
+  ToolCallEntry,
+  UIMessage,
+} from "./shared/types.js";
 import { formatAgentDisplayId } from "./shared/agent-id.js";
-import { formatToolArgsForDisplay } from "./shared/tool-args-formatter.js";
-
-interface ToolEntry {
-  toolCallId: string;
-  name: string;
-  args: unknown;
-  result: unknown;
-  isError: boolean;
-  suppressOnSuccess?: boolean;
-}
+import { conversationReducer } from "./shared/reducer.js";
+import { createToolResultProjection } from "./shared/tool-result-projection.js";
 
 interface AgentActivityBlock {
   type: "agent";
   agentId: string;
   activity: AgentActivity;
   toolsExpanded: boolean;
-  manualToolsExpanded?: boolean;
 }
 
 type ContentBlock =
@@ -96,14 +93,19 @@ export class TuiThinkingBlock implements Component {
     const safeWidth = Math.max(1, width);
     if (!this.expanded) {
       const label = "› Thinking";
-      const hint = safeWidth >= visibleWidth(label) + 10 ? "  [Ctrl+R]" : "";
+      const hint = safeWidth >= visibleWidth(label) + 18 ? "  [Ctrl+E inspect]" : "";
       const summaryWidth = Math.max(
         0,
         safeWidth - visibleWidth(label) - visibleWidth(hint) - 2,
       );
-      const summary = truncateSummary(this.content, summaryWidth);
+      const summary = truncateToWidth(
+        this.content.replace(/\s+/g, " ").trim(),
+        summaryWidth,
+        "...",
+      );
       const separator = summary ? "  " : "";
-      return [c.dim(`${label}${separator}${summary}${hint}`)];
+      const rendered = `${label}${separator}${summary}${hint}`;
+      return [c.dim(rendered)];
     }
     const contentWidth = Math.max(1, safeWidth - 2);
     const allLines = wrapTextWithAnsi(
@@ -112,7 +114,7 @@ export class TuiThinkingBlock implements Component {
     );
     const visibleLines = allLines.slice(0, MAX_TUI_DETAIL_LINES);
     const hidden = allLines.length - visibleLines.length;
-    const header = safeWidth >= 20 ? "⌄ Thinking  [Ctrl+R]" : "⌄ Thinking";
+    const header = safeWidth >= 28 ? "⌄ Thinking  [Ctrl+E inspect]" : "⌄ Thinking";
     const detail = [
       c.dim(header),
       ...visibleLines.map((line) => c.dim(`  ${line}`)),
@@ -133,8 +135,34 @@ function truncateSummary(text: string, length: number): string {
     : `${normalized.slice(0, Math.max(0, length - 3)).trimEnd()}...`;
 }
 
+const TUI_LONG_USER_MESSAGE_CHAR_THRESHOLD = 1_000;
+const TUI_LONG_USER_MESSAGE_LINE_THRESHOLD = 10;
+const TUI_USER_MESSAGE_PREVIEW_CHARS = 120;
 const MAX_TUI_AGENT_OUTPUT = 2_000;
 const MAX_TUI_DETAIL_LINES = 16;
+
+function isMainToolCompleted(tool: ToolCallEntry): boolean {
+  return tool.resultDetail !== undefined || tool.result !== "";
+}
+
+export function formatUserMessageForTui(content: string): string {
+  const normalized = content.trim();
+  const lines = normalized.split(/\r?\n/);
+  if (
+    normalized.length <= TUI_LONG_USER_MESSAGE_CHAR_THRESHOLD
+    && lines.length <= TUI_LONG_USER_MESSAGE_LINE_THRESHOLD
+  ) {
+    return normalized;
+  }
+
+  const firstLine = lines.find((line) => line.trim().length > 0) ?? "";
+  const preview = truncateSummary(
+    firstLine,
+    TUI_USER_MESSAGE_PREVIEW_CHARS,
+  );
+  const detail = `${normalized.length.toLocaleString()} chars · ${lines.length} lines · full prompt retained in Session`;
+  return `${preview}\n${c.dim(`… ${detail}`)}`;
+}
 
 function formatAgentOutput(text: string, contentWidth = 120): {
   lines: string[];
@@ -184,8 +212,9 @@ function activitySymbol(activity: AgentActivity): string {
   return "◆";
 }
 
-function defaultToolsExpanded(activity: AgentActivity): boolean {
-  return activity.state !== "completed";
+function defaultAgentToolsExpanded(activity: AgentActivity): boolean {
+  return Boolean(activity.permission)
+    || ["created", "running", "waiting", "stopped"].includes(activity.state);
 }
 
 export function formatAgentActivityForTui(
@@ -209,8 +238,18 @@ export function formatAgentActivityForTui(
       failed > 0 ? `${failed} failed` : "",
       active > 0 ? `${active} active` : "",
     ].filter(Boolean).join(" · ");
-    const expanded = activity.permission ? true : options.toolsExpanded ?? false;
+    const expanded = activity.permission
+      ? true
+      : options.toolsExpanded ?? defaultAgentToolsExpanded(activity);
     lines.push(`  ${expanded ? "⌄" : "›"} Tools · ${summary}`);
+    if (!expanded) {
+      const activeTool = [...activity.tools].reverse().find(
+        (tool) => tool.status === "running" || tool.status === "permission",
+      );
+      if (activeTool) {
+        lines.push(`    ↳ ${activeTool.name}  ${activeTool.status}`);
+      }
+    }
     if (expanded) {
       const visibleTools = activity.tools.slice(-MAX_TUI_DETAIL_LINES);
       const hidden = activity.tools.length - visibleTools.length;
@@ -264,11 +303,10 @@ export function formatAgentActivityForTui(
     lines.push(`  ↳ ${count}${truncateSummary(detail, 120)}`);
   }
   const terminalNote = outputTruncated
-    ? " · output truncated; full output retained in Agent Process Store"
+    ? " · output summarized; Ctrl+E opens Inspector"
     : "";
-  const controlHint = options.selected ? " · Ctrl+O tools · Ctrl+N next" : "";
   lines.push(
-    `  agent id: ${formatAgentDisplayId(activity.agentId)}${controlHint}${terminalNote}`,
+    `  agent id: ${formatAgentDisplayId(activity.agentId)}${terminalNote}`,
   );
   return lines.join("\n");
 }
@@ -312,41 +350,45 @@ function tryParseJson(text: string): unknown | null {
   try { return JSON.parse(trimmed); } catch { return null; }
 }
 
-function toolArgsPreview(name: string, args: unknown): string {
-  return formatToolArgsForDisplay(name, args, 160);
-}
-
-function toolResultPreview(result: unknown): string {
+function toolResultPreview(tool: ToolCallEntry): string {
+  const result = tool.result;
+  let preview: string;
   if (typeof result === "string") {
     const parsed = tryParseJson(result);
-    return parsed ? compactJsonSummary(parsed) : result.slice(0, 120);
-  }
-  if (result && typeof result === "object") {
+    preview = parsed ? compactJsonSummary(parsed) : result;
+  } else if (result && typeof result === "object") {
     const r = result as Record<string, unknown>;
     if (Array.isArray(r.content)) {
       const first = r.content[0];
       if (first && typeof first === "object" && "text" in first) {
         const parsed = tryParseJson(String(first.text));
-        return parsed ? compactJsonSummary(parsed) : String(first.text).slice(0, 120);
+        preview = parsed ? compactJsonSummary(parsed) : String(first.text);
+      } else {
+        preview = compactJsonSummary(result);
       }
+    } else {
+      preview = compactJsonSummary(result);
     }
+  } else {
+    preview = String(result ?? "");
   }
-  try {
-    return compactJsonSummary(JSON.parse(JSON.stringify(result)));
-  } catch {
-    return String(result).slice(0, 120);
-  }
-}
 
-function extractTextFromBlocks(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .filter((b: any) => b.type === "text")
-      .map((b: any) => b.text)
-      .join("");
-  }
-  return "";
+  const normalized = preview
+    .replace(/^```[^\n]*\n?/, "")
+    .replace(/\n?```\s*$/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const detail = tool.resultDetail;
+  if (detail?.charCount === 0) return "no output";
+  const stats = [
+    detail?.lineCount != null && detail.lineCount > 1
+      ? `${detail.lineCount.toLocaleString()} lines`
+      : "",
+    detail?.charCount != null && detail.charCount > 160
+      ? `${detail.charCount.toLocaleString()} chars`
+      : "",
+  ].filter(Boolean).join(" · ");
+  return stats || truncateSummary(normalized, 120);
 }
 
 export type PermOptionValue = "allow" | "always_allow" | "always_allow_save" | "explain" | "deny";
@@ -359,11 +401,11 @@ export interface PermOption {
 }
 
 export const PERM_OPTIONS: PermOption[] = [
-  { value: "allow", label: "Allow", key: "enter", color: c.green },
-  { value: "always_allow", label: "Always Allow", key: "a", color: c.cyan },
-  { value: "always_allow_save", label: "Save to Settings", key: "s", color: c.magenta },
-  { value: "explain", label: "Input Idea", key: "i", color: c.yellow },
-  { value: "deny", label: "Deny", key: "esc", color: c.red },
+  { value: "allow", label: "Allow once", key: "1", color: c.green },
+  { value: "always_allow", label: "Allow matching calls for this Session", key: "2", color: c.cyan },
+  { value: "always_allow_save", label: "Save matching rule to Settings", key: "3", color: c.magenta },
+  { value: "explain", label: "Send guidance instead", key: "4", color: c.yellow },
+  { value: "deny", label: "Deny", key: "d", color: c.red },
 ];
 
 export function navigatePermSelection(current: number, direction: -1 | 1): number {
@@ -378,13 +420,11 @@ export class ConversationView {
   private box: Box;
   private blocks: ContentBlock[] = [];
   private renderedBlockCount = 0;
-  private thinkingBuffer = "";
-  private currentAssistantText = "";
-  private toolEntries: ToolEntry[] = [];
+  private messages: UIMessage[] = [];
+  private committedMessageIds = new Set<string>();
+  private syntheticToolCallSequence = 0;
   private assistantTurnActive = false;
   private pendingAgentBlocks = new Map<string, AgentActivityBlock>();
-  private selectedAgentId: string | null = null;
-  private liveThinkingExpanded = false;
   private tui: TUI;
   private draftBlocks = new Map<number, { startIndex: number; count: number }>();
 
@@ -412,13 +452,10 @@ export class ConversationView {
   clear(): void {
     this.blocks = [];
     this.renderedBlockCount = 0;
-    this.thinkingBuffer = "";
-    this.currentAssistantText = "";
-    this.toolEntries = [];
+    this.messages = [];
+    this.committedMessageIds.clear();
     this.assistantTurnActive = false;
     this.pendingAgentBlocks.clear();
-    this.selectedAgentId = null;
-    this.liveThinkingExpanded = false;
     this._activePermission = null;
     this.permSelected = 0;
     this.permSubMode = false;
@@ -431,176 +468,136 @@ export class ConversationView {
   }
 
   replayMessages(messages: unknown[]): void {
-    const lines: string[] = [];
-    const flushLines = () => {
-      if (lines.length === 0) return;
-      this.pushText(lines.join("\n"));
-      lines.length = 0;
-    };
-    for (const msg of messages) {
-      const m = msg as any;
-      if (m.role === "user") {
-        const text = extractTextFromBlocks(m.content);
-        if (text) {
-          lines.push(c.green.bold("you › ") + text);
-        }
-        // Render image blocks from content (restored by restoreImagesFromCache)
-        if (Array.isArray(m.content)) {
-          for (const block of m.content) {
-            if (block.type === "image" && block.data) {
-              flushLines();
-              this.addInlineImage(block.data, block.mimeType ?? "image/png");
-            }
-          }
-        }
-        // Also render images from msg.images (non-restored inline format)
-        if (m.images && Array.isArray(m.images)) {
-          for (const img of m.images) {
-            if (img && typeof img === "object" && img.data) {
-              flushLines();
-              this.addInlineImage(img.data, img.mimeType ?? "image/png");
-            }
-          }
-        }
-      } else if (m.role === "assistant") {
-        if (m.thinking) {
-          flushLines();
-          this.pushThinking(String(m.thinking));
-        }
-        if (Array.isArray(m.tools)) {
-          for (const tool of m.tools) {
-            const icon = tool.isError ? c.red("✗") : c.cyan("✓");
-            const result = tool.result ? c.dim(" → ") + toolResultPreview(tool.result) : "";
-            lines.push(`${icon} ${c.cyan(tool.name)} ${c.dim(tool.args ?? "")}${result}`);
-          }
-        }
-        const content = m.content;
-        if (Array.isArray(content)) {
-          for (const block of content) {
-            if (block.type === "thinking" && block.thinking) {
-              flushLines();
-              this.pushThinking(String(block.thinking));
-            } else if (block.type === "text" && block.text) {
-              lines.push(c.magenta.bold("agent ›") + "\n" + block.text);
-            } else if (block.type === "toolCall") {
-              lines.push(` ${c.cyan("⚙")} ${c.cyan(block.name)} ${c.dim(toolArgsPreview(block.name, block.arguments))}`);
-            } else if (block.type === "image" && block.data) {
-              flushLines();
-              this.addInlineImage(block.data, block.mimeType ?? "image/png");
-            }
-          }
-        } else if (typeof content === "string") {
-          if (content) lines.push(c.magenta.bold("agent ›") + "\n" + content);
-        }
-        if (Array.isArray(m.images)) {
-          for (const img of m.images) {
-            if (img && typeof img === "object" && img.data) {
-              flushLines();
-              this.addInlineImage(img.data, img.mimeType ?? "image/png");
-            }
-          }
-        }
-      } else if (m.role === "agent" && m.agentActivity) {
-        flushLines();
-        this.upsertAgentActivity(m.agentActivity);
+    this.clear();
+    this.messages = conversationReducer([], {
+      type: "ready",
+      model: "",
+      config: {} as never,
+      messages: messages as any[],
+    });
+    for (const message of this.messages) {
+      this.commitCanonicalMessage(message);
+      for (const image of message.images ?? []) {
+        if ("data" in image) this.addInlineImage(image.data, image.mimeType);
       }
     }
-    flushLines();
     this.render();
+  }
+
+  getMessages(): readonly UIMessage[] {
+    return this.messages;
+  }
+
+  applyConversationEvent(event: ServerEvent): void {
+    if (event.type === "ready") {
+      this.replayMessages(event.messages);
+      return;
+    }
+    if (event.type === "clear_conversation") {
+      this.clear();
+      return;
+    }
+    this.messages = conversationReducer(this.messages, event);
+    switch (event.type) {
+      case "user_message": {
+        const message = this.messages.at(-1);
+        if (message) this.commitCanonicalMessage(message);
+        this.render();
+        break;
+      }
+      case "assistant_start":
+        this.assistantTurnActive = true;
+        this.renderLive();
+        break;
+      case "thinking_delta":
+      case "text_delta":
+      case "tool_start":
+      case "tool_progress":
+        this.assistantTurnActive = true;
+        this.renderLive();
+        break;
+      case "tool_end":
+        for (const image of event.images ?? []) {
+          this.addInlineImage(image.data, image.mimeType);
+        }
+        this.renderLive();
+        break;
+      case "assistant_end": {
+        const message = [...this.messages].reverse().find(
+          (item) => item.role === "assistant",
+        );
+        if (message) this.commitCanonicalMessage(message);
+        for (const block of this.pendingAgentBlocks.values()) this.blocks.push(block);
+        this.pendingAgentBlocks.clear();
+        this.assistantTurnActive = false;
+        this.render();
+        break;
+      }
+      case "agent_activity":
+        this.applyAgentActivity(event.activity);
+        break;
+      default:
+        break;
+    }
   }
 
   addUserMessage(text: string): void {
-    this.pushText(c.green.bold("you › ") + text);
-    this.render();
+    this.applyConversationEvent({
+      type: "user_message",
+      text,
+      createdAt: Date.now(),
+    });
   }
 
   startAssistantMessage(): void {
-    this.assistantTurnActive = true;
-    this.currentAssistantText = "";
-    this.thinkingBuffer = "";
-    this.toolEntries = [];
-    this.liveThinkingExpanded = false;
-    this.tui.requestRender(true);
+    this.applyConversationEvent({
+      type: "assistant_start",
+      messageId: `assistant-${Date.now()}`,
+      createdAt: Date.now(),
+    });
   }
 
   thinkingDelta(delta: string): void {
-    this.thinkingBuffer += delta;
-    this.renderLive();
+    this.applyConversationEvent({ type: "thinking_delta", delta });
   }
 
   textDelta(delta: string): void {
-    this.currentAssistantText += delta;
-    this.renderLive();
+    this.applyConversationEvent({ type: "text_delta", delta });
   }
 
-  toolStart(name: string, args: unknown, toolCallId = `${name}-${this.toolEntries.length}`): void {
-    this.toolEntries.push({
+  toolStart(
+    name: string,
+    args: unknown,
+    toolCallId = `${name}-${++this.syntheticToolCallSequence}`,
+  ): void {
+    this.applyConversationEvent({
+      type: "tool_start",
       toolCallId,
       name,
       args,
-      result: "" as unknown,
-      isError: false,
-      suppressOnSuccess: name === "spawn_agent",
     });
-    this.renderLive();
   }
 
   toolEnd(name: string, result: unknown, isError: boolean, toolCallId?: string): void {
-    const entry = toolCallId
-      ? this.toolEntries.find((tool) => tool.toolCallId === toolCallId)
-      : [...this.toolEntries].reverse().find(
-          (tool) => tool.name === name && tool.result === ("" as unknown),
-        );
-    if (entry) {
-      entry.result = result;
-      entry.isError = isError;
-
-      // Extract and render images from tool result
-      if (result && typeof result === "object") {
-        const r = result as Record<string, unknown>;
-        if (Array.isArray(r.content)) {
-          for (const item of r.content) {
-            if (item && typeof item === "object" && (item as any).type === "image" && (item as any).data) {
-              this.addInlineImage((item as any).data, (item as any).mimeType ?? "image/png");
-            }
-          }
-        }
-      }
-    }
-    this.renderLive();
+    const activeToolCallId = toolCallId ?? [...this.messages]
+      .reverse()
+      .flatMap((message) => [...(message.tools ?? [])].reverse())
+      .find((tool) => tool.name === name && !isMainToolCompleted(tool))
+      ?.toolCallId;
+    if (!activeToolCallId) return;
+    const resultDetail = createToolResultProjection(name, result);
+    this.applyConversationEvent({
+      type: "tool_end",
+      toolCallId: activeToolCallId,
+      name,
+      result: resultDetail.summary,
+      resultDetail,
+      isError,
+    });
   }
 
   finishAssistantMessage(): void {
-    const lines: string[] = [];
-    if (this.thinkingBuffer) {
-      this.pushThinking(this.thinkingBuffer, this.liveThinkingExpanded);
-    }
-    if (this.currentAssistantText) {
-      lines.push(c.magenta.bold("agent ›") + "\n" + this.currentAssistantText);
-    }
-    const visibleTools = this.visibleMainTools();
-    if (visibleTools.length > 0) {
-      for (const t of visibleTools) {
-        const icon = t.isError ? c.red("✗") : c.cyan("✓");
-        const preview = toolResultPreview(t.result);
-        const argsStr = toolArgsPreview(t.name, t.args);
-        const previewPart = preview ? c.dim(" → ") + preview : "";
-        lines.push(`${icon} ${c.cyan(t.name)} ${c.dim(argsStr)}${previewPart}`);
-      }
-    }
-    if (lines.length > 0) {
-      this.pushText(lines.join("\n"));
-    }
-    for (const block of this.pendingAgentBlocks.values()) {
-      this.blocks.push(block);
-    }
-    this.pendingAgentBlocks.clear();
-    this.assistantTurnActive = false;
-    this.currentAssistantText = "";
-    this.thinkingBuffer = "";
-    this.toolEntries = [];
-    this.liveThinkingExpanded = false;
-    this.render();
+    this.applyConversationEvent({ type: "assistant_end" });
   }
 
   addInfo(text: string): void {
@@ -609,25 +606,24 @@ export class ConversationView {
   }
 
   upsertAgentActivity(activity: AgentActivity): void {
+    this.messages = conversationReducer(this.messages, {
+      type: "agent_activity",
+      activity,
+    });
+    this.applyAgentActivity(activity);
+  }
+
+  private applyAgentActivity(activity: AgentActivity): void {
     const index = this.blocks.findIndex(
       (block) => block.type === "agent" && block.agentId === activity.agentId,
     );
-    const existing = index >= 0 && this.blocks[index].type === "agent"
-      ? this.blocks[index] as AgentActivityBlock
-      : this.pendingAgentBlocks.get(activity.agentId);
-    const toolsExpanded = activity.permission
-      ? true
-      : existing?.manualToolsExpanded !== undefined
-        ? existing.manualToolsExpanded
-        : defaultToolsExpanded(activity);
+    const toolsExpanded = defaultAgentToolsExpanded(activity);
     const block: AgentActivityBlock = {
       type: "agent",
       agentId: activity.agentId,
       activity,
       toolsExpanded,
-      manualToolsExpanded: existing?.manualToolsExpanded,
     };
-    this.selectedAgentId ??= activity.agentId;
     if (index >= 0) {
       this.blocks[index] = block;
       this.rerenderStaticBlocks();
@@ -640,45 +636,6 @@ export class ConversationView {
     }
   }
 
-  toggleThinking(): boolean {
-    if (this.assistantTurnActive && this.thinkingBuffer) {
-      this.liveThinkingExpanded = !this.liveThinkingExpanded;
-      this.renderLive();
-      return this.liveThinkingExpanded;
-    }
-    const block = [...this.blocks].reverse().find(
-      (item): item is Extract<ContentBlock, { type: "thinking" }> =>
-        item.type === "thinking",
-    );
-    if (!block) return false;
-    block.expanded = !block.expanded;
-    this.rerenderStaticBlocks();
-    return block.expanded;
-  }
-
-  selectNextAgent(): string | undefined {
-    const blocks = this.allAgentBlocks();
-    if (blocks.length === 0) return undefined;
-    const currentIndex = blocks.findIndex((block) => block.agentId === this.selectedAgentId);
-    const next = blocks[(currentIndex + 1 + blocks.length) % blocks.length];
-    this.selectedAgentId = next.agentId;
-    this.rerenderStaticBlocks();
-    return next.agentId;
-  }
-
-  toggleSelectedAgentTools(): boolean | undefined {
-    const blocks = this.allAgentBlocks();
-    const selected = blocks.find((block) => block.agentId === this.selectedAgentId)
-      ?? blocks.at(-1);
-    if (!selected) return undefined;
-    this.selectedAgentId = selected.agentId;
-    if (selected.activity.permission) return selected.toolsExpanded;
-    selected.toolsExpanded = !selected.toolsExpanded;
-    selected.manualToolsExpanded = selected.toolsExpanded;
-    this.rerenderStaticBlocks();
-    return selected.toolsExpanded;
-  }
-
   getActiveExecutionStatus(): string | undefined {
     const activity = [...this.allAgentBlocks()]
       .reverse()
@@ -689,16 +646,29 @@ export class ConversationView {
         || item.state === "waiting"
         || item.state === "stopped",
       );
-    if (!activity) return undefined;
-    const label = formatAgentLabel(activity);
-    if (activity.permission) {
-      return `${label} · ${activity.permission.toolName} · permission required`;
+    if (activity) {
+      const label = formatAgentLabel(activity);
+      if (activity.permission) {
+        return `${label} · ${activity.permission.toolName} · permission required`;
+      }
+      const activeTool = [...(activity.tools ?? [])].reverse().find(
+        (tool) => tool.status === "running" || tool.status === "permission",
+      );
+      if (activeTool) return `${label} · ${activeTool.name} · ${activeTool.status}`;
+      return `${label} · ${activity.progress?.message ?? activity.state}`;
     }
-    const activeTool = [...(activity.tools ?? [])].reverse().find(
-      (tool) => tool.status === "running" || tool.status === "permission",
+
+    const streamingMessage = [...this.messages].reverse().find(
+      (message) => message.role === "assistant" && message.isStreaming,
     );
-    if (activeTool) return `${label} · ${activeTool.name} · ${activeTool.status}`;
-    return `${label} · ${activity.progress?.message ?? activity.state}`;
+    const activeMainTool = [...(streamingMessage?.tools ?? [])].reverse().find(
+      (tool) => !isMainToolCompleted(tool),
+    );
+    if (activeMainTool) return `Main · ${activeMainTool.name} · running`;
+    if (streamingMessage?.thinkingStartedAt !== undefined) {
+      return "Thinking";
+    }
+    return undefined;
   }
 
   addWarning(text: string): void {
@@ -738,7 +708,7 @@ export class ConversationView {
     this.renderedBlockCount = Math.max(0, this.renderedBlockCount - count);
 
     // Adjust startIndex of all drafts that come after the removed one
-    for (const [otherId, other] of this.draftBlocks) {
+    for (const other of this.draftBlocks.values()) {
       if (other.startIndex > startIndex) {
         other.startIndex -= count;
       }
@@ -890,15 +860,19 @@ export class ConversationView {
     const now = Date.now();
     if (now - this.lastSubNavAt < 120) return;
     this.lastSubNavAt = now;
-    const fa = this._activePermission?.fuzzyArgDesc;
-    const llm = this._activePermission?.llmSuggestions;
-    const count = (fa ? 3 : 2) + (llm ? llm.length : 0);
+    const count = this.getPermSubOptionCount();
     this.permSubSelected = (this.permSubSelected + direction + count) % count;
     this.rerenderStaticBlocks();
   }
 
   permSubSelect(): number {
     return this.permSubSelected;
+  }
+
+  getPermSubOptionCount(): number {
+    const fuzzyArgs = this._activePermission?.fuzzyArgDesc ? 1 : 0;
+    const suggestions = this._activePermission?.llmSuggestions?.length ?? 0;
+    return (this._permSubModeType === "save" ? 2 + fuzzyArgs + suggestions : 2);
   }
 
   clearPermissionPrompt(): void {
@@ -917,6 +891,44 @@ export class ConversationView {
     this.blocks.push({ type: "thinking", content, expanded });
   }
 
+  private commitCanonicalMessage(message: UIMessage): void {
+    if (this.committedMessageIds.has(message.id)) return;
+    this.committedMessageIds.add(message.id);
+    if (message.role === "agent" && message.agentActivity) {
+      this.applyAgentActivity(message.agentActivity);
+      return;
+    }
+    if (message.role === "user") {
+      if (message.content) {
+        this.pushText(
+          c.green.bold("you › ") + formatUserMessageForTui(message.content),
+        );
+      }
+      return;
+    }
+    if (message.role === "assistant") {
+      if (message.thinking) this.pushThinking(message.thinking);
+      const lines: string[] = [];
+      if (message.content) {
+        lines.push(c.magenta.bold("agent ›") + "\n" + message.content);
+      }
+      for (const tool of this.visibleMainTools(message.tools)) {
+        const completed = isMainToolCompleted(tool);
+        const icon = completed
+          ? tool.isError ? c.red("✗") : c.cyan("✓")
+          : c.yellow("⟳");
+        const preview = completed ? toolResultPreview(tool) : "";
+        const previewPart = preview ? c.dim(" → ") + preview : "";
+        lines.push(
+          `${icon} ${c.cyan(tool.name)} ${c.dim(tool.args)}${previewPart}`,
+        );
+      }
+      if (lines.length > 0) this.pushText(lines.join("\n"));
+      return;
+    }
+    if (message.content) this.pushText(c.dim(message.content));
+  }
+
   private allAgentBlocks(): AgentActivityBlock[] {
     return [
       ...this.blocks.filter(
@@ -926,9 +938,9 @@ export class ConversationView {
     ];
   }
 
-  private visibleMainTools(): ToolEntry[] {
-    return this.toolEntries.filter(
-      (tool) => !tool.suppressOnSuccess || tool.isError,
+  private visibleMainTools(tools: readonly ToolCallEntry[] | undefined): ToolCallEntry[] {
+    return (tools ?? []).filter(
+      (tool) => tool.name !== "spawn_agent" || tool.isError,
     );
   }
 
@@ -955,7 +967,13 @@ export class ConversationView {
     }
 
     lines.push(c.yellow.bold(" Permissions ────────────────────────────────────"));
-    lines.push(c.yellow(` Tool: ${this._activePermission.toolName}`));
+    const owner = this.allAgentBlocks().find((block) =>
+      this.permissionMatchesAgentBlock(block)
+    );
+    const ownerPath = owner
+      ? `${formatAgentLabel(owner.activity)} > ${this._activePermission.toolName}`
+      : `Main > ${this._activePermission.toolName}`;
+    lines.push(c.yellow(` Owner: ${ownerPath}`));
     if (this._activePermission.preview) {
       for (const pl of this._activePermission.preview.split("\n").slice(0, 6)) {
         lines.push(c.dim(`   ${pl.slice(0, maxLineLen)}`));
@@ -971,7 +989,7 @@ export class ConversationView {
       lines.push(`${prefix} ${label}  ${hint}`);
     }
     lines.push(c.dim(" ──────────────────────────────────────────────────"));
-    lines.push(c.dim(" ↑↓ to navigate  Enter to confirm  A/I/S shortcuts  Esc to deny"));
+    lines.push(c.dim(" 1-4 choose · Enter confirm · D deny"));
     return lines;
   }
 
@@ -995,10 +1013,10 @@ export class ConversationView {
         const selected = i === this.permSubSelected;
         const prefix = selected ? c.cyan(" ▶") : "  ";
         const label = selected ? c.bold(c.magenta(opt.label)) : c.dim(opt.label);
-        lines.push(`${prefix} ${label}`);
+        lines.push(`${prefix} ${c.dim(`[${opt.key}]`)} ${label}`);
       }
       lines.push(c.dim(" ──────────────────────────────────────────────────────"));
-      lines.push(c.dim(" ↑↓ to choose  Enter to confirm  Esc to cancel"));
+      lines.push(c.dim(" 1-2 choose · Enter confirm · Esc cancel"));
       return lines;
     }
 
@@ -1015,7 +1033,10 @@ export class ConversationView {
     const llm = this._activePermission?.llmSuggestions;
     if (llm && llm.length > 0) {
       for (let i = 0; i < llm.length; i++) {
-        subOptions.push({ label: `[AI] ${llm[i].label}`, key: `${3 + i}` });
+        subOptions.push({
+          label: `[AI] ${llm[i].label}`,
+          key: `${subOptions.length + 1}`,
+        });
       }
     }
 
@@ -1026,10 +1047,10 @@ export class ConversationView {
       const selected = i === this.permSubSelected;
       const prefix = selected ? c.cyan(" ▶") : "  ";
       const label = selected ? c.bold(c.magenta(opt.label)) : c.dim(opt.label);
-      lines.push(`${prefix} ${label}`);
+      lines.push(`${prefix} ${c.dim(`[${opt.key}]`)} ${label}`);
     }
     lines.push(c.dim(" ──────────────────────────────────────────────────────"));
-    lines.push(c.dim(" ↑↓ to choose  Enter to confirm  Esc to cancel"));
+    lines.push(c.dim(" Number chooses directly · Enter confirms · Esc cancels"));
     return lines;
   }
 
@@ -1061,35 +1082,37 @@ export class ConversationView {
     }
     this.liveComponents = [];
 
-    if (this.thinkingBuffer) {
+    const liveMessage = [...this.messages].reverse().find(
+      (message) => message.role === "assistant" && message.isStreaming,
+    );
+    if (liveMessage?.thinking) {
       const thinking = new TuiThinkingBlock(
-        this.thinkingBuffer,
-        this.liveThinkingExpanded,
+        liveMessage.thinking,
+        false,
       );
       this.box.addChild(thinking);
       this.liveComponents.push(thinking);
     }
 
     const liveLines: string[] = [];
-    if (this.currentAssistantText) {
-      liveLines.push(c.magenta.bold("agent ›") + "\n" + this.currentAssistantText);
+    if (liveMessage?.content) {
+      liveLines.push(c.magenta.bold("agent ›") + "\n" + liveMessage.content);
     }
-    const visibleTools = this.visibleMainTools();
+    const visibleTools = this.visibleMainTools(liveMessage?.tools);
     if (visibleTools.length > 0) {
       liveLines.push("");
       liveLines.push(c.dim("──── ⚙ Main Tools ───────────────────"));
       for (const t of visibleTools) {
-        const hasResult = t.result !== ("" as unknown);
-        if (hasResult) {
+        if (isMainToolCompleted(t)) {
           const icon = t.isError ? c.red("✗") : c.cyan("✓");
-          const preview = toolResultPreview(t.result);
-          const argsStr = toolArgsPreview(t.name, t.args);
+          const preview = toolResultPreview(t);
+          const argsStr = t.args;
           liveLines.push(
             ` ${icon} ${c.cyan(t.name)} ${c.dim(argsStr)}${preview ? c.dim(" → ") + preview : ""}`,
           );
         } else {
           liveLines.push(
-            ` ${c.yellow("⟳")} ${c.cyan(t.name)} ${c.dim(toolArgsPreview(t.name, t.args))} ${c.dim("...")}`,
+            ` ${c.yellow("⟳")} ${c.cyan(t.name)} ${c.dim(t.args)} ${c.dim("...")}`,
           );
         }
       }
@@ -1125,7 +1148,6 @@ export class ConversationView {
       : undefined;
     return new TuiAgentActivityCard(block.activity, {
       toolsExpanded: block.toolsExpanded,
-      selected: block.agentId === this.selectedAgentId,
       permissionLines,
     });
   }

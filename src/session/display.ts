@@ -2,7 +2,7 @@ import type { AgentSessionMessage, DisplayMessage } from "./types.js";
 import { ImageCache } from "../utils/image-cache.js";
 import { formatSubagentLabel } from "../ui/shared/agent-label.js";
 import { formatToolArgsForDisplay } from "../ui/shared/tool-args-formatter.js";
-import { formatToolResultForUI } from "../ui/shared/tool-result-formatter.js";
+import { createToolResultProjection } from "../ui/shared/tool-result-projection.js";
 
 // ── Helpers ──
 
@@ -34,24 +34,12 @@ function extractThinkingFromContent(blocks: any[]): string | undefined {
   return parts.length > 0 ? parts.join("\n\n") : undefined;
 }
 
-function extractToolsFromContent(blocks: any[]): { name: string; args: string; result: string; isError: boolean }[] | undefined {
-  const tools: { name: string; args: string; result: string; isError: boolean }[] = [];
-  for (const b of blocks) {
-    if (b && b.type === "toolCall" && b.name) {
-      const args = formatToolArgsForDisplay(b.name, b.arguments);
-      tools.push({ name: b.name, args, result: "", isError: false });
-    }
-  }
-  return tools.length > 0 ? tools : undefined;
-}
-
-function extractToolResultText(blocks: any[], toolName: string): string {
+function extractToolResultText(blocks: any[]): string {
   if (!Array.isArray(blocks)) return "";
-  const raw = blocks
+  return blocks
     .filter((b: any) => b && b.type === "text")
     .map((b: any) => b.text)
     .join("\n");
-  return formatToolResultForUI(toolName, raw);
 }
 
 function isInternalAgentNotification(message: any): boolean {
@@ -119,7 +107,8 @@ export function rebuildDisplayMessages(
 
   // Pass 1: sequential scan — extract tool calls, match results, collect output indices
   const output = new Set<number>(); // message indices to emit
-  const pendingResults = new Map<number, Map<string, { result: string; isError: boolean; toolName: string }>>();
+  const pendingResults = new Map<number, Map<string, { rawResult: string; isError: boolean; toolName: string }>>();
+  const parsedToolsByAssistant = new Map<number, { id: string; name: string; args: string }[]>();
   // pendingResults: assistantMsgIndex → (toolCallId → { result, isError, toolName })
 
   let lastAssistantIdx = -1;
@@ -149,8 +138,7 @@ export function rebuildDisplayMessages(
         for (let ti = 0; ti < toolCalls.length; ti++) {
           lastAssistantToolIds.set(toolCalls[ti].id, ti);
         }
-        // Store tool call metadata for later use when building output
-        (m as any).__parsedTools = toolCalls;
+        parsedToolsByAssistant.set(i, toolCalls);
       } else {
         lastAssistantToolIds = null;
       }
@@ -160,10 +148,9 @@ export function rebuildDisplayMessages(
       if (toolCallId && lastAssistantToolIds.has(toolCallId)) {
         const toolIdx = lastAssistantToolIds.get(toolCallId)!;
         // Look up the tool name from the assistant's parsed tool calls
-        const assistantMsg = messages[lastAssistantIdx];
-        const parsedTools = (assistantMsg as any).__parsedTools as { id: string; name: string; args: string }[] | undefined;
+        const parsedTools = parsedToolsByAssistant.get(lastAssistantIdx);
         const toolName = parsedTools?.[toolIdx]?.name ?? "unknown";
-        const resultText = extractToolResultText(m.content, toolName);
+        const rawResult = extractToolResultText(m.content);
         const isError = !!m.isError;
 
         let results = pendingResults.get(lastAssistantIdx);
@@ -171,7 +158,7 @@ export function rebuildDisplayMessages(
           results = new Map();
           pendingResults.set(lastAssistantIdx, results);
         }
-        results.set(toolCallId, { result: resultText, isError, toolName });
+        results.set(toolCallId, { rawResult, isError, toolName });
         // Don't emit this ToolResultMessage — it's matched
       } else {
         // Unmatched ToolResultMessage: emit as standalone
@@ -239,25 +226,33 @@ export function rebuildDisplayMessages(
     }
 
     // Tools: extract from content blocks for assistant messages, merge with results
-    let tools: DisplayMessage["tools"] = m.tools;
+    let tools: DisplayMessage["tools"] = Array.isArray(m.tools)
+      ? m.tools.map((tool: NonNullable<DisplayMessage["tools"]>[number]) => ({ ...tool }))
+      : undefined;
     if (m.role === "assistant" && Array.isArray(m.content)) {
-      const parsedTools = (m as any).__parsedTools as { id: string; name: string; args: string }[] | undefined;
+      const parsedTools = parsedToolsByAssistant.get(i);
       if (parsedTools && parsedTools.length > 0) {
         const results = pendingResults.get(i);
         tools = parsedTools.map((tc) => {
           const r = results?.get(tc.id);
+          const resultDetail = r
+            ? createToolResultProjection(r.toolName, r.rawResult, {
+                owner: "session",
+                ownerId: parentSessionId,
+                toolCallId: tc.id,
+              })
+            : undefined;
           return {
+            toolCallId: tc.id,
             name: tc.name,
             args: tc.args,
-            result: r?.result ?? "",
+            result: resultDetail?.summary ?? "",
+            resultDetail,
             isError: r?.isError ?? false,
           };
         });
       }
     }
-
-    // Clean up temp field
-    delete (m as any).__parsedTools;
 
     // System messages with no content: preserve but with empty content
     if (m.role === "system" && !content && !images) {
@@ -307,11 +302,12 @@ export function rebuildDisplayMessages(
           agentMessage.application,
         ),
         application: agentMessage.application,
-        attachment: "foreground",
+        attachment: agentMessage.attachment ?? "foreground",
         state: agentMessage.state,
         input: agentMessage.input.prompt,
         output: agentMessage.output?.text,
         error: agentMessage.output?.error,
+        tools: agentMessage.tools?.map((tool) => ({ ...tool })),
         createdAt: agentMessage.createdAt,
         startedAt: agentMessage.startedAt,
         endedAt: agentMessage.endedAt,

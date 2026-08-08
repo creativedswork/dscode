@@ -77,6 +77,19 @@ describe("rebuildDisplayMessages — Agent Activity", () => {
     ]);
   });
 
+  it("preserves a background Agent attachment in replay", () => {
+    const result = rebuildDisplayMessages(
+      [{ role: "user", content: "Before", createdAt: 100 }],
+      [agentMessage({
+        attachment: "background",
+        createdAt: 200,
+      })],
+      "session-1",
+    );
+
+    expect(result[1].agentActivity?.attachment).toBe("background");
+  });
+
   it("recovers a delegated role from legacy spawn_agent messages", () => {
     const result = rebuildDisplayMessages(
       [
@@ -244,5 +257,67 @@ describe("rebuildDisplayMessages — Agent Activity", () => {
     });
     expect(result[0].tools?.[0].result).toContain("file contents");
     expect(result[1].role).toBe("agent");
+  });
+
+  it("preserves Tool identity and uses a Session ref for large results", () => {
+    const largeResult = Array.from(
+      { length: 1_200 },
+      (_, index) => `result line ${index + 1} with additional detail`,
+    ).join("\n");
+    const messages = [
+      {
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          id: "call-large",
+          name: "read_file",
+          arguments: { path: "large.txt" },
+        }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-large",
+        content: [{ type: "text", text: largeResult }],
+      },
+    ];
+
+    const result = rebuildDisplayMessages(messages, [], "session-large");
+
+    expect(result[0].tools?.[0]).toMatchObject({
+      toolCallId: "call-large",
+      resultDetail: {
+        ref: {
+          owner: "session",
+          ownerId: "session-large",
+          toolCallId: "call-large",
+        },
+        charCount: largeResult.length,
+        lineCount: 1_200,
+      },
+    });
+    expect(result[0].tools?.[0].resultDetail?.text).toBeUndefined();
+    expect(messages[0]).not.toHaveProperty("__parsedTools");
+  });
+
+  it("keeps legacy Tool summaries without fabricating missing detail", () => {
+    const result = rebuildDisplayMessages([
+      {
+        role: "assistant",
+        content: "done",
+        tools: [{
+          name: "legacy_tool",
+          args: "",
+          result: "summary only",
+          isError: false,
+        }],
+      },
+    ], [], "session-legacy");
+
+    expect(result[0].tools?.[0]).toMatchObject({
+      name: "legacy_tool",
+      result: "summary only",
+    });
+    expect(result[0].tools?.[0].toolCallId).toBeUndefined();
+    expect(result[0].tools?.[0].resultDetail).toBeUndefined();
   });
 });

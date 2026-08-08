@@ -11,6 +11,7 @@ import {
   type AutocompleteSuggestions,
   type AutocompleteItem,
   matchesKey,
+  isKeyRelease,
   Key,
   decodeKittyPrintable,
   hyperlink,
@@ -54,6 +55,13 @@ import { resolveFileRefs, isImagePath } from "../utils/at-file-resolver.js";
 import { existsSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { rebuildDisplayMessages } from "../session/display.js";
+import { TuiActivityInspector } from "./tui-activity-inspector.js";
+import { TuiPermissionInput } from "./tui-permission-input.js";
+import type {
+  ServerEvent,
+  ToolResultRef,
+} from "./shared/types.js";
+import { findToolResultText } from "./shared/tool-result-projection.js";
 // TuiDeps replaced by HarnessAPI — see src/core/harness-api.ts
 
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;
@@ -170,6 +178,12 @@ export class TuiApp {
   private imageStatus: Text;
   private loader: CancellableLoader;
   private loaderOverlayHandle: ReturnType<TUI["showOverlay"]> | null = null;
+  private activityInspector: TuiActivityInspector | null = null;
+  private activityInspectorOverlay: ReturnType<TUI["showOverlay"]> | null = null;
+  private permissionInputOverlay: ReturnType<TUI["showOverlay"]> | null = null;
+  private permissionPreviousFocus: "editor" | "inspector" | null = null;
+  private persistedAgentResultMessages = new Map<string, readonly unknown[]>();
+  private persistedAgentResultGeneration = 0;
   private mcpPanel = new Text("", 1, 0);
   private mcpPanelVisible = false;
   private mcpSelectedServerIndex: number | null = null;
@@ -183,6 +197,7 @@ export class TuiApp {
   private lastMenuNavDirection: "up" | "down" | null = null;
   private lastMenuNavAt = 0;
   private resolvePermission: ((result: PermissionPromptResult) => void) | null = null;
+  private handlingPermissionComponentInput = false;
   private pendingPermissionContext:
     | { toolName: string; args: unknown }
     | null = null;
@@ -314,7 +329,12 @@ export class TuiApp {
       // Pre-submit drain: if Enter/Return is pressed with pending images or files,
       // drain them NOW before the Editor fires onChange("") which would
       // otherwise trigger removeImageById / fileTracker.remove.
-      if ((matchesKey(data, Key.enter) || matchesKey(data, Key.return) || data === "\r" || data === "\n") && !this.processing) {
+      if (
+        (matchesKey(data, Key.enter) || matchesKey(data, Key.return) || data === "\r" || data === "\n")
+        && !this.processing
+        && !this.activityInspectorOverlay
+        && !this.resolvePermission
+      ) {
         if (this.imagePasteHandler.imageCount > 0) {
           this.drainedSubmitImages = this.imagePasteHandler.drainImages();
         }
@@ -322,7 +342,8 @@ export class TuiApp {
           this.drainedSubmitFiles = this.fileTracker.drain();
         }
       }
-      if (this.handleInput(data)) {
+      const handled = this.handleInput(data);
+      if (handled) {
         return { consume: true };
       }
       return undefined;
@@ -370,6 +391,9 @@ export class TuiApp {
   ): Promise<PermissionPromptResult> {
     this.pendingPermissionContext = { toolName, args };
     this.permissionExplainMode = false;
+    this.permissionPreviousFocus = this.activityInspectorOverlay?.isFocused()
+      ? "inspector"
+      : "editor";
     const fuzzy = deriveFuzzyPattern(toolName);
     const fuzzyArgDesc = describeFuzzyArgPattern(toolName, args);
     const llmSuggestions = getLlmSuggestions(toolName, args);
@@ -384,6 +408,15 @@ export class TuiApp {
       const ap = this.conversation.activePermission;
       if (ap) ap.llmSuggestions = llmSuggestions;
     }
+    const permissionInput = new TuiPermissionInput((data) => {
+      this.handlePermissionInput(data);
+    });
+    this.permissionInputOverlay?.hide();
+    this.permissionInputOverlay = this.tui.showOverlay(permissionInput, {
+      width: 1,
+      maxHeight: 1,
+      anchor: "bottom-right",
+    });
     // Prefetch for next time (fire-and-forget)
     const model = resolveModel(this.deps.config.provider, this.deps.config.modelId);
     prefetchLlmSuggestions(model, toolName, args, preview);
@@ -401,6 +434,14 @@ export class TuiApp {
     this.permissionExplainMode = false;
     this.editor.disableSubmit = this.processing;
     this.conversation.clearPermissionPrompt();
+    this.permissionInputOverlay?.hide();
+    this.permissionInputOverlay = null;
+    if (this.permissionPreviousFocus === "inspector" && this.activityInspectorOverlay) {
+      this.activityInspectorOverlay.focus();
+    } else {
+      this.focusEditor();
+    }
+    this.permissionPreviousFocus = null;
     this.tui.requestRender(true);
   }
 
@@ -451,17 +492,12 @@ export class TuiApp {
       this.permissionExplainMode = true;
       this.editor.disableSubmit = false;
       this.conversation.clearPermissionPrompt();
-      this.conversation.addInfo(c.dim("Type your updated idea and press Enter. It will be sent back to the agent. Esc cancels."));
+      this.permissionInputOverlay?.setHidden(true);
+      this.tui.setFocus(this.editor);
       this.tui.requestRender(true);
       return;
     }
-    // Allow (one-time)
-    const fuzzy = deriveFuzzyPattern(this.pendingPermissionContext?.toolName ?? "");
-    if (fuzzy && fuzzy !== this.pendingPermissionContext?.toolName) {
-      this.conversation.enterSubMode("allow", fuzzy);
-    } else {
-      this.resolvePermissionChoice({ decision: "allow" });
-    }
+    this.resolvePermissionChoice({ decision: "allow" });
   }
 
   private saveExactRule(): void {
@@ -479,13 +515,15 @@ export class TuiApp {
     else if (subIdx === 1) {
       const fuzzy = deriveFuzzyPattern(ctx.toolName);
       this.resolvePermissionChoice({ decision: "allow", rememberForSession: true, persistRule: fuzzy ? { tool: fuzzy, decision: "allow" as const } : undefined });
-    } else if (subIdx === 2) {
+    } else if (subIdx === 2 && this.conversation.activePermission?.fuzzyArgDesc) {
       const fuzzyArg = deriveFuzzyArgPattern(ctx.toolName, ctx.args);
       this.resolvePermissionChoice({ decision: "allow", rememberForSession: true, persistRule: fuzzyArg ? { tool: ctx.toolName, argPattern: fuzzyArg, decision: "allow" as const } : undefined });
     } else {
-      // LLM suggestions
       const llm = this.conversation.activePermission?.llmSuggestions;
-      const s = llm ? llm[subIdx - 3] : null;
+      const suggestionOffset = this.conversation.activePermission?.fuzzyArgDesc
+        ? 3
+        : 2;
+      const s = llm ? llm[subIdx - suggestionOffset] : null;
       if (s) {
         this.resolvePermissionChoice({
           decision: "allow",
@@ -520,15 +558,27 @@ export class TuiApp {
     }
   }
 
+  private handlePermissionInput(data: string): void {
+    this.handlingPermissionComponentInput = true;
+    try {
+      this.handleInput(data);
+    } finally {
+      this.handlingPermissionComponentInput = false;
+    }
+  }
+
   private handleInput(data: string): boolean {
+    if (isKeyRelease(data)) return true;
+    const printable = decodeKittyPrintable(data) ?? data;
     if (this.permissionExplainMode) {
       if (matchesKey(data, Key.escape) || matchesKey(data, "ctrl+c") || data === "\x03") {
-        this.permissionExplainMode = false;
-        this.pendingPermissionContext = null;
-        this.editor.disableSubmit = this.processing;
-        this.conversation.addInfo(c.dim("Permission explanation cancelled."));
+        this.resolvePermissionChoice({ decision: "deny" });
         return true;
       }
+      return false;
+    }
+
+    if (this.resolvePermission && !this.handlingPermissionComponentInput) {
       return false;
     }
 
@@ -548,18 +598,15 @@ export class TuiApp {
         if (matchesKey(data, Key.escape) || matchesKey(data, "ctrl+c") || data === "\x03") {
           this.conversation.cancelSubMode(); return true;
         }
-        if (data === "1") {
+        const numericChoice = /^[1-9]$/.test(printable) ? Number(printable) - 1 : -1;
+        if (
+          numericChoice >= 0
+          && numericChoice < this.conversation.getPermSubOptionCount()
+        ) {
           const t = this.conversation.permSubModeType;
-          if (t === "session") this.applySessionGrantOption(0);
-          else if (t === "allow") this.applyAllowOption(0);
-          else this.applyFuzzySaveOption(0);
-          return true;
-        }
-        if (data === "2") {
-          const t = this.conversation.permSubModeType;
-          if (t === "session") this.applySessionGrantOption(1);
-          else if (t === "allow") this.applyAllowOption(1);
-          else this.applyFuzzySaveOption(1);
+          if (t === "session") this.applySessionGrantOption(numericChoice);
+          else if (t === "allow") this.applyAllowOption(numericChoice);
+          else this.applyFuzzySaveOption(numericChoice);
           return true;
         }
         return true;
@@ -586,7 +633,7 @@ export class TuiApp {
         }
         return true;
       }
-      const shortcut = findPermOptionByKey(data);
+      const shortcut = findPermOptionByKey(printable);
       if (shortcut) { this.applyPermissionOption(shortcut.value); return true; }
       return true;
     }
@@ -595,17 +642,13 @@ export class TuiApp {
       return this.handleMcpBrowserInput(data);
     }
 
-    if (matchesKey(data, Key.ctrl("r"))) {
-      this.conversation.toggleThinking();
+    if (matchesKey(data, Key.ctrl("e"))) {
+      if (this.activityInspectorOverlay) this.closeActivityInspector();
+      else this.openActivityInspector();
       return true;
     }
-    if (matchesKey(data, Key.ctrl("n"))) {
-      this.conversation.selectNextAgent();
-      return true;
-    }
-    if (matchesKey(data, Key.ctrl("o"))) {
-      this.conversation.toggleSelectedAgentTools();
-      return true;
+    if (this.activityInspectorOverlay) {
+      return false;
     }
 
     if (this.processing) {
@@ -618,6 +661,7 @@ export class TuiApp {
         this.handleCtrlC();
         return true;
       }
+      return true;
     } else {
       if (matchesKey(data, "ctrl+c") || data === "\x03") {
         this.handleCtrlC();
@@ -1122,6 +1166,61 @@ export class TuiApp {
     this.conversation.addInfo("Press Ctrl+C again to exit");
   }
 
+  private openActivityInspector(): void {
+    if (this.activityInspectorOverlay) return;
+    this.activityInspector = new TuiActivityInspector(
+      () => this.conversation.getMessages(),
+      (ref) => this.resolveToolResultRef(ref),
+      () => this.closeActivityInspector(),
+      () => this.tui.requestRender(false),
+    );
+    this.activityInspectorOverlay = this.tui.showOverlay(
+      this.activityInspector,
+      {
+        width: "92%",
+        maxHeight: "88%",
+        anchor: "center",
+        margin: 1,
+      },
+    );
+    this.tui.requestRender(true);
+  }
+
+  private closeActivityInspector(): void {
+    this.activityInspectorOverlay?.hide();
+    this.activityInspectorOverlay = null;
+    this.activityInspector = null;
+    this.focusEditor();
+    this.tui.requestRender(true);
+  }
+
+  private resolveToolResultRef(ref: ToolResultRef): string | undefined {
+    if (ref.owner === "session") {
+      return findToolResultText(this.deps.agent.state.messages, ref.toolCallId);
+    }
+    const process = this.deps.agentSupervisor.get(ref.ownerId);
+    const messages = process?.runtime.snapshot?.().messages
+      ?? process?.runtimeSnapshot?.messages
+      ?? this.persistedAgentResultMessages.get(ref.ownerId);
+    return messages
+      ? findToolResultText(messages, ref.toolCallId)
+      : undefined;
+  }
+
+  applyConversationEvent(event: ServerEvent): void {
+    if (
+      event.type === "thinking_delta"
+      || event.type === "text_delta"
+      || event.type === "tool_start"
+      || event.type === "tool_end"
+    ) {
+      this.markActivity();
+    }
+    this.conversation.applyConversationEvent(event);
+    this.activityInspector?.refresh();
+    this.tui.requestRender(false);
+  }
+
   addUserMessage(text: string): void {
     this.conversation.addUserMessage(text);
   }
@@ -1151,8 +1250,12 @@ export class TuiApp {
   }
 
   finishAssistantMessage(usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number; cost: { total: number } }): void {
-    this.finalizeIdleSegment();
     this.conversation.finishAssistantMessage();
+    this.finishAssistantTurnMetadata(usage);
+  }
+
+  finishAssistantTurnMetadata(usage?: { input: number; output: number; cacheRead: number; cacheWrite: number; total: number; cost: { total: number } }): void {
+    this.finalizeIdleSegment();
     const parts: string[] = [];
     if (this.totalWaitMs >= 1000) {
       parts.push(`⏱ ${this.formatElapsed(this.totalWaitMs)}`);
@@ -1203,6 +1306,10 @@ export class TuiApp {
   }
 
   setProcessing(processing: boolean): void {
+    if (this.processing === processing) {
+      this.editor.disableSubmit = processing && !this.permissionExplainMode;
+      return;
+    }
     this.processing = processing;
     this.editor.disableSubmit = processing && !this.permissionExplainMode;
     if (processing) {
@@ -1225,10 +1332,9 @@ export class TuiApp {
           );
         } else if (this.showTip) {
           const tips = [
+            "Ctrl+E to inspect activity",
             "Esc or Tab to abort",
-            "Type exit to quit",
-            "Ctrl+C twice to exit",
-            "/help for commands",
+            "Ctrl+C to abort",
           ];
           const tip = tips[Math.floor(Date.now() / 4000) % tips.length];
           this.loader.setMessage(`${tip}  ${c.dim(`(${this.formatElapsed(elapsed)})`)}`);
@@ -1324,24 +1430,10 @@ export class TuiApp {
       return;
     }
 
-    if (!hasText && !hasImages && !hasFiles) {
-      const now = Date.now();
-      if (now - this.lastPasteTime < 100) return;
-      this.lastPasteTime = now;
-      readClipboardImageNonBlocking().then((img) => {
-        if (img) {
-          this.imagePasteHandler.addImage(img);
-          setTimeout(() => this.tui.requestRender(true), 0);
-        }
-      });
-      return;
-    }
-
     this.editor.addToHistory(text);
     this.editor.setText("");
 
     if (this.permissionExplainMode) {
-      const state = this.pendingPermissionContext;
       this.resolvePermissionChoice({
         decision: "deny",
         denyReason: `User updated the request during permission review: ${text}`,
@@ -1470,9 +1562,15 @@ export class TuiApp {
         text = text ? `${text}\n\n📁 Attached files:\n${pathLines}` : `📁 Attached files:\n${pathLines}`;
       }
     }
+    const mainModel = resolveModel(
+      this.deps.config.provider,
+      this.deps.config.modelId,
+    );
+    if (images?.length && !mainModel.input.includes("image")) {
       this.conversation.addInfo(
-        c.dim(`${resolveModel(this.deps.config.provider, this.deps.config.modelId).name} does not support image input natively — using vision model or OCR.`),
+        c.dim(`${mainModel.name} does not support image input natively — using vision model or OCR.`),
       );
+    }
 
     const imageIndicator = images
       ? c.dim(`[${images.length} image(s) attached]`)
@@ -1542,6 +1640,14 @@ export class TuiApp {
   }
 
   clearConversationView(): void {
+    if (this.resolvePermission) {
+      this.resolvePermissionChoice({ decision: "deny" });
+    }
+    if (this.activityInspectorOverlay) {
+      this.closeActivityInspector();
+    }
+    this.persistedAgentResultGeneration++;
+    this.persistedAgentResultMessages.clear();
     this.conversation.clear();
     this.permissionExplainMode = false;
     this.pendingPermissionContext = null;
@@ -1559,25 +1665,46 @@ export class TuiApp {
 
   replayMessages(messages: unknown[]): void {
     const sessionId = this.deps.sessionManager.getCurrentSessionId() ?? "unknown";
+    const agentMessages = this.deps.sessionManager.agentMessages;
     const displayMessages = rebuildDisplayMessages(
       messages as any[],
-      this.deps.sessionManager.agentMessages,
+      agentMessages,
       sessionId,
     );
     this.conversation.replayMessages(displayMessages);
+    this.preloadPersistedAgentResults(
+      agentMessages.map((message) => message.agentId),
+    );
+    this.activityInspector?.refresh();
+  }
+
+  private preloadPersistedAgentResults(agentIds: readonly string[]): void {
+    const generation = ++this.persistedAgentResultGeneration;
+    this.persistedAgentResultMessages.clear();
+    if (agentIds.length === 0) return;
+    void this.deps.agentSupervisor.loadPersisted(agentIds).then(({ found }) => {
+      if (generation !== this.persistedAgentResultGeneration) return;
+      for (const [agentId, process] of found) {
+        const messages = process.runtimeSnapshot?.messages;
+        if (Array.isArray(messages)) {
+          this.persistedAgentResultMessages.set(agentId, messages);
+        }
+      }
+      this.activityInspector?.refresh();
+      this.tui.requestRender(false);
+    }).catch(() => {
+      // Missing or corrupt Process Store entries remain unavailable to Inspector.
+    });
   }
 
   upsertAgentActivity(activity: import("./shared/types.js").AgentActivity): void {
     this.markActivity();
     this.conversation.upsertAgentActivity(activity);
+    this.activityInspector?.refresh();
   }
 
   addPendingImage(image: ImageContent): void {
     this.imagePasteHandler.addImage(image);
-  }
-
-  private updateImageStatus(): void {
-    this.imagePasteHandler.updateStatus();
   }
 
   private formatUserEcho(text: string): string {

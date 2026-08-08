@@ -2,7 +2,11 @@
 // Pure data model for session persistence and vision pipeline.
 // Consumed by: harness.ts (inference), store.ts (I/O), display.ts (UI)
 
-import type { AgentActivity } from "../ui/shared/types.js";
+import type {
+  AgentActivity,
+  AgentToolActivity,
+  ToolCallEntry,
+} from "../ui/shared/types.js";
 
 // --- Image ---
 
@@ -36,6 +40,7 @@ export interface AgentSessionMessage {
   parentAgentId?: string;
   application: string;
   description?: string;
+  attachment?: "foreground" | "background";
   state: "completed" | "failed" | "terminated" | "killed";
   input: {
     prompt: string;
@@ -46,6 +51,7 @@ export interface AgentSessionMessage {
     source?: string;
     error?: string;
   };
+  tools?: AgentToolActivity[];
   messageIndex?: number;
   createdAt: number;
   startedAt?: number;
@@ -113,7 +119,7 @@ export interface DisplayMessage {
   content: string;
   images?: { data: string; mimeType: string }[];
   thinking?: string;
-  tools?: { name: string; args: string; result: string; isError: boolean }[];
+  tools?: ToolCallEntry[];
   createdAt?: number;
   agentActivity?: AgentActivity;
 }

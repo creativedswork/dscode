@@ -35,7 +35,13 @@ describe("PiAgentRuntimeAdapter snapshot", () => {
       async prompt() {
         const events = [
           { type: "tool_execution_start", toolCallId: "call-1", toolName: "read_file" },
-          { type: "tool_execution_end", toolCallId: "call-1", toolName: "read_file", isError: false },
+          {
+            type: "tool_execution_end",
+            toolCallId: "call-1",
+            toolName: "read_file",
+            result: { content: [{ type: "text", text: "file contents" }] },
+            isError: false,
+          },
           { type: "turn_end" },
         ];
         for (const event of events) {
@@ -84,6 +90,10 @@ describe("PiAgentRuntimeAdapter snapshot", () => {
         toolCallId: "call-1",
         toolName: "read_file",
         isError: false,
+        resultDetail: expect.objectContaining({
+          summary: expect.stringContaining("file contents"),
+          text: "file contents",
+        }),
       }),
     ]);
     expect(checkpoints).toHaveLength(1);

@@ -6,6 +6,7 @@ import type {
 import type { UiBackend } from "./backend.js";
 import { TuiApp } from "./tui-app.js";
 import { AgentActivityProjector } from "./shared/agent-activity.js";
+import { harnessEventToConversationEvent } from "./shared/harness-conversation-adapter.js";
 import { openDashboard } from "../eval/dashboard.js";
 
 /**
@@ -26,25 +27,32 @@ export class TuiBackend implements UiBackend {
     const projectAgentActivity = (event: Parameters<AgentActivityProjector["handle"]>[0]) => {
       this.agentActivityProjector.handle(event);
     };
+    const projectConversationEvent = (
+      event: Parameters<typeof harnessEventToConversationEvent>[0],
+    ) => {
+      const projected = harnessEventToConversationEvent(event, {
+        sessionId: deps.sessionManager.getCurrentSessionId() ?? undefined,
+      });
+      if (projected) this.tui.applyConversationEvent(projected);
+    };
 
     // ── Event bus subscriptions ──
-    deps.events.on("llm:text:delta", (e) => { this.tui.textDelta(e.delta); });
-    deps.events.on("llm:thinking:delta", (e) => { this.tui.thinkingDelta(e.delta); });
+    deps.events.on("llm:text:delta", projectConversationEvent);
+    deps.events.on("llm:thinking:delta", projectConversationEvent);
     deps.events.on("llm:retry", (e) => { this.tui.addRetry({ attempt: e.attempt, maxRetries: e.maxRetries, delayMs: e.delayMs, error: e.error, level: e.level }); });
-    deps.events.on("tool:start", (e) => {
-      this.tui.toolStart(e.name, e.args, e.toolCallId);
+    deps.events.on("tool:start", projectConversationEvent);
+    deps.events.on("tool:end", projectConversationEvent);
+    deps.events.on("turn:streaming:start", projectConversationEvent);
+    deps.events.on("turn:end", (e) => {
+      projectConversationEvent(e);
+      this.tui.finishAssistantTurnMetadata(e.usage);
     });
-    deps.events.on("tool:end", (e) => {
-      this.tui.toolEnd(e.name, e.result, e.isError, e.toolCallId);
-    });
-    deps.events.on("turn:streaming:start", () => { this.tui.startAssistantMessage(); });
-    deps.events.on("turn:end", (e) => { this.tui.finishAssistantMessage(e.usage); });
-    deps.events.on("message:user", (e) => { this.tui.addUserMessage(e.text); });
+    deps.events.on("message:user", projectConversationEvent);
     deps.events.on("ui:info", (e) => { this.tui.addInfo(e.text, e.display); });
     deps.events.on("ui:error", (e) => { this.tui.addError(e.text); });
     deps.events.on("ui:warning", (e) => { this.tui.addWarning(e.text); });
     deps.events.on("ui:image:pending", (e) => { this.tui.addPendingImage(e.image); });
-    deps.events.on("ui:conversation:clear", () => { this.tui.clearConversationView(); });
+    deps.events.on("ui:conversation:clear", projectConversationEvent);
     deps.events.on("ui:focus:editor", () => { this.tui.focusEditor(); });
     deps.events.on("processing:start", () => { this.tui.setProcessing(true); });
     deps.events.on("processing:stop", () => { this.tui.setProcessing(false); });

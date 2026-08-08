@@ -6,6 +6,7 @@ import type {
   AgentActivityProgress,
   AgentPermissionActivity,
   AgentToolActivity,
+  ToolResultProjection,
 } from "./types.js";
 import { formatSubagentLabel } from "./agent-label.js";
 
@@ -26,7 +27,9 @@ interface ToolProgressDetails {
   status: "running" | "completed" | "failed";
   toolCallId: string;
   toolName: string;
+  args?: string;
   summary?: string;
+  resultDetail?: ToolResultProjection;
   startedAt: number;
   endedAt?: number;
   isError?: boolean;
@@ -163,10 +166,12 @@ export class AgentActivityProjector {
       toolCallId: details.toolCallId,
       name: details.toolName,
       status: details.status,
-      summary: details.summary ?? previous?.summary,
+      args: details.args ?? previous?.args,
+      summary: details.summary ?? details.args ?? previous?.summary,
+      resultDetail: details.resultDetail ?? previous?.resultDetail,
       startedAt: details.startedAt ?? previous?.startedAt ?? Date.now(),
-      endedAt: details.endedAt,
-      isError: details.isError,
+      endedAt: details.endedAt ?? previous?.endedAt,
+      isError: details.isError ?? previous?.isError,
     });
     this.tools.set(agentId, tools);
   }

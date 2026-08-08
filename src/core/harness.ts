@@ -30,6 +30,7 @@ import { AppHostManager } from "../mcp/app/host.js";
 import { inferLayout } from "../ui/mdx/inference.js";
 import { TuiBackend } from "../ui/tui-backend.js";
 import type { UiBackend } from "../ui/backend.js";
+import { projectTranscriptToolActivities } from "../ui/shared/tool-result-projection.js";
 import type { HarnessAPI } from "./harness-api.js";
 import { resolveModel, getThinkingLevel, getAllModels, getEnvApiKey } from "../models/index.js";
 import { ImagePipeline } from "../drivers/vision/pipeline.js";
@@ -380,7 +381,6 @@ export class Harness implements HarnessAPI {
       }
 
       this.events.emit({ type: "turn:start" });
-      this.events.emit({ type: "turn:streaming:start" });
       await this.agent.prompt(text, images);
 
       // Check if last assistant message has an error
@@ -696,12 +696,14 @@ export class Harness implements HarnessAPI {
       parentAgentId: agentProcess.parentAgentId,
       application: agentProcess.application.name,
       description: agentProcess.description,
+      attachment: agentProcess.attachment,
       state: agentProcess.exit.state,
       input: { prompt },
       output: {
         text: agentProcess.exit.output,
         error: agentProcess.exit.error,
       },
+      tools: projectTranscriptToolActivities(runtimeMessages, agentId),
       createdAt: agentProcess.createdAt,
       startedAt: agentProcess.startedAt,
       endedAt: agentProcess.exit.endedAt,
@@ -1023,7 +1025,7 @@ export class Harness implements HarnessAPI {
         }
       });
     }
-    return new PiAgentRuntimeAdapter(child);
+    return new PiAgentRuntimeAdapter(child, agentId);
   }
 
   private buildApplicationSkills(application: AgentApplicationSnapshot): string {

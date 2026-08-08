@@ -44,11 +44,15 @@ The protocol SHALL convey tool call start and end states, including the tool nam
 - **THEN** server sends `{"type":"tool_end","name":"bash","result":"command not found","isError":true}`
 
 ### Requirement: Permission prompt interaction
-The protocol SHALL support interactive permission prompts: the server sends a permission request, the client responds with a decision.
+The protocol SHALL support interactive permission prompts: the server sends a permission request, the client responds with a decision. A SubAgent permission request SHALL include `agentId` and SHOULD include `toolCallId`; a Main Agent or legacy request MAY omit both fields.
 
 #### Scenario: Server requests permission
 - **WHEN** the agent attempts to execute a tool that requires user confirmation
 - **THEN** server sends `{"type":"permission_prompt","toolName":"bash","preview":"rm -rf /tmp/test"}` and pauses execution
+
+#### Scenario: SubAgent requests permission
+- **WHEN** SubAgent `agent-123` attempts Tool Call `call-456` that requires confirmation
+- **THEN** server sends a `permission_prompt` containing `agentId: "agent-123"` and `toolCallId: "call-456"`
 
 #### Scenario: Client allows permission
 - **WHEN** client responds with `{"type":"permission","decision":"allow"}`

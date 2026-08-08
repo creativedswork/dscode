@@ -9,9 +9,14 @@ function normalizeContent(c: unknown): string {
   return "";
 }
 
+function toolHasEnded(tool: ToolCallEntry): boolean {
+  return tool.resultDetail !== undefined || tool.result !== "";
+}
+
 function updateLastOrCreate(
   prev: UIMessage[],
   update: (msg: UIMessage) => Partial<UIMessage>,
+  options: { messageId?: string; createdAt?: number } = {},
 ): UIMessage[] {
   const next = [...prev];
   const last = next[next.length - 1];
@@ -19,14 +24,14 @@ function updateLastOrCreate(
     next[next.length - 1] = { ...last, ...update(last) };
   } else {
     next.push({
-      id: `assistant-${Date.now()}`,
+      id: options.messageId ?? `assistant-${options.createdAt ?? Date.now()}`,
       role: "assistant" as const,
       content: "",
       thinking: "",
       tools: [],
       isStreaming: true,
       images: undefined,
-      createdAt: Date.now(),
+      createdAt: options.createdAt ?? Date.now(),
       ...update({ id: "", role: "assistant" as const, content: "", thinking: "", tools: [] }),
     });
   }
@@ -37,13 +42,17 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
   switch (event.type) {
     case "ready":
       return (event.messages as any[]).map((m: any, i) => ({
-        id: m.role === "agent" && m.agentActivity?.agentId
-          ? `agent-${m.agentActivity.agentId}`
-          : `hist-${i}`,
+        id: typeof m.id === "string"
+          ? m.id
+          : m.role === "agent" && m.agentActivity?.agentId
+            ? `agent-${m.agentActivity.agentId}`
+            : `hist-${i}`,
         role: m.role,
         content: normalizeContent(m.content),
         thinking: typeof m.thinking === "string" ? m.thinking : "",
-        tools: Array.isArray(m.tools) ? m.tools : [],
+        tools: Array.isArray(m.tools)
+          ? m.tools.map((tool: ToolCallEntry) => ({ ...tool }))
+          : [],
         createdAt: typeof m.createdAt === "number" ? m.createdAt : undefined,
         images: Array.isArray(m.images) ? m.images : [],
         agentActivity: m.role === "agent" ? m.agentActivity : undefined,
@@ -72,54 +81,75 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
       return [
         ...prev,
         {
-          id: `user-${Date.now()}`,
+          id: `user-${event.createdAt ?? Date.now()}-${prev.length}`,
           role: "user" as const,
           content: normalizeContent(event.text),
           images: (event as any).images ?? [],
-          createdAt: Date.now(),
+          createdAt: event.createdAt,
         },
       ];
 
-    case "assistant_start":
-      return prev;
+    case "assistant_start": {
+      if (prev.at(-1)?.isStreaming) return prev;
+      return [
+        ...prev,
+        {
+          id: event.messageId ?? `assistant-${event.createdAt ?? Date.now()}`,
+          role: "assistant",
+          content: "",
+          thinking: "",
+          tools: [],
+          isStreaming: true,
+          createdAt: event.createdAt,
+        },
+      ];
+    }
 
     case "thinking_delta":
       return updateLastOrCreate(prev, (msg) => {
-        const now = Date.now();
+        const now = event.createdAt ?? Date.now();
         return {
           thinking: (msg.thinking ?? "") + event.delta,
           thinkingStartedAt: msg.thinkingStartedAt ?? now,
           thinkingUpdatedAt: now,
         };
-      });
+      }, { createdAt: event.createdAt });
 
     case "text_delta":
       return updateLastOrCreate(prev, (msg) => ({
         content: msg.content + event.delta,
         thinkingStartedAt: undefined,
-      }));
+      }), { createdAt: event.createdAt });
 
     case "tool_start":
       return updateLastOrCreate(prev, (msg) => {
-        const tools: ToolCallEntry[] = [
-          ...(msg.tools ?? []),
-          {
-            name: event.name,
-            args: formatToolArgsForDisplay(event.name, event.args),
-            result: "",
-            isError: false,
-            images: [],
-          },
-        ];
+        const entry: ToolCallEntry = {
+          toolCallId: event.toolCallId,
+          name: event.name,
+          args: formatToolArgsForDisplay(event.name, event.args),
+          result: "",
+          isError: false,
+          images: [],
+        };
+        const existing = (msg.tools ?? []).findIndex(
+          (tool) => tool.toolCallId === event.toolCallId,
+        );
+        const tools = existing < 0
+          ? [...(msg.tools ?? []), entry]
+          : (msg.tools ?? []).map((tool, index) =>
+              index === existing ? { ...tool, ...entry } : tool
+            );
         return { tools, thinkingStartedAt: undefined };
-      });
+      }, { createdAt: event.createdAt });
 
     case "tool_progress": {
       const next = [...prev];
       const last = next[next.length - 1];
       if (last?.isStreaming && last.tools) {
         const tools = last.tools.map((t) =>
-          t.name === event.name && !t.result
+          (event.toolCallId
+            ? t.toolCallId === event.toolCallId
+            : t.name === event.name && !toolHasEnded(t))
             ? { ...t, progress: event.progress, progressTotal: event.total, progressMessage: event.message }
             : t,
         );
@@ -133,8 +163,14 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
       const last = next[next.length - 1];
       if (last?.isStreaming) {
         const tools = (last.tools ?? []).map((t) =>
-          t.name === event.name && !t.result
-            ? { ...t, result: event.result, isError: event.isError, images: (event as any).images ?? t.images }
+          t.toolCallId === event.toolCallId
+            ? {
+                ...t,
+                result: event.result,
+                resultDetail: event.resultDetail,
+                isError: event.isError,
+                images: event.images ?? t.images,
+              }
             : t,
         );
         next[next.length - 1] = { ...last, tools };
@@ -147,7 +183,9 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
       for (let i = next.length - 1; i >= 0; i--) {
         const msg = next[i];
         if (msg.tools) {
-          const idx = msg.tools.findIndex((t) => t.name === event.app.toolName);
+          const idx = event.toolCallId
+            ? msg.tools.findIndex((tool) => tool.toolCallId === event.toolCallId)
+            : msg.tools.findIndex((tool) => tool.name === event.app.toolName);
           if (idx >= 0) {
             const nt = [...msg.tools];
             nt[idx] = { ...nt[idx], mcpApp: event.app };

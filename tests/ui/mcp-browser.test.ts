@@ -4,6 +4,7 @@ import { Type } from "@earendil-works/pi-ai";
 import { DriverRegistry } from "../../src/drivers/registry.js";
 import { ToolRegistry } from "../../src/drivers/tool-registry.js";
 import { makeDiscoveryDriver } from "../../src/drivers/discovery.js";
+import { mcpDriverName, mcpToolName } from "../../src/mcp/names.js";
 import {
   buildMcpServers,
   createInitialMcpBrowserState,
@@ -21,7 +22,10 @@ function makeSkillTool() {
     label: "Skill",
     description: "Load a skill",
     parameters: Type.Object({ name: Type.String() }),
-    execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
+    execute: async () => ({
+      content: [{ type: "text" as const, text: "ok" }],
+      details: {},
+    }),
   };
 }
 
@@ -303,37 +307,40 @@ describe("buildMcpServers", () => {
     const toolRegistry = new ToolRegistry(registry);
 
     registry.register({
-      name: "mcp_demo",
+      name: mcpDriverName("demo"),
       description: "Demo MCP",
       source: "mcp",
       tools: [
         {
-          name: "mcp_demo_ping",
+          name: mcpToolName("demo", "ping"),
           label: "demo: ping",
           description: "Ping the demo server",
           parameters: Type.Object({}),
-          execute: async () => ({ content: [] }),
+          execute: async () => ({ content: [], details: {} }),
         },
         {
-          name: "mcp_demo_search",
+          name: mcpToolName("demo", "search"),
           label: "demo: search",
           description: "Search demo data",
           parameters: Type.Object({}),
-          execute: async () => ({ content: [] }),
+          execute: async () => ({ content: [], details: {} }),
         },
         {
-          name: "mcp_demo_delete",
+          name: mcpToolName("demo", "delete"),
           label: "demo: delete",
           description: "Delete demo data",
           parameters: Type.Object({}),
-          execute: async () => ({ content: [] }),
+          execute: async () => ({ content: [], details: {} }),
         },
       ],
     });
     registry.register(makeDiscoveryDriver(toolRegistry));
 
-    toolRegistry.initialize(makeSkillTool(), new Set(["mcp_demo_ping"]));
-    toolRegistry.markAsDiscovered(["mcp_demo_search"]);
+    toolRegistry.initialize(
+      makeSkillTool(),
+      new Set([mcpToolName("demo", "ping")]),
+    );
+    toolRegistry.markAsDiscovered([mcpToolName("demo", "search")]);
 
     const states: MCPServerState[] = [
       {
@@ -352,13 +359,22 @@ describe("buildMcpServers", () => {
     expect(servers[0]).toMatchObject({
       name: "demo",
       description: "Demo server",
-      status: "connected",
+      status: "connected" as const,
       toolCount: 3,
     });
     expect(servers[0].tools).toEqual([
-      expect.objectContaining({ name: "mcp_demo_ping", state: "loaded" }),
-      expect.objectContaining({ name: "mcp_demo_search", state: "loaded" }),
-      expect.objectContaining({ name: "mcp_demo_delete", state: "discoverable" }),
+      expect.objectContaining({
+        name: mcpToolName("demo", "ping"),
+        state: "loaded",
+      }),
+      expect.objectContaining({
+        name: mcpToolName("demo", "search"),
+        state: "loaded",
+      }),
+      expect.objectContaining({
+        name: mcpToolName("demo", "delete"),
+        state: "discoverable",
+      }),
     ]);
   });
 
@@ -394,7 +410,7 @@ describe("buildMcpServers", () => {
     const server = {
       name: "demo",
       description: "Demo server",
-      status: "connected",
+      status: "connected" as const,
       toolCount: 12,
       tools: Array.from({ length: 12 }, (_, index) => ({
         name: `mcp_demo_tool_${index}`,

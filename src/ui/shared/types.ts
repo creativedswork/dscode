@@ -122,10 +122,26 @@ export interface FileListItem {
 
 // ── Tool calls ──
 
+export interface ToolResultRef {
+  owner: "session" | "agent-process";
+  ownerId: string;
+  toolCallId: string;
+}
+
+export interface ToolResultProjection {
+  summary: string;
+  text?: string;
+  ref?: ToolResultRef;
+  charCount?: number;
+  lineCount?: number;
+}
+
 export interface ToolCallEntry {
+  toolCallId: string;
   name: string;
   args: string;
   result: string;
+  resultDetail?: ToolResultProjection;
   isError: boolean;
   images?: ImageAttachment[];
   mcpApp?: McpAppInfo;
@@ -163,7 +179,9 @@ export interface AgentToolActivity {
   toolCallId: string;
   name: string;
   status: AgentToolActivityState;
+  args?: string;
   summary?: string;
+  resultDetail?: ToolResultProjection;
   startedAt: number;
   endedAt?: number;
   isError?: boolean;
@@ -196,6 +214,7 @@ export interface AgentActivity {
 }
 
 export interface ConversationMessage {
+  id?: string;
   role: "user" | "assistant" | "system" | "agent";
   content: string;
   thinking?: string;
@@ -334,15 +353,15 @@ export type ClientCommand =
 export type ServerEvent =
   | { type: "ready"; model: string; config: ConfigData; messages: ConversationMessage[] }
   | { type: "agent_activity"; activity: AgentActivity }
-  | { type: "user_message"; text: string; images?: ImageAttachment[] }
-  | { type: "assistant_start" }
-  | { type: "thinking_delta"; delta: string }
-  | { type: "text_delta"; delta: string }
-  | { type: "tool_start"; name: string; args: unknown }
-  | { type: "tool_progress"; name: string; progress: number; total?: number; message?: string }
+  | { type: "user_message"; text: string; images?: ImageAttachment[]; createdAt?: number }
+  | { type: "assistant_start"; messageId?: string; createdAt?: number }
+  | { type: "thinking_delta"; delta: string; createdAt?: number }
+  | { type: "text_delta"; delta: string; createdAt?: number }
+  | { type: "tool_start"; toolCallId: string; name: string; args: unknown; createdAt?: number }
+  | { type: "tool_progress"; toolCallId?: string; name: string; progress: number; total?: number; message?: string }
   | { type: "context_window"; total: number; used: number; free: number; categories: { system: number; rules: number; user: number; thinking: number; readwrite: number; edit: number; shell: number; skill: number; mcp: number; other: number } }
 
-  | { type: "tool_end"; name: string; result: string; isError: boolean; images?: ImageAttachment[] }
+  | { type: "tool_end"; toolCallId: string; name: string; result: string; resultDetail?: ToolResultProjection; isError: boolean; images?: ImageAttachment[] }
   | { type: "assistant_end" }
   | { type: "info"; text: string; display: "toast" | "panel" }
   | { type: "warning"; text: string }
@@ -370,7 +389,7 @@ export type ServerEvent =
   | { type: "skill_state"; skills: SkillInfo[] }
   | { type: "model"; name: string }
   | { type: "slash_result"; text: string }
-  | { type: "mcp_app"; app: McpAppInfo }
+  | { type: "mcp_app"; app: McpAppInfo; toolCallId?: string }
   | { type: "clear_conversation" }
   | { type: "file_list_result"; prefix: string; items: FileListItem[] }
   | { type: "processing"; processing: boolean }

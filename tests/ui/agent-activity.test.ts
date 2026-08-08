@@ -178,9 +178,13 @@ describe("Web Agent Activity projection", () => {
         executionId: process.agentId,
         toolCallId,
         toolName,
+        args: `path=${toolCallId}`,
         startedAt,
         endedAt,
         isError: false,
+        resultDetail: status === "completed"
+          ? { summary: `${toolCallId} result`, text: `${toolCallId} result` }
+          : undefined,
       },
     });
 
@@ -196,6 +200,11 @@ describe("Web Agent Activity projection", () => {
         toolCallId: "call-1",
         name: "read_file",
         status: "completed",
+        args: "path=call-1",
+        resultDetail: {
+          summary: "call-1 result",
+          text: "call-1 result",
+        },
         endedAt: 1400,
       }),
       expect.objectContaining({
@@ -269,6 +278,49 @@ describe("Web Agent Activity projection", () => {
         }),
       ],
     });
+  });
+
+  it("projects failed Tool error detail onto the matching activity", () => {
+    const process = processFixture({ state: "running", startedAt: 1100 });
+    const { events, broadcast } = setup(process);
+    events.emit({
+      type: "agent:progress",
+      agentId: process.agentId,
+      phase: "tool",
+      details: {
+        kind: "tool",
+        status: "running",
+        toolCallId: "call-failed",
+        toolName: "bash",
+        args: "command=false",
+        startedAt: 1200,
+      },
+    });
+    events.emit({
+      type: "agent:progress",
+      agentId: process.agentId,
+      phase: "model",
+      details: {
+        kind: "tool",
+        status: "failed",
+        toolCallId: "call-failed",
+        toolName: "bash",
+        startedAt: 1200,
+        endedAt: 1300,
+        isError: true,
+        resultDetail: { summary: "exit 1", text: "exit 1" },
+      },
+    });
+
+    expect(agentActivities(broadcast).at(-1)?.activity.tools).toEqual([
+      expect.objectContaining({
+        toolCallId: "call-failed",
+        status: "failed",
+        args: "command=false",
+        isError: true,
+        resultDetail: { summary: "exit 1", text: "exit 1" },
+      }),
+    ]);
   });
 
   it("preserves SubAgent identity in the Web permission prompt", async () => {

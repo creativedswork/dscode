@@ -1,4 +1,9 @@
-## ADDED Requirements
+# shared-permission-model Specification
+
+## Purpose
+Define canonical permission request, decision, and option types shared by terminal and Web interfaces.
+
+## Requirements
 
 ### Requirement: Canonical PermissionPrompt type
 The shared module SHALL define a canonical `PermissionPrompt` type representing an active permission request from the server.
@@ -6,6 +11,7 @@ The shared module SHALL define a canonical `PermissionPrompt` type representing 
 #### Scenario: Permission prompt fields
 - **WHEN** a permission prompt is active
 - **THEN** the `PermissionPrompt` has `toolName: string` and `preview: string`
+- **AND** it MAY include `agentId` and `toolCallId` for execution-scoped rendering
 
 ### Requirement: Canonical PermissionDecision type
 The shared module SHALL define a canonical `PermissionDecision` type as the union `"allow" | "deny" | "ask"`.

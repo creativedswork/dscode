@@ -192,6 +192,7 @@ export function App() {
       }
       case "user_message":
       case "agent_activity":
+      case "assistant_start":
       case "thinking_delta":
       case "text_delta":
       case "tool_progress":
@@ -206,8 +207,6 @@ export function App() {
       case "clear_conversation":
         setMessages((prev) => conversationReducer(prev, event));
         setPermissionPrompt(null);
-        break;
-      case "assistant_start":
         break;
       case "info": {
         const txt = event.text;

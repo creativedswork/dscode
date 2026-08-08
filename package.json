@@ -1,6 +1,6 @@
 {
   "name": "@creative-dswork/dscode",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "description": "DeepSeek-native terminal AI agent for digital work — DeepSeek model harness analogous to Claude Code for Claude models.",

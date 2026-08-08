@@ -1,0 +1,1302 @@
+<!DOCTYPE html>
+<!--
+  Change: redesign-tui-conversation-interaction
+  Date: 2026-08-07
+  Descriptor: conversation-focus-and-activity-inspector
+-->
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DSCode TUI Conversation Interaction Redesign</title>
+<style>
+  :root {
+    --color-bg: #f8f7f5;
+    --color-surface: #f3f2ef;
+    --color-surface-hover: #ebe9e5;
+    --color-border: #e6e4e0;
+    --color-text: #2d2a26;
+    --color-text-muted: #8a8580;
+    --color-text-secondary: #6b6560;
+    --color-accent: #b87503;
+    --color-accent-hover: #946002;
+    --color-accent-bg: rgba(184, 117, 3, 0.12);
+    --color-success: #edf4ed;
+    --color-success-text: #347539;
+    --color-error: #fdebec;
+    --color-error-text: #9f2f2d;
+    --color-warning: #fbf3db;
+    --color-warning-text: #8a6500;
+    --terminal-bg: #252932;
+    --terminal-surface: #2d323c;
+    --terminal-surface-strong: #343a45;
+    --terminal-border: #545c68;
+    --terminal-text: #d8dce4;
+    --terminal-muted: #929aa8;
+    --terminal-faint: #6e7683;
+    --terminal-accent: #83c6bd;
+    --terminal-main: #c69ac8;
+    --terminal-success: #8fc59a;
+    --terminal-warning: #d5b76e;
+    --terminal-error: #e38d8d;
+    --font-sans: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-mono: "Geist Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  body.dark {
+    --color-bg: #1e1c19;
+    --color-surface: #282622;
+    --color-surface-hover: #322e2a;
+    --color-border: #3a3732;
+    --color-text: #e8e4dd;
+    --color-text-muted: #8a8580;
+    --color-text-secondary: #9a9590;
+    --color-accent: #c98605;
+    --color-accent-hover: #e5a50a;
+    --color-accent-bg: rgba(201, 134, 5, 0.15);
+    --color-success: #1a2e1a;
+    --color-success-text: #5ca860;
+    --color-error: #3a1a1a;
+    --color-error-text: #e05553;
+    --color-warning: #3a2e10;
+    --color-warning-text: #d5a72a;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { min-height: 100%; margin: 0; }
+  body {
+    padding: 26px;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+  }
+
+  button { font: inherit; }
+  button:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  .page {
+    width: min(1240px, 100%);
+    margin: 0 auto;
+  }
+
+  .header {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 24px;
+    align-items: start;
+    margin-bottom: 18px;
+  }
+
+  .eyebrow {
+    color: var(--color-accent);
+    font: 700 10px/1 var(--font-mono);
+    letter-spacing: .09em;
+    text-transform: uppercase;
+  }
+
+  h1 {
+    margin: 8px 0 6px;
+    font-size: 25px;
+    letter-spacing: -.025em;
+  }
+
+  .intro {
+    max-width: 760px;
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: 13px;
+    line-height: 1.65;
+  }
+
+  .controls {
+    display: flex;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-width: 520px;
+  }
+
+  .control {
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    padding: 7px 10px;
+    background: var(--color-surface);
+    color: var(--color-text-secondary);
+    font: 600 10px/1 var(--font-mono);
+    cursor: pointer;
+  }
+
+  .control:hover { background: var(--color-surface-hover); }
+  .control.active {
+    border-color: var(--color-accent);
+    background: var(--color-accent-bg);
+    color: var(--color-accent);
+  }
+
+  .principles {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+
+  .principle {
+    min-height: 70px;
+    padding: 11px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-surface);
+    color: var(--color-text-secondary);
+    font-size: 11px;
+    line-height: 1.5;
+  }
+
+  .principle strong {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--color-text);
+    font-size: 11px;
+  }
+
+  .terminal-shell {
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--terminal-bg);
+  }
+
+  .terminal-head {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    padding: 0 13px;
+    border-bottom: 1px solid #3b414c;
+    background: #20242c;
+    color: var(--terminal-muted);
+    font: 10px var(--font-mono);
+  }
+
+  .terminal-head i {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #555c68;
+  }
+
+  .terminal-head .title { margin-left: 4px; }
+  .terminal-head .mode {
+    margin-left: auto;
+    color: var(--terminal-accent);
+  }
+
+  .terminal-stage {
+    display: flex;
+    justify-content: center;
+    padding: 0;
+    background: #20242c;
+  }
+
+  .terminal-screen {
+    position: relative;
+    width: 100%;
+    height: 690px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--terminal-bg);
+    color: var(--terminal-text);
+    font: 12px/1.5 var(--font-mono);
+    transition: width .18s ease;
+  }
+
+  .terminal-shell.cols-80 .terminal-screen {
+    width: 760px;
+  }
+
+  .transcript {
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+    padding: 18px 22px 10px;
+  }
+
+  .turn {
+    display: grid;
+    gap: 11px;
+  }
+
+  .turn-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--terminal-faint);
+    font-size: 10px;
+  }
+
+  .turn-meta::after {
+    content: "";
+    flex: 1;
+    border-top: 1px solid #3b414c;
+  }
+
+  .line {
+    display: grid;
+    grid-template-columns: 78px minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .actor {
+    color: var(--terminal-main);
+    font-weight: 700;
+  }
+
+  .actor.you { color: var(--terminal-success); }
+
+  .content {
+    min-width: 0;
+    display: grid;
+    gap: 7px;
+  }
+
+  .phase {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    color: var(--terminal-muted);
+  }
+
+  .phase .mark {
+    width: 12px;
+    color: var(--terminal-faint);
+    text-align: center;
+  }
+
+  .phase .summary {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .phase .meta {
+    margin-left: auto;
+    color: var(--terminal-faint);
+    font-size: 10px;
+  }
+
+  .phase.active .mark,
+  .phase.active .label { color: var(--terminal-accent); }
+
+  .tool-stack {
+    display: grid;
+    gap: 3px;
+    padding-left: 19px;
+  }
+
+  .tool-line {
+    display: grid;
+    grid-template-columns: 14px 92px minmax(0, 1fr) auto;
+    gap: 7px;
+    color: var(--terminal-muted);
+  }
+
+  .tool-line .name { color: var(--terminal-accent); }
+  .tool-line .detail {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tool-line .state { color: var(--terminal-faint); }
+  .tool-line.running .icon,
+  .tool-line.running .state { color: var(--terminal-warning); }
+  .tool-line.failed .icon,
+  .tool-line.failed .state { color: var(--terminal-error); }
+
+  .delegation {
+    margin: 3px 0 1px 88px;
+    color: var(--terminal-faint);
+    font-size: 10px;
+    letter-spacing: .02em;
+  }
+
+  .agent-card {
+    position: static;
+    margin-left: 88px;
+    border: 1px solid var(--terminal-border);
+    border-left: 3px solid var(--terminal-accent);
+    border-radius: 7px;
+    background: rgba(255,255,255,.018);
+  }
+
+  .agent-card.selected {
+    border-color: var(--terminal-accent);
+    border-left-color: var(--terminal-accent);
+    background: rgba(131,198,189,.05);
+  }
+
+  .agent-card.permission-owner {
+    border-color: var(--terminal-warning);
+    border-left-color: var(--terminal-warning);
+  }
+
+  .agent-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    padding: 8px 10px;
+    border-bottom: 1px solid #454c57;
+  }
+
+  .agent-symbol { color: var(--terminal-accent); }
+  .agent-card.permission-owner .agent-symbol { color: var(--terminal-warning); }
+  .agent-name { color: var(--terminal-accent); font-weight: 700; }
+  .agent-card.permission-owner .agent-name { color: var(--terminal-warning); }
+  .agent-state { color: var(--terminal-muted); font-size: 10px; }
+
+  .agent-body {
+    display: grid;
+    gap: 7px;
+    padding: 9px 10px 10px;
+  }
+
+  .agent-task {
+    color: var(--terminal-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .agent-tools {
+    display: grid;
+    gap: 3px;
+  }
+
+  .agent-tool {
+    display: grid;
+    grid-template-columns: 14px 92px minmax(0, 1fr) auto;
+    gap: 7px;
+    color: var(--terminal-muted);
+  }
+
+  .agent-tool .name { color: var(--terminal-accent); }
+  .agent-tool .detail {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .agent-tool.permission .icon,
+  .agent-tool.permission .name,
+  .agent-tool.permission .state { color: var(--terminal-warning); }
+
+  .agent-footer {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    color: var(--terminal-faint);
+    font-size: 10px;
+  }
+
+  .agent-footer .inspect-hint { color: var(--terminal-accent); }
+
+  .response {
+    color: var(--terminal-text);
+    white-space: pre-wrap;
+  }
+
+  .activity-strip {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 32px;
+    padding: 6px 22px;
+    border-top: 1px solid #3b414c;
+    color: var(--terminal-muted);
+    background: #232730;
+  }
+
+  .activity-strip .pulse {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--terminal-accent);
+  }
+
+  .activity-strip .shortcut {
+    margin-left: auto;
+    color: var(--terminal-accent);
+  }
+
+  .composer {
+    min-height: 66px;
+    padding: 9px 14px 11px;
+    border-top: 1px solid #3b414c;
+    background: #20242c;
+  }
+
+  .composer-box {
+    min-height: 42px;
+    display: flex;
+    align-items: flex-start;
+    gap: 9px;
+    padding: 10px 11px;
+    border: 1px solid var(--terminal-border);
+    border-radius: 6px;
+    color: var(--terminal-muted);
+    background: var(--terminal-bg);
+  }
+
+  .cursor {
+    width: 7px;
+    height: 14px;
+    margin-top: 1px;
+    background: var(--terminal-text);
+  }
+
+  .focus-panel {
+    position: absolute;
+    z-index: 3;
+    top: 48px;
+    right: 18px;
+    width: 520px;
+    max-height: 540px;
+    display: none;
+    overflow: hidden;
+    border: 1px solid var(--terminal-accent);
+    border-radius: 8px;
+    background: var(--terminal-surface);
+  }
+
+  .mode-inspect #inspectorPanel,
+  .mode-output #outputPanel,
+  .mode-permission #permissionPanel { display: block; }
+
+  .focus-panel.permission-panel {
+    border-color: var(--terminal-warning);
+  }
+
+  .panel-head {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 12px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--terminal-border);
+    background: var(--terminal-surface-strong);
+  }
+
+  .panel-title {
+    color: var(--terminal-text);
+    font-weight: 700;
+  }
+
+  .panel-breadcrumb {
+    margin-top: 2px;
+    color: var(--terminal-muted);
+    font-size: 10px;
+  }
+
+  .panel-mode {
+    color: var(--terminal-accent);
+    font-size: 10px;
+  }
+
+  .permission-panel .panel-mode { color: var(--terminal-warning); }
+
+  .panel-body {
+    display: grid;
+    gap: 9px;
+    padding: 11px 12px;
+  }
+
+  .nav-list {
+    display: grid;
+    gap: 2px;
+    padding-bottom: 9px;
+    border-bottom: 1px solid var(--terminal-border);
+  }
+
+  .nav-row {
+    display: grid;
+    grid-template-columns: 16px 100px minmax(0, 1fr) auto;
+    gap: 7px;
+    padding: 4px 6px;
+    color: var(--terminal-muted);
+  }
+
+  .nav-row.current {
+    background: rgba(131,198,189,.08);
+    color: var(--terminal-text);
+  }
+
+  .nav-row.current .nav-icon,
+  .nav-row.current .nav-label { color: var(--terminal-accent); }
+
+  .detail-label {
+    color: var(--terminal-faint);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+  }
+
+  .detail-block {
+    padding: 8px 9px;
+    border-left: 2px solid var(--terminal-accent);
+    background: rgba(0,0,0,.08);
+    color: var(--terminal-text);
+    white-space: pre-wrap;
+  }
+
+  .output-viewport {
+    height: 286px;
+    overflow: hidden;
+    padding: 9px 10px;
+    border: 1px solid var(--terminal-border);
+    border-radius: 6px;
+    background: #20242c;
+    color: var(--terminal-text);
+  }
+
+  .output-line {
+    display: grid;
+    grid-template-columns: 34px minmax(0, 1fr);
+    gap: 9px;
+    min-height: 18px;
+  }
+
+  .output-line .number {
+    color: var(--terminal-faint);
+    text-align: right;
+    user-select: none;
+  }
+
+  .output-line .code {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: pre;
+  }
+
+  .output-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    color: var(--terminal-muted);
+    font-size: 10px;
+  }
+
+  .output-actions {
+    display: flex;
+    gap: 6px;
+  }
+
+  .mini-button {
+    border: 1px solid var(--terminal-border);
+    border-radius: 5px;
+    padding: 4px 7px;
+    background: transparent;
+    color: var(--terminal-text);
+    font: 10px var(--font-mono);
+    cursor: pointer;
+  }
+
+  .mini-button:hover { background: rgba(255,255,255,.04); }
+
+  .permission-context {
+    display: grid;
+    gap: 6px;
+    padding: 9px 10px;
+    border-left: 2px solid var(--terminal-warning);
+    background: rgba(213,183,110,.06);
+  }
+
+  .permission-owner-label { color: var(--terminal-warning); }
+  .command {
+    padding: 7px 8px;
+    border: 1px solid var(--terminal-border);
+    border-radius: 5px;
+    background: #20242c;
+    color: var(--terminal-text);
+  }
+
+  .permission-options {
+    display: grid;
+    gap: 3px;
+  }
+
+  .permission-option {
+    display: grid;
+    grid-template-columns: 18px 24px minmax(0, 1fr);
+    gap: 7px;
+    padding: 6px 8px;
+    color: var(--terminal-muted);
+  }
+
+  .permission-option.selected {
+    background: rgba(213,183,110,.08);
+    color: var(--terminal-text);
+  }
+
+  .permission-option.selected .option-arrow,
+  .permission-option.selected .option-key { color: var(--terminal-warning); }
+
+  .panel-help {
+    padding-top: 8px;
+    border-top: 1px solid var(--terminal-border);
+    color: var(--terminal-muted);
+    font-size: 10px;
+  }
+
+  .mode-inspect .transcript,
+  .mode-output .transcript { opacity: .34; }
+
+  .mode-permission::before {
+    content: "";
+    position: absolute;
+    z-index: 2;
+    inset: 0;
+    background: rgba(37,41,50,.72);
+    pointer-events: none;
+  }
+
+  .mode-permission #permissionPanel {
+    z-index: 4;
+  }
+
+  .terminal-shell.cols-80 .focus-panel {
+    top: 18px;
+    right: 18px;
+    left: 18px;
+    width: auto;
+  }
+
+  .terminal-shell.cols-80 .line {
+    grid-template-columns: 64px minmax(0, 1fr);
+  }
+
+  .terminal-shell.cols-80 .delegation,
+  .terminal-shell.cols-80 .agent-card {
+    margin-left: 74px;
+  }
+
+  .terminal-shell.cols-80 .tool-line,
+  .terminal-shell.cols-80 .agent-tool {
+    grid-template-columns: 14px 80px minmax(0, 1fr);
+  }
+
+  .terminal-shell.cols-80 .tool-line .state,
+  .terminal-shell.cols-80 .agent-tool .state,
+  .terminal-shell.cols-80 .phase .meta {
+    display: none;
+  }
+
+  .notes {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 18px;
+  }
+
+  .note {
+    padding: 13px 14px;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-surface);
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    line-height: 1.62;
+  }
+
+  .note strong {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--color-text);
+  }
+
+  .note code {
+    color: var(--color-accent);
+    font: 11px var(--font-mono);
+  }
+
+  @media (max-width: 900px) {
+    body { padding: 14px; }
+    .header { grid-template-columns: 1fr; }
+    .controls { justify-content: flex-start; max-width: none; }
+    .principles, .notes { grid-template-columns: 1fr 1fr; }
+  }
+
+  @media (max-width: 650px) {
+    .principles, .notes { grid-template-columns: 1fr; }
+    .transcript { padding-inline: 13px; }
+    .line { grid-template-columns: 1fr; gap: 3px; }
+    .delegation, .agent-card { margin-left: 0; }
+    .focus-panel { inset: 14px 10px auto; width: auto; }
+  }
+</style>
+</head>
+<body class="dark">
+<main class="page">
+  <header class="header">
+    <div>
+      <div class="eyebrow">TUI conversation redesign</div>
+      <h1>Chat 保持安静，Activity 进入可聚焦的 Inspector</h1>
+      <p class="intro">WebUI 与 TUI 共享同一份 Conversation/Execution 数据和 disclosure 语义；终端不再依靠三个全局快捷键猜测目标，而是用单一入口切换到具备稳定焦点、局部键盘路由和可滚动详情的检查模式。</p>
+    </div>
+    <div class="controls" aria-label="Prototype controls">
+      <button class="control mode active" data-mode="chat">Chat</button>
+      <button class="control mode" data-mode="inspect">Inspector</button>
+      <button class="control mode" data-mode="output">Long output</button>
+      <button class="control mode" data-mode="permission">Permission</button>
+      <button class="control mode" data-mode="completed">Completed</button>
+      <button class="control mode" data-mode="error">Error</button>
+      <button class="control" id="widthButton">80 cols</button>
+      <button class="control active" id="themeButton">Dark</button>
+    </div>
+  </header>
+
+  <section class="principles" aria-label="Design principles">
+    <div class="principle"><strong>一个入口，一个焦点</strong><code>Ctrl+E</code> 打开 Activity Inspector；<code>Tab / Shift+Tab</code> 切换，Enter 激活当前项。</div>
+    <div class="principle"><strong>输入优先</strong>Chat 模式下 Editor 拥有常规按键，移除全局 <code>Ctrl+R/O/N</code> 劫持。</div>
+    <div class="principle"><strong>摘要不是删除</strong>对话只展示 Tool 摘要；Inspector 使用 viewport 浏览完整结果，不再二次截断为 120 字符。</div>
+    <div class="principle"><strong>审批绑定 owner</strong>Permission 以所属 Agent/Tool Card 的聚焦态出现，并强制接管输入直到解决。</div>
+  </section>
+
+  <section class="terminal-shell" id="terminal">
+    <div class="terminal-head">
+      <i></i><i></i><i></i>
+      <span class="title">dscode · xiaohongshu-visual-post</span>
+      <span class="mode" id="terminalMode">CHAT · editor focus</span>
+    </div>
+
+    <div class="terminal-stage">
+      <div class="terminal-screen mode-chat" id="screen">
+        <div class="transcript">
+          <div class="turn">
+            <div class="turn-meta">Turn 12 · 17s · 126k input · 373 output</div>
+
+            <div class="line">
+              <span class="actor you">you ›</span>
+              <div class="content">按 Skill 流程核实 MemGPT 论文事实，并生成小红书视觉稿。</div>
+            </div>
+
+            <div class="line">
+              <span class="actor">dscode ›</span>
+              <div class="content">
+                <div class="phase">
+                  <span class="mark">›</span>
+                  <span class="label">Thought for 14s</span>
+                  <span class="summary">读取契约后采用 Researcher → Content → Visual 三阶段编排</span>
+                  <span class="meta">collapsed</span>
+                </div>
+
+                <div class="phase active">
+                  <span class="mark">⌄</span>
+                  <span class="label">Main tools</span>
+                  <span class="summary">5 total · 5 done</span>
+                  <span class="meta">summary only</span>
+                </div>
+                <div class="tool-stack">
+                  <div class="tool-line">
+                    <span class="icon">✓</span>
+                    <span class="name">read_file</span>
+                    <span class="detail">references/output-contract.md</span>
+                    <span class="state">11 lines · 8ms</span>
+                  </div>
+                  <div class="tool-line">
+                    <span class="icon">✓</span>
+                    <span class="name">read_file</span>
+                    <span class="detail">references/card-html-example.html</span>
+                    <span class="state">173 lines · 12ms</span>
+                  </div>
+                  <div class="tool-line">
+                    <span class="icon">✓</span>
+                    <span class="name">read_file</span>
+                    <span class="detail">assets/post-template.md</span>
+                    <span class="state">10 lines · 7ms</span>
+                  </div>
+                </div>
+
+                <div class="response">参考文件已读取。Researcher 正在核实论文事实，完成后 Main 会继续内容和视觉阶段。</div>
+              </div>
+            </div>
+
+            <div class="delegation">DELEGATED EXECUTION · 1 ACTIVE</div>
+
+            <article class="agent-card selected" id="researcherCard">
+              <div class="agent-head">
+                <span class="agent-symbol" id="agentSymbol">◆</span>
+                <span class="agent-name">Researcher</span>
+                <span class="agent-state" id="agentState">running · foreground · 23s</span>
+              </div>
+              <div class="agent-body">
+                <div class="agent-task">核实 MemGPT 论文关键事实，并产出结构化研究摘要</div>
+                <div class="agent-tools">
+                  <div class="agent-tool">
+                    <span class="icon">✓</span>
+                    <span class="name">web_search</span>
+                    <span class="detail">MemGPT paper architecture and evaluation</span>
+                    <span class="state">done</span>
+                  </div>
+                  <div class="agent-tool" id="agentActiveTool">
+                    <span class="icon" id="agentToolIcon">◌</span>
+                    <span class="name">bash</span>
+                    <span class="detail">write .work/research.md</span>
+                    <span class="state" id="agentToolState">running · 8s</span>
+                  </div>
+                </div>
+                <div class="agent-footer">
+                  <span id="agentFooter">2 tools · 1 done · 1 active</span>
+                  <span class="inspect-hint">Ctrl+E inspect</span>
+                </div>
+              </div>
+
+              <section class="focus-panel permission-panel" id="permissionPanel" aria-label="SubAgent permission">
+                <div class="panel-head">
+                  <div>
+                    <div class="panel-title">Permission required</div>
+                    <div class="panel-breadcrumb">Turn 12 › Researcher › bash</div>
+                  </div>
+                  <span class="panel-mode">FOCUS LOCKED</span>
+                </div>
+                <div class="panel-body">
+                  <div class="permission-context">
+                    <span class="permission-owner-label">Researcher requests workspace write access</span>
+                    <span>Tool call <strong>bash</strong> will create the verified research artifact.</span>
+                    <span class="command">$ mkdir -p .work &amp;&amp; write .work/research.md</span>
+                  </div>
+                  <div class="permission-options">
+                    <div class="permission-option selected">
+                      <span class="option-arrow">›</span><span class="option-key">1</span><span>Allow once</span>
+                    </div>
+                    <div class="permission-option">
+                      <span class="option-arrow"></span><span class="option-key">2</span><span>Allow matching calls for this session</span>
+                    </div>
+                    <div class="permission-option">
+                      <span class="option-arrow"></span><span class="option-key">3</span><span>Save matching rule to settings</span>
+                    </div>
+                    <div class="permission-option">
+                      <span class="option-arrow"></span><span class="option-key">4</span><span>Send guidance instead</span>
+                    </div>
+                    <div class="permission-option">
+                      <span class="option-arrow"></span><span class="option-key">D</span><span>Deny this call</span>
+                    </div>
+                  </div>
+                  <div class="panel-help">1-4 direct action · Enter confirms Allow once · D deny · Editor paused</div>
+                </div>
+              </section>
+            </article>
+          </div>
+        </div>
+
+        <section class="focus-panel" id="inspectorPanel" aria-label="Activity inspector">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title">Activity Inspector</div>
+              <div class="panel-breadcrumb">Turn 12 · stable focus path</div>
+            </div>
+            <span class="panel-mode" id="inspectorPosition">4 / 6</span>
+          </div>
+          <div class="panel-body">
+            <div class="nav-list">
+              <div class="nav-row" data-inspector-item="thinking" data-kind="thinking">
+                <span class="nav-icon">›</span><span class="nav-label">Thinking</span><span>Thought for 14s</span><span>done</span>
+              </div>
+              <div class="nav-row" data-inspector-item="main-tools" data-kind="group">
+                <span class="nav-icon">⌄</span><span class="nav-label">Main tools</span><span>5 calls</span><span>done</span>
+              </div>
+              <div class="nav-row" data-inspector-item="read-file" data-kind="tool">
+                <span class="nav-icon"></span><span class="nav-label">read_file</span><span>card-html-example.html · 173 lines</span><span>done</span>
+              </div>
+              <div class="nav-row current" data-inspector-item="researcher" data-kind="agent">
+                <span class="nav-icon">◆</span><span class="nav-label">Researcher</span><span>bash · write research artifact</span><span>running</span>
+              </div>
+              <div class="nav-row" data-inspector-item="web-search" data-kind="tool">
+                <span class="nav-icon"></span><span class="nav-label">web_search</span><span>paper architecture and evaluation</span><span>done</span>
+              </div>
+              <div class="nav-row" data-inspector-item="bash" data-kind="tool">
+                <span class="nav-icon"></span><span class="nav-label">bash</span><span>write .work/research.md</span><span>active</span>
+              </div>
+            </div>
+            <div class="detail-label" id="inspectorDetailLabel">Selected execution</div>
+            <div class="detail-block" id="inspectorDetail">Researcher
+Task: verify MemGPT claims and preserve source links
+Context: fresh · Application: general · foreground
+Progress: writing the verified research artifact</div>
+            <div class="panel-help">Tab / Shift+Tab select · Enter open · ↑↓ or J/K auxiliary · Ctrl+E/Esc close</div>
+          </div>
+        </section>
+
+        <section class="focus-panel" id="outputPanel" aria-label="Tool output viewer">
+          <div class="panel-head">
+            <div>
+              <div class="panel-title" id="outputTitle">Tool output · read_file</div>
+              <div class="panel-breadcrumb" id="outputBreadcrumb">Turn 12 › Main › references/card-html-example.html</div>
+            </div>
+            <span class="panel-mode" id="outputRange">1-12 / 173</span>
+          </div>
+          <div class="panel-body">
+            <div class="output-viewport" id="outputViewport"></div>
+            <div class="output-meta">
+              <span id="outputMeta">Full result · 9.8 KB · no UI truncation</span>
+              <span>wrap off</span>
+            </div>
+            <div class="output-actions">
+              <button class="mini-button" id="outputPrev">PgUp</button>
+              <button class="mini-button" id="outputNext">PgDn</button>
+              <button class="mini-button" id="outputHome">Home</button>
+              <button class="mini-button" id="outputEnd">End</button>
+            </div>
+            <div class="panel-help">PgUp/PgDn scroll · Home/End jump · W wrap · Y copy · ← return to activity</div>
+          </div>
+        </section>
+
+        <div class="activity-strip">
+          <span class="pulse" id="statusPulse"></span>
+          <span id="statusText">Researcher › bash › running 8s</span>
+          <span class="shortcut" id="shortcutText">Ctrl+E Activity Inspector</span>
+        </div>
+
+        <div class="composer">
+          <div class="composer-box">
+            <span class="cursor"></span>
+            <span id="composerText">Message dscode…</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="notes">
+    <div class="note"><strong>共享数据，分离渲染。</strong>TUI 应直接消费 canonical <code>UIMessage[]</code> 和 reducer，不再维护第二套 mutable <code>ContentBlock</code>、<code>toolEntries</code> 与 replay 分支。</div>
+    <div class="note"><strong>Tool result 是可浏览资源。</strong>Event 和 Session 保留原始 result；summary、Markdown 和 viewport 都是派生展示。超大结果可落盘并通过 result reference 读取窗口。</div>
+    <div class="note"><strong>焦点属于组件。</strong><code>TuiApp</code> 只处理进入 Inspector、终止 Turn 等应用级命令。Inspector、Permission、Editor 各自实现 <code>handleInput</code> 和 focus lifecycle。</div>
+  </section>
+</main>
+
+<script>
+  const screen = document.getElementById("screen");
+  const terminal = document.getElementById("terminal");
+  const modeButtons = [...document.querySelectorAll(".control.mode")];
+  const terminalMode = document.getElementById("terminalMode");
+  const researcherCard = document.getElementById("researcherCard");
+  const agentSymbol = document.getElementById("agentSymbol");
+  const agentState = document.getElementById("agentState");
+  const agentActiveTool = document.getElementById("agentActiveTool");
+  const agentToolIcon = document.getElementById("agentToolIcon");
+  const agentToolState = document.getElementById("agentToolState");
+  const agentFooter = document.getElementById("agentFooter");
+  const statusPulse = document.getElementById("statusPulse");
+  const statusText = document.getElementById("statusText");
+  const shortcutText = document.getElementById("shortcutText");
+  const composerText = document.getElementById("composerText");
+  const inspectorRows = [...document.querySelectorAll("[data-inspector-item]")];
+  const inspectorPosition = document.getElementById("inspectorPosition");
+  const inspectorDetailLabel = document.getElementById("inspectorDetailLabel");
+  const inspectorDetail = document.getElementById("inspectorDetail");
+  let inspectorIndex = inspectorRows.findIndex((row) => row.dataset.inspectorItem === "researcher");
+  const inspectorExpanded = new Set(["main-tools"]);
+
+  const inspectorDetails = {
+    thinking: {
+      label: "Selected thinking",
+      collapsed: "Thought for 14s\nPress Enter to expand the retained reasoning.",
+      expanded: "Thinking\nRead the output contract and visual reference files.\nUse a fresh Researcher execution before content and visual work.\nKeep the Main transcript focused on orchestration and final delivery.",
+    },
+    "main-tools": {
+      label: "Selected execution tools",
+      collapsed: "Main tools · 5 calls · all completed",
+      expanded: "Main tools\nread_file · output-contract.md · 11 lines\nread_file · card-html-example.html · 173 lines\nread_file · post-template.md · 10 lines",
+    },
+    "read-file": {
+      label: "Selected tool",
+      collapsed: "read_file\nOwner: Main\nResult: 173 lines · 9.8 KB\nPress Enter to open the lossless output viewport.",
+    },
+    researcher: {
+      label: "Selected execution",
+      collapsed: "Researcher\nTask: verify MemGPT claims and preserve source links\nContext: fresh · Application: general · foreground\nProgress: writing the verified research artifact",
+      expanded: "Researcher\nTask: verify MemGPT claims and preserve source links\nContext: fresh · Application: general · foreground\nTools: 2 total · 1 done · 1 active\nProgress: writing the verified research artifact",
+    },
+    "web-search": {
+      label: "Selected SubAgent tool",
+      collapsed: "web_search\nOwner: Researcher\nStatus: completed\nSummary: paper architecture and evaluation",
+    },
+    bash: {
+      label: "Selected SubAgent tool",
+      collapsed: "bash\nOwner: Researcher\nStatus: running\nCommand: write .work/research.md",
+    },
+  };
+
+  const outputLines = Array.from({ length: 173 }, (_, index) => {
+    const line = index + 1;
+    const samples = [
+      '<section class="post-card">',
+      '  <header class="post-header">',
+      '    <span class="eyebrow">MEMGPT PAPER</span>',
+      '    <h1>让 Agent 拥有分层记忆</h1>',
+      '  </header>',
+      '  <div class="memory-diagram">',
+      '    <div class="memory-tier">Core Memory</div>',
+      '    <div class="memory-tier">Recall Memory</div>',
+      '    <div class="memory-tier">Archival Memory</div>',
+      '  </div>',
+      '</section>',
+      '',
+    ];
+    return samples[index % samples.length] + (line % 17 === 0 ? `  <!-- source line ${line} -->` : "");
+  });
+  let outputOffset = 0;
+  const outputPageSize = 12;
+
+  function renderOutput() {
+    const viewport = document.getElementById("outputViewport");
+    const visible = outputLines.slice(outputOffset, outputOffset + outputPageSize);
+    viewport.innerHTML = visible.map((line, index) => (
+      `<div class="output-line"><span class="number">${outputOffset + index + 1}</span><span class="code"></span></div>`
+    )).join("");
+    [...viewport.querySelectorAll(".code")].forEach((node, index) => {
+      node.textContent = visible[index];
+    });
+    document.getElementById("outputRange").textContent =
+      `${outputOffset + 1}-${Math.min(outputOffset + outputPageSize, outputLines.length)} / ${outputLines.length}`;
+  }
+
+  const modeCopy = {
+    chat: {
+      mode: "CHAT · editor focus",
+      status: "Researcher › bash › running 8s",
+      shortcut: "Ctrl+E Activity Inspector",
+      composer: "Message dscode…",
+    },
+    inspect: {
+      mode: "INSPECT · activity focus",
+      status: "Selected: Researcher › bash",
+      shortcut: "Tab/Shift+Tab select · Enter open · Esc close",
+      composer: "Editor preserved · Inspector owns input",
+    },
+    output: {
+      mode: "INSPECT · tool output focus",
+      status: "read_file › full output › lines 1-12 of 173",
+      shortcut: "PgUp/PgDn scroll · ← back",
+      composer: "Editor preserved · Output viewer owns input",
+    },
+    permission: {
+      mode: "PERMISSION · Researcher/bash",
+      status: "Researcher › bash › permission required",
+      shortcut: "1-4 direct action · Enter allow once · D deny",
+      composer: "Editor paused while approval is pending",
+    },
+    completed: {
+      mode: "CHAT · editor focus",
+      status: "Researcher completed · Main resumed",
+      shortcut: "Ctrl+E Activity Inspector",
+      composer: "Message dscode…",
+    },
+    error: {
+      mode: "CHAT · editor focus",
+      status: "Researcher › bash › failed",
+      shortcut: "Ctrl+E inspect error details",
+      composer: "Message dscode…",
+    },
+  };
+
+  function setMode(mode) {
+    screen.className = `terminal-screen mode-${mode}`;
+    terminalMode.textContent = modeCopy[mode].mode;
+    statusText.textContent = modeCopy[mode].status;
+    shortcutText.textContent = modeCopy[mode].shortcut;
+    composerText.textContent = modeCopy[mode].composer;
+    modeButtons.forEach((button) => {
+      button.classList.toggle("active", button.dataset.mode === mode);
+    });
+    if (mode === "inspect") {
+      renderInspectorSelection();
+    }
+
+    researcherCard.classList.toggle("permission-owner", mode === "permission");
+    researcherCard.classList.toggle("selected", mode === "inspect" || mode === "permission");
+    agentActiveTool.classList.toggle("permission", mode === "permission");
+
+    if (mode === "permission") {
+      agentSymbol.textContent = "◇";
+      agentState.textContent = "waiting · foreground · 29s";
+      agentToolIcon.textContent = "◇";
+      agentToolState.textContent = "permission";
+      agentFooter.textContent = "2 tools · 1 awaiting approval";
+      statusPulse.style.background = "var(--terminal-warning)";
+    } else if (mode === "completed") {
+      agentSymbol.textContent = "✓";
+      agentState.textContent = "completed · foreground · 41s";
+      agentToolIcon.textContent = "✓";
+      agentToolState.textContent = "done · 14s";
+      agentFooter.textContent = "2 tools · all completed";
+      statusPulse.style.background = "var(--terminal-success)";
+    } else if (mode === "error") {
+      agentSymbol.textContent = "✗";
+      agentState.textContent = "failed · foreground · 31s";
+      agentToolIcon.textContent = "✗";
+      agentToolState.textContent = "failed";
+      agentFooter.textContent = "2 tools · 1 failed";
+      statusPulse.style.background = "var(--terminal-error)";
+    } else {
+      agentSymbol.textContent = "◆";
+      agentState.textContent = "running · foreground · 23s";
+      agentToolIcon.textContent = "◌";
+      agentToolState.textContent = "running · 8s";
+      agentFooter.textContent = "2 tools · 1 done · 1 active";
+      statusPulse.style.background = "var(--terminal-accent)";
+    }
+  }
+
+  function renderInspectorSelection() {
+    inspectorRows.forEach((row, index) => {
+      row.classList.toggle("current", index === inspectorIndex);
+    });
+    const row = inspectorRows[inspectorIndex];
+    const id = row.dataset.inspectorItem;
+    const detail = inspectorDetails[id];
+    const expanded = inspectorExpanded.has(id);
+    inspectorPosition.textContent = `${inspectorIndex + 1} / ${inspectorRows.length}`;
+    inspectorDetailLabel.textContent = detail.label;
+    inspectorDetail.textContent = expanded && detail.expanded
+      ? detail.expanded
+      : detail.collapsed;
+    if (row.dataset.kind === "thinking" || row.dataset.kind === "group" || row.dataset.kind === "agent") {
+      row.querySelector(".nav-icon").textContent = expanded
+        ? "⌄"
+        : id === "researcher" ? "◆" : "›";
+    }
+    statusText.textContent = `Selected: ${row.querySelector(".nav-label").textContent}`;
+  }
+
+  function moveInspectorSelection(delta) {
+    inspectorIndex = (inspectorIndex + delta + inspectorRows.length) % inspectorRows.length;
+    renderInspectorSelection();
+  }
+
+  function activateInspectorSelection() {
+    const row = inspectorRows[inspectorIndex];
+    const id = row.dataset.inspectorItem;
+    if (id === "read-file") {
+      document.getElementById("outputTitle").textContent = "Tool output · read_file";
+      document.getElementById("outputBreadcrumb").textContent =
+        "Turn 12 › Main › references/card-html-example.html";
+      document.getElementById("outputMeta").textContent =
+        "Full result · 9.8 KB · no UI truncation";
+      outputOffset = 0;
+      renderOutput();
+      setMode("output");
+      return;
+    }
+    if (row.dataset.kind === "thinking" || row.dataset.kind === "group" || row.dataset.kind === "agent") {
+      if (inspectorExpanded.has(id)) {
+        inspectorExpanded.delete(id);
+      } else {
+        inspectorExpanded.add(id);
+      }
+      renderInspectorSelection();
+    }
+  }
+
+  modeButtons.forEach((button) => {
+    button.addEventListener("click", () => setMode(button.dataset.mode));
+  });
+
+  document.getElementById("widthButton").addEventListener("click", (event) => {
+    terminal.classList.toggle("cols-80");
+    event.currentTarget.classList.toggle("active", terminal.classList.contains("cols-80"));
+    event.currentTarget.textContent = terminal.classList.contains("cols-80") ? "120 cols" : "80 cols";
+  });
+
+  document.getElementById("themeButton").addEventListener("click", (event) => {
+    document.body.classList.toggle("dark");
+    const dark = document.body.classList.contains("dark");
+    event.currentTarget.classList.toggle("active", dark);
+    event.currentTarget.textContent = dark ? "Dark" : "Light";
+  });
+
+  document.getElementById("outputPrev").addEventListener("click", () => {
+    outputOffset = Math.max(0, outputOffset - outputPageSize);
+    renderOutput();
+  });
+  document.getElementById("outputNext").addEventListener("click", () => {
+    outputOffset = Math.min(outputLines.length - outputPageSize, outputOffset + outputPageSize);
+    renderOutput();
+  });
+  document.getElementById("outputHome").addEventListener("click", () => {
+    outputOffset = 0;
+    renderOutput();
+  });
+  document.getElementById("outputEnd").addEventListener("click", () => {
+    outputOffset = outputLines.length - outputPageSize;
+    renderOutput();
+  });
+
+  window.addEventListener("keydown", (event) => {
+    if (event.ctrlKey && event.key.toLowerCase() === "e") {
+      event.preventDefault();
+      setMode(screen.classList.contains("mode-chat") ? "inspect" : "chat");
+    }
+    if (event.key === "Escape" && !screen.classList.contains("mode-chat")) {
+      setMode("chat");
+    }
+    if (screen.classList.contains("mode-output")) {
+      if (event.key === "PageDown") {
+        event.preventDefault();
+        outputOffset = Math.min(outputLines.length - outputPageSize, outputOffset + outputPageSize);
+        renderOutput();
+      } else if (event.key === "PageUp") {
+        event.preventDefault();
+        outputOffset = Math.max(0, outputOffset - outputPageSize);
+        renderOutput();
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        setMode("inspect");
+      }
+      return;
+    }
+    if (screen.classList.contains("mode-inspect")) {
+      if (event.key === "Tab") {
+        event.preventDefault();
+        moveInspectorSelection(event.shiftKey ? -1 : 1);
+      } else if (event.key === "ArrowDown" || event.key.toLowerCase() === "j") {
+        event.preventDefault();
+        moveInspectorSelection(1);
+      } else if (event.key === "ArrowUp" || event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        moveInspectorSelection(-1);
+      } else if (event.key === "Enter" || event.key === "ArrowRight") {
+        event.preventDefault();
+        activateInspectorSelection();
+      } else if (event.key === "ArrowLeft") {
+        event.preventDefault();
+        const id = inspectorRows[inspectorIndex].dataset.inspectorItem;
+        inspectorExpanded.delete(id);
+        renderInspectorSelection();
+      }
+      return;
+    }
+    if (screen.classList.contains("mode-permission")) {
+      const key = event.key.toLowerCase();
+      if (event.key === "Enter" || ["1", "2", "3"].includes(key)) {
+        event.preventDefault();
+        setMode("completed");
+      } else if (key === "4") {
+        event.preventDefault();
+        setMode("chat");
+      } else if (key === "d") {
+        event.preventDefault();
+        setMode("error");
+      }
+    }
+  });
+
+  renderOutput();
+  setMode("chat");
+</script>
+</body>
+</html>

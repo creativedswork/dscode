@@ -235,6 +235,8 @@ Assistant messages SHALL render using the flat message layout system defined in 
 - **WHEN** a user message renders with role `user`
 - **THEN** it SHALL retain the existing bubble style with `data-collider="message-card"`
 - **AND** the bubble SHALL have `border-radius: 16px 16px 4px 16px` and `background: var(--color-user-bubble)`
+- **AND** it SHALL use `color: var(--color-user-bubble-text)` and a `1px solid var(--color-border)` boundary
+- **AND** the user-bubble tokens SHALL resolve to neutral surfaces rather than accent, warning, or error colors
 
 ### Requirement: Thinking block uses div instead of details
 The `ThinkingBlock` component SHALL render as a `<div class="thinking">` with a CSS left border rather than a `<details>` element. The thinking content SHALL be always visible.
@@ -656,8 +658,12 @@ MUST 遵循 editorial workshop design system，并与 user bubble、assistant me
 
 #### Scenario: Running Agent Card
 - **WHEN** role=agent 且 state 为 running
-- **THEN** 卡片显示活动状态点、Application、attachment、输入摘要和运行耗时
+- **THEN** 卡片显示活动状态点、委派角色 label、attachment、输入摘要和运行耗时
 - **AND** 使用 semantic CSS token，不使用硬编码颜色
+
+#### Scenario: Dynamic role hides internal Application
+- **WHEN** Researcher 角色由 general Application 执行
+- **THEN** 卡片标题显示 Researcher，不显示 general
 
 #### Scenario: Waiting Agent Card
 - **WHEN** Agent Activity state 为 waiting
@@ -670,6 +676,22 @@ MUST 遵循 editorial workshop design system，并与 user bubble、assistant me
 #### Scenario: Failed Agent Card
 - **WHEN** Agent Activity state 为 failed、terminated 或 killed
 - **THEN** 卡片使用 error 或 muted semantic token 显示终态及错误摘要
+
+### Requirement: SubAgent Permission 原位交互
+
+Web conversation SHALL 使用 `agentId` 和 `toolCallId` 将 SubAgent Permission prompt
+绑定到对应 Agent Activity Card。匹配的 Tool timeline SHALL 强制展开，Permission
+选项 SHALL 显示在对应 Tool 内，不得同时显示独立 Permission Card。Main Agent、
+旧协议或无法归属的 prompt SHALL 回退为独立 Permission Card。
+
+#### Scenario: SubAgent 等待 bash 授权
+- **WHEN** `permission_prompt.agentId` 匹配当前 Agent Activity 且 `toolCallId` 匹配 bash
+- **THEN** bash Tool 行内显示 Allow、Always Allow、Save、Explain 和 Deny
+- **AND** 对话流底部不再显示重复的独立 Permission Card
+
+#### Scenario: Main Agent 等待授权
+- **WHEN** `permission_prompt` 不包含可匹配的 `agentId` 或 `toolCallId`
+- **THEN** Web conversation 继续显示独立 Permission Card
 
 ### Requirement: Agent Card 折叠详情
 
@@ -714,4 +736,3 @@ collider 体系，但 MUST NOT 使用 assistant response 的 phase label。
 #### Scenario: Dashboard transition
 - **WHEN** Chat-to-Dashboard transition 扫描 conversation collider
 - **THEN** Agent Activity Card 作为独立 card collider 被处理
-

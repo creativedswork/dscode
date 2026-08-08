@@ -7,11 +7,15 @@ TBD - created by archiving change subagent-design-proposal. Update Purpose after
 
 系统 SHALL 使用 `AgentApplication` 表示 Agent 应用配置，而不是运行中的进程。每次启动 Application SHALL 创建独立 Agent 进程。
 
-AgentApplication MUST 包含 `name`、`description`、`systemPrompt` 和 `source`，并 MAY 包含 `tools`、`disallowedTools`、`model`、`effort`、`permissionMode`、`mcpServers`、`hooks`、`maxTurns`、`skills`、`initialPrompt`、`memory`、`background`、`isolation`、`color`、`fallback`。
+AgentApplication MUST 包含 `name`、`description`、`systemPrompt` 和 `source`，并 MAY 包含 `tools`、`disallowedTools`、`model`、`effort`、`permissionMode`、`mcpServers`、`hooks`、`maxTurns`、`skills`、`initialPrompt`、`memory`、`background`、`isolation`、`color`、`fallback`。`background` SHALL 表示用户配置的缺省调度方式，并 MAY 被单次启动的显式参数覆盖。
 
 #### Scenario: 同一 Application 启动多个进程
 - **WHEN** Main Agent 连续两次启动 `explore` Application
 - **THEN** 系统创建两个拥有不同 agentId、共享同一 Application 配置的 Agent 进程
+
+#### Scenario: Application 配置后台默认值
+- **WHEN** Agent.md 声明 `background: true` 且启动调用未显式覆盖
+- **THEN** 系统按用户配置将新进程作为 background 启动
 
 ### Requirement: Markdown Application 配置
 
@@ -81,17 +85,24 @@ AgentApplication MUST 包含 `name`、`description`、`systemPrompt` 和 `source
 
 ### Requirement: Bundled Application 必须文件化
 
-系统 SHALL 通过 `resources/agents/vision.md` 提供 Vision Bundled Application。`bundled` SHALL 只表示随 dscode 发行的来源，Bundled Agent.md MUST NOT 放在 `src/`。
+系统 SHALL 通过 `resources/agents/vision.md` 提供 Vision Bundled Application，并 SHALL 通过
+`resources/agents/general.md` 提供通用 Bundled Application。`bundled` SHALL 只表示随 dscode
+发行的来源，Bundled Agent.md MUST NOT 放在 `src/`。
 
-系统 MUST NOT 在 TypeScript 中硬编码 Vision Application 的 systemPrompt。Main、general、explore、plan 和 reviewer 不属于本变更的 Bundled Agent.md 范围。
+系统 MUST NOT 在 TypeScript 中硬编码 Vision 或 general Application 的 systemPrompt。Main、
+explore、plan 和 reviewer 不属于本变更的 Bundled Agent.md 范围。
 
 #### Scenario: Vision 使用声明式配置
 - **WHEN** Main Agent 启动 `vision`
 - **THEN** 该 Agent 使用 `vision.md` 的 Prompt、model、空 capability 和 fallback，并由通用 PiAgentRuntimeAdapter 执行
 
-#### Scenario: 模型升级更新 Vision
-- **WHEN** 发行版本修改 `resources/agents/vision.md` 的 Prompt
-- **THEN** 不修改 AgentSupervisor 或 PiAgentRuntimeAdapter 即可改变新 Vision Agent 的行为
+#### Scenario: general 使用声明式配置
+- **WHEN** Main Agent 启动 `general`
+- **THEN** 该 Agent 使用 `general.md` 的 Prompt 和继承配置，并由通用 PiAgentRuntimeAdapter 执行
+
+#### Scenario: 模型升级更新 Bundled Application
+- **WHEN** 发行版本修改 `resources/agents/vision.md` 或 `resources/agents/general.md` 的 Prompt
+- **THEN** 不修改 AgentSupervisor 或 PiAgentRuntimeAdapter 即可改变对应新 Process 的行为
 
 ### Requirement: Bundled 与外部配置共用编译链
 
@@ -144,3 +155,17 @@ AgentApplication MAY 声明 fallback handler 与触发事件。编译器 SHALL �
 #### Scenario: 项目声明未注册 fallback
 - **WHEN** 项目 vision.md 声明未注册 handler 或未知触发事件
 - **THEN** 编译失败并产生结构化 fallback 诊断
+
+### Requirement: Registry 暴露 Application catalog
+
+AgentApplicationRegistry SHALL 提供当前 generation 中全部有效 Application 的只读 catalog，
+每个条目 MUST 至少包含最终 `name` 和 `description`，并 SHALL 按 name 稳定排序。无效配置
+MUST 保持在 diagnostics 中，不得伪装为可启动 Application。
+
+#### Scenario: 发现项目专业 Agent
+- **WHEN** 项目存在合法的 `.dscode/agents/reviewer.md` 且 Registry 完成加载
+- **THEN** catalog 包含 `reviewer` 的最终 name 和 description
+
+#### Scenario: 项目切换后刷新 catalog
+- **WHEN** Harness 切换项目路径并重新加载 Registry
+- **THEN** 后续读取 catalog 返回新项目的有效 Application，不继续返回旧项目专属条目

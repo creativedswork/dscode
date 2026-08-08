@@ -25,8 +25,8 @@ import type { AppInstance } from "../../mcp/app/types.js";
 import { buildMcpServers } from "../mcp-browser.js";
 import { resolveAtFileRefs, resolveFileRefs, listProjectFiles, isImagePath } from "../../utils/at-file-resolver.js";
 import { rebuildDisplayMessages } from "../../session/display.js";
-import { formatToolResultForUI } from "../shared/tool-result-formatter.js";
 import { AgentActivityProjector } from "../shared/agent-activity.js";
+import { harnessEventToConversationEvent } from "../shared/harness-conversation-adapter.js";
 import { formatAgentDisplayId } from "../shared/agent-id.js";
 import { serializeArtifactThemeVariables } from "../shared/artifact-theme.js";
 import { stageAttachedFiles } from "../shared/file-attachments.js";
@@ -45,7 +45,6 @@ import type {
   SkillInfo,
   EvalDashboardServerEvent,
 } from "./protocol.js";
-import type { ImageAttachment } from "./protocol.js";
 
 export const DASHBOARD_AGENT_TASK_SUMMARY_LIMIT = 100;
 export const DASHBOARD_AGENT_OUTCOME_SUMMARY_LIMIT = 120;
@@ -224,19 +223,6 @@ ${SESSION_DASHBOARD_VISUAL_REQUIREMENTS}
 Make it visually rich with clear hierarchy, progress bars, color-coded metrics, and CSS charts.`;
 }
 
-function extractImagesFromToolResult(result: unknown): ImageAttachment[] | undefined {
-  if (!result || typeof result !== "object") return undefined;
-  const r = result as Record<string, unknown>;
-  const content = r.content;
-  if (!Array.isArray(content)) return undefined;
-  const images: ImageAttachment[] = [];
-  for (const item of content) {
-    if (item && typeof item === "object" && (item as any).type === "image" && (item as any).data) {
-      images.push({ data: (item as any).data, mimeType: (item as any).mimeType ?? "image/png" });
-    }
-  }
-  return images.length > 0 ? images : undefined;
-}
 export interface WebUiOptions {
   port: number;
   harness: HarnessAPI;
@@ -284,6 +270,7 @@ export class WebUiBackend implements UiBackend {
   private contextWindowThrottlePending: boolean = false;
   private lastArtifactHtml: string = "";
   private isAssistantTurn: boolean = false;
+  private syntheticToolCallSequence = 0;
   private readonly agentActivityProjector: AgentActivityProjector;
 
   private cleanupUploadDir(sessionId: string): void {
@@ -335,34 +322,67 @@ export class WebUiBackend implements UiBackend {
     const projectAgentActivity = (event: Parameters<AgentActivityProjector["handle"]>[0]) => {
       this.agentActivityProjector.handle(event);
     };
+    const projectConversationEvent = (
+      event: Parameters<typeof harnessEventToConversationEvent>[0],
+    ) => harnessEventToConversationEvent(event, {
+      sessionId: h.sessionManager.getCurrentSessionId() ?? undefined,
+    });
 
-    h.events.on("llm:thinking:delta", (e) => { this.broadcast({ type: "thinking_delta", delta: e.delta }); });
+    h.events.on("llm:thinking:delta", (e) => {
+      const projected = projectConversationEvent(e);
+      if (projected) this.broadcast(projected);
+    });
     h.events.on("llm:text:delta", (e) => {
       if (this.currentAssistant && e.delta != null) this.currentAssistant.text += e.delta;
-      this.broadcast({ type: "text_delta", delta: e.delta });
+      const projected = projectConversationEvent(e);
+      if (projected) this.broadcast(projected);
     });
     h.events.on("llm:retry", (e) => { this.broadcast({ type: "retry", info: { attempt: e.attempt, maxRetries: e.maxRetries, delayMs: e.delayMs, error: e.error, level: e.level } }); });
-    h.events.on("tool:start", (e) => { this.broadcast({ type: "tool_start", name: e.name, args: e.args }); });
+    h.events.on("tool:start", (e) => {
+      const projected = projectConversationEvent(e);
+      if (projected?.type !== "tool_start") return;
+      this.currentAssistant?.tools.push({
+        toolCallId: e.toolCallId,
+        name: e.name,
+        args: "",
+        result: "",
+        isError: false,
+      });
+      this.broadcast(projected);
+    });
     h.events.on("tool:end", (e) => {
-      const rawResult = typeof e.result === "string" ? e.result : JSON.stringify(e.result);
-      const rs = formatToolResultForUI(e.name, rawResult);
-      const imgs = extractImagesFromToolResult(e.result);
+      const projected = projectConversationEvent(e);
+      if (projected?.type !== "tool_end") return;
       if (this.currentAssistant) {
-        this.currentAssistant.tools = this.currentAssistant.tools.filter((t) => t.name !== e.name || t.result !== "");
-        this.currentAssistant.tools.push({ name: e.name, args: "", result: rs, isError: e.isError, images: imgs });
+        const index = this.currentAssistant.tools.findIndex(
+          (tool) => tool.toolCallId === e.toolCallId,
+        );
+        const completed: ToolCallEntry = {
+          toolCallId: e.toolCallId,
+          name: e.name,
+          args: index >= 0 ? this.currentAssistant.tools[index].args : "",
+          result: projected.result,
+          resultDetail: projected.resultDetail,
+          isError: e.isError,
+          images: projected.images,
+        };
+        if (index >= 0) this.currentAssistant.tools[index] = completed;
+        else this.currentAssistant.tools.push(completed);
       }
-      this.broadcast({ type: "tool_end", name: e.name, result: rs, isError: e.isError, images: imgs });
+      this.broadcast(projected);
       this.broadcastContextWindow(false);    });
     h.events.on("turn:streaming:start", () => {
       this.currentAssistant = { thinking: "", text: "", tools: [] };
-      this.broadcast({ type: "assistant_start" });
+      const projected = projectConversationEvent({ type: "turn:streaming:start" });
+      if (projected) this.broadcast(projected);
       this.startSessionTimeBroadcast();
       this.isAssistantTurn = true;    });
-    h.events.on("turn:end", () => {
+    h.events.on("turn:end", (event) => {
       this.broadcastSessionTime();
       const toolsForBroadcast = this.currentAssistant?.tools ?? [];
       this.currentAssistant = null;
-      this.broadcast({ type: "assistant_end" });
+      const projected = projectConversationEvent(event);
+      if (projected) this.broadcast(projected);
       this.isAssistantTurn = false;
       this.broadcastContextWindow(true, toolsForBroadcast);
       this.pushSessionListToAll();
@@ -379,12 +399,21 @@ export class WebUiBackend implements UiBackend {
     h.events.on("eval:dashboard", (event) => {
       this.broadcast(projectEvalDashboardState(event.state));
     });
-    h.events.on("message:user", (e) => { this.broadcast({ type: "user_message", text: e.text, images: e.images as any }); });
+    h.events.on("message:user", (e) => {
+      const projected = projectConversationEvent(e);
+      if (projected) this.broadcast(projected);
+    });
     h.events.on("ui:info", (e) => { this.broadcast({ type: "info", text: e.text, display: e.display ?? "toast" }); });
     h.events.on("ui:error", (e) => { this.broadcast({ type: "error", text: e.text }); });
     h.events.on("ui:warning", (e) => { this.broadcast({ type: "warning", text: e.text }); });
     h.events.on("ui:image:pending", (e) => { this.pendingImages.push(e.image); });
-    h.events.on("ui:conversation:clear", () => { this.currentAssistant = null; this.pendingImages = []; this.broadcast({ type: "clear_conversation" }); this.broadcastContextWindow(true); });
+    h.events.on("ui:conversation:clear", (event) => {
+      this.currentAssistant = null;
+      this.pendingImages = [];
+      const projected = projectConversationEvent(event);
+      if (projected) this.broadcast(projected);
+      this.broadcastContextWindow(true);
+    });
     h.events.on("config:change", (e) => { this.broadcast({ type: "config", data: e.data }); });
     h.events.on("mcp:state", (e) => { this.broadcast({ type: "mcp_state", servers: e.servers }); });
     h.events.on("mcp:browser:open", () => { this.pushMcpState(); this.broadcast({ type: "mcp_open_browser" }); });
@@ -466,8 +495,13 @@ export class WebUiBackend implements UiBackend {
     this.broadcast({ type: "text_delta", delta });
   }
 
-  toolStart(name: string, args: unknown): void {
-    this.broadcast({ type: "tool_start", name, args });
+  toolStart(name: string, args: unknown, toolCallId?: string): void {
+    this.broadcast({
+      type: "tool_start",
+      toolCallId: toolCallId ?? `legacy-${++this.syntheticToolCallSequence}`,
+      name,
+      args,
+    });
   }
 
   finishAssistantMessage(): void {

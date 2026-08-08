@@ -14,6 +14,8 @@ export type {
   FileListItem,
   ConversationMessage,
   ToolCallEntry,
+  ToolResultProjection,
+  ToolResultRef,
   SkillInfo,
   ContextWindowData,
   AgentActivity,

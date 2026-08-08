@@ -5,6 +5,7 @@ import type { AgentProcess } from "../../src/agents/process/types.js";
 import {
   ConversationView,
   formatAgentActivityForTui,
+  formatUserMessageForTui,
   TuiAgentActivityCard,
   TuiThinkingBlock,
 } from "../../src/ui/conversation.js";
@@ -198,7 +199,7 @@ describe("TUI Agent Activity", () => {
       endedAt: 2000,
     });
     expect(oversized).toContain(
-      "output truncated; full output retained in Agent Process Store",
+      "output summarized; Ctrl+E opens Inspector",
     );
   });
 
@@ -299,7 +300,7 @@ describe("TUI Agent Activity", () => {
 
     expect(rendered).toContain("result line 1");
     expect(rendered).not.toContain("result line 80");
-    expect(rendered).toContain("output retained in Agent Process Store");
+    expect(rendered).toContain("output summarized; Ctrl+E");
     expect(activity.output).toBe(output);
 
     const singleLineActivity = {
@@ -316,10 +317,56 @@ describe("TUI Agent Activity", () => {
     const content = "reasoning ".repeat(500);
     const collapsed = new TuiThinkingBlock(content, false).render(32);
     const expanded = new TuiThinkingBlock(content, true).render(32);
+    const mixedWidthContent =
+      "The user wants a Xiaohongshu (小红书) visual post based on MemGPT. "
+      + "Load the xiaohongshu-visual-post skill before proceeding. ".repeat(4);
+    const mixedWidthCollapsed = new TuiThinkingBlock(
+      mixedWidthContent,
+      false,
+    ).render(213);
 
     expect(collapsed).toHaveLength(1);
     expect(visibleWidth(collapsed[0])).toBeLessThanOrEqual(32);
+    expect(mixedWidthCollapsed).toHaveLength(1);
+    expect(visibleWidth(mixedWidthCollapsed[0])).toBeLessThanOrEqual(213);
     expect(expanded.length).toBeLessThanOrEqual(19);
+  });
+
+  it("compacts long user messages without changing canonical live or replay text", () => {
+    const content = [
+      "[file:MemGPT.pdf] ## MemGPT 笔记整理",
+      ...Array.from(
+        { length: 20 },
+        (_, index) => `第 ${index + 1} 行详细笔记 ${"内容".repeat(40)}`,
+      ),
+    ].join("\n");
+    const formatted = stripAnsi(formatUserMessageForTui(content));
+
+    expect(formatted).toContain("[file:MemGPT.pdf] ## MemGPT 笔记整理");
+    expect(formatted).toContain(`${content.length.toLocaleString()} chars`);
+    expect(formatted).toContain("21 lines");
+    expect(formatted).not.toContain("第 1 行详细笔记");
+
+    const live = new ConversationView({ requestRender: vi.fn() } as any);
+    live.addUserMessage(content);
+    expect(live.getMessages()[0].content).toBe(content);
+    expect(stripAnsi(live.component.render(120).join("\n"))).not.toContain(
+      "第 1 行详细笔记",
+    );
+
+    const replay = new ConversationView({ requestRender: vi.fn() } as any);
+    replay.replayMessages([{
+      id: "user-history",
+      role: "user",
+      content,
+    }]);
+    expect(replay.getMessages()[0].content).toBe(content);
+    expect(stripAnsi(replay.component.render(120).join("\n"))).toContain(
+      "21 lines",
+    );
+    expect(stripAnsi(replay.component.render(120).join("\n"))).not.toContain(
+      "第 1 行详细笔记",
+    );
   });
 
   it("uses the Agent card as the only successful spawn representation", () => {
@@ -373,17 +420,19 @@ describe("TUI Agent Activity", () => {
     expect(rendered).not.toContain("SubAgent");
   });
 
-  it("folds thinking and tools independently and locks permission tools open", () => {
+  it("keeps Chat summaries compact and locks permission tools open", () => {
     const view = new ConversationView({ requestRender: vi.fn() } as any);
     view.startAssistantMessage();
     view.thinkingDelta("Detailed reasoning retained in the turn");
     expect(stripAnsi(view.component.render(72).join("\n"))).toContain(
       "› Thinking",
     );
-    view.toggleThinking();
-    expect(stripAnsi(view.component.render(72).join("\n"))).toContain(
-      "⌄ Thinking",
-    );
+    expect(stripAnsi(view.component.render(72).join("\n"))).toContain("› Thinking");
+    expect(view.getActiveExecutionStatus()).toBe("Thinking");
+
+    view.toolStart("read_file", { path: "notes.md" }, "main-read");
+    expect(view.getActiveExecutionStatus()).toBe("Main · read_file · running");
+    view.toolEnd("read_file", "done", false, "main-read");
 
     view.upsertAgentActivity({
       agentId: "agent-fold",
@@ -407,12 +456,6 @@ describe("TUI Agent Activity", () => {
     expect(stripAnsi(view.component.render(72).join("\n"))).toContain(
       "› Tools · 1 total · 1 done",
     );
-    expect(view.toggleSelectedAgentTools()).toBe(true);
-    expect(stripAnsi(view.component.render(72).join("\n"))).toContain(
-      "⌄ Tools · 1 total · 1 done",
-    );
-    expect(view.toggleSelectedAgentTools()).toBe(false);
-
     view.upsertAgentActivity({
       agentId: "agent-fold",
       parentSessionId: "session-1",
@@ -434,7 +477,6 @@ describe("TUI Agent Activity", () => {
         preview: "$ pwd",
       },
     });
-    expect(view.toggleSelectedAgentTools()).toBe(true);
     const permission = stripAnsi(view.component.render(72).join("\n"));
     expect(permission).toContain("Permission required · bash");
     expect(permission).toContain("⌄ Tools");
@@ -459,11 +501,40 @@ describe("TUI Agent Activity", () => {
       }],
     });
     expect(stripAnsi(view.component.render(72).join("\n"))).toContain(
-      "› Tools · 1 total · 1 active",
+      "⌄ Tools · 1 total · 1 active",
+    );
+    expect(stripAnsi(view.component.render(72).join("\n"))).toContain(
+      "◌ bash",
     );
     expect(view.getActiveExecutionStatus()).toBe(
       "Researcher · bash · running",
     );
+  });
+
+  it("renders an empty Main Tool result as completed", () => {
+    const view = new ConversationView({ requestRender: vi.fn() } as any);
+    view.startAssistantMessage();
+    view.toolStart("bash", { command: "true" }, "call-empty");
+    view.toolEnd("bash", "", false, "call-empty");
+
+    const rendered = stripAnsi(view.component.render(72).join("\n"));
+    expect(rendered).toContain("✓ bash");
+    expect(rendered).not.toContain("⟳ bash");
+  });
+
+  it("keeps a multiline Main Tool result on one Chat summary row", () => {
+    const view = new ConversationView({ requestRender: vi.fn() } as any);
+    const output = Array.from(
+      { length: 80 },
+      (_, index) => `result line ${index + 1}`,
+    ).join("\n");
+    view.startAssistantMessage();
+    view.toolStart("read_file", { path: "large.txt" }, "call-large");
+    view.toolEnd("read_file", output, false, "call-large");
+
+    const lines = view.component.render(120).map((line) => stripAnsi(line));
+    expect(lines.join("\n")).toContain("80 lines");
+    expect(lines.join("\n")).not.toContain("result line");
   });
 
   it("binds an interactive permission prompt by tool call identity", () => {
@@ -495,8 +566,9 @@ describe("TUI Agent Activity", () => {
 
     const rendered = stripAnsi(view.component.render(100).join("\n"));
     expect(rendered).toContain("Permission required · bash");
-    expect(rendered).toContain("▶ Allow  [enter]");
-    expect(rendered).toContain("Always Allow  [a]");
+    expect(rendered).toContain("Owner: SubAgent > bash");
+    expect(rendered).toContain("▶ Allow once  [1]");
+    expect(rendered).toContain("Allow matching calls for this Session  [2]");
   });
 
   it("compacts Skill resource paths in live Main Tool rows", () => {
