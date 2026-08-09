@@ -4,7 +4,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import type { HarnessAPI } from "../../core/harness-api.js";
+import type { EvalApplicationPort } from "../../application/harness-api.js";
 import { safeJsonParse, type ValidationResult } from "../schemas.js";
 import type { ScanResult, AttentionZone, SessionSkeleton } from "./types.js";
 import type { ProgressDisplay } from "./progress.js";
@@ -61,7 +61,7 @@ function readScanOutput(workspacePath: string): ScanResult | null {
 
 export async function scanSession(
   _skeleton: SessionSkeleton,
-  _harness: HarnessAPI,
+  _harness: EvalApplicationPort,
   workspacePath: string,
   _sessionId: string,
   _progress?: ProgressDisplay,

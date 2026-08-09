@@ -5,7 +5,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import type { HarnessAPI } from "../../core/harness-api.js";
+import type { EvalApplicationPort } from "../../application/harness-api.js";
 import { safeJsonParse, type ValidationResult, type HistoryStep, type SubtaskEdge, type AgentNode, type AgentEdge, type StepDataFlow } from "../schemas.js";
 import type { AttentionZone, ZoneAnalysis, ZoneSubtask, ZoneCandidate, SessionSkeleton } from "./types.js";
 import type { ProgressDisplay } from "./progress.js";
@@ -164,7 +164,7 @@ export function mergeSubAnalyses(subAnalyses: ZoneAnalysis[]): ZoneAnalysis {
 export async function zoomZone(
   zone: AttentionZone,
   allSteps: HistoryStep[],
-  harness: HarnessAPI,
+  harness: EvalApplicationPort,
   workspacePath: string,
   sessionId: string,
   skeleton: SessionSkeleton,

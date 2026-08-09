@@ -65,7 +65,10 @@ export class MCPClient {
   private activeSseRequest: ReturnType<typeof httpRequest> | ReturnType<typeof httpsRequest> | null = null;
   private stdioReadline: Interface | null = null;
 
-  constructor(private config: MCPServerConfig) {
+  constructor(
+    private config: MCPServerConfig,
+    private readonly environment: Readonly<Record<string, string | undefined>> = {},
+  ) {
     this.protocolVersion = config.preferredProtocolVersion ?? DEFAULT_MCP_PROTOCOL_VERSION;
     this.resolvedTransport = config.transport;
   }
@@ -259,7 +262,7 @@ export class MCPClient {
     const expandedArgs = (this.config.args ?? []).map(expandTilde);
     this.process = spawn(cmd, expandedArgs, {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env, ...this.config.env },
+      env: { ...this.environment, ...this.config.env },
       detached: process.platform !== "win32",
     });
 

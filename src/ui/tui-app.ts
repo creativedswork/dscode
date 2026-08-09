@@ -10,6 +10,7 @@ import {
   type AutocompleteProvider,
   type AutocompleteSuggestions,
   type AutocompleteItem,
+  type Component,
   matchesKey,
   isKeyRelease,
   Key,
@@ -17,44 +18,26 @@ import {
   hyperlink,
 } from "@earendil-works/pi-tui";
 
-import type { Agent } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { SessionManager } from "../session/manager.js";
-import { setTitleIntent } from "../session/manager.js";
-import type { MemoryManager } from "../memory/manager.js";
-import type { DriverRegistry } from "../drivers/registry.js";
-import type { ToolRegistry } from "../drivers/tool-registry.js";
-import type { SkillManager } from "../skills/manager.js";
-import type { PermissionManager } from "../permissions/manager.js";
-import type { ContextManager } from "../context/manager.js";
 import type {
-  HarnessConfig,
   PermissionPromptContext,
   PermissionPromptResult,
   PermissionRuleConfig,
-} from "../core/types.js";
-import type { HarnessAPI } from "../core/harness-api.js";
-import { resolveModel } from "../models/index.js";
-import type { ConfigWatch } from "../core/config-watch.js";
-import type { MCPManager } from "../mcp/manager.js";
+} from "../permissions/types.js";
+import type { HarnessAPI } from "../application/harness-api.js";
 import type { AppInstance } from "../mcp/app/types.js";
 import { c, editorTheme } from "./theme.js";
-import { deriveFuzzyPattern, deriveFuzzyArgPattern, describeFuzzyArgPattern } from "../permissions/fuzzy.js";
-import { prefetchLlmSuggestions, getLlmSuggestions, LlmSuggestion } from "../permissions/fuzzy-llm.js";
 import { ConversationView, findPermOptionByKey } from "./conversation.js";
 import { getSlashCommandAutocomplete, executeSlashCommand, resolveCustomCommand } from "./commands.js";
-import { buildMcpServers, createInitialMcpBrowserState, getMcpVisibleRows, reduceMcpBrowserState, renderMcpServerList, renderMcpToolList } from "./mcp-browser.js";
+import { getMcpVisibleRows, reduceMcpBrowserState, renderMcpServerList, renderMcpToolList } from "./mcp-browser.js";
 import type { McpBrowserState } from "./mcp-browser.js";
-import { resolveAtFileRefs, listProjectFiles } from "../utils/at-file-resolver.js";
-import { readClipboardImageNonBlocking } from "../utils/image.js";
 import { ImageManager } from "./image-manager.js";
 import { ImagePasteHandler } from "./image-paste-handler.js";
 import { FileTracker } from "./shared/file-tracker.js";
 import { stageAttachedFiles } from "./shared/file-attachments.js";
-import { resolveFileRefs, isImagePath } from "../utils/at-file-resolver.js";
 import { existsSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
-import { rebuildDisplayMessages } from "../session/display.js";
+import { rebuildDisplayMessages } from "./shared/session-projector.js";
 import { TuiActivityInspector } from "./tui-activity-inspector.js";
 import { TuiPermissionInput } from "./tui-permission-input.js";
 import type {
@@ -62,16 +45,38 @@ import type {
   ToolResultRef,
 } from "./shared/types.js";
 import { findToolResultText } from "./shared/tool-result-projection.js";
-// TuiDeps replaced by HarnessAPI — see src/core/harness-api.ts
+// TuiDeps was replaced by the Application-owned HarnessAPI facade.
 
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;
 
-class HybridAutocompleteProvider implements AutocompleteProvider {
-  private projectPath: string;
-  private slashProvider: CombinedAutocompleteProvider;
+export class TuiProcessingStatus implements Component {
+  private visible = false;
 
-  constructor(slashCommands: { name: string; description?: string }[], projectPath: string) {
-    this.projectPath = projectPath;
+  constructor(private readonly content: Component) {}
+
+  setVisible(visible: boolean): void {
+    this.visible = visible;
+  }
+
+  invalidate(): void {
+    this.content.invalidate?.();
+  }
+
+  render(width: number): string[] {
+    return this.visible ? this.content.render(width) : [];
+  }
+}
+
+class HybridAutocompleteProvider implements AutocompleteProvider {
+  private slashProvider: CombinedAutocompleteProvider;
+  private readonly listFiles: HarnessAPI["project"]["listFiles"];
+
+  constructor(
+    slashCommands: { name: string; description?: string }[],
+    projectPath: string,
+    listFiles: HarnessAPI["project"]["listFiles"],
+  ) {
+    this.listFiles = listFiles;
     this.slashProvider = new CombinedAutocompleteProvider(slashCommands, projectPath, null);
 
   }
@@ -88,7 +93,7 @@ class HybridAutocompleteProvider implements AutocompleteProvider {
     const atMatch = textBeforeCursor.match(/(?:^|[\s])@([^\s]*)$/);
     if (atMatch) {
       const query = atMatch[1];
-      const items = listProjectFiles(this.projectPath, query, 20);
+      const items = this.listFiles(query, 20);
       if (items.length === 0) return null;
       return {
         prefix: atMatch[0],
@@ -177,7 +182,7 @@ export class TuiApp {
   private editor: Editor;
   private imageStatus: Text;
   private loader: CancellableLoader;
-  private loaderOverlayHandle: ReturnType<TUI["showOverlay"]> | null = null;
+  private processingStatus: TuiProcessingStatus;
   private activityInspector: TuiActivityInspector | null = null;
   private activityInspectorOverlay: ReturnType<TUI["showOverlay"]> | null = null;
   private permissionInputOverlay: ReturnType<TUI["showOverlay"]> | null = null;
@@ -191,6 +196,10 @@ export class TuiApp {
   private mcpServerWindowStart = 0;
   private mcpToolSelection = 0;
   private mcpToolWindowStart = 0;
+
+  private get config() {
+    return this.deps.settings.get();
+  }
   private processing = false;
   private lastCtrlCPress = 0;
   private ctrlCDebounceUntil = 0;
@@ -199,7 +208,7 @@ export class TuiApp {
   private resolvePermission: ((result: PermissionPromptResult) => void) | null = null;
   private handlingPermissionComponentInput = false;
   private pendingPermissionContext:
-    | { toolName: string; args: unknown }
+    | { toolName: string; preview: string; args: unknown }
     | null = null;
   private permissionExplainMode = false;
   private idleStartTime = 0;
@@ -230,7 +239,6 @@ export class TuiApp {
   // Kitty transmits large images in chunks. Accumulate base64 payloads here
   // keyed by a synthetic ID until the final chunk (v=8) arrives.
   private kittyChunkBuffer: { base64: string; timer: ReturnType<typeof setTimeout> } | null = null;
-  private sigintHandler = () => this.handleCtrlC();
 
   constructor(deps: HarnessAPI) {
     this.deps = deps;
@@ -240,10 +248,13 @@ export class TuiApp {
     this.imageStatus = new Text("");
 
     this.loader = new CancellableLoader(this.tui, c.cyan, c.dim, "Waiting...");
+    this.loader.stop();
+    this.processingStatus = new TuiProcessingStatus(this.loader);
 
     const autocomplete = new HybridAutocompleteProvider(
-      getSlashCommandAutocomplete(deps.commandManager.listManifests()),
-      deps.config.projectPath,
+      getSlashCommandAutocomplete(deps.commands.list()),
+      deps.settings.get().projectPath,
+      deps.project.listFiles,
     );
     this.editor = new Editor(this.tui, editorTheme, { paddingX: 1 });
     this.imagePasteHandler = new ImagePasteHandler(
@@ -291,9 +302,9 @@ export class TuiApp {
       // Added: present in text but not in tracker
       for (const dp of presentDisplayPaths) {
         if (!displayToAbs.has(dp)) {
-          const absPath = resolvePath(this.deps.config.projectPath, dp);
+          const absPath = resolvePath(this.config.projectPath, dp);
           if (existsSync(absPath)) {
-            this.fileTracker.add(absPath, this.deps.config.projectPath);
+            this.fileTracker.add(absPath, this.config.projectPath);
           }
         }
       }
@@ -349,10 +360,8 @@ export class TuiApp {
       return undefined;
     });
 
-    process.on("SIGINT", this.sigintHandler);
-
     this.loader.onAbort = () => {
-      deps.abort();
+      deps.conversation.abort();
     };
 
     this.buildLayout();
@@ -360,9 +369,10 @@ export class TuiApp {
 
   private buildLayout(): void {
     const root = new Box(1);
-    root.addChild(new TruncatedText(c.bold("DSCode ") + c.dim(`· ${resolveModel(this.deps.config.provider, this.deps.config.modelId).name}`), 1));
+    root.addChild(new TruncatedText(c.bold("DSCode ") + c.dim(`· ${this.deps.settings.modelInfo().name}`), 1));
     root.addChild(this.conversation.component);
     this.tui.addChild(root);
+    this.tui.addChild(this.processingStatus);
     this.tui.addChild(this.imageStatus);
     this.tui.addChild(this.editor);
     this.tui.addChild(this.mcpPanel);
@@ -376,27 +386,21 @@ export class TuiApp {
       this.showPermissionPrompt(toolName, preview, args, context);
   }
 
-  setMcpManager(mcpManager?: MCPManager): void {
-    (this.deps as any).mcpManager = mcpManager;
-    if (this.mcpPanelVisible) {
-      this.updateMcpPanel();
-    }
-  }
-
   private async showPermissionPrompt(
     toolName: string,
     preview: string,
     args: unknown,
     context?: PermissionPromptContext,
   ): Promise<PermissionPromptResult> {
-    this.pendingPermissionContext = { toolName, args };
+    this.pendingPermissionContext = { toolName, preview, args };
     this.permissionExplainMode = false;
     this.permissionPreviousFocus = this.activityInspectorOverlay?.isFocused()
       ? "inspector"
       : "editor";
-    const fuzzy = deriveFuzzyPattern(toolName);
-    const fuzzyArgDesc = describeFuzzyArgPattern(toolName, args);
-    const llmSuggestions = getLlmSuggestions(toolName, args);
+    const fuzzyInfo = this.deps.permissions.fuzzy(toolName, args);
+    const fuzzy = fuzzyInfo.toolPattern;
+    const fuzzyArgDesc = fuzzyInfo.argDescription;
+    const llmSuggestions = this.deps.permissions.suggestions(toolName, args);
     this.conversation.showPermissionPrompt(
       toolName,
       preview,
@@ -406,7 +410,7 @@ export class TuiApp {
     );
     if (llmSuggestions.length > 0) {
       const ap = this.conversation.activePermission;
-      if (ap) ap.llmSuggestions = llmSuggestions;
+      if (ap) ap.llmSuggestions = [...llmSuggestions];
     }
     const permissionInput = new TuiPermissionInput((data) => {
       this.handlePermissionInput(data);
@@ -418,11 +422,23 @@ export class TuiApp {
       anchor: "bottom-right",
     });
     // Prefetch for next time (fire-and-forget)
-    const model = resolveModel(this.deps.config.provider, this.deps.config.modelId);
-    prefetchLlmSuggestions(model, toolName, args, preview);
+    this.deps.permissions.prefetchSuggestions(toolName, args, preview);
     return new Promise((resolve) => {
       this.resolvePermission = resolve;
     });
+  }
+
+  takePendingPermission() {
+    const context = this.pendingPermissionContext;
+    if (!context || !this.resolvePermission) return undefined;
+    const pending = {
+      toolName: context.toolName,
+      preview: context.preview,
+      fuzzyPattern: this.deps.permissions.fuzzy(context.toolName).toolPattern,
+      permissionArgs: context.args,
+    };
+    this.resolvePermissionChoice({ decision: "deny" });
+    return pending;
   }
 
   private resolvePermissionChoice(result: PermissionPromptResult): void {
@@ -471,7 +487,9 @@ export class TuiApp {
       return;
     }
     if (option === "always_allow") {
-      const fuzzy = deriveFuzzyPattern(this.pendingPermissionContext?.toolName ?? "");
+      const fuzzy = this.deps.permissions.fuzzy(
+        this.pendingPermissionContext?.toolName ?? "",
+      ).toolPattern;
       if (fuzzy && fuzzy !== this.pendingPermissionContext?.toolName) {
         this.conversation.enterSubMode("session", fuzzy);
       } else {
@@ -480,7 +498,9 @@ export class TuiApp {
       return;
     }
     if (option === "always_allow_save") {
-      const fuzzy = deriveFuzzyPattern(this.pendingPermissionContext?.toolName ?? "");
+      const fuzzy = this.deps.permissions.fuzzy(
+        this.pendingPermissionContext?.toolName ?? "",
+      ).toolPattern;
       if (fuzzy) {
         this.conversation.enterSubMode("save", fuzzy);
       } else {
@@ -513,10 +533,13 @@ export class TuiApp {
     if (!ctx) { this.resolvePermissionChoice({ decision: "deny" }); return; }
     if (subIdx === 0) { this.saveExactRule(); }
     else if (subIdx === 1) {
-      const fuzzy = deriveFuzzyPattern(ctx.toolName);
+      const fuzzy = this.deps.permissions.fuzzy(ctx.toolName).toolPattern;
       this.resolvePermissionChoice({ decision: "allow", rememberForSession: true, persistRule: fuzzy ? { tool: fuzzy, decision: "allow" as const } : undefined });
     } else if (subIdx === 2 && this.conversation.activePermission?.fuzzyArgDesc) {
-      const fuzzyArg = deriveFuzzyArgPattern(ctx.toolName, ctx.args);
+      const fuzzyArg = this.deps.permissions.fuzzy(
+        ctx.toolName,
+        ctx.args,
+      ).argPattern;
       this.resolvePermissionChoice({ decision: "allow", rememberForSession: true, persistRule: fuzzyArg ? { tool: ctx.toolName, argPattern: fuzzyArg, decision: "allow" as const } : undefined });
     } else {
       const llm = this.conversation.activePermission?.llmSuggestions;
@@ -544,7 +567,9 @@ export class TuiApp {
     if (subIdx === 0) {
       this.resolvePermissionChoice({ decision: "allow", rememberForSession: true });
     } else {
-      const fuzzy = deriveFuzzyPattern(this.pendingPermissionContext?.toolName ?? "");
+      const fuzzy = this.deps.permissions.fuzzy(
+        this.pendingPermissionContext?.toolName ?? "",
+      ).toolPattern;
       this.resolvePermissionChoice({ decision: "allow", rememberForSession: true, sessionGrantPattern: fuzzy ?? undefined });
     }
   }
@@ -553,7 +578,9 @@ export class TuiApp {
     if (subIdx === 0) {
       this.resolvePermissionChoice({ decision: "allow" });
     } else {
-      const fuzzy = deriveFuzzyPattern(this.pendingPermissionContext?.toolName ?? "");
+      const fuzzy = this.deps.permissions.fuzzy(
+        this.pendingPermissionContext?.toolName ?? "",
+      ).toolPattern;
       this.resolvePermissionChoice({ decision: "allow", rememberForSession: true, sessionGrantPattern: fuzzy ?? undefined });
     }
   }
@@ -653,7 +680,7 @@ export class TuiApp {
 
     if (this.processing) {
       if (matchesKey(data, Key.escape) || matchesKey(data, Key.tab)) {
-        this.deps.abort();
+        this.deps.conversation.abort();
         this.conversation.addInfo("(aborted)");
         return true;
       }
@@ -767,11 +794,6 @@ export class TuiApp {
     this.updateAttachmentBar();
   }
   openMcpBrowser(): void {
-    if (!this.deps.mcpManager) {
-      this.addInfo("No MCP servers configured.");
-      return;
-    }
-
     const servers = this.getMcpServers();
     if (servers.length === 0) {
       this.addInfo("No MCP servers configured.");
@@ -800,12 +822,10 @@ export class TuiApp {
   }
 
   private getMcpServers() {
-    if (!this.deps.mcpManager) return [];
-    return buildMcpServers(
-      this.deps.mcpManager.getStates(),
-      this.deps.driverRegistry,
-      this.deps.toolRegistry,
-    );
+    return this.deps.mcp.list().map((server) => ({
+      ...server,
+      tools: [...server.tools],
+    }));
   }
 
   private updateMcpPanel(): void {
@@ -955,7 +975,7 @@ export class TuiApp {
         // Unescape shell-style escapes (Ghostty escapes spaces in drag-drop paths)
         const unescaped = trimmed.replace(/\\(.)/g, "$1");
         if (existsSync(unescaped)) {
-          const displayPath = this.fileTracker.add(unescaped, this.deps.config.projectPath);
+          const displayPath = this.fileTracker.add(unescaped, this.config.projectPath);
           this.editor.insertTextAtCursor("[file:" + displayPath + "] ");
           this.updateAttachmentBar();
           return { consume: true };
@@ -978,7 +998,7 @@ export class TuiApp {
     }
     this.lastPasteTime = now;
     this.beginPendingImageLoad();
-    readClipboardImageNonBlocking().then((img) => {
+    this.deps.images.readClipboardNonBlocking().then((img) => {
       if (img) {
         this.imagePasteHandler.addImage(img);
       }
@@ -1116,7 +1136,7 @@ export class TuiApp {
     this.lastPasteTime = now;
     this.beginPendingImageLoad();
     const tryRead = (attempt: number) => {
-      readClipboardImageNonBlocking().then(
+      this.deps.images.readClipboardNonBlocking().then(
         (img) => {
           if (img) {
             this.imagePasteHandler.addImage(img);
@@ -1148,7 +1168,7 @@ export class TuiApp {
     }
 
     if (this.processing) {
-      this.deps.abort();
+      this.deps.conversation.abort();
       this.conversation.addInfo("(aborted)");
       return;
     }
@@ -1195,13 +1215,15 @@ export class TuiApp {
   }
 
   private resolveToolResultRef(ref: ToolResultRef): string | undefined {
-    if (ref.owner === "session") {
-      return findToolResultText(this.deps.agent.state.messages, ref.toolCallId);
-    }
-    const process = this.deps.agentSupervisor.get(ref.ownerId);
-    const messages = process?.runtime.snapshot?.().messages
-      ?? process?.runtimeSnapshot?.messages
-      ?? this.persistedAgentResultMessages.get(ref.ownerId);
+    const live = this.deps.conversation.toolResult(
+      ref.owner === "session" ? "session" : "agent",
+      ref.owner === "agent-process" ? ref.ownerId : undefined,
+      ref.toolCallId,
+    );
+    if (live) return live;
+    const messages = ref.owner === "agent-process"
+      ? this.persistedAgentResultMessages.get(ref.ownerId)
+      : undefined;
     return messages
       ? findToolResultText(messages, ref.toolCallId)
       : undefined;
@@ -1264,9 +1286,8 @@ export class TuiApp {
       parts.push(`📊 ${formatTokens(usage.input)}↓ ${formatTokens(usage.output)}↑`);
     }
     {
-      const estimatedTokens = this.deps.contextManager.getEstimatedTokens(this.deps.agent.state.messages);
-      const contextWindow = this.deps.contextManager.getContextWindow();
-      const ctxStr = formatContextPercent(estimatedTokens, contextWindow);
+      const usage = this.deps.conversation.contextUsage();
+      const ctxStr = formatContextPercent(usage.used, usage.total);
       if (ctxStr) parts.push(ctxStr);
     }
     if (usage && usage.cost.total > 0) {
@@ -1346,13 +1367,8 @@ export class TuiApp {
           this.idleStartTime = this.lastActivityTime;
         }
       }, 500);
+      this.processingStatus.setVisible(true);
       this.loader.start();
-      this.loaderOverlayHandle = this.tui.showOverlay(this.loader, {
-        anchor: "bottom-left",
-        offsetX: 2,
-        offsetY: -3,
-        nonCapturing: true,
-      });
     } else {
       if (this.idleTimer) {
         clearInterval(this.idleTimer);
@@ -1360,10 +1376,7 @@ export class TuiApp {
       }
       this.finalizeIdleSegment();
       this.loader.stop();
-      if (this.loaderOverlayHandle) {
-        this.loaderOverlayHandle.hide();
-        this.loaderOverlayHandle = null;
-      }
+      this.processingStatus.setVisible(false);
     }
     this.tui.requestRender(true);
   }
@@ -1421,7 +1434,7 @@ export class TuiApp {
       const now = Date.now();
       if (now - this.lastPasteTime < 100) return;
       this.lastPasteTime = now;
-      readClipboardImageNonBlocking().then((img) => {
+      this.deps.images.readClipboardNonBlocking().then((img) => {
         if (img) {
           this.imagePasteHandler.addImage(img);
           setTimeout(() => this.tui.requestRender(true), 0);
@@ -1441,13 +1454,13 @@ export class TuiApp {
       this.setProcessing(false);
       this.addUserMessage(text);
       this.setProcessing(true);
-      this.deps.promptAndSave(text).then(
+      this.deps.conversation.prompt(text).then(
         () => {
           this.setProcessing(false);
         },
         (err) => {
           this.setProcessing(false);
-          this.deps.sessionManager.trySaveSession(this.deps.agent);
+          this.deps.sessions.save();
           this.addError(err instanceof Error ? err.message : String(err));
         },
       );
@@ -1457,22 +1470,22 @@ export class TuiApp {
     if (this.processing) return;
 
     if (text.startsWith("/")) {
-      const executed = await executeSlashCommand(text, { harness: this.deps, ui: this as any });
+      const executed = await executeSlashCommand(text, { harness: this.deps, ui: this });
       if (executed) {
         return;
       }
       // Check custom commands
-      const expanded = resolveCustomCommand(text, { harness: this.deps, ui: this as any, commandManager: this.deps.commandManager });
+      const expanded = resolveCustomCommand(text, { harness: this.deps, ui: this });
       if (expanded !== undefined) {
         // Treat all custom commands as completion-first: if no args provided,
         // re-populate the editor so the user can type args before submitting.
         const spaceIdx = text.indexOf(" ");
         const cmdName = spaceIdx === -1 ? text.slice(1) : text.slice(1, spaceIdx);
-        const manifest = this.deps.commandManager.getManifest(cmdName);
+        const manifest = this.deps.commands.get(cmdName);
 
         // Set title hint with user's actual input so title extraction uses it
         const args = text.slice(spaceIdx + 1).trim();
-        if (args) setTitleIntent(args);
+        if (args) this.deps.sessions.setTitleIntent(args);
         const hasArgs = spaceIdx !== -1 && text.slice(spaceIdx + 1).trim().length > 0;
         if (manifest && !hasArgs) {
           this.editor.setText(text + " ");
@@ -1495,11 +1508,11 @@ export class TuiApp {
     const atPathAbsPaths = new Set<string>();
     let atRefMatch: RegExpExecArray | null;
     while ((atRefMatch = atPathRe.exec(text)) !== null) {
-      const absPath = resolvePath(this.deps.config.projectPath, atRefMatch[1]);
+      const absPath = resolvePath(this.config.projectPath, atRefMatch[1]);
       if (existsSync(absPath)) atPathAbsPaths.add(absPath);
     }
     // Resolve @file references
-    const resolved = resolveAtFileRefs(this.deps.config.projectPath, text, this.deps.config.atFile ?? {});
+    const resolved = this.deps.project.resolveAtFiles(text);
     if (resolved.warnings.length > 0) {
       for (const warn of resolved.warnings) {
         this.conversation.addInfo(c.yellow(`@${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}`));
@@ -1522,16 +1535,20 @@ export class TuiApp {
       let stagedFileRefs: string[];
       try {
         stagedFileRefs = stageAttachedFiles(
-          this.deps.config.projectPath,
-          this.deps.sessionManager.getCurrentSessionId() ?? "unscoped",
+          this.config.projectPath,
+          this.deps.sessions.currentId() ?? "unscoped",
           fileRefs,
         );
       } catch (error) {
         this.addError(error instanceof Error ? error.message : String(error));
         return;
       }
-      const imageRefs = stagedFileRefs.filter(f => isImagePath(f));
-      const nonImageRefs = stagedFileRefs.filter(f => !isImagePath(f));
+      const imageRefs = stagedFileRefs.filter((file) =>
+        this.deps.project.isImagePath(file)
+      );
+      const nonImageRefs = stagedFileRefs.filter((file) =>
+        !this.deps.project.isImagePath(file)
+      );
       // Non-image files: collect for path injection
       const promptFilePaths: string[] = nonImageRefs.length > 0 ? [...nonImageRefs] : [];
       // Image files: resolve with @path dedup
@@ -1540,7 +1557,9 @@ export class TuiApp {
         if (dedupedImageRefs.length > 0) {
           // Inject image absolute paths into prompt alongside non-image paths
           promptFilePaths.push(...dedupedImageRefs);
-          const refsResolved = resolveFileRefs(this.deps.config.projectPath, dedupedImageRefs, this.deps.config.atFile ?? {});
+          const refsResolved = this.deps.project.resolveFiles(
+            dedupedImageRefs,
+          );
           if (refsResolved.warnings.length > 0) {
             for (const warn of refsResolved.warnings) {
               this.conversation.addInfo(c.yellow(`${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}`));
@@ -1562,11 +1581,8 @@ export class TuiApp {
         text = text ? `${text}\n\n📁 Attached files:\n${pathLines}` : `📁 Attached files:\n${pathLines}`;
       }
     }
-    const mainModel = resolveModel(
-      this.deps.config.provider,
-      this.deps.config.modelId,
-    );
-    if (images?.length && !mainModel.input.includes("image")) {
+    const mainModel = this.deps.settings.modelInfo();
+    if (images?.length && !mainModel.supportsImages) {
       this.conversation.addInfo(
         c.dim(`${mainModel.name} does not support image input natively — using vision model or OCR.`),
       );
@@ -1591,22 +1607,22 @@ export class TuiApp {
     this.imagePasteHandler.updateStatus();
 
     if (images && images.length > 0) {
-      this.deps.promptWithImages(text, images, displayText).then(
+      this.deps.conversation.promptWithImages(text, images, displayText).then(
         () => this.setProcessing(false),
         (err) => {
           this.setProcessing(false);
-          this.deps.sessionManager.trySaveSession(this.deps.agent);
+          this.deps.sessions.save();
           this.addError(err instanceof Error ? err.message : String(err));
         },
       );
     } else {
-      this.deps.promptAndSave(text, images ?? undefined).then(
+      this.deps.conversation.prompt(text, images ?? undefined).then(
         () => {
           this.setProcessing(false);
         },
         (err) => {
           this.setProcessing(false);
-          this.deps.sessionManager.trySaveSession(this.deps.agent);
+          this.deps.sessions.save();
           this.addError(err instanceof Error ? err.message : String(err));
         },
       );
@@ -1629,10 +1645,13 @@ export class TuiApp {
   stop(): void {
     if (this.stopping) return;
     this.stopping = true;
-    process.removeListener("SIGINT", this.sigintHandler);
     this.terminal.write("\n" + c.dim("Goodbye.\n"));
     this.tui.stop();
     this.exitResolve();
+  }
+
+  handleInterrupt(): void {
+    this.handleCtrlC();
   }
 
   focusEditor(): void {
@@ -1664,12 +1683,13 @@ export class TuiApp {
   }
 
   replayMessages(messages: unknown[]): void {
-    const sessionId = this.deps.sessionManager.getCurrentSessionId() ?? "unknown";
-    const agentMessages = this.deps.sessionManager.agentMessages;
+    const sessionId = this.deps.sessions.currentId() ?? "unknown";
+    const agentMessages = this.deps.conversation.snapshot().agentMessages;
     const displayMessages = rebuildDisplayMessages(
       messages as any[],
-      agentMessages,
+      [...agentMessages],
       sessionId,
+      { resolveImage: (ref) => this.deps.conversation.resolveImage(ref) },
     );
     this.conversation.replayMessages(displayMessages);
     this.preloadPersistedAgentResults(
@@ -1682,7 +1702,7 @@ export class TuiApp {
     const generation = ++this.persistedAgentResultGeneration;
     this.persistedAgentResultMessages.clear();
     if (agentIds.length === 0) return;
-    void this.deps.agentSupervisor.loadPersisted(agentIds).then(({ found }) => {
+    void this.deps.agents.loadPersisted(agentIds).then((found) => {
       if (generation !== this.persistedAgentResultGeneration) return;
       for (const [agentId, process] of found) {
         const messages = process.runtimeSnapshot?.messages;

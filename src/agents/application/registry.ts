@@ -3,7 +3,10 @@ import { readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { compileAgentApplication } from "./compiler.js";
+import {
+  compileAgentApplication,
+  compileAgentDefinition,
+} from "./compiler.js";
 import {
   DirectoryBundledApplicationProvider,
   PackageResourceProvider,
@@ -14,6 +17,7 @@ import type {
   AgentApplicationSnapshot,
   AgentApplicationSource,
   AgentApplicationSourceKind,
+  AgentDefinition,
 } from "./types.js";
 
 export interface AgentApplicationRegistryOptions {
@@ -23,6 +27,7 @@ export interface AgentApplicationRegistryOptions {
   bundledProvider?: BundledApplicationProvider;
   homeDir?: string;
   managedDir?: string;
+  definitions?: readonly AgentDefinition[];
 }
 
 interface SourceDirectory {
@@ -35,8 +40,16 @@ export class AgentApplicationRegistry {
   private applications = new Map<string, AgentApplicationSnapshot>();
   private diagnostics: AgentApplicationDiagnostic[] = [];
   private generation = 0;
+  private readonly definitions = new Map<string, AgentDefinition>();
 
-  constructor(private readonly options: AgentApplicationRegistryOptions) {}
+  constructor(private readonly options: AgentApplicationRegistryOptions) {
+    for (const definition of options.definitions ?? []) {
+      this.definitions.set(
+        definition.name,
+        structuredClone(definition),
+      );
+    }
+  }
 
   async load(): Promise<void> {
     const generation = this.generation + 1;
@@ -102,6 +115,27 @@ export class AgentApplicationRegistry {
       }
     }
 
+    for (const definition of this.definitions.values()) {
+      const source: AgentApplicationSource = {
+        kind: "internal",
+        path: `programmatic:${definition.name}`,
+      };
+      try {
+        const compiled = compileAgentDefinition(
+          definition,
+          source,
+          generation,
+        );
+        next.set(compiled.name, compiled);
+      } catch (error) {
+        diagnostics.push({
+          level: "error",
+          source,
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
     this.applications = next;
     this.diagnostics = diagnostics;
     this.generation = generation;
@@ -129,6 +163,22 @@ export class AgentApplicationRegistry {
 
   getGeneration(): number {
     return this.generation;
+  }
+
+  registerDefinition(definition: AgentDefinition): AgentApplicationSnapshot | undefined {
+    const cloned = structuredClone(definition);
+    const compiled = compileAgentDefinition(
+      cloned,
+      {
+        kind: "internal",
+        path: `programmatic:${cloned.name}`,
+      },
+      Math.max(this.generation, 1),
+    );
+    this.definitions.set(cloned.name, cloned);
+    if (this.generation === 0) return undefined;
+    this.applications.set(compiled.name, compiled);
+    return compiled;
   }
 
   async updateProjectPath(projectPath: string): Promise<void> {

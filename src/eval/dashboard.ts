@@ -6,7 +6,7 @@ import { writeFileSync, mkdirSync, existsSync, renameSync, rmSync } from "node:f
 import { exec } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
-import { serializeArtifactThemeVariables } from "../ui/shared/artifact-theme.js";
+import { serializeArtifactThemeVariables } from "./dashboard-theme.js";
 import type { EvalResult } from "./types.js";
 import type { ChiefAttribution } from "./chief/types.js";
 

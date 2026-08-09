@@ -6,12 +6,9 @@ import { execSync } from "node:child_process";
 
 import {
   CheckpointManager,
+  CheckpointSystem,
   FileWriteTracker,
   FileSystemCheckpointStore,
-  initCheckpointSystem,
-  getCheckpointManager,
-  getFileWriteTracker,
-  shutdownCheckpointSystem,
 } from "../../src/checkpoint/index.js";
 
 describe("CheckpointManager", () => {
@@ -367,37 +364,44 @@ describe("FileWriteTracker", () => {
   });
 });
 
-describe("singleton lifecycle", () => {
+describe("CheckpointSystem lifecycle", () => {
   let tmpDir: string;
+  let system: CheckpointSystem;
 
   beforeEach(() => {
     tmpDir = mkdtempSync(join(tmpdir(), "dscode-singleton-test-"));
+    system = new CheckpointSystem(
+      "test-host",
+      join(tmpDir, "checkpoints"),
+    );
   });
 
   afterEach(() => {
-    shutdownCheckpointSystem();
+    system.shutdown();
     rmSync(tmpDir, { recursive: true, force: true });
   });
 
   it("should return null before initialization", () => {
-    shutdownCheckpointSystem();
-    expect(getCheckpointManager()).toBeNull();
-    expect(getFileWriteTracker()).toBeNull();
+    expect(system.checkpointManager()).toBeNull();
+    expect(system.fileWriteTracker()).toBeNull();
   });
 
   it("should return instances after initialization", () => {
-    const { checkpointManager, fileWriteTracker } = initCheckpointSystem(tmpDir, "test-session");
+    const { checkpointManager, fileWriteTracker } = system.initialize(
+      tmpDir,
+      "test-session",
+    );
 
-    expect(getCheckpointManager()).toBe(checkpointManager);
-    expect(getFileWriteTracker()).toBe(fileWriteTracker);
+    expect(system.checkpointManager()).toBe(checkpointManager);
+    expect(system.fileWriteTracker()).toBe(fileWriteTracker);
   });
 
   it("should clean up on shutdown", () => {
-    initCheckpointSystem(tmpDir, "test-session");
-    expect(getCheckpointManager()).not.toBeNull();
+    system.initialize(tmpDir, "test-session");
+    expect(system.checkpointManager()).not.toBeNull();
 
-    shutdownCheckpointSystem();
-    expect(getCheckpointManager()).toBeNull();
-    expect(getFileWriteTracker()).toBeNull();
+    system.shutdown();
+    expect(system.checkpointManager()).toBeNull();
+    expect(system.fileWriteTracker()).toBeNull();
   });
 });

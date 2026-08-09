@@ -220,6 +220,11 @@ export interface MCPServerState {
   refreshError?: string;
 }
 
+export type McpStateEvent = {
+  type: "mcp:state";
+  servers: readonly MCPServerState[];
+};
+
 // --- Error Classification ---
 
 export type ErrorClass = "transient" | "session_expired" | "permanent";

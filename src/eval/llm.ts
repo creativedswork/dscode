@@ -1,4 +1,4 @@
-import type { HarnessAPI } from "../core/harness-api.js";
+import type { EvalApplicationPort } from "../application/harness-api.js";
 import type { SerializedSession } from "../session/types.js";
 import type { Logger } from "../utils/logger.js";
 import { runChiefPipeline } from "./chief/pipeline.js";
@@ -14,14 +14,14 @@ import type { EvalResult } from "./types.js";
  */
 export async function runCausalGraphPipeline(
   data: SerializedSession,
-  harness: HarnessAPI,
+  harness: EvalApplicationPort,
   onLog?: (message: string) => void,
   logger?: Logger,
 ): Promise<EvalResult> {
-  const trajectory = await loadMultiAgentTrajectory(data, harness.agentSupervisor);
+  const trajectory = await loadMultiAgentTrajectory(data, harness.agents);
   const run = await createEvalRun(
     trajectory,
-    harness.sessionManager.getCurrentSessionId() ?? data.metadata.id,
+    harness.currentSessionId() ?? data.metadata.id,
   );
   const result = await runChiefPipeline({
     trajectory,
@@ -39,7 +39,7 @@ export async function runCausalGraphPipeline(
 /** @deprecated Session size no longer changes eval semantics. */
 export async function runFocusPipeline(
   data: SerializedSession,
-  harness: HarnessAPI,
+  harness: EvalApplicationPort,
   _stats?: SessionStats,
   onLog?: (message: string) => void,
   logger?: Logger,
@@ -49,7 +49,7 @@ export async function runFocusPipeline(
 
 export async function analyzeWithLLM(
   data: SerializedSession,
-  harness: HarnessAPI,
+  harness: EvalApplicationPort,
   onLog?: (message: string) => void,
   logger?: Logger,
 ): Promise<EvalResult> {

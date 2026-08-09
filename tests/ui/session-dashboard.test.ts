@@ -178,12 +178,11 @@ describe("Session Dashboard SubAgent summary", () => {
     const summary = JSON.parse(
       (WebUiBackend.prototype as any).buildSessionSummary.call({
         harness: {
-          sessionManager: {
-            getTotalActiveMs: () => 12_000,
-            agentMessages: [agentMessage()],
+          sessions: {
+            totalActiveMs: () => 12_000,
           },
-          agent: {
-            state: {
+          conversation: {
+            snapshot: () => ({
               messages: [
                 { role: "user", content: "private Main message" },
                 {
@@ -191,10 +190,10 @@ describe("Session Dashboard SubAgent summary", () => {
                   content: [{ type: "toolCall", name: "read_file" }],
                 },
               ],
-            },
-          },
-          contextManager: {
-            getCategoryBreakdown: () => ({
+              agentMessages: [agentMessage()],
+              modelName: "model",
+            }),
+            contextUsage: () => ({
               total: 1000,
               used: 600,
               free: 400,

@@ -1,8 +1,17 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
-import { getEnvApiKey } from "../models/index.js";
+import {
+  configHome,
+  dataHome,
+  projectMcpPath as resolveProjectMcpPath,
+  projectSettingsPath as resolveProjectSettingsPath,
+  userCommandConfigPath,
+  userMcpPath as resolveUserMcpPath,
+  userSettingsPath as resolveUserSettingsPath,
+} from "../config/paths.js";
+import { maskSecret } from "../config/public-snapshot.js";
+import { SettingsRepository } from "../config/settings-repository.js";
 
 export const PROVIDER_ENV_VARS: Record<string, string> = {
   deepseek: "DEEPSEEK_API_KEY",
@@ -19,62 +28,41 @@ export const PROVIDER_ENV_VARS: Record<string, string> = {
   "moonshotai-cn": "MOONSHOT_API_KEY",
 };
 
-import type { HarnessConfig, ThinkingLevel } from "./types.js";
+import type { RuntimeConfig } from "../config/types.js";
 import type { MCPProtocolVersion, MCPServerConfig, MCPTransport } from "../mcp/types.js";
 import { DEFAULT_MCP_PROTOCOL_VERSION } from "../mcp/types.js";
 import { getThinkingLevel } from "../models/index.js";
+import type { RetryConfig, ThinkingLevel } from "../models/types.js";
 
 
-function dsConfigHome(): string {
-  return process.env.DSCODE_CONFIG_HOME ?? join(homedir(), ".dscode");
-}
-
-function dsDataHome(): string {
-  return process.env.DSCODE_DATA_HOME ?? join(homedir(), ".dscode");
-}
+const settingsRepository = new SettingsRepository();
 
 function userConfigPath(): string {
-  return join(dsConfigHome(), "config.json");
+  return userCommandConfigPath();
 }
 
 export function userSettingsPath(): string {
-  return join(dsConfigHome(), "settings.json");
+  return resolveUserSettingsPath();
 }
 
 export function projectSettingsPath(projectPath: string): string {
-  return join(projectPath, ".dscode", "settings.json");
+  return resolveProjectSettingsPath(projectPath);
 }
 
 export function userMcpPath(): string {
-  return join(homedir(), ".mcp.json");
+  return resolveUserMcpPath();
 }
 
 export function projectMcpPath(projectPath: string): string {
-  return join(projectPath, ".mcp.json");
+  return resolveProjectMcpPath(projectPath);
 }
 
 function loadJsonSafe(path: string): Record<string, unknown> {
-  if (!existsSync(path)) return {};
-  try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return {};
-  }
-}
-
-function saveJsonSafe(path: string, data: Record<string, unknown>): void {
-  const dir = resolve(path, "..");
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(path, JSON.stringify(data, null, 2) + "\n", "utf8");
+  return settingsRepository.readOrEmpty(path) as Record<string, unknown>;
 }
 
 export function maskApiKey(key: string | undefined): string {
-  if (!key || key.length < 12) return "(not set)";
-  return key.slice(0, 3) + "****" + key.slice(-4);
-}
-
-function loadUserCommandConfig(): Record<string, unknown> {
-  return loadJsonSafe(userConfigPath());
+  return maskSecret(key);
 }
 
 export function loadScopedSettings(settingsPath: string): Record<string, unknown> {
@@ -86,35 +74,16 @@ export function loadUserSettings(): Record<string, unknown> {
 }
 
 export function saveUserSettings(partial: Record<string, unknown>): void {
-  const path = userSettingsPath();
-  const existing = loadUserSettings();
-  const merged = { ...existing, ...partial };
-  for (const [k, v] of Object.entries(partial)) {
-    if (v === null) delete merged[k];
-  }
-  saveJsonSafe(path, merged);
+  settingsRepository.patchObjectSync(userSettingsPath(), partial);
 }
 
 export function saveProjectSettings(projectPath: string, partial: Record<string, unknown>): void {
-  const path = projectSettingsPath(projectPath);
-  const existing = loadScopedSettings(path);
-  const merged = { ...existing, ...partial };
-  for (const [k, v] of Object.entries(partial)) {
-    if (v === null) delete merged[k];
-  }
-  saveJsonSafe(path, merged);
+  settingsRepository.patchObjectSync(projectSettingsPath(projectPath), partial);
 }
 
 
 export function saveUserConfig(partial: Record<string, unknown>): void {
-
-  const path = userConfigPath();
-  const existing = loadUserCommandConfig();
-  const merged = { ...existing, ...partial };
-  for (const [k, v] of Object.entries(partial)) {
-    if (v === null) delete merged[k];
-  }
-  saveJsonSafe(path, merged);
+  settingsRepository.patchObjectSync(userConfigPath(), partial);
 }
 
 export function normalizeTransport(rawTransport: unknown, hasCommand: boolean, hasUrl: boolean): MCPTransport {
@@ -192,8 +161,12 @@ export function loadMcpServers(
   userSettings: Record<string, unknown>,
   projectSettings: Record<string, unknown>,
   projectPath: string,
+  options: {
+    userMcpFile?: string;
+    warn?: (message: string) => void;
+  } = {},
 ): { servers: MCPServerConfig[]; migrated: boolean } {
-  const userMcp = loadJsonSafe(userMcpPath());
+  const userMcp = loadJsonSafe(options.userMcpFile ?? userMcpPath());
   const projectMcp = loadJsonSafe(projectMcpPath(projectPath));
   const hasMcpJson = Object.keys(userMcp).length > 0 || Object.keys(projectMcp).length > 0;
 
@@ -229,7 +202,7 @@ export function loadMcpServers(
   if (mcpServersRaw.length > 0) {
     // Only warn if .mcp.json doesn't exist (user hasn't migrated yet)
     if (!hasMcpJson) {
-      process.stderr.write(
+      (options.warn ?? ((message) => process.stderr.write(message)))(
         "⚠ MCP config found in settings.json is deprecated. Please migrate to .mcp.json\n",
       );
     }
@@ -239,36 +212,53 @@ export function loadMcpServers(
   return { servers: [], migrated: hasMcpJson };
 }
 
-export function loadConfig(cliCwd?: string): HarnessConfig {
-  const startupPath = resolve(cliCwd ?? process.env.DSCODE_PROJECT_PATH ?? process.cwd());
-  const configDir = dsConfigHome();
-  const dataDir = join(dsDataHome(), "data");
+export interface LoadConfigOptions {
+  environment?: Readonly<Record<string, string | undefined>>;
+  currentWorkingDirectory?: string;
+  configDir?: string;
+  dataDir?: string;
+  userMcpFile?: string;
+  warn?: (message: string) => void;
+}
 
-  const userConfig = loadUserCommandConfig();
-  const userSettings = loadScopedSettings(userSettingsPath());
+export function loadConfig(
+  cliCwd?: string,
+  options: LoadConfigOptions = {},
+): RuntimeConfig {
+  const environment = options.environment ?? process.env;
+  const currentWorkingDirectory = options.currentWorkingDirectory
+    ?? process.cwd();
+  const startupPath = resolve(
+    cliCwd
+      ?? environment.DSCODE_PROJECT_PATH
+      ?? currentWorkingDirectory,
+  );
+  const configDir = options.configDir ?? configHome(environment);
+  const dataDir = options.dataDir ?? join(dataHome(environment), "data");
+
+  const userConfig = loadJsonSafe(join(configDir, "config.json"));
+  const userSettings = loadScopedSettings(join(configDir, "settings.json"));
 
   const projectPath = startupPath;
-
-  if (projectPath !== process.cwd()) {
-    process.chdir(projectPath);
-  }
 
   const projectSettings = loadScopedSettings(projectSettingsPath(projectPath));
   const merged = { ...userSettings, ...projectSettings };
 
-  const provider = (process.env.AGENT_PROVIDER as string) ?? (userConfig.provider as string) ?? (merged.provider as string) ?? "deepseek";
-  const modelId = (process.env.AGENT_MODEL as string) ?? (process.env.DEEPSEEK_MODEL as string) ?? (userConfig.modelId as string) ?? (merged.modelId as string) ?? "deepseek-v4-flash";
+  const provider = environment.AGENT_PROVIDER ?? (userConfig.provider as string) ?? (merged.provider as string) ?? "deepseek";
+  const modelId = environment.AGENT_MODEL ?? environment.DEEPSEEK_MODEL ?? (userConfig.modelId as string) ?? (merged.modelId as string) ?? "deepseek-v4-flash";
   // Use provider-specific env var (e.g. KIMI_API_KEY, DEEPSEEK_API_KEY) via pi-ai,
   // fall back to DEEPSEEK_API_KEY for backward compat, then user config
-  const envApiKey = getEnvApiKey(provider) ?? (provider === "qwen" ? process.env.DASHSCOPE_API_KEY : undefined) ?? process.env.DEEPSEEK_API_KEY;
+  const envApiKey = environment[PROVIDER_ENV_VARS[provider]]
+    ?? (provider === "qwen" ? environment.DASHSCOPE_API_KEY : undefined)
+    ?? environment.DEEPSEEK_API_KEY;
   const apiKey = envApiKey ?? (userConfig.apiKey as string | undefined);
 
   // Vision model config: env var > user config
-  const visionProvider = (process.env.AGENT_VISION_PROVIDER as string) ?? (userConfig.vision as any)?.provider;
-  const visionModel = (process.env.AGENT_VISION_MODEL as string) ?? (userConfig.vision as any)?.model;
+  const visionProvider = environment.AGENT_VISION_PROVIDER ?? (userConfig.vision as any)?.provider;
+  const visionModel = environment.AGENT_VISION_MODEL ?? (userConfig.vision as any)?.model;
   const visionKey = (userConfig.vision as any)?.key as string | undefined;
   const vision = visionProvider && visionModel ? { provider: visionProvider, model: visionModel, key: visionKey } : undefined;
-  const maxTokens = Number(process.env.DSCODE_MAX_TOKENS) || (merged.maxTokens as number) || 16384;
+  const maxTokens = Number(environment.DSCODE_MAX_TOKENS) || (merged.maxTokens as number) || 16384;
 
   // Parse Claude Code compatible allow/deny arrays
   const userAllow = ((userSettings.permissions as any)?.allow as string[]) ?? [];
@@ -309,26 +299,26 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
   const projectCommandsDir = join(projectPath, ".dscode", "commands");
   const defaultThinkingLevel: ThinkingLevel = getThinkingLevel(provider, modelId);
   const validThinkingLevels = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
-  const rawThinkingLevel = process.env.AGENT_THINKING_LEVEL ?? userConfig.thinkingLevel ?? merged.thinkingLevel;
+  const rawThinkingLevel = environment.AGENT_THINKING_LEVEL ?? userConfig.thinkingLevel ?? merged.thinkingLevel;
   const thinkingLevel: ThinkingLevel = rawThinkingLevel !== undefined && validThinkingLevels.has(rawThinkingLevel as string)
     ? (rawThinkingLevel as ThinkingLevel)
     : defaultThinkingLevel;
 
   // Retry config: env vars > settings.json > defaults
   const retryFromEnv = {
-    maxRetries: process.env.DSCODE_RETRY_MAX_RETRIES ? Number(process.env.DSCODE_RETRY_MAX_RETRIES) : undefined,
-    baseDelayMs: process.env.DSCODE_RETRY_BASE_DELAY_MS ? Number(process.env.DSCODE_RETRY_BASE_DELAY_MS) : undefined,
-    maxDelayMs: process.env.DSCODE_RETRY_MAX_DELAY_MS ? Number(process.env.DSCODE_RETRY_MAX_DELAY_MS) : undefined,
-    retryOnTimeout: process.env.DSCODE_RETRY_ON_TIMEOUT !== undefined ? process.env.DSCODE_RETRY_ON_TIMEOUT !== "false" : undefined,
-    retryOnRateLimit: process.env.DSCODE_RETRY_ON_RATE_LIMIT !== undefined ? process.env.DSCODE_RETRY_ON_RATE_LIMIT !== "false" : undefined,
-    retryOnServerError: process.env.DSCODE_RETRY_ON_SERVER_ERROR !== undefined ? process.env.DSCODE_RETRY_ON_SERVER_ERROR !== "false" : undefined,
+    maxRetries: environment.DSCODE_RETRY_MAX_RETRIES ? Number(environment.DSCODE_RETRY_MAX_RETRIES) : undefined,
+    baseDelayMs: environment.DSCODE_RETRY_BASE_DELAY_MS ? Number(environment.DSCODE_RETRY_BASE_DELAY_MS) : undefined,
+    maxDelayMs: environment.DSCODE_RETRY_MAX_DELAY_MS ? Number(environment.DSCODE_RETRY_MAX_DELAY_MS) : undefined,
+    retryOnTimeout: environment.DSCODE_RETRY_ON_TIMEOUT !== undefined ? environment.DSCODE_RETRY_ON_TIMEOUT !== "false" : undefined,
+    retryOnRateLimit: environment.DSCODE_RETRY_ON_RATE_LIMIT !== undefined ? environment.DSCODE_RETRY_ON_RATE_LIMIT !== "false" : undefined,
+    retryOnServerError: environment.DSCODE_RETRY_ON_SERVER_ERROR !== undefined ? environment.DSCODE_RETRY_ON_SERVER_ERROR !== "false" : undefined,
   };
   // Remove undefined entries so merged doesn't override with undefined
   for (const k of Object.keys(retryFromEnv)) {
     if ((retryFromEnv as any)[k] === undefined) delete (retryFromEnv as any)[k];
   }
   const mergedRetry = (merged.retry as Record<string, unknown>) ?? {};
-  const retry: import("./types.js").RetryConfig = {
+  const retry: RetryConfig = {
     maxRetries: retryFromEnv.maxRetries ?? (mergedRetry.maxRetries as number) ?? 3,
     baseDelayMs: retryFromEnv.baseDelayMs ?? (mergedRetry.baseDelayMs as number) ?? 1000,
     maxDelayMs: retryFromEnv.maxDelayMs ?? (mergedRetry.maxDelayMs as number) ?? 30000,
@@ -338,7 +328,15 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
   };
 
   // load MCP server configs from .mcp.json (preferred) or settings.json (deprecated fallback)
-  const { servers: mcp } = loadMcpServers(userSettings, projectSettings, projectPath);
+  const { servers: mcp } = loadMcpServers(
+    userSettings,
+    projectSettings,
+    projectPath,
+    {
+      userMcpFile: options.userMcpFile,
+      warn: options.warn,
+    },
+  );
 
   return {
     provider,
@@ -375,12 +373,12 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
     mcp,
     appHost: { enabled: true },
     agents: {
-      enabled: process.env.DSCODE_AGENTS_ENABLED !== undefined
-        ? process.env.DSCODE_AGENTS_ENABLED !== "false"
+      enabled: environment.DSCODE_AGENTS_ENABLED !== undefined
+        ? environment.DSCODE_AGENTS_ENABLED !== "false"
         : (merged.agents as { enabled?: boolean } | undefined)?.enabled ?? true,
     },
-    managedAgentsDir: typeof (process.env.DSCODE_MANAGED_AGENTS_DIR ?? merged.managedAgentsDir) === "string"
-      ? resolve(String(process.env.DSCODE_MANAGED_AGENTS_DIR ?? merged.managedAgentsDir))
+    managedAgentsDir: typeof (environment.DSCODE_MANAGED_AGENTS_DIR ?? merged.managedAgentsDir) === "string"
+      ? resolve(String(environment.DSCODE_MANAGED_AGENTS_DIR ?? merged.managedAgentsDir))
       : undefined,
     atFile: {
       maxFiles: (merged.atFileMaxFiles as number) ?? 5,
@@ -390,7 +388,7 @@ export function loadConfig(cliCwd?: string): HarnessConfig {
     },
     agentsMdContent: loadAgentsMd(projectPath),
     vision,
-    agentModelAliases: merged.agentModelAliases as HarnessConfig["agentModelAliases"],
+    agentModelAliases: merged.agentModelAliases as RuntimeConfig["agentModelAliases"],
     retry,
   };
 

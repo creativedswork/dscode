@@ -1,11 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import {
   PermissionManager,
   PermissionPromptQueue,
 } from "../../src/permissions/manager.js";
+import type { PermissionsConfig } from "../../src/permissions/types.js";
 
 function createPromptFn() {
   return async (_toolName: string, _preview: string) => ({
@@ -15,7 +13,7 @@ function createPromptFn() {
 }
 
 describe("PermissionManager", () => {
-  let defaultConfig: Parameters<typeof PermissionManager.prototype.constructor>[0];
+  let defaultConfig: PermissionsConfig;
   const originalConfigHome = process.env.DSCODE_CONFIG_HOME;
   const originalDataHome = process.env.DSCODE_DATA_HOME;
 
@@ -302,7 +300,7 @@ describe("PermissionManager", () => {
     const pm = new PermissionManager(defaultConfig, async () => ({
       decision: "allow",
       rememberForSession: false,
-    }), "/tmp/test-project", () => { called = true; });
+    }), undefined, () => { called = true; });
     await pm.check({
       toolCall: { name: "write_file" },
       args: { path: "/tmp/test.txt", content: "hello" },
@@ -310,14 +308,8 @@ describe("PermissionManager", () => {
     expect(called).toBe(true);
   });
 
-  it("persists a saved allow rule to project settings", async () => {
-    const root = mkdtempSync(join(tmpdir(), "dscode-permissions-"));
-    const projectDir = join(root, "project");
-    mkdirSync(projectDir, { recursive: true });
-    const configHome = join(root, "home");
-    mkdirSync(configHome, { recursive: true });
-    process.env.DSCODE_CONFIG_HOME = configHome;
-    process.env.DSCODE_DATA_HOME = configHome;
+  it("sends a saved allow rule through the persistence port", async () => {
+    let persisted: unknown;
 
     const pm = new PermissionManager(defaultConfig, async () => ({
       decision: "allow",
@@ -328,7 +320,11 @@ describe("PermissionManager", () => {
         reason: "saved from permission prompt",
         priority: 20,
       },
-    }), projectDir);
+    }), {
+      persistRule: async (rule) => {
+        persisted = rule;
+      },
+    });
 
     const result = await pm.check({
       toolCall: { name: "bash" },
@@ -336,11 +332,11 @@ describe("PermissionManager", () => {
     });
 
     expect(result).toBeUndefined();
-    const saved = JSON.parse(readFileSync(join(projectDir, ".dscode", "settings.json"), "utf8"));
-    expect(saved.permissions.allow).toHaveLength(1);
-    expect(saved.permissions.allow[0]).toBe("bash");
-
-    rmSync(root, { recursive: true, force: true });
+    expect(persisted).toMatchObject({
+      tool: "bash",
+      decision: "allow",
+      priority: 20,
+    });
   });
 
   describe("glob tool name patterns", () => {

@@ -19,6 +19,17 @@ export type AgentAttachment = "foreground" | "background";
 export type AgentContextMode = "minimal" | "selected" | "fork";
 export type AgentRecording = "session" | "process-only";
 
+export interface AgentToolExecutionRecord {
+  toolCallId: string;
+  name: string;
+  status: "running" | "completed" | "failed";
+  args?: unknown;
+  result?: unknown;
+  startedAt: number;
+  endedAt?: number;
+  isError?: boolean;
+}
+
 export type ContextSelectionItem =
   | { type: "message"; messageId: string }
   | { type: "tool_result"; toolCallId: string }

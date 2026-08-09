@@ -6,7 +6,10 @@
 import { appendFileSync, mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { getAgentContext } from "../agents/process/context.js";
+import {
+  getExecutionContext,
+  getHostFacility,
+} from "../kernel/execution-context.js";
 
 // ── Types ──
 
@@ -23,6 +26,13 @@ export interface LoggerOptions {
   type: string;
   id: string;
   level?: LogLevel;
+  directory?: string;
+}
+
+export const HOST_LOGGER_FACILITY = Symbol("dscode.logger");
+
+export function getHostLogger(): Logger | undefined {
+  return getHostFacility<Logger>(HOST_LOGGER_FACILITY);
 }
 
 // ── Logger ──
@@ -31,11 +41,13 @@ export class Logger {
   private type: string;
   private id: string;
   private minLevel: number;
+  private directory: string;
 
   constructor(options: LoggerOptions) {
     this.type = options.type;
     this.id = options.id;
     this.minLevel = LEVEL_RANK[options.level ?? "debug"];
+    this.directory = options.directory ?? LOG_DIR;
   }
 
   // ── Public API ──
@@ -58,8 +70,8 @@ export class Logger {
 
   clear(): void {
     try {
-      ensureDir();
-      writeFileSync(filePath(), "", "utf-8");
+      ensureDir(this.directory);
+      writeFileSync(filePath(this.directory), "", "utf-8");
     } catch {
       // best-effort, suppress
     }
@@ -70,11 +82,14 @@ export class Logger {
   private write(level: LogLevel, tag: string, message: string): void {
     if (LEVEL_RANK[level] < this.minLevel) return;
 
-    const context = getAgentContext();
-    const line = formatLine(level, this.type, context?.agentId || this.id, tag, message);
+    const context = getExecutionContext();
+    const executionId = context
+      ? `${context.hostId}:${context.processId}`
+      : this.id;
+    const line = formatLine(level, this.type, executionId, tag, message);
     try {
-      ensureDir();
-      appendFileSync(filePath(), line + "\n", "utf8");
+      ensureDir(this.directory);
+      appendFileSync(filePath(this.directory), line + "\n", "utf8");
     } catch {
       // All I/O errors silently suppressed — log writing is best-effort
     }
@@ -96,12 +111,12 @@ function formatLine(
 
 const LOG_DIR = join(homedir(), ".dscode", "logs");
 
-function ensureDir(): void {
-  if (!existsSync(LOG_DIR)) {
-    mkdirSync(LOG_DIR, { recursive: true });
+function ensureDir(directory: string): void {
+  if (!existsSync(directory)) {
+    mkdirSync(directory, { recursive: true });
   }
 }
 
-function filePath(): string {
-  return join(LOG_DIR, "dscode.log");
+function filePath(directory: string): string {
+  return join(directory, "dscode.log");
 }

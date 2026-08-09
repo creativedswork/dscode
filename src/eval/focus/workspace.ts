@@ -25,18 +25,18 @@ export type CHIEFPhase = "SCAN" | "ZOOM" | "SYNTHESIZE";
 
 // ── Path Helpers ──
 
-export function evalBaseDir(): string {
-  return join(homedir(), ".dscode", "eval");
+export function evalBaseDir(baseDir?: string): string {
+  return baseDir ?? join(homedir(), ".dscode", "eval");
 }
 
-export function workspaceDir(sessionId: string): string {
-  return join(evalBaseDir(), sessionId);
+export function workspaceDir(sessionId: string, baseDir?: string): string {
+  return join(evalBaseDir(baseDir), sessionId);
 }
 
 // ── Directory Creation ──
 
-export function createWorkspace(sessionId: string): string {
-  const root = workspaceDir(sessionId);
+export function createWorkspace(sessionId: string, baseDir?: string): string {
+  const root = workspaceDir(sessionId, baseDir);
 
   // Clean existing workspace if present
   if (existsSync(root)) {
@@ -442,8 +442,11 @@ export function writeLibrary(
 
 // ── Retention ──
 
-export function cleanOldWorkspaces(maxRetain: number = 10): number {
-  const baseDir = evalBaseDir();
+export function cleanOldWorkspaces(
+  maxRetain: number = 10,
+  rootDir?: string,
+): number {
+  const baseDir = evalBaseDir(rootDir);
   if (!existsSync(baseDir)) return 0;
 
   const entries = readdirSync(baseDir, { withFileTypes: true })

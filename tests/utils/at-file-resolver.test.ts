@@ -99,7 +99,10 @@ describe("resolveAtFileRefs — end-to-end integration", () => {
   });
 
   it("should resolve two real files", () => {
-    const r = resolveAtFileRefs(PROJECT_ROOT, "@README.md @src/core/types.ts");
+    const r = resolveAtFileRefs(
+      PROJECT_ROOT,
+      "@README.md @src/config/types.ts",
+    );
     expect(r.text).toContain("```");
     expect(r.warnings).toHaveLength(0);
   });

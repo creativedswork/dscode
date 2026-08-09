@@ -1,4 +1,4 @@
-import type { AgentSupervisor } from "../agents/process/supervisor.js";
+import type { AgentProcessApplicationPort } from "../application/harness-api.js";
 import type {
   AgentProcessState,
   SerializedAgentProcess,
@@ -371,7 +371,8 @@ function buildEdges(
 
 export function buildMultiAgentTrajectory(
   session: SerializedSession,
-  persisted = new Map<string, SerializedAgentProcess>(),
+  persisted: ReadonlyMap<string, SerializedAgentProcess> =
+    new Map<string, SerializedAgentProcess>(),
 ): MultiAgentTrajectory {
   const summaries = latestSummaries(session.agentMessages ?? []);
   const mainId = stableMainId(session, summaries);
@@ -490,9 +491,9 @@ export function buildMultiAgentTrajectory(
 
 export async function loadMultiAgentTrajectory(
   session: SerializedSession,
-  supervisor: AgentSupervisor,
+  processes: AgentProcessApplicationPort,
 ): Promise<MultiAgentTrajectory> {
   const ids = latestSummaries(session.agentMessages ?? []).map((message) => message.agentId);
-  const { found } = await supervisor.loadPersisted(ids);
+  const found = await processes.loadPersisted(ids);
   return buildMultiAgentTrajectory(session, found);
 }

@@ -4,7 +4,7 @@
 
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import type { HarnessAPI } from "../../core/harness-api.js";
+import type { EvalApplicationPort } from "../../application/harness-api.js";
 import { safeJsonParse, type ValidationResult, type CausalGraphSnapshot, type SubtaskSummary, type EdgeSummary, type AgentSummary, type DataFlowSummary } from "../schemas.js";
 import type { RecoveryArc } from "../schemas.js";
 import type { ScanResult, ZoneAnalysis, FocusAttribution, CascadeEdge, AlternateRootCause, SessionSkeleton, CascadeMechanism } from "./types.js";
@@ -220,7 +220,7 @@ export async function synthesize(
   _scanResult: ScanResult,
   zoneAnalyses: ZoneAnalysis[],
   skeleton: SessionSkeleton,
-  _harness: HarnessAPI,
+  _harness: EvalApplicationPort,
   workspacePath: string,
   _sessionId: string,
   _progress?: ProgressDisplay,

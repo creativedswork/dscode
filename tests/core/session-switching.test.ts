@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { Harness } from "../../src/core/harness.js";
+import { ConversationCoordinator } from "../../src/application/conversation-coordinator.js";
+import { SessionCoordinator } from "../../src/application/session-coordinator.js";
 
 function metadata(id: string) {
   return {
@@ -20,7 +21,7 @@ function metadata(id: string) {
   };
 }
 
-function createHarness(overrides: Record<string, unknown> = {}) {
+function createCoordinators() {
   const order: string[] = [];
   const target = metadata("TARGET-SESSION");
   const prepared = {
@@ -29,150 +30,162 @@ function createHarness(overrides: Record<string, unknown> = {}) {
     messages: [{ role: "user", content: "target" }],
     agentMessages: [],
   };
-  const harness = Object.create(Harness.prototype) as any;
-  Object.assign(harness, {
-    sessionSwitchInProgress: false,
-    activeMainTurn: null,
-    pendingBackgroundContinuationSessions: new Set<string>(),
-    backgroundContinuationDrain: null,
-    shuttingDown: false,
-    mainAgentId: "main-1",
-    config: { projectPath: "/project" },
-    piAgentRuntime: { state: { messages: [{ role: "user", content: "source" }] } },
-    sessionManager: {
-      listSessions: () => [target],
-      listAllSessions: () => [target],
-      getCurrentSessionId: () => "SOURCE-SESSION",
-      getCurrentMetadata: () => metadata("SOURCE-SESSION"),
-      prepareLoad: vi.fn(async () => {
-        order.push("prepare");
-        return prepared;
-      }),
-      saveSession: vi.fn(() => order.push("save")),
-      commitPreparedLoad: vi.fn(() => order.push("commit")),
-    },
-    agentSupervisor: {
-      spawn: vi.fn(),
-      updateParentSession: vi.fn(async () => {
-        order.push("rebind");
-      }),
-    },
-    abort: vi.fn(() => order.push("abort")),
-    ...overrides,
+  const agent = {
+    state: { messages: [{ role: "user", content: "source" }] },
+  };
+  const sessionManager = {
+    listSessions: () => [target],
+    listAllSessions: () => [target],
+    getCurrentSessionId: () => "SOURCE-SESSION",
+    getCurrentMetadata: () => metadata("SOURCE-SESSION"),
+    prepareLoad: vi.fn(async () => {
+      order.push("prepare");
+      return prepared;
+    }),
+    saveSession: vi.fn(() => order.push("save")),
+    commitPreparedLoad: vi.fn(() => order.push("commit")),
+    trySaveSession: vi.fn(),
+  };
+  const agentSupervisor = {
+    updateParentSession: vi.fn(async () => {
+      order.push("rebind");
+    }),
+  };
+  const abort = vi.fn(() => {
+    order.push("abort");
   });
-  return { harness: harness as Harness, order, prepared };
+  const conversation = new ConversationCoordinator();
+  const sessions = new SessionCoordinator({
+    sessionManager: sessionManager as any,
+    agentSupervisor: () => agentSupervisor as any,
+    mainAgentId: () => "main-1",
+    agent: () => agent as any,
+    projectPath: () => "/project",
+    abort,
+    conversation,
+    logger: { info: vi.fn() } as any,
+  });
+  return {
+    abort,
+    agent,
+    agentSupervisor,
+    conversation,
+    order,
+    prepared,
+    sessionManager,
+    sessions,
+  };
 }
 
-describe("Harness.switchSession", () => {
+describe("SessionCoordinator", () => {
   it("runs prepare, abort/quiesce, save, rebind, and commit in order", async () => {
     let settleTurn!: () => void;
-    const activeTurn = new Promise<void>((resolve) => {
-      settleTurn = resolve;
-    });
-    const { harness, order, prepared } = createHarness({
-      activeMainTurn: activeTurn,
-    });
-    (harness as any).abort = vi.fn(() => {
-      order.push("abort");
+    const fixture = createCoordinators();
+    const activeTurn = fixture.conversation.run(
+      () => new Promise<void>((resolve) => {
+        settleTurn = resolve;
+      }),
+    );
+    fixture.abort.mockImplementation(() => {
+      fixture.order.push("abort");
       settleTurn();
     });
 
     const pendingPermission = { toolName: "bash", preview: "echo test" };
-    const result = await harness.switchSession({
+    const result = await fixture.sessions.switch({
       sessionIdOrPrefix: "TARGET",
       pendingPermission,
     });
+    await activeTurn;
 
-    expect(order).toEqual(["prepare", "abort", "save", "rebind", "commit"]);
+    expect(fixture.order).toEqual([
+      "prepare",
+      "abort",
+      "save",
+      "rebind",
+      "commit",
+    ]);
     expect(result).toEqual({
-      session: prepared.metadata,
-      messages: prepared.messages,
-      agentMessages: prepared.agentMessages,
+      session: fixture.prepared.metadata,
+      messages: fixture.prepared.messages,
+      agentMessages: fixture.prepared.agentMessages,
     });
-    expect((harness as any).agentSupervisor.spawn).not.toHaveBeenCalled();
-    expect((harness as any).sessionManager.saveSession).toHaveBeenCalledWith(
-      (harness as any).agent,
+    expect(fixture.sessionManager.saveSession).toHaveBeenCalledWith(
+      fixture.agent,
       pendingPermission,
     );
   });
 
   it("does not abort or mutate state when target resolution fails", async () => {
-    const { harness } = createHarness();
-    (harness as any).sessionManager.listSessions = () => [];
-    (harness as any).sessionManager.listAllSessions = () => [];
-    (harness as any).sessionManager.getCurrentMetadata = () => null;
+    const fixture = createCoordinators();
+    fixture.sessionManager.listSessions = () => [];
+    fixture.sessionManager.listAllSessions = () => [];
+    fixture.sessionManager.getCurrentMetadata = () => null as any;
 
     await expect(
-      harness.switchSession({ sessionIdOrPrefix: "missing" }),
+      fixture.sessions.switch({ sessionIdOrPrefix: "missing" }),
     ).rejects.toThrow("Session not found");
 
-    expect((harness as any).abort).not.toHaveBeenCalled();
-    expect((harness as any).sessionManager.prepareLoad).not.toHaveBeenCalled();
-    expect((harness as any).sessionManager.saveSession).not.toHaveBeenCalled();
+    expect(fixture.abort).not.toHaveBeenCalled();
+    expect(fixture.sessionManager.prepareLoad).not.toHaveBeenCalled();
+    expect(fixture.sessionManager.saveSession).not.toHaveBeenCalled();
   });
 
-  it("resolves a project session after it is evicted from the capped global index", async () => {
-    const { harness, prepared } = createHarness();
-    (harness as any).sessionManager.listAllSessions = () => [];
+  it("resolves a project session after it leaves the capped global index", async () => {
+    const fixture = createCoordinators();
+    fixture.sessionManager.listAllSessions = () => [];
 
     await expect(
-      harness.switchSession({ sessionIdOrPrefix: "TARGET" }),
-    ).resolves.toEqual({
-      session: prepared.metadata,
-      messages: prepared.messages,
-      agentMessages: prepared.agentMessages,
-    });
-
-    expect((harness as any).sessionManager.prepareLoad).toHaveBeenCalledWith(
+      fixture.sessions.switch({ sessionIdOrPrefix: "TARGET" }),
+    ).resolves.toMatchObject({ session: fixture.prepared.metadata });
+    expect(fixture.sessionManager.prepareLoad).toHaveBeenCalledWith(
       "TARGET-SESSION",
     );
   });
 
   it("rejects ambiguous prefixes before prepare", async () => {
-    const { harness } = createHarness();
-    (harness as any).sessionManager.listSessions = () => [];
-    (harness as any).sessionManager.listAllSessions = () => [
+    const fixture = createCoordinators();
+    fixture.sessionManager.listSessions = () => [];
+    fixture.sessionManager.listAllSessions = () => [
       metadata("PREFIX-ONE"),
       metadata("PREFIX-TWO"),
     ];
 
     await expect(
-      harness.switchSession({ sessionIdOrPrefix: "PREFIX" }),
+      fixture.sessions.switch({ sessionIdOrPrefix: "PREFIX" }),
     ).rejects.toThrow("Ambiguous session ID prefix");
-
-    expect((harness as any).sessionManager.prepareLoad).not.toHaveBeenCalled();
+    expect(fixture.sessionManager.prepareLoad).not.toHaveBeenCalled();
   });
 
   it("does not commit when Main Process rebind fails", async () => {
-    const { harness } = createHarness();
-    (harness as any).agentSupervisor.updateParentSession = vi.fn(async () => {
+    const fixture = createCoordinators();
+    fixture.agentSupervisor.updateParentSession = vi.fn(async () => {
       throw new Error("process store failed");
     });
 
     await expect(
-      harness.switchSession({ sessionIdOrPrefix: "TARGET" }),
+      fixture.sessions.switch({ sessionIdOrPrefix: "TARGET" }),
     ).rejects.toThrow("process store failed");
-
-    expect((harness as any).sessionManager.commitPreparedLoad).not.toHaveBeenCalled();
+    expect(fixture.sessionManager.commitPreparedLoad).not.toHaveBeenCalled();
   });
 
   it("rejects a second switch and prompts while prepare is pending", async () => {
     let finishPrepare!: () => void;
-    const { harness, prepared } = createHarness();
-    (harness as any).sessionManager.prepareLoad = vi.fn(() =>
+    const fixture = createCoordinators();
+    fixture.sessionManager.prepareLoad = vi.fn(() =>
       new Promise((resolve) => {
-        finishPrepare = () => resolve(prepared);
-      }),
+        finishPrepare = () => resolve(fixture.prepared);
+      })
     );
 
-    const first = harness.switchSession({ sessionIdOrPrefix: "TARGET" });
+    const first = fixture.sessions.switch({ sessionIdOrPrefix: "TARGET" });
     await Promise.resolve();
 
     await expect(
-      harness.switchSession({ sessionIdOrPrefix: "TARGET" }),
+      fixture.sessions.switch({ sessionIdOrPrefix: "TARGET" }),
     ).rejects.toThrow("already in progress");
     await expect(
-      harness.promptAndSave("must be rejected"),
+      fixture.conversation.run(async () => {}),
     ).rejects.toThrow("session switch is in progress");
 
     finishPrepare();

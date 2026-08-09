@@ -1,5 +1,5 @@
-import type { HarnessAPI } from "../../core/harness-api.js";
-import { formatAgentDisplayId } from "../../ui/shared/agent-id.js";
+import type { EvalApplicationPort } from "../../application/harness-api.js";
+import { formatAgentDisplayId } from "../format.js";
 import type { Logger } from "../../utils/logger.js";
 import type { CausalGraphSnapshot } from "../schemas.js";
 import { attributeRulesWithAgent } from "../rules/extraction.js";
@@ -49,7 +49,7 @@ export interface ChiefProgressEvent {
 
 export interface RunChiefPipelineOptions {
   trajectory: MultiAgentTrajectory;
-  harness: HarnessAPI;
+  harness: EvalApplicationPort;
   run: EvalRunContext;
   signal?: AbortSignal;
   logger?: Logger;

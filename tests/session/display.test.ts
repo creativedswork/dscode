@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { rebuildDisplayMessages } from "../../src/session/display.js";
+import { rebuildDisplayMessages } from "../../src/ui/shared/session-projector.js";
 import type { AgentSessionMessage } from "../../src/session/types.js";
 
 function agentMessage(

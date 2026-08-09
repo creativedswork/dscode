@@ -1,4 +1,5 @@
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -36,6 +37,28 @@ describe("stageAttachedFiles", () => {
     mkdirSync(assets);
     const source = join(assets, "notes.md");
     writeFileSync(source, "notes");
+
+    expect(stageAttachedFiles(project, "session-1", [source], 1234))
+      .toEqual([source]);
+  });
+
+  it("keeps an external directory as an absolute path reference", () => {
+    const project = mkdtempSync(join(tmpdir(), "dscode-project-"));
+    const external = mkdtempSync(join(tmpdir(), "dscode-attachment-"));
+    const source = join(external, "html-canvas");
+    mkdirSync(source);
+    writeFileSync(join(source, "index.html"), "<main>canvas</main>");
+
+    expect(stageAttachedFiles(project, "session-1", [source], 1234))
+      .toEqual([source]);
+    expect(existsSync(join(project, ".dscode", "uploads", "session-1")))
+      .toBe(false);
+  });
+
+  it("keeps a project-local directory in place", () => {
+    const project = mkdtempSync(join(tmpdir(), "dscode-project-"));
+    const source = join(project, "src");
+    mkdirSync(source);
 
     expect(stageAttachedFiles(project, "session-1", [source], 1234))
       .toEqual([source]);

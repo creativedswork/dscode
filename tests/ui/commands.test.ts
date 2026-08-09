@@ -8,18 +8,21 @@ function makeContext(
 ) {
   return {
     harness: {
-      agent: { reset: vi.fn(), state: { messages: [] } },
-      sessionManager: { trySaveSession: vi.fn(), createSession: vi.fn(), persistEmptySession: vi.fn(), getCurrentSessionId: () => null },
-      memoryManager: {},
-      driverRegistry: {},
-      toolRegistry: {},
-      skillManager: {},
-      permissionManager: {},
-      contextManager: {},
-      config: {},
-      onSetModel: vi.fn(),
-      onSetThinking: vi.fn(),
-      onSetCwd: vi.fn(),
+      conversation: {
+        reset: vi.fn(),
+        snapshot: () => ({ messages: [], agentMessages: [], modelName: "model" }),
+      },
+      sessions: {
+        currentId: () => undefined,
+      },
+      settings: {
+        get: () => ({
+          provider: "test",
+          modelId: "model",
+          projectPath: "/project",
+        }),
+      },
+      mcp: { list: () => [] },
       ...harnessOverrides,
     },
     ui: {
@@ -38,8 +41,8 @@ describe("slash commands", () => {
       "/mcp",
       makeContext(
         {
-          mcpManager: {
-            getStates: () => [{ config: { name: "github" }, status: "connected", toolCount: 2 }],
+          mcp: {
+            list: () => [{ name: "github", status: "connected", toolCount: 2 }],
           },
         },
         { openMcpBrowser },
@@ -57,9 +60,7 @@ describe("slash commands", () => {
       "/mcp",
       makeContext(
         {
-          mcpManager: {
-            getStates: () => [],
-          },
+          mcp: { list: () => [] },
         },
         { addInfo, addError },
       ),
@@ -77,7 +78,7 @@ describe("slash commands", () => {
     await executeSlashCommand(
       "/reset",
       makeContext(
-        { agent: { reset, state: { messages: [] } } },
+        { conversation: { reset } },
         { clearConversationView, addInfo },
       ),
     );
@@ -110,8 +111,10 @@ describe("slash commands", () => {
     }));
     const context = makeContext(
       {
-        switchSession,
-        agent: { reset: vi.fn(), state: { messages: [{ role: "user", content: "target" }] } },
+        sessions: {
+          currentId: () => undefined,
+          switch: switchSession,
+        },
       },
       { clearConversationView, replayMessages, takePendingPermission },
     );
@@ -123,7 +126,9 @@ describe("slash commands", () => {
       pendingPermission: { toolName: "bash", preview: "echo test" },
     });
     expect(clearConversationView).toHaveBeenCalledOnce();
-    expect(replayMessages).toHaveBeenCalledWith(context.harness.agent.state.messages);
-    expect(context.harness.sessionManager.loadSession).toBeUndefined();
+    expect(replayMessages).toHaveBeenCalledWith([
+      { role: "user", content: "target" },
+    ]);
+    expect(context.harness.sessionManager).toBeUndefined();
   });
 });

@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 
-import type { CommandManifest } from "../core/types.js";
+import type { CommandManifest } from "./types.js";
 
 export function scanCommandDirs(userDir: string, projectDir: string): CommandManifest[] {
   const manifests = new Map<string, CommandManifest>();

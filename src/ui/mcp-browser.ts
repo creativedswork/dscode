@@ -1,11 +1,17 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
-import type { DriverRegistry } from "../drivers/registry.js";
-import type { ToolRegistry } from "../drivers/tool-registry.js";
 import type { MCPServerState } from "../mcp/types.js";
-import { mcpDriverName } from "../mcp/names.js";
 import { c } from "./theme.js";
+
+interface DriverViewSource {
+  get(name: string): { tools: AgentTool<any>[] } | undefined;
+}
+
+interface ToolCatalogViewSource {
+  isDeferred(name: string): boolean;
+  getDiscoveredToolNames(): ReadonlySet<string>;
+}
 
 const MIN_VISIBLE_ROWS = 6;
 const MAX_VISIBLE_ROWS = 8;
@@ -146,14 +152,14 @@ export interface McpServerViewModel {
   refreshError?: string;
 }
 
-function getToolState(name: string, toolRegistry: ToolRegistry): McpToolViewModel["state"] {
+function getToolState(name: string, toolRegistry: ToolCatalogViewSource): McpToolViewModel["state"] {
   if (!toolRegistry.isDeferred(name)) {
     return "loaded";
   }
   return toolRegistry.getDiscoveredToolNames().has(name) ? "loaded" : "discoverable";
 }
 
-function toToolViewModel(tool: AgentTool<any>, toolRegistry: ToolRegistry): McpToolViewModel {
+function toToolViewModel(tool: AgentTool<any>, toolRegistry: ToolCatalogViewSource): McpToolViewModel {
   return {
     name: tool.name,
     label: tool.label ?? tool.name,
@@ -164,11 +170,11 @@ function toToolViewModel(tool: AgentTool<any>, toolRegistry: ToolRegistry): McpT
 
 export function buildMcpServers(
   states: MCPServerState[],
-  driverRegistry: DriverRegistry,
-  toolRegistry: ToolRegistry,
+  driverRegistry: DriverViewSource,
+  toolRegistry: ToolCatalogViewSource,
 ): McpServerViewModel[] {
   return states.map((state) => {
-    const driver = driverRegistry.get(mcpDriverName(state.config.name));
+    const driver = driverRegistry.get(`mcp__${state.config.name}`);
     const tools = (driver?.tools ?? []).map((tool) => toToolViewModel(tool, toolRegistry));
     return {
       name: state.config.name,

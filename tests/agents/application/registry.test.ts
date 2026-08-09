@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { AgentApplicationRegistry } from "../../../src/agents/application/registry.js";
+import { deriveAgentContext } from "../../../src/agents/process/context.js";
 
 const temporaryDirectories: string[] = [];
 
@@ -260,5 +261,98 @@ Research
       { name: "researcher", description: "Research source material" },
       { name: "vision", description: "" },
     ]);
+  });
+
+  it("gives equivalent file and programmatic definitions the same capability path", async () => {
+    const paths = await fixture();
+    await writeBundledVision(paths.bundled);
+    await writeFile(
+      join(paths.project, ".dscode", "agents", "file-worker.md"),
+      `---
+name: file-worker
+description: Equivalent worker
+tools: [Read, Bash]
+disallowedTools: [Write]
+model: sonnet
+permissionMode: plan
+maxTurns: 4
+skills: [review]
+memory: project
+---
+Equivalent prompt
+`,
+    );
+    const registry = new AgentApplicationRegistry({
+      projectPath: paths.project,
+      configDir: paths.config,
+      bundledDir: paths.bundled,
+      homeDir: paths.root,
+      definitions: [{
+        name: "program-worker",
+        description: "Equivalent worker",
+        systemPrompt: "Equivalent prompt",
+        tools: ["read_file", "bash"],
+        disallowedTools: ["write_file"],
+        model: "sonnet",
+        permissionMode: "plan",
+        maxTurns: 4,
+        skills: ["review"],
+        memory: "project",
+      }],
+    });
+
+    await registry.load();
+    const file = registry.require("file-worker");
+    const program = registry.require("program-worker");
+    const comparable = ({
+      name: _name,
+      source: _source,
+      digest: _digest,
+      ...definition
+    }: typeof file) => definition;
+    expect(comparable(program)).toEqual(comparable(file));
+    expect(program.source).toEqual({
+      kind: "internal",
+      path: "programmatic:program-worker",
+    });
+    expect(Object.isFrozen(program)).toBe(true);
+
+    const capabilities = deriveAgentContext({
+      application: program,
+      parent: {
+        agentId: "main",
+        cwd: paths.project,
+        parentSessionId: "session",
+        depth: 0,
+        attachment: "foreground",
+        allowedTools: ["read_file", "bash"],
+        deniedTools: ["bash"],
+      },
+      availableTools: ["read_file", "bash", "write_file"],
+      attachment: "foreground",
+    });
+    expect(capabilities.allowedTools).toEqual(["read_file"]);
+    expect(capabilities.deniedTools).toEqual(
+      expect.arrayContaining(["bash", "write_file"]),
+    );
+  });
+
+  it("validates a programmatic definition before registering it", async () => {
+    const paths = await fixture();
+    await writeBundledVision(paths.bundled);
+    const registry = new AgentApplicationRegistry({
+      projectPath: paths.project,
+      configDir: paths.config,
+      bundledDir: paths.bundled,
+      homeDir: paths.root,
+    });
+    await registry.load();
+
+    expect(() => registry.registerDefinition({
+      name: "unsafe",
+      systemPrompt: "Unsafe",
+      permissionMode: "bypassPermissions",
+    })).toThrow("restricted to managed");
+    expect(registry.get("unsafe")).toBeUndefined();
   });
 });

@@ -14,7 +14,10 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { c } from "./theme.js";
-import { convertJpegToPng, detectImageFormat } from "../utils/image-convert.js";
+import {
+  convertJpegToPng,
+  detectImageFormat,
+} from "./shared/image-convert.js";
 import type {
   AgentActivity,
   PermissionPrompt,

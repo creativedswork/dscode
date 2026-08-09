@@ -1,7 +1,7 @@
 import type {
   PermissionPromptContext,
   PermissionPromptResult,
-} from "../core/types.js";
+} from "../permissions/types.js";
 
 /**
  * Minimal lifecycle + request-response interface for UI backends.
@@ -13,10 +13,11 @@ import type {
  * Both TUI and Web UI implement this interface.
  */
 export interface UiBackend {
-  /** Start the UI and begin rendering. Called once by Harness.run(). */
+  /** Start the UI and begin rendering. Called once by the Composition Root. */
   start(): Promise<void>;
-  /** Block until the UI should exit. Called by Harness.run() after start(). */
+  /** Block until the UI should exit. Called by the Composition Root after start(). */
   waitForExit(): Promise<void>;
+  handleInterrupt?(): void;
   /** Gracefully tear down the UI. */
   shutdown(): Promise<void>;
 

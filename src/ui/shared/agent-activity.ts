@@ -1,14 +1,16 @@
-import type { AgentProcess, AgentProcessState } from "../../agents/process/types.js";
-import type { AgentSupervisor } from "../../agents/process/supervisor.js";
+import type {
+  AgentProcessState,
+  SerializedAgentProcess,
+} from "../../agents/process/types.js";
 import type { HarnessEvent } from "../../core/events.js";
 import type {
   AgentActivity,
   AgentActivityProgress,
   AgentPermissionActivity,
   AgentToolActivity,
-  ToolResultProjection,
 } from "./types.js";
 import { formatSubagentLabel } from "./agent-label.js";
+import { createToolResultProjection } from "./tool-result-projection.js";
 
 export type AgentLifecycleEvent = Extract<
   HarnessEvent,
@@ -29,7 +31,8 @@ interface ToolProgressDetails {
   toolName: string;
   args?: string;
   summary?: string;
-  resultDetail?: ToolResultProjection;
+  result?: unknown;
+  resultOwnerId?: string;
   startedAt: number;
   endedAt?: number;
   isError?: boolean;
@@ -66,7 +69,7 @@ function progressDetails(value: unknown): ToolProgressDetails | PermissionProgre
   return undefined;
 }
 
-function extractPrompt(process: AgentProcess): string {
+function extractPrompt(process: SerializedAgentProcess): string {
   const messages = process.runtimeSnapshot?.messages;
   if (!Array.isArray(messages)) return "";
   const userMessage = messages.find((message: any) => message?.role === "user") as any;
@@ -88,14 +91,16 @@ export class AgentActivityProjector {
   private readonly fingerprints = new Map<string, string>();
 
   constructor(
-    private readonly supervisor: AgentSupervisor,
+    private readonly processes: {
+      get(agentId: string): SerializedAgentProcess | undefined;
+    },
     private readonly visibleSessionId: () => string | undefined,
     private readonly publish: (activity: AgentActivity) => void,
   ) {}
 
   handle(event: AgentLifecycleEvent): AgentActivity | undefined {
     const agentId = event.type === "agent:exit" ? event.result.agentId : event.agentId;
-    const process = this.supervisor.get(agentId);
+    const process = this.processes.get(agentId);
     if (!process || process.role !== "subagent") return undefined;
     // Process-only workers belong to isolated workflows such as Eval. Their
     // progress is projected by the owning workflow, not the Chat conversation.
@@ -130,7 +135,10 @@ export class AgentActivityProjector {
     return activity;
   }
 
-  private snapshot(process: AgentProcess, event: AgentLifecycleEvent): AgentActivity {
+  private snapshot(
+    process: SerializedAgentProcess,
+    event: AgentLifecycleEvent,
+  ): AgentActivity {
     const exit = event.type === "agent:exit" ? event.result : process.exit;
     const state = event.type === "agent:spawned" && process.state === "created"
       ? "running"
@@ -162,13 +170,26 @@ export class AgentActivityProjector {
   private upsertTool(agentId: string, details: ToolProgressDetails): void {
     const tools = this.tools.get(agentId) ?? new Map<string, AgentToolActivity>();
     const previous = tools.get(details.toolCallId);
+    const resultDetail = details.result !== undefined
+      ? createToolResultProjection(
+        details.toolName,
+        details.result,
+        details.resultOwnerId
+          ? {
+              owner: "agent-process",
+              ownerId: details.resultOwnerId,
+              toolCallId: details.toolCallId,
+            }
+          : undefined,
+      )
+      : previous?.resultDetail;
     tools.set(details.toolCallId, {
       toolCallId: details.toolCallId,
       name: details.toolName,
       status: details.status,
       args: details.args ?? previous?.args,
       summary: details.summary ?? details.args ?? previous?.summary,
-      resultDetail: details.resultDetail ?? previous?.resultDetail,
+      resultDetail,
       startedAt: details.startedAt ?? previous?.startedAt ?? Date.now(),
       endedAt: details.endedAt ?? previous?.endedAt,
       isError: details.isError ?? previous?.isError,

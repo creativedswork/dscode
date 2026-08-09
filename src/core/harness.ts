@@ -5,19 +5,28 @@ import type { AfterToolCallContext, AfterToolCallResult, AgentMessage, AgentTool
 import { Type } from "@earendil-works/pi-ai";
 import type { Api, AssistantMessage, Context, ImageContent, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 
-import { streamSimple } from "../models/index.js";
+import {
+  getAllModels,
+  getAllProviders,
+  getVisionModels,
+  getVisionProviders,
+  streamSimple,
+} from "../models/index.js";
 import type {
-  HarnessConfig,
-  SwitchSessionRequest,
-  SwitchSessionResult,
-} from "./types.js";
-import { saveUserConfig, loadScopedSettings, projectSettingsPath, userSettingsPath, loadMcpServers } from "./config.js";
-import { SessionManager } from "../session/manager.js";
+  RuntimeConfig,
+  RuntimeConfigSnapshot,
+} from "../config/types.js";
+import {
+  SettingsService,
+  type SettingsChangeReason,
+} from "../config/settings-service.js";
+import { RuntimeConfigStore } from "../config/runtime-config-store.js";
+import {
+  SessionManager,
+  setTitleIntent,
+} from "../session/manager.js";
 import { ContextManager } from "../context/manager.js";
 import { MemoryManager } from "../memory/manager.js";
-import { DriverRegistry } from "../drivers/registry.js";
-import { ToolRegistry } from "../drivers/tool-registry.js";
-import { makeDiscoveryDriver } from "../drivers/discovery.js";
 import { formatLoadedSkill, SkillManager } from "../skills/manager.js";
 import { CommandManager } from "../commands/manager.js";
 import {
@@ -25,52 +34,73 @@ import {
   PermissionPromptQueue,
 } from "../permissions/manager.js";
 import { MCPManager } from "../mcp/manager.js";
-import type { MCPClientEvent } from "../mcp/types.js";
+import { mcpDriverName } from "../mcp/names.js";
 import { AppHostManager } from "../mcp/app/host.js";
-import { inferLayout } from "../ui/mdx/inference.js";
-import { TuiBackend } from "../ui/tui-backend.js";
-import type { UiBackend } from "../ui/backend.js";
-import { projectTranscriptToolActivities } from "../ui/shared/tool-result-projection.js";
-import type { HarnessAPI } from "./harness-api.js";
-import { resolveModel, getThinkingLevel, getAllModels, getEnvApiKey } from "../models/index.js";
-import { ImagePipeline } from "../drivers/vision/pipeline.js";
+import { inferLayout } from "../mcp/app/mdx-inference.js";
+import { findToolResultText } from "../session/tool-results.js";
+import type {
+  HarnessAPI,
+  UserInteractionPort,
+} from "../application/harness-api.js";
+import { ConversationCoordinator } from "../application/conversation-coordinator.js";
+import { SessionCoordinator } from "../application/session-coordinator.js";
+import { McpController } from "../application/mcp-controller.js";
+import { ProjectCoordinator } from "../application/project-coordinator.js";
+import { AgentRuntimeCoordinator } from "../application/agent-runtime-coordinator.js";
+import { resolveModel } from "../models/index.js";
+import {
+  isImagePath,
+  listProjectFiles,
+  resolveAtFileRefs,
+  resolveFileRefs,
+} from "../utils/at-file-resolver.js";
+import {
+  deriveFuzzyArgPattern,
+  deriveFuzzyPattern,
+  describeFuzzyArgPattern,
+} from "../permissions/fuzzy.js";
+import { runEval } from "../eval/index.js";
 import type { ProcessOptions, ProcessResult, ProgressInfo } from "../drivers/vision/types.js";
-import { ImageCache } from "../utils/image-cache.js";
-import type { AgentSessionMessage, ImageRef, VisionMessage } from "./types.js";
-import { initCheckpointSystem, shutdownCheckpointSystem } from "../checkpoint/index.js";
-import { ConfigWatch } from "./config-watch.js";
+import type { ImageRef } from "../resources/images/types.js";
+import type {
+  AgentSessionMessage,
+  SwitchSessionRequest,
+  SwitchSessionResult,
+  VisionMessage,
+} from "../session/types.js";
+import {
+  initCheckpointSystem,
+  shutdownCheckpointSystem,
+  type CheckpointSystem,
+} from "../checkpoint/index.js";
 import { recordInvalidation, consumePendingNotices } from "../context/anchor-invalidation.js";
+import { runWithExecutionContext } from "../kernel/execution-context.js";
+import type { HostFacilities } from "../kernel/host-facilities.js";
 import { HarnessEventBus } from "./events.js";
 import type { Logger } from "../utils/logger.js";
 import { AgentApplicationRegistry } from "../agents/application/registry.js";
 import type { AgentApplicationSnapshot } from "../agents/application/types.js";
-import { loadAgentMemory } from "../agents/application/memory.js";
 import { AgentProcessRuntimeFactory } from "../agents/runtimes/factory.js";
 import { PiAgentRuntimeAdapter } from "../agents/runtimes/pi-agent-runtime.js";
-import {
-  AgentRuntimeFailure,
-  FailedAgentRuntime,
-  type AgentProcessRuntime,
-} from "../agents/runtimes/runtime.js";
 import {
   OcrFallbackHandler,
   type VisionAgentOutput,
 } from "../agents/runtimes/ocr-fallback.js";
 import { resolveVisionApplicationConfig } from "../agents/runtimes/vision-model.js";
-import { AgentProcessStore } from "../agents/process/store.js";
+import {
+  AgentProcessStore,
+  serializeAgentProcess,
+} from "../agents/process/store.js";
 import { AgentSupervisor } from "../agents/process/supervisor.js";
 import { AgentFallbackRegistry } from "../agents/process/fallback.js";
 import { createMainAgentContext } from "../agents/process/context.js";
-import type {
-  AgentContext as ProcessAgentContext,
-  AgentExitResult,
-} from "../agents/process/types.js";
-import { checkAgentCapability } from "../agents/process/capability.js";
+import { formatSubagentLabel } from "../agents/process/label.js";
+import { extractAgentToolExecutions } from "../agents/process/transcript.js";
+import type { AgentExitResult } from "../agents/process/types.js";
 import {
   AGENT_PROCESS_TOOL_NAMES,
   makeAgentProcessTools,
 } from "../agents/tools/process-tools.js";
-import { formatSubagentLabel } from "../ui/shared/agent-label.js";
 
 const MAIN_PROCESS_APPLICATION: AgentApplicationSnapshot = Object.freeze({
   name: "main",
@@ -90,85 +120,668 @@ export function shouldUseNativeMainImagePath(
   return !agentsEnabled && !hasVisionConfig && mainSupportsImages;
 }
 
-export class Harness implements HarnessAPI {
+export interface HarnessDependencies {
+  hostId: string;
+  facilities: HostFacilities;
+  environment: Readonly<Record<string, string | undefined>>;
+  checkpointSystem: CheckpointSystem;
+  events: HarnessEventBus;
+  configStore: RuntimeConfigStore;
+  createSettings(
+    onApplied: (
+      previous: RuntimeConfigSnapshot,
+      next: RuntimeConfigSnapshot,
+      reason: SettingsChangeReason,
+    ) => void,
+  ): SettingsService;
+  applicationRegistry: AgentApplicationRegistry;
+  processStore: AgentProcessStore;
+  sessionManager: SessionManager;
+  contextManager: ContextManager;
+  memoryManager: MemoryManager;
+  driverRegistry: import("../drivers/types.js").DriverRegistryPort;
+  toolRegistry: import("../drivers/types.js").ToolCatalogPort;
+  discoveryDriver: import("../drivers/types.js").Driver;
+  commandManager: CommandManager;
+  skillManager: SkillManager;
+  createPermissionManager(
+    request: ConstructorParameters<typeof PermissionManager>[1],
+    settings: SettingsService,
+  ): PermissionManager;
+  permissionSuggestions: import("../permissions/fuzzy-llm.js").PermissionSuggestionPort;
+  imageInput: import("../application/harness-api.js").ImageInputApplicationPort;
+  imagePipeline: import("../drivers/vision/types.js").ImageProcessingPort;
+  imageStore: import("../drivers/vision/types.js").ImageStorePort;
+  createMcpManager(
+    servers: readonly import("../mcp/types.js").MCPServerConfig[],
+  ): MCPManager;
+  createAppHostManager(): AppHostManager;
+  createMainAgent(
+    options: ConstructorParameters<typeof PiAgentRuntime>[0],
+  ): PiAgentRuntime;
+  prepareProjectRuntime(projectPath: string): Promise<RuntimeConfig>;
+}
+export class Harness {
   private piAgentRuntime!: PiAgentRuntime;
   sessionManager: SessionManager;
   contextManager: ContextManager;
   memoryManager: MemoryManager;
-  driverRegistry: DriverRegistry;
-  toolRegistry: ToolRegistry;
+  driverRegistry: import("../drivers/types.js").DriverRegistryPort;
+  toolRegistry: import("../drivers/types.js").ToolCatalogPort;
   skillManager: SkillManager;
   commandManager: CommandManager;
   permissionManager: PermissionManager;
-  mcpManager: MCPManager | undefined;
   appHostManager?: AppHostManager;
-  configStore: ConfigWatch;
-  config: HarnessConfig;
+  configStore: RuntimeConfigStore;
+  readonly settings: SettingsService;
+  config: RuntimeConfig;
   readonly logger: Logger;
   readonly events: HarnessEventBus;
-  imagePipeline: ImagePipeline;
+  readonly api: HarnessAPI;
+  imagePipeline: import("../drivers/vision/types.js").ImageProcessingPort;
+  private readonly imageStore: import("../drivers/vision/types.js").ImageStorePort;
   applicationRegistry: AgentApplicationRegistry;
   agentSupervisor!: AgentSupervisor;
   private runtimeFactory!: AgentProcessRuntimeFactory;
   private processStore: AgentProcessStore;
   private mainAgentId = "";
-  private ui!: UiBackend;
+  private userInteraction: UserInteractionPort = {
+    requestPermission: async () => ({ decision: "deny" }),
+  };
   private baseSystemPrompt = "";
   private debug = false;
   private debugPromptLastHash = "";
-  private lastMcpProgress = new Map<string, { progress?: number; total?: number; message?: string }>();
-  private mcpEventUnsubscribe?: () => void;
+  private readonly mcpController: McpController;
+  private readonly projectCoordinator: ProjectCoordinator;
+  private readonly agentRuntimeCoordinator: AgentRuntimeCoordinator;
+  private readonly createAppHostManager: () => AppHostManager;
+  private readonly createMainAgent: HarnessDependencies["createMainAgent"];
+  private readonly discoveryDriver: import("../drivers/types.js").Driver;
+  private readonly hostId: string;
+  private readonly facilities: HostFacilities;
+  private readonly checkpointSystem: CheckpointSystem;
+  private readonly permissionSuggestions: import("../permissions/fuzzy-llm.js").PermissionSuggestionPort;
+  private readonly imageInput: import("../application/harness-api.js").ImageInputApplicationPort;
   private shuttingDown = false;
   private turnIndex = 0;
   private activeVisionAgentId: string | null = null;
   private activeVisionAbortController: AbortController | null = null;
-  private autoSaveTimer: NodeJS.Timeout | undefined;
-  private lastSavedMessageCount: number = 0;
-  private activeMainTurn: Promise<void> | null = null;
-  private sessionSwitchInProgress = false;
+  private readonly conversationCoordinator: ConversationCoordinator;
+  private readonly sessionCoordinator: SessionCoordinator;
   private readonly permissionPromptQueue = new PermissionPromptQueue();
-  private readonly pendingBackgroundContinuationSessions = new Set<string>();
-  private backgroundContinuationDrain: Promise<void> | null = null;
 
   get agent(): PiAgentRuntime {
     return this.piAgentRuntime;
   }
 
-  constructor(config: HarnessConfig, logger: Logger, debug?: boolean) {
+  get mcpManager(): MCPManager | undefined {
+    return this.mcpController.manager;
+  }
+
+  constructor(
+    config: RuntimeConfig,
+    logger: Logger,
+    dependencies: HarnessDependencies,
+    debug?: boolean,
+  ) {
+    this.hostId = dependencies.hostId;
+    this.facilities = dependencies.facilities;
+    this.checkpointSystem = dependencies.checkpointSystem;
+    this.permissionSuggestions = dependencies.permissionSuggestions;
+    this.imageInput = dependencies.imageInput;
     this.logger = logger;
-    this.configStore = new ConfigWatch(config);
-    this.debug = debug ?? false;
-    this.config = this.configStore.get() as HarnessConfig;
-    this.events = new HarnessEventBus(logger);
-    this.applicationRegistry = new AgentApplicationRegistry({
-      projectPath: config.projectPath,
-      configDir: config.configDir,
-      managedDir: config.managedAgentsDir,
-    });
-    this.processStore = new AgentProcessStore(config.dataDir, config.projectPath);
-    this.sessionManager = new SessionManager(config.dataDir, config.projectPath, logger);
-    this.contextManager = new ContextManager(config.context);
-    this.sessionManager.bindEvents(this.events);
-    this.memoryManager = new MemoryManager(config.dataDir, config.projectPath, config.memory);
-    this.driverRegistry = new DriverRegistry();
-    this.toolRegistry = new ToolRegistry(this.driverRegistry);
-    this.commandManager = new CommandManager(config.userCommandsDir, config.projectCommandsDir);
-    this.skillManager = new SkillManager(config.userSkillsDir, config.projectSkillsDir);
-    this.permissionManager = new PermissionManager(
-      config.permissions,
-      (toolName, preview, args) => this.permissionPromptQueue.enqueue(
-        () => this.ui.getPromptPermission()(toolName, preview, args),
-      ),
-      config.projectPath,
-      () => {},
+    this.events = dependencies.events;
+    this.configStore = dependencies.configStore;
+    this.settings = dependencies.createSettings(
+      (previous, next, reason) =>
+        this.applySettingsSnapshot(previous, next, reason),
     );
-    this.imagePipeline = new ImagePipeline({
-      visionConfig: config.vision,
-      fallbackApiKey: config.apiKey,
-      onWarning: (msg: string) => {
-        if (this.ui) this.events.emit({ type: "ui:warning", text: msg });
-      },
+    this.debug = debug ?? false;
+    this.config = this.configStore.get() as RuntimeConfig;
+    this.applicationRegistry = dependencies.applicationRegistry;
+    this.processStore = dependencies.processStore;
+    this.sessionManager = dependencies.sessionManager;
+    this.conversationCoordinator = new ConversationCoordinator();
+    this.sessionCoordinator = new SessionCoordinator({
+      sessionManager: this.sessionManager,
+      agentSupervisor: () => this.agentSupervisor,
+      mainAgentId: () => this.mainAgentId,
+      agent: () => this.agent,
+      projectPath: () => this.config.projectPath,
+      abort: () => this.abort(),
+      conversation: this.conversationCoordinator,
+      logger,
+      isShuttingDown: () => this.shuttingDown,
+      resumeNotifications: (notifications) =>
+        this.promptAndSaveInternal(
+          this.formatAgentNotifications(notifications),
+        ),
+      publish: (event) => this.events.emit(event),
     });
+    this.contextManager = dependencies.contextManager;
+    this.sessionManager.bindEvents(this.events);
+    this.memoryManager = dependencies.memoryManager;
+    this.driverRegistry = dependencies.driverRegistry;
+    this.toolRegistry = dependencies.toolRegistry;
+    this.discoveryDriver = dependencies.discoveryDriver;
+    this.commandManager = dependencies.commandManager;
+    this.skillManager = dependencies.skillManager;
+    this.permissionManager = dependencies.createPermissionManager(
+      (toolName, preview, args) => this.permissionPromptQueue.enqueue(
+        () => this.userInteraction.requestPermission(toolName, preview, args),
+      ),
+      this.settings,
+    );
+    this.imagePipeline = dependencies.imagePipeline;
+    this.imageStore = dependencies.imageStore;
+    this.createAppHostManager = dependencies.createAppHostManager;
+    this.createMainAgent = dependencies.createMainAgent;
+    this.agentRuntimeCoordinator = new AgentRuntimeCoordinator({
+      config: () => this.config,
+      environment: dependencies.environment,
+      drivers: this.driverRegistry,
+      supervisor: () => this.agentSupervisor,
+      skillTool: () => this.makeSkillTool(),
+      skillManifest: (name) => this.skillManager.getManifest(name),
+      requestPermission: (toolName, preview, args, context) =>
+        this.permissionPromptQueue.enqueue(() =>
+          this.userInteraction.requestPermission(
+            toolName,
+            preview,
+            args,
+            context,
+          )
+        ),
+      publish: (event) => this.events.emit(event),
+    });
+    this.mcpController = new McpController({
+      createManager: dependencies.createMcpManager,
+      drivers: this.driverRegistry,
+      tools: this.toolRegistry,
+      makeSkillTool: () => this.makeSkillTool(),
+      processImages: (images, text, options) =>
+        this.processImagesWithVisionAgent(images, text, options),
+      applyTools: (tools, deferredHint) => {
+        this.agent.state.tools = [...tools];
+        this.agent.state.systemPrompt = this.baseSystemPrompt.replace(
+          "__DEFERRED_HINT__",
+          deferredHint,
+        );
+      },
+      refreshCapabilities: () => this.refreshMainAgentCapabilities(),
+      publish: (event) => this.events.emit(event),
+      bindManager: (manager) => {
+        if (manager && this.appHostManager) {
+          this.appHostManager.setMcpManager(manager);
+        }
+      },
+      afterCatalogChange: () => this.dumpDebugPrompt(),
+    });
+    this.projectCoordinator = new ProjectCoordinator({
+      resolve,
+      exists: existsSync,
+      prepareRuntime: dependencies.prepareProjectRuntime,
+      saveCurrentSession: () => this.sessionCoordinator.saveNow(),
+      reloadMcp: (servers) => this.mcpController.reload(servers),
+      updateSessionProject: (dataDir, projectPath) =>
+        this.sessionManager.updateProjectPath(dataDir, projectPath),
+      updateMemoryProject: (dataDir, projectPath) =>
+        this.memoryManager.updateProjectPath(dataDir, projectPath),
+      updateProcessProject: (projectPath) =>
+        this.processStore.updateProjectPath(projectPath),
+      updateApplications: (projectPath) =>
+        this.applicationRegistry.updateProjectPath(projectPath),
+      rebindMainSession: async (projectPath) => {
+        const sessionId = this.sessionManager.getCurrentSessionId();
+        if (sessionId) {
+          await this.agentSupervisor.updateParentSession(
+            this.mainAgentId,
+            sessionId,
+            projectPath,
+          );
+        }
+      },
+      reloadSkills: (projectPath) => this.skillManager.reloadDirs(
+        this.config.userSkillsDir,
+        join(projectPath, ".dscode", "skills"),
+        this.driverRegistry,
+      ),
+      replaceRuntime: (next) => this.settings.replaceProjectRuntime(next)
+        .then(() => undefined),
+      rebuildPrompt: () => this.rebuildSystemPrompt(),
+      reportError: (scope, error) =>
+        this.logger.error(scope, String(error)),
+    });
+    this.api = this.createApplicationApi();
+  }
+
+  bindUserInteraction(port: UserInteractionPort): void {
+    this.userInteraction = port;
+  }
+
+  private createApplicationApi(): HarnessAPI {
+    const events = Object.freeze<HarnessAPI["events"]>({
+      on: this.events.on.bind(this.events),
+    });
+    const agents = Object.freeze<HarnessAPI["agents"]>({
+      list: () => Object.freeze(
+        this.agentSupervisor.list().map((process) =>
+          Object.freeze(serializeAgentProcess(process))
+        ),
+      ),
+      get: (agentId) => {
+        const process = this.agentSupervisor.get(agentId);
+        return process
+          ? Object.freeze(serializeAgentProcess(process))
+          : undefined;
+      },
+      loadPersisted: async (agentIds) => {
+        const { found } = await this.agentSupervisor.loadPersisted(agentIds);
+        return found;
+      },
+      spawn: (request) => this.agentSupervisor.spawn(request),
+    });
+
+    const api: HarnessAPI = {
+      events,
+      conversation: Object.freeze<HarnessAPI["conversation"]>({
+        prompt: (text, images) =>
+          this.promptAndSave(text, images ? [...images] : undefined),
+        promptWithImages: (text, images, displayText) =>
+          this.promptWithImages(text, [...images], displayText),
+        abort: () => this.abort(),
+        reset: () => {
+          this.sessionManager.trySaveSession(this.agent);
+          const config = this.settings.getPublicSnapshot();
+          this.sessionManager.createSession(config.provider, config.modelId);
+          this.sessionManager.persistEmptySession();
+          this.agent.reset();
+          this.rebuildSystemPrompt();
+        },
+        save: () => this.saveSessionNow(),
+        snapshot: () => Object.freeze({
+          messages: Object.freeze(structuredClone(
+            this.agent.state.messages as unknown[],
+          )),
+          agentMessages: Object.freeze(structuredClone(
+            this.sessionManager.agentMessages,
+          )),
+          modelName: (this.agent.state.model as { name?: string } | undefined)
+            ?.name ?? this.config.modelId,
+        }),
+        compact: async () => {
+          const before = this.agent.state.messages.length;
+          this.agent.state.messages = await this.contextManager.transform(
+            this.agent.state.messages,
+          ) as AgentMessage[];
+          return Object.freeze({
+            before,
+            after: this.agent.state.messages.length,
+          });
+        },
+        discardPendingToolCall: () => {
+          const messages = this.agent.state.messages as unknown[];
+          for (let index = messages.length - 1; index >= 0; index--) {
+            const message = messages[index] as {
+              role?: unknown;
+              content?: unknown;
+            };
+            if (
+              message.role === "assistant"
+              && Array.isArray(message.content)
+              && message.content.some((block) =>
+                !!block
+                && typeof block === "object"
+                && (block as { type?: unknown }).type === "toolCall"
+              )
+            ) {
+              messages.length = index;
+              break;
+            }
+          }
+          return Object.freeze(structuredClone(messages));
+        },
+        estimateTokens: () =>
+          this.contextManager.getEstimatedTokens(this.agent.state.messages),
+        contextUsage: (tools = []) => {
+          const skillNames = new Set(this.skillManager.listAllSkillNames());
+          const snapshot = this.contextManager.getCategoryBreakdown(
+            this.agent.state.messages,
+            [...tools],
+            skillNames,
+          );
+          return Object.freeze({
+            ...snapshot,
+            categories: Object.freeze({ ...snapshot.categories }),
+          });
+        },
+        toolResult: (owner, ownerId, toolCallId) => {
+          const messages = owner === "session"
+            ? this.agent.state.messages
+            : ownerId
+              ? (
+                this.agentSupervisor.get(ownerId)?.runtime.snapshot?.().messages
+                ?? this.agentSupervisor.get(ownerId)?.runtimeSnapshot?.messages
+              )
+              : undefined;
+          return messages
+            ? findToolResultText(messages, toolCallId)
+            : undefined;
+        },
+        resolveImage: (ref) => {
+          const image = this.imageStore.getSync(ref);
+          return image
+            ? Object.freeze({
+                data: image.data,
+                mimeType: image.mimeType,
+              })
+            : undefined;
+        },
+        streamText: async (request, onEvent) => {
+          const model = resolveModel(
+            this.config.provider,
+            this.config.modelId,
+          );
+          let text = "";
+          const stream = streamSimple(model, {
+            systemPrompt: request.systemPrompt,
+            messages: [{
+              role: "user",
+              content: request.userPrompt,
+              timestamp: Date.now(),
+            }],
+          }, {
+            apiKey: this.config.apiKey,
+            maxTokens: request.maxTokens ?? this.config.maxTokens,
+            timeoutMs: 120_000,
+            maxRetries: 1,
+          });
+          for await (const event of stream) {
+            if (event.type === "text_delta") {
+              text += event.delta;
+              onEvent({ type: "text", text: event.delta });
+            } else if (event.type === "error") {
+              onEvent({
+                type: "error",
+                text: (event.error as { errorMessage?: string })
+                  .errorMessage ?? "Unknown error",
+              });
+            }
+          }
+          return text;
+        },
+      }),
+      sessions: Object.freeze<HarnessAPI["sessions"]>({
+        list: (options) => Object.freeze(structuredClone(
+          options?.all
+            ? this.sessionManager.listAllSessions()
+            : this.sessionManager.listSessions(),
+        )),
+        currentId: () =>
+          this.sessionManager.getCurrentSessionId() ?? undefined,
+        currentMetadata: () => {
+          const metadata = this.sessionManager.getCurrentMetadata();
+          return metadata
+            ? Object.freeze(structuredClone(metadata))
+            : undefined;
+        },
+        totalActiveMs: () => this.sessionManager.getTotalActiveMs(),
+        setTitleIntent: (intent) => setTitleIntent(intent),
+        save: (pendingPermission) => {
+          if (pendingPermission) {
+            this.sessionManager.saveSession(this.agent, pendingPermission);
+          } else {
+            this.saveSessionNow();
+          }
+        },
+        clearPendingPermission: () => {
+          this.sessionManager.setPendingPermission(undefined);
+          this.saveSessionNow();
+        },
+        switch: (request) => this.switchSession(request),
+        delete: (id) => Object.freeze(this.sessionManager.deleteSession(id)),
+        resolve: (idOrPrefix) => {
+          const found = this.sessionManager.getSessionFilePath(idOrPrefix);
+          return found
+            ? Object.freeze(structuredClone(found.metadata))
+            : undefined;
+        },
+        loadSerialized: async (id) => {
+          const session = await this.sessionManager.loadSessionFile(id);
+          return session
+            ? Object.freeze(structuredClone(session))
+            : undefined;
+        },
+      }),
+      settings: Object.freeze<HarnessAPI["settings"]>({
+        get: () => this.settings.getPublicSnapshot(),
+        setModel: (modelId) => this.setModel(modelId),
+        setProvider: (provider) => this.setProvider(provider),
+        setThinking: (level) => this.setThinking(level),
+        setApiKey: async (apiKey) => {
+          await this.settings.setApiKey(apiKey);
+        },
+        setVisionProvider: async (provider) => {
+          await this.settings.setVisionProvider(provider);
+        },
+        setVisionModel: async (model) => {
+          await this.settings.setVisionModel(model);
+        },
+        setVisionKey: async (key) => {
+          await this.settings.setVisionKey(key);
+        },
+        clearVision: async () => {
+          await this.settings.clearVision();
+        },
+        providers: () => Object.freeze(getAllProviders()),
+        models: (provider) => Object.freeze(getAllModels(provider)),
+        visionProviders: () => Object.freeze(getVisionProviders()),
+        visionModels: (provider) =>
+          Object.freeze(getVisionModels(provider)),
+        modelInfo: (provider, modelId) => {
+          const model = resolveModel(
+            provider ?? this.config.provider,
+            modelId ?? this.config.modelId,
+          );
+          return Object.freeze({
+            id: model.id,
+            name: model.name,
+            supportsImages: model.input.includes("image"),
+          });
+        },
+      }),
+      project: Object.freeze<HarnessAPI["project"]>({
+        setPath: (path) => this.updateProjectPath(path),
+        resolveAtFiles: (text) => resolveAtFileRefs(
+          this.config.projectPath,
+          text,
+          this.config.atFile,
+        ),
+        resolveFiles: (fileRefs) => resolveFileRefs(
+          this.config.projectPath,
+          [...fileRefs],
+          this.config.atFile,
+        ),
+        listFiles: (prefix, maxResults) => listProjectFiles(
+          this.config.projectPath,
+          prefix,
+          maxResults,
+        ),
+        isImagePath,
+      }),
+      memory: Object.freeze<HarnessAPI["memory"]>({
+        list: (scope) => Object.freeze(structuredClone(
+          this.memoryManager.listMemories(scope),
+        )),
+        add: (content, scope, sessionId) =>
+          this.memoryManager.addMemory(content, scope, sessionId),
+        remove: (id) => this.memoryManager.removeMemory(id),
+        clear: (scope) => this.memoryManager.clearMemories(scope),
+      }),
+      skills: Object.freeze<HarnessAPI["skills"]>({
+        list: () => Object.freeze(this.skillManager.listAll().map(
+          ({ skill, active }) => Object.freeze({
+            name: skill.name,
+            description: skill.description,
+            source: skill.source,
+            active,
+            toolNames: Object.freeze((skill.tools ?? []).map((tool) =>
+              typeof tool === "string" ? tool : tool.name
+            )),
+          }),
+        )),
+        setEnabled: async (name, enabled) => {
+          await this.settings.setSkillEnabled(name, enabled);
+          let toolNames: readonly string[] = [];
+          if (enabled) {
+            const skill = this.skillManager.activate(name, this.driverRegistry);
+            toolNames = Object.freeze(skill.tools.map((tool) => tool.name));
+          } else {
+            this.skillManager.deactivate(name);
+          }
+          this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
+          return Object.freeze({ toolNames });
+        },
+      }),
+      drivers: Object.freeze<HarnessAPI["drivers"]>({
+        list: () => Object.freeze(this.driverRegistry.listAll().map(
+          (driver) => Object.freeze({
+            name: driver.name,
+            description: driver.description,
+            source: driver.source,
+            toolNames: Object.freeze(driver.tools.map((tool) => tool.name)),
+          }),
+        )),
+      }),
+      commands: Object.freeze<HarnessAPI["commands"]>({
+        list: () => Object.freeze(structuredClone(
+          this.commandManager.listManifests(),
+        )),
+        get: (name) => {
+          const manifest = this.commandManager.getManifest(name);
+          return manifest
+            ? Object.freeze(structuredClone(manifest))
+            : undefined;
+        },
+      }),
+      permissions: Object.freeze<HarnessAPI["permissions"]>({
+        sessionGrants: () => Object.freeze([
+          ...this.permissionManager.getSessionGrants(),
+        ]),
+        grantForSession: (toolName) =>
+          this.permissionManager.grantForSession(toolName),
+        persistRule: (rule) => this.settings.persistRule(rule),
+        suggestions: (toolName, args) =>
+          this.permissionSuggestions.get(toolName, args),
+        prefetchSuggestions: (toolName, args, preview) => {
+          try {
+            this.permissionSuggestions.prefetch(
+              resolveModel(this.config.provider, this.config.modelId),
+              toolName,
+              args,
+              preview,
+            );
+          } catch {
+            // Suggestions are best-effort and never gate permission prompts.
+          }
+        },
+        fuzzy: (toolName, args) => Object.freeze({
+          toolPattern: deriveFuzzyPattern(toolName),
+          argPattern: deriveFuzzyArgPattern(toolName, args),
+          argDescription: describeFuzzyArgPattern(toolName, args),
+        }),
+      }),
+      mcp: Object.freeze<HarnessAPI["mcp"]>({
+        list: () => {
+          if (!this.mcpManager) return Object.freeze([]);
+          const deferred = new Set(this.toolRegistry.getDeferredToolNames());
+          const discovered = this.toolRegistry.getDiscoveredToolNames();
+          return Object.freeze(this.mcpManager.getStates().map((state) => {
+            const driver = this.driverRegistry.get(
+              mcpDriverName(state.config.name),
+            );
+            return Object.freeze({
+              name: state.config.name,
+              description: state.config.description ?? "",
+              status: state.status,
+              error: state.error,
+              toolCount: state.toolCount,
+              tools: Object.freeze((driver?.tools ?? []).map((tool) =>
+                Object.freeze({
+                  name: tool.name,
+                  label: tool.label ?? tool.name,
+                  description: tool.description ?? "",
+                  state: deferred.has(tool.name) && !discovered.has(tool.name)
+                    ? "discoverable" as const
+                    : "loaded" as const,
+                })
+              )),
+              transport: state.resolvedTransport,
+              protocolVersion: state.negotiatedProtocolVersion,
+              compatibilityMode: state.compatibilityMode,
+              refreshState: state.refreshState,
+              refreshError: state.refreshError,
+            });
+          }));
+        },
+        refresh: () => this.mcpController.refresh(),
+        connect: (serverName) => this.mcpController.connect(serverName),
+        disconnect: (serverName) =>
+          this.mcpController.disconnect(serverName),
+      }),
+      agents,
+      eval: Object.freeze<HarnessAPI["eval"]>({
+        agents,
+        hostId: () => this.hostId,
+        currentSessionId: () =>
+          this.sessionManager.getCurrentSessionId() ?? undefined,
+        currentProjectPath: () => this.config.projectPath,
+        saveCurrentSession: () => this.saveSessionNow(),
+        resolveSession: (idOrPrefix) => {
+          const found = this.sessionManager.getSessionFilePath(idOrPrefix);
+          return found
+            ? Object.freeze(structuredClone(found.metadata))
+            : undefined;
+        },
+        loadSession: async (id) => {
+          const session = await this.sessionManager.loadSessionFile(id);
+          return session
+            ? Object.freeze(structuredClone(session))
+            : undefined;
+        },
+        publish: (event) => this.events.emit(event),
+        run: (sessionId) => runWithExecutionContext(
+          {
+            hostId: this.hostId,
+            processId: this.mainAgentId,
+            sessionId: this.sessionManager.getCurrentSessionId() ?? "unknown",
+            application: "eval",
+            cwd: this.config.projectPath,
+            facilities: this.facilities,
+          },
+          () => runEval(sessionId ?? null, {
+            harness: this.api.eval,
+            ui: {
+              addInfo: (text) => this.events.emit({
+                type: "ui:info",
+                text,
+              }),
+              addError: (text) => this.events.emit({
+                type: "ui:error",
+                text,
+              }),
+            },
+          }),
+        ),
+      }),
+      tools: Object.freeze<HarnessAPI["tools"]>({
+        deferredNames: () => Object.freeze(
+          this.toolRegistry.getDeferredToolNames(),
+        ),
+      }),
+      images: Object.freeze(this.imageInput),
+    };
+    return Object.freeze(api);
   }
 
   async initialize(): Promise<void> {
@@ -198,11 +811,15 @@ export class Harness implements HarnessAPI {
 
     // 4.2: Initialize checkpoint system for baseline hygiene
     const sessionId = this.sessionManager.getCurrentSessionId?.() ?? `session-${Date.now()}`;
-    initCheckpointSystem(this.config.projectPath, sessionId);
-    this.driverRegistry.register(makeDiscoveryDriver(this.toolRegistry));
+    initCheckpointSystem(
+      this.config.projectPath,
+      sessionId,
+      this.checkpointSystem,
+    );
+    this.driverRegistry.register(this.discoveryDriver);
 
     if (this.config.appHost?.enabled) {
-      this.appHostManager = new AppHostManager();
+      this.appHostManager = this.createAppHostManager();
       await this.appHostManager.start();
     }
 
@@ -217,7 +834,7 @@ export class Harness implements HarnessAPI {
     const maxTokens = this.config.maxTokens;
     const apiKey = this.config.apiKey;
     const self = this;
-    this.piAgentRuntime = new PiAgentRuntime({
+    this.piAgentRuntime = this.createMainAgent({
       initialState: {
         systemPrompt,
         model,
@@ -299,7 +916,8 @@ export class Harness implements HarnessAPI {
     this.bindEvents();
     const session = this.sessionManager.createSession(this.config.provider, this.config.modelId);
     this.runtimeFactory = new AgentProcessRuntimeFactory(
-      (application, context, agentId) => this.createSubagentRuntime(application, context, agentId),
+      (application, context, agentId) =>
+        this.agentRuntimeCoordinator.create(application, context, agentId),
     );
     const fallbackRegistry = new AgentFallbackRegistry();
     fallbackRegistry.register(new OcrFallbackHandler(this.events));
@@ -309,18 +927,24 @@ export class Harness implements HarnessAPI {
       this.processStore,
       this.events,
       this.logger,
-      () => this.getAvailableAgentToolNames(),
+      () => this.agentRuntimeCoordinator.availableToolNames(
+        AGENT_PROCESS_TOOL_NAMES,
+      ),
       1,
       fallbackRegistry,
+      this.hostId,
+      this.facilities,
     );
     this.events.on("agent:exit", (event) => {
       this.recordSubagentExit(event.result.agentId);
-      this.scheduleBackgroundAgentContinuation(event.result.agentId);
+      this.sessionCoordinator.scheduleBackgroundProcess(
+        this.agentSupervisor.get(event.result.agentId),
+      );
     });
     const mainContext = createMainAgentContext(
       this.config.projectPath,
       session.id,
-      this.getAvailableAgentToolNames(),
+      this.agentRuntimeCoordinator.availableToolNames(AGENT_PROCESS_TOOL_NAMES),
       this.config.permissions.denyPatterns,
     );
     const mainProcess = this.agentSupervisor.registerMain(
@@ -354,105 +978,56 @@ export class Harness implements HarnessAPI {
    * with exponential backoff, then saves the failed state.
    */
   async promptAndSave(text: string, images?: ImageContent[]): Promise<void> {
-    return this.runMainTurn(() => this.promptAndSaveInternal(text, images));
+    return this.conversationCoordinator.prompt(
+      this.conversationPromptOptions(text, images),
+    );
   }
 
   private async promptAndSaveInternal(text: string, images?: ImageContent[]): Promise<void> {
-    const maxRetries = this.config.retry.maxRetries;
-    const baseDelay = this.config.retry.baseDelayMs;
-    const maxDelay = this.config.retry.maxDelayMs;
-
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
-      const preTurnLength = (this.agent.state.messages as any[]).length;
-
-      // On retry attempts, rollback messages and wait
-      if (attempt > 0) {
-        // Truncate messages to pre-turn state (removes failed assistant message)
-        (this.agent.state.messages as any[]).length = preTurnLength;
-
-        const delay = this.computeRetryDelay(attempt, baseDelay, maxDelay);
-        this.events.emit({ type: "llm:retry", attempt,
-          maxRetries,
-          delayMs: delay,
-          error: "",
-          level: "turn",
-        });
-        await this.sleep(delay);
-      }
-
-      this.events.emit({ type: "turn:start" });
-      await this.agent.prompt(text, images);
-
-      // Check if last assistant message has an error
-      const msgs = this.agent.state.messages as any[];
-      const lastAssistantMsg = this.findLastAssistantMessage(msgs);
-
-      if (!lastAssistantMsg || lastAssistantMsg.stopReason !== "error") {
-        // Success — save and return
-        this.sessionManager.trySaveSession(this.agent);
-        this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
-
-        return;
-      }
-
-      const errorMsg = lastAssistantMsg.errorMessage ?? "Unknown model error";
-
-      // Non-retryable errors: auth, invalid model, etc.
-      if (!this.isRetryableError(errorMsg)) {
-        this.events.emit({ type: "llm:retry", attempt: attempt + 1,
-          maxRetries,
-          delayMs: 0,
-          error: errorMsg,
-          level: "turn",
-        });
-        this.events.emit({ type: "ui:error", text: `Model error: ${errorMsg}` });
-        this.events.emit({ type: "turn:error", error: errorMsg, attempt: attempt + 1, maxRetries });        this.sessionManager.trySaveSession(this.agent);
-        this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
-
-        return;
-      }
-
-
-      // Last retry attempt exhausted
-      if (attempt >= maxRetries) {
-        this.events.emit({ type: "llm:retry", attempt: attempt + 1,
-          maxRetries,
-          delayMs: 0,
-          error: errorMsg,
-          level: "turn",
-        });
-        this.events.emit({ type: "ui:error", text: `Model error: ${errorMsg}` });
-        this.events.emit({ type: "turn:error", error: errorMsg, attempt: attempt + 1, maxRetries });        this.events.emit({ type: "ui:error", text: "✗ All retries exhausted" });
-        this.sessionManager.trySaveSession(this.agent);
-        this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
-        return;
-      }
-
-      // Will retry — show progress
-      this.events.emit({ type: "llm:retry", 
-        attempt: attempt + 1,
-        maxRetries,
-        delayMs: this.computeRetryDelay(attempt + 1, baseDelay, maxDelay),
-        error: errorMsg,
-        level: "turn",
-      });
-    }
+    return this.conversationCoordinator.executePrompt(
+      this.conversationPromptOptions(text, images),
+    );
   }
 
-  private runMainTurn(operation: () => Promise<void>): Promise<void> {
-    if (this.sessionSwitchInProgress) {
-      return Promise.reject(new Error("Cannot submit a prompt while a session switch is in progress"));
-    }
-    if (this.activeMainTurn) {
-      return Promise.reject(new Error("A Main Agent turn is already in progress"));
-    }
-    const operationPromise = operation();
-    let tracked: Promise<void>;
-    tracked = operationPromise.finally(() => {
-      if (this.activeMainTurn === tracked) this.activeMainTurn = null;
-    });
-    this.activeMainTurn = tracked;
-    return tracked;
+  private conversationPromptOptions(text: string, images?: ImageContent[]) {
+    return {
+      text,
+      images,
+      maxRetries: this.config.retry.maxRetries,
+      baseDelayMs: this.config.retry.baseDelayMs,
+      maxDelayMs: this.config.retry.maxDelayMs,
+      messageCount: () => this.agent.state.messages.length,
+      truncateMessages: (length: number) => {
+        this.agent.state.messages.length = length;
+      },
+      prompt: (promptText: string, promptImages?: readonly ImageContent[]) =>
+        runWithExecutionContext(
+          {
+            hostId: this.hostId,
+            processId: this.mainAgentId,
+            sessionId: this.sessionManager.getCurrentSessionId() ?? "unknown",
+            application: "main",
+            cwd: this.config.projectPath,
+            facilities: this.facilities,
+          },
+          () => this.agent.prompt(
+            promptText,
+            promptImages ? [...promptImages] : undefined,
+          ),
+        ),
+      lastError: () => {
+        const message = this.findLastAssistantMessage(
+          this.agent.state.messages as any[],
+        );
+        return message?.stopReason === "error"
+          ? message.errorMessage ?? "Unknown model error"
+          : undefined;
+      },
+      isRetryable: (error: string) => this.isRetryableError(error),
+      save: () => this.sessionCoordinator.saveNow(),
+      publish: (event: Parameters<HarnessEventBus["emit"]>[0]) =>
+        this.events.emit(event),
+    };
   }
 
   private formatAgentNotifications(notifications: AgentExitResult[]): string {
@@ -481,158 +1056,8 @@ export class Harness implements HarnessAPI {
     ].join("\n");
   }
 
-  private scheduleBackgroundAgentContinuation(agentId: string): void {
-    const process = this.agentSupervisor.get(agentId);
-    if (
-      !process
-      || process.role !== "subagent"
-      || process.recording !== "session"
-      || process.attachment !== "background"
-      || !process.exit
-    ) return;
-    this.pendingBackgroundContinuationSessions.add(process.parentSessionId);
-    this.startBackgroundContinuationDrain();
-  }
-
-  private startBackgroundContinuationDrain(): void {
-    if (
-      this.backgroundContinuationDrain
-      || this.shuttingDown
-      || this.sessionSwitchInProgress
-      || this.pendingBackgroundContinuationSessions.size === 0
-    ) return;
-
-    let drain: Promise<void>;
-    drain = Promise.resolve()
-      .then(() => this.drainBackgroundAgentContinuations())
-      .finally(() => {
-        if (this.backgroundContinuationDrain === drain) {
-          this.backgroundContinuationDrain = null;
-        }
-        const currentSessionId = this.sessionManager.getCurrentSessionId();
-        if (
-          !this.shuttingDown
-          && !this.sessionSwitchInProgress
-          && currentSessionId
-          && this.pendingBackgroundContinuationSessions.has(currentSessionId)
-        ) {
-          this.startBackgroundContinuationDrain();
-        }
-      });
-    this.backgroundContinuationDrain = drain;
-  }
-
-  private async drainBackgroundAgentContinuations(): Promise<void> {
-    while (!this.shuttingDown && !this.sessionSwitchInProgress) {
-      const sessionId = this.sessionManager.getCurrentSessionId();
-      if (
-        !sessionId
-        || !this.pendingBackgroundContinuationSessions.has(sessionId)
-      ) return;
-
-      const activeTurn = this.activeMainTurn;
-      if (activeTurn) {
-        try {
-          await activeTurn;
-        } catch {
-          // A failed user turn still leaves the background notification pending.
-        }
-        continue;
-      }
-      if (
-        this.sessionSwitchInProgress
-        || this.sessionManager.getCurrentSessionId() !== sessionId
-      ) continue;
-
-      const notifications = this.agentSupervisor.consumeNotifications(sessionId);
-      this.pendingBackgroundContinuationSessions.delete(sessionId);
-      if (notifications.length === 0) continue;
-
-      this.events.emit({ type: "processing:start" });
-      try {
-        await this.runMainTurn(() =>
-          this.promptAndSaveInternal(this.formatAgentNotifications(notifications))
-        );
-      } catch (error) {
-        this.logger.error(
-          "AgentContinuation",
-          `Failed to resume Main Agent: ${String(error)}`,
-        );
-        this.events.emit({
-          type: "ui:error",
-          text: `Failed to resume after SubAgent completion: ${String(error)}`,
-        });
-        this.events.emit({ type: "processing:stop" });
-      }
-    }
-  }
-
   async switchSession(request: SwitchSessionRequest): Promise<SwitchSessionResult> {
-    if (this.sessionSwitchInProgress) {
-      throw new Error("A session switch is already in progress");
-    }
-    this.sessionSwitchInProgress = true;
-    try {
-      const targetId = this.resolveSessionId(request.sessionIdOrPrefix);
-      const prepared = await this.sessionManager.prepareLoad(targetId);
-
-      const activeTurn = this.activeMainTurn;
-      if (activeTurn) {
-        this.abort();
-        try {
-          await activeTurn;
-        } catch {
-          // Aborted turns may reject; quiescence, not success, is required here.
-        }
-      }
-
-      this.sessionManager.saveSession(this.agent, request.pendingPermission);
-      await this.agentSupervisor.updateParentSession(
-        this.mainAgentId,
-        targetId,
-        this.config.projectPath,
-      );
-      this.sessionManager.commitPreparedLoad(prepared, this.agent);
-      this.lastSavedMessageCount = prepared.messages.length;
-
-      return {
-        session: prepared.metadata,
-        messages: prepared.messages,
-        agentMessages: prepared.agentMessages,
-      };
-    } finally {
-      this.sessionSwitchInProgress = false;
-      this.startBackgroundContinuationDrain();
-    }
-  }
-
-  private resolveSessionId(idOrPrefix: string): string {
-    const normalized = idOrPrefix.trim();
-    if (!normalized) throw new Error("Session ID required");
-
-    const current = this.sessionManager.getCurrentMetadata();
-    const candidates = new Map(
-      [
-        ...this.sessionManager.listSessions(),
-        ...this.sessionManager.listAllSessions(),
-        ...(current ? [current] : []),
-      ].map((session) => [session.id, session]),
-    );
-    if (candidates.has(normalized)) return normalized;
-
-    const matches = [...candidates.values()].filter((session) =>
-      session.id.startsWith(normalized),
-    );
-    if (matches.length === 0) {
-      throw new Error(`Session not found: ${normalized}`);
-    }
-    if (matches.length > 1) {
-      const details = matches
-        .map((session) => `  ${session.id.slice(0, 8)} "${session.title.slice(0, 60)}"`)
-        .join("\n");
-      throw new Error(`Ambiguous session ID prefix. Matching sessions:\n${details}`);
-    }
-    return matches[0].id;
+    return this.sessionCoordinator.switch(request);
   }
 
   /**
@@ -640,26 +1065,7 @@ export class Harness implements HarnessAPI {
    * including error handlers and shutdown hooks.
    */
   saveSessionNow(): void {
-    this.sessionManager.trySaveSession(this.agent);
-    this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
-  }
-
-  /**
-   * Start periodic auto-save (every 15s) during agent execution.
-   * Only saves when new messages have been added since last save.
-   */
-  private startAutoSave(): void {
-    this.autoSaveTimer = setInterval(() => {
-      if (this.agent?.state?.messages) {
-        const currentCount = (this.agent.state.messages as any[]).length;
-        if (currentCount !== this.lastSavedMessageCount) {
-          this.logger.info("AutoSave", `Periodic auto-save (${currentCount} messages, was ${this.lastSavedMessageCount})`);
-          this.sessionManager.trySaveSession(this.agent);
-          this.lastSavedMessageCount = currentCount;
-        }
-      }
-    }, 15_000);
-    this.autoSaveTimer.unref();
+    this.sessionCoordinator.saveNow();
   }
 
   private findLastUserMessageIndex(messages: any[]): number {
@@ -703,7 +1109,7 @@ export class Harness implements HarnessAPI {
         text: agentProcess.exit.output,
         error: agentProcess.exit.error,
       },
-      tools: projectTranscriptToolActivities(runtimeMessages, agentId),
+      tools: extractAgentToolExecutions(runtimeMessages),
       createdAt: agentProcess.createdAt,
       startedAt: agentProcess.startedAt,
       endedAt: agentProcess.exit.endedAt,
@@ -829,275 +1235,11 @@ export class Harness implements HarnessAPI {
     return false;
   }
 
-  /**
-   * Compute exponential backoff delay with jitter.
-   * delay = min(baseDelayMs * 2^(attempt-1) + random(0, 500), maxDelayMs)
-   */
-  private computeRetryDelay(attempt: number, baseDelayMs: number, maxDelayMs: number): number {
-    const jitter = Math.random() * 500;
-    const delay = baseDelayMs * Math.pow(2, attempt - 1) + jitter;
-    return Math.min(delay, maxDelayMs);
-  }
-
-  private sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
-  private getAvailableAgentToolNames(): string[] {
-    return [...new Set([
-      ...this.driverRegistry.getAllTools().map((tool) => tool.name),
-      "skill",
-      ...AGENT_PROCESS_TOOL_NAMES,
-    ])];
-  }
-
   private async refreshMainAgentCapabilities(): Promise<void> {
-    await this.agentSupervisor.updateMainCapabilities(
+    await this.agentRuntimeCoordinator.refreshMain(
       this.mainAgentId,
-      this.getAvailableAgentToolNames(),
+      AGENT_PROCESS_TOOL_NAMES,
     );
-  }
-
-  private createSubagentRuntime(
-    application: AgentApplicationSnapshot,
-    context: ProcessAgentContext,
-    agentId: string,
-  ): AgentProcessRuntime {
-    let modelSelection: { model: Model<Api>; apiKey?: string };
-    try {
-      modelSelection = this.resolveApplicationModel(application);
-    } catch (error) {
-      if (
-        error instanceof AgentRuntimeFailure
-        && application.fallback?.some((fallback) => fallback.on.includes(error.code))
-      ) {
-        return new FailedAgentRuntime(error);
-      }
-      throw error;
-    }
-    const model = modelSelection.model;
-    const childContextManager = new ContextManager(this.config.context);
-    childContextManager.updateModel(model.contextWindow, model.maxTokens);
-    const processTools = makeAgentProcessTools(this.agentSupervisor, agentId);
-    const toolsByName = new Map<string, AgentTool<any>>();
-    for (const tool of [
-      ...this.driverRegistry.getAllTools(),
-      this.makeSkillTool(),
-      ...processTools,
-    ]) {
-      toolsByName.set(tool.name, tool);
-    }
-    const allowed = new Set(context.allowedTools);
-    const tools = [...toolsByName.values()].filter((tool) => allowed.has(tool.name));
-    const acceptEditRules = application.permissionMode === "acceptEdits"
-      ? ["write_file", "overwrite_file", "edit", "edit_undo"].map((tool) => ({
-          tool,
-          decision: "allow" as const,
-          priority: 100,
-        }))
-      : [];
-    const childPermissions = new PermissionManager(
-      {
-        ...this.config.permissions,
-        rules: [...acceptEditRules, ...this.config.permissions.rules],
-        defaultDecision: application.permissionMode === "bypassPermissions"
-          ? "allow"
-          : context.attachment === "background"
-          ? "deny"
-          : this.config.permissions.defaultDecision,
-      },
-      async (toolName, preview, args, promptContext) => {
-        const toolCallId = promptContext?.toolCallId;
-        this.events.emit({
-          type: "agent:progress",
-          agentId,
-          phase: "permission",
-          message: `Permission required for ${toolName}`,
-          details: {
-            kind: "permission",
-            status: "waiting",
-            executionId: agentId,
-            toolCallId,
-            toolName,
-            preview,
-          },
-        });
-        try {
-          return await this.permissionPromptQueue.enqueue(
-            () => this.ui.getPromptPermission()(toolName, preview, args, {
-              agentId,
-              toolCallId,
-            }),
-          );
-        } finally {
-          this.events.emit({
-            type: "agent:progress",
-            agentId,
-            phase: "permission",
-            message: `Permission resolved for ${toolName}`,
-            details: {
-              kind: "permission",
-              status: "resolved",
-              executionId: agentId,
-              toolCallId,
-              toolName,
-            },
-          });
-        }
-      },
-      context.cwd,
-    );
-    const backgroundPermissions = new PermissionManager(
-      {
-        ...this.config.permissions,
-        rules: [...acceptEditRules, ...this.config.permissions.rules],
-        defaultDecision: application.permissionMode === "bypassPermissions"
-          ? "allow"
-          : "deny",
-      },
-      () => Promise.resolve({
-        decision: "deny",
-        denyReason: "Background Agent processes cannot open permission prompts",
-      }),
-      context.cwd,
-    );
-    const thinkingLevel = typeof application.effort === "number"
-      ? application.effort <= 0
-        ? "off"
-        : application.effort <= 0.33
-          ? "low"
-          : application.effort <= 0.66
-            ? "medium"
-            : "high"
-      : typeof application.effort === "string"
-        && ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(application.effort)
-        ? application.effort as HarnessConfig["thinkingLevel"]
-        : this.config.thinkingLevel;
-    const applicationMemory = loadAgentMemory(
-      application,
-      this.config.configDir,
-      context.worktree?.repositoryRoot ?? this.config.projectPath,
-    );
-    const applicationSkills = this.buildApplicationSkills(application);
-    const child = new PiAgentRuntime({
-      initialState: {
-        systemPrompt: [
-          application.systemPrompt,
-          `# Runtime Context\n\nAgent ID: ${agentId}\nParent session: ${context.parentSessionId}\nWorking directory: ${context.cwd}`,
-          applicationSkills,
-          applicationMemory,
-        ].filter(Boolean).join("\n\n"),
-        model,
-        tools,
-        thinkingLevel,
-      },
-      streamFn: (runtimeModel: Model<Api>, runtimeContext: Context, options?: SimpleStreamOptions) =>
-        streamSimple(runtimeModel, runtimeContext, {
-          ...options,
-          apiKey: options?.apiKey ?? modelSelection.apiKey,
-          maxTokens: this.config.maxTokens,
-          timeoutMs: 120_000,
-          maxRetries: this.config.retry.maxRetries,
-          maxRetryDelayMs: this.config.retry.maxDelayMs,
-        }),
-      transformContext: (messages, signal) =>
-        childContextManager.transform(messages, signal) as Promise<AgentMessage[]>,
-      beforeToolCall: async (toolContext, signal) => {
-        const currentContext = this.agentSupervisor.get(agentId)?.context ?? context;
-        const capability = checkAgentCapability(
-          currentContext,
-          toolContext.toolCall.name,
-          toolContext.args,
-        );
-        const permissions = currentContext.attachment === "background"
-          ? backgroundPermissions
-          : childPermissions;
-        return capability ?? await permissions.check(toolContext, signal);
-      },
-      afterToolCall: async (_toolContext, signal) =>
-        signal?.aborted ? { terminate: true } : undefined,
-    });
-    if (application.maxTurns) {
-      let turns = 0;
-      child.subscribe((event) => {
-        if (event.type === "turn_end" && ++turns >= application.maxTurns!) {
-          child.abort();
-        }
-      });
-    }
-    return new PiAgentRuntimeAdapter(child, agentId);
-  }
-
-  private buildApplicationSkills(application: AgentApplicationSnapshot): string {
-    if (!application.skills?.length) return "";
-    const sections = application.skills.map((name) => {
-      const manifest = this.skillManager.getManifest(name);
-      if (!manifest) throw new Error(`Unknown Skill in ${application.name}: ${name}`);
-      return [
-        `## Skill: ${manifest.name}`,
-        manifest.description,
-        manifest.instructions ?? "",
-      ].filter(Boolean).join("\n\n");
-    });
-    return ["# Application Skills", ...sections].join("\n\n");
-  }
-
-  private resolveApplicationModel(
-    application: AgentApplicationSnapshot,
-  ): { model: Model<Api>; apiKey?: string } {
-    let configured = application.model;
-    if (configured && ["haiku", "sonnet", "opus"].includes(configured)) {
-      configured = this.config.agentModelAliases?.[
-        configured as "haiku" | "sonnet" | "opus"
-      ];
-    }
-    if (!configured || configured === "inherit") {
-      return {
-        model: this.resolveSubagentModel(this.config.provider, this.config.modelId),
-        apiKey: this.config.apiKey,
-      };
-    }
-    if (configured === "vision") {
-      const vision = resolveVisionApplicationConfig(application, this.config);
-      if (!vision?.provider || !vision.model) {
-        throw new AgentRuntimeFailure(
-          "model_unavailable",
-          "Vision model is not configured",
-        );
-      }
-      return {
-        model: this.resolveSubagentModel(vision.provider, vision.model),
-        apiKey: vision.key ?? getEnvApiKey(vision.provider),
-      };
-    }
-    const separator = configured.indexOf("/");
-    if (separator > 0) {
-      const provider = configured.slice(0, separator);
-      return {
-        model: this.resolveSubagentModel(provider, configured.slice(separator + 1)),
-        apiKey: provider === this.config.provider
-          ? this.config.apiKey
-          : provider === this.config.vision?.provider
-          ? this.config.vision.key ?? getEnvApiKey(provider)
-          : getEnvApiKey(provider),
-      };
-    }
-    return {
-      model: this.resolveSubagentModel(this.config.provider, configured),
-      apiKey: this.config.apiKey,
-    };
-  }
-
-  private resolveSubagentModel(provider: string, modelId: string): Model<Api> {
-    try {
-      return resolveModel(provider, modelId);
-    } catch (error) {
-      throw new AgentRuntimeFailure(
-        "model_unavailable",
-        error instanceof Error ? error.message : String(error),
-        { cause: error },
-      );
-    }
   }
 
   private async processImagesWithVisionAgent(
@@ -1131,7 +1273,9 @@ export class Harness implements HarnessAPI {
     if (!sessionId) throw new Error("Cannot launch Vision Agent without an active session");
     await this.agentSupervisor.updateParentSession(this.mainAgentId, sessionId);
     options?.onProgress?.({ phase: "compressing", cachedRefs: [] });
-    const cachedRefs = await Promise.all(images.map((image) => ImageCache.put(image)));
+    const cachedRefs = await Promise.all(
+      images.map((image) => this.imageStore.put(image)),
+    );
     options?.onProgress?.({ phase: "compressing", cachedRefs });
     let visionAgentId = "";
     const unsubscribe = this.events.on("agent:progress", (event) => {
@@ -1209,7 +1353,7 @@ export class Harness implements HarnessAPI {
     images: ImageContent[],
     displayText = text,
   ): Promise<void> {
-    return this.runMainTurn(() =>
+    return this.conversationCoordinator.run(() =>
       this.promptWithImagesInternal(text, images, displayText)
     );
   }
@@ -1295,6 +1439,10 @@ export class Harness implements HarnessAPI {
 
   /** Abort any in-progress vision/OCR processing AND the current agent run. */
   abort(): void {
+    this.conversationCoordinator.abort(() => this.abortRuntime());
+  }
+
+  private abortRuntime(): void {
     this.activeVisionAbortController?.abort();
     if (this.activeVisionAgentId) {
       void this.agentSupervisor.terminate(this.activeVisionAgentId).catch((error) => {
@@ -1334,11 +1482,11 @@ export class Harness implements HarnessAPI {
       }));
     }
     this.sessionManager.trySaveSession(this.agent);
-    this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
+    this.sessionCoordinator.noteSavedMessageCount();
     // Restore images into agent state for the UI to render
     const restoredImgs: ImageContent[] = [];
     for (const ref of cachedRefs) {
-      const cached = ImageCache.getSync(ref);
+      const cached = this.imageStore.getSync(ref);
       if (cached) restoredImgs.push(cached);
     }
     if (restoredImgs.length > 0 && userMsg) {
@@ -1349,235 +1497,107 @@ export class Harness implements HarnessAPI {
     }
   }
 
-  async run(ui?: UiBackend): Promise<void> {
-    if (ui) this.ui = ui;
-    const model = resolveModel(this.config.provider, this.config.modelId);
-    const nativeImageSupport = model.input.includes("image");
-    if (!ui) {
-      ui = new TuiBackend(this);
+  async start(): Promise<void> {
+    await this.mcpController.start(this.config.mcp);
+    this.sessionCoordinator.startAutoSave();
+
+    if (!this.config.apiKey) {
+      this.events.emit({ type: "ui:info", text: [
+        "Welcome to DSCode! To get started, configure your API key:",
+        "",
+        `  /config key your-${this.config.provider}-api-key`,
+        "",
+        "Then set your preferred model:",
+        "",
+        `  /config model ${this.config.modelId}`,
+        "",
+        "Type /config to see all settings.",
+      ].join("\n") });
     }
-    this.ui = ui;
-    // Register config change notification → UI
-    this.configStore.onChange(() => {
-      (this.ui as any).onConfigChange?.();
+    this.events.emit({ type: "ui:focus:editor" });
+  }
+
+  async setModel(modelId: string): Promise<void> {
+    await this.settings.setModel(modelId);
+  }
+
+
+  async setProvider(providerId: string): Promise<void> {
+    if (this.config.provider === providerId) return;
+    await this.settings.setProvider(providerId);
+  }
+
+  async setThinking(level: string): Promise<void> {
+    await this.settings.setThinking(level);
+  }
+
+  private applySettingsSnapshot(
+    previous: RuntimeConfigSnapshot,
+    next: RuntimeConfigSnapshot,
+    reason: SettingsChangeReason,
+  ): void {
+    this.config = next as unknown as RuntimeConfig;
+    this.events.emit({
+      type: "config:change",
+      data: this.settings.getPublicSnapshot(),
     });
+    this.imagePipeline?.updateConfig({
+      visionConfig: next.vision as RuntimeConfig["vision"],
+      fallbackApiKey: next.apiKey,
+    });
+    if (!this.piAgentRuntime) return;
 
-    await this.ui.start();
-
-    try {
-      if (this.config.mcp.length > 0) {
-        this.events.emit({ type: "ui:info", text: `Connecting ${this.config.mcp.length} MCP server(s)...` });
-        this.mcpManager = new MCPManager(this.config.mcp);
-        this.mcpManager.processImages = (images, text, options) =>
-          this.processImagesWithVisionAgent(images, text, options);
-        // mcpManager is directly accessible via harness.mcpManager
-        await this.mcpManager.initialize();
-        this.mcpEventUnsubscribe = this.mcpManager.onEvent((event) => this.handleMcpEvent(event));
-        await this.mcpManager.registerDrivers(this.driverRegistry);
-        (this.ui as any).setMcpManager?.(this.mcpManager);
-        (this.ui as any).pushMcpState?.();
-
-        if (this.appHostManager) {
-          this.appHostManager.setMcpManager(this.mcpManager);
-        }
-
-        const appOnlyNames = new Set(this.mcpManager.getAppOnlyToolNames());
-        this.toolRegistry.initialize(
-          this.makeSkillTool(),
-          this.mcpManager.getAlwaysLoadToolNames(),
-          appOnlyNames,
-        );
-        this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
-        this.agent.state.systemPrompt = this.baseSystemPrompt.replace("__DEFERRED_HINT__", this.toolRegistry.buildDeferredToolsHint());
-        await this.dumpDebugPrompt();
-        const connected = this.mcpManager.getStates().filter((s) => s.status === "connected").length;
-        const total = this.config.mcp.length;
-        this.events.emit({ type: "ui:info", text: `MCP: ${connected}/${total} connected` });
-        if (connected < total) {
-          const errors = this.mcpManager.getStates().filter((s) => s.status === "error");
-          for (const err of errors) {
-            this.events.emit({ type: "ui:info", text: `MCP '${err.config.name}' failed: ${err.error ?? "unknown"}` });
-          }
-        }
-        this.events.emit({ type: "ui:focus:editor" });
-      } else {
-        this.toolRegistry.initialize(this.makeSkillTool());
-        this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
+    if (
+      reason === "model"
+      || reason === "provider"
+      || (
+        reason === "project"
+        && (
+          previous.provider !== next.provider
+          || previous.modelId !== next.modelId
+        )
+      )
+    ) {
+      const model = resolveModel(next.provider, next.modelId);
+      this.agent.state.model = model;
+      this.agent.state.thinkingLevel = next.thinkingLevel;
+      this.contextManager.updateModel(model.contextWindow, model.maxTokens);
+      if (
+        previous.provider !== next.provider
+        || previous.modelId !== next.modelId
+      ) {
+        this.agent.reset();
+        this.events.emit({ type: "ui:conversation:clear" });
+        this.rebuildSystemPrompt();
       }
-      await this.refreshMainAgentCapabilities();
-
-      // Start periodic auto-save (15s interval) after MCP/agent initialization
-      this.startAutoSave();
-
-      if (!this.config.apiKey) {
-        this.events.emit({ type: "ui:info", text: [
-          "Welcome to DSCode! To get started, configure your API key:",
-          "",
-          `  /config key your-${this.config.provider}-api-key`,
-          "",
-          "Then set your preferred model:",
-          "",
-          `  /config model ${this.config.modelId}`,
-          "",
-          "Type /config to see all settings.",
-        ].join("\n") });
-      }
-
-      this.events.emit({ type: "ui:focus:editor" });
-      await this.ui.waitForExit();
-    } finally {
-      await this.shutdown();
+      return;
     }
-  }
 
-  setModel(modelId: string): void {
-    const oldModelId = this.config.modelId;
-    const model = resolveModel(this.config.provider, modelId);
-    const thinkingLevel = getThinkingLevel(this.config.provider, modelId);
-    this.configStore.setModelConfig(this.config.provider, modelId, thinkingLevel);
-    this.agent.state.model = model;
-    this.contextManager.updateModel(model.contextWindow, model.maxTokens);
-    this.agent.state.thinkingLevel = thinkingLevel;
-
-    saveUserConfig({ modelId, thinkingLevel });
-
-    // Clear conversation context when switching models to avoid capability mismatch
-    // (e.g. image messages from qwen -> deepseek which only supports text)
-    if (oldModelId && modelId !== oldModelId) {
-      this.agent.reset();
-      this.events.emit({ type: "ui:conversation:clear" });
-      this.rebuildSystemPrompt();
+    if (reason === "thinking") {
+      this.agent.state.thinkingLevel = next.thinkingLevel;
     }
-  }
-
-
-  setProvider(providerId: string): void {
-    const oldProvider = this.config.provider;
-    if (oldProvider === providerId) return;
-
-    const models = getAllModels(providerId);
-    if (!models || models.length === 0) {
-      throw new Error(`Unknown provider: ${providerId}`);
-    }
-    const defaultModelId = models[0].id;
-    const model = resolveModel(providerId, defaultModelId);
-
-    this.configStore.setModelConfig(providerId, defaultModelId, getThinkingLevel(providerId, defaultModelId));
-    this.agent.state.model = model;
-    this.agent.state.thinkingLevel = this.config.thinkingLevel;
-    this.contextManager.updateModel(model.contextWindow, model.maxTokens);
-
-    saveUserConfig({ provider: providerId, modelId: defaultModelId, thinkingLevel: this.config.thinkingLevel });
-
-    this.agent.reset();
-    this.events.emit({ type: "ui:conversation:clear" });
-    this.rebuildSystemPrompt();
-  }
-  setThinking(level: string): void {
-    this.configStore.setThinkingLevel(level as any);
-    this.agent.state.thinkingLevel = level as any;
-    saveUserConfig({ thinkingLevel: level });
   }
 
   async updateProjectPath(cwd: string): Promise<{ success: boolean; error?: string }> {
-    const resolvedPath = resolve(cwd);
-
-    if (!existsSync(resolvedPath)) {
-      return { success: false, error: `Path does not exist: ${resolvedPath}` };
-    }
-
-    // Save current session before switching
-    this.sessionManager.trySaveSession(this.agent);
-    this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
-
-    // Change working directory
-    process.chdir(resolvedPath);
-
-    this.configStore.setProjectPath(resolvedPath);
-    this.sessionManager.updateProjectPath(this.config.dataDir, resolvedPath);
-    this.memoryManager.updateProjectPath(this.config.dataDir, resolvedPath);
-    this.processStore.updateProjectPath(resolvedPath);
-    await this.applicationRegistry.updateProjectPath(resolvedPath);
-    const sessionId = this.sessionManager.getCurrentSessionId();
-    if (sessionId) {
-      await this.agentSupervisor.updateParentSession(this.mainAgentId, sessionId, resolvedPath);
-    }
-
-    // Reload skills from new project directory
-    const projectSkillsDir = join(resolvedPath, ".dscode", "skills");
-    this.skillManager.reloadDirs(this.config.userSkillsDir, projectSkillsDir, this.driverRegistry);
-
-    // Reload MCP servers from new project settings
-    try {
-      const userSettings = loadScopedSettings(userSettingsPath());
-      const projectSettings = loadScopedSettings(projectSettingsPath(resolvedPath));
-      const { servers: mcpServers } = loadMcpServers(userSettings, projectSettings, resolvedPath);
-
-      if (mcpServers.length > 0) {
-        this.configStore.setMcpServers(mcpServers);
-        this.mcpManager = new MCPManager(mcpServers);
-        this.mcpManager.processImages = (images, text, options) =>
-          this.processImagesWithVisionAgent(images, text, options);
-        await this.mcpManager.initialize();
-        await this.mcpManager.registerDrivers(this.driverRegistry);
-
-        // Re-initialize ToolRegistry to pick up new MCP AgentTool objects
-        const appOnlyNames = new Set(this.mcpManager.getAppOnlyToolNames());
-        this.toolRegistry.initialize(
-          this.makeSkillTool(),
-          this.mcpManager.getAlwaysLoadToolNames(),
-          appOnlyNames,
-        );
-
-        if (this.appHostManager) {
-          this.appHostManager.setMcpManager(this.mcpManager);
-        }
-      } else {
-        this.configStore.setMcpServers([]);
-        this.mcpManager = undefined;
-
-        // Re-initialize ToolRegistry to clear old MCP tools
-        this.toolRegistry.initialize(this.makeSkillTool());
-      }
-
-      // Notify UI of updated MCP state
-      (this.ui as any).setMcpManager?.(this.mcpManager);
-      (this.ui as any).pushMcpState?.();
-    } catch (err) {
-      this.logger.error("McpReload", String(err));
-      // Non-fatal: continue with updated path even if MCP reload fails
-    }
-
-    // Update agent tools after driver changes
-    this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
-    await this.refreshMainAgentCapabilities();
-
-    // Refresh system prompt with new project memories and skills
-    const memories = this.memoryManager.getRelevantMemories();
-    const skillSection = this.skillManager.getSystemPromptSection();
-    this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection, this.commandManager.getSystemPromptSection());
-    this.agent.state.systemPrompt = this.baseSystemPrompt.replace("__DEFERRED_HINT__", this.toolRegistry.buildDeferredToolsHint());
-
-    return { success: true };
+    return this.projectCoordinator.switchProject(cwd);
   }
 
-  private async shutdown(): Promise<void> {
-    // Clear auto-save timer before final save
-    if (this.autoSaveTimer) {
-      clearInterval(this.autoSaveTimer);
-      this.autoSaveTimer = undefined;
-    }
+  async shutdown(): Promise<void> {
+    this.sessionCoordinator.stopAutoSave();
     // Save session FIRST, before any other shutdown steps.
     // This ensures data is persisted even if later steps fail.
     // Also save regardless of shuttingDown flag — this is the last chance to persist.
     this.sessionManager.trySaveSession(this.agent);
-    this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
+    this.sessionCoordinator.noteSavedMessageCount();
 
     if (this.shuttingDown) return;
     this.shuttingDown = true;
 
-    this.mcpEventUnsubscribe?.();
-    this.mcpEventUnsubscribe = undefined;
+    try {
+      await this.mcpController.shutdown();
+    } catch (err) {
+      this.logger.error("McpShutdown", String(err));
+    }
     try {
       await this.agentSupervisor.shutdown();
     } catch (err) {
@@ -1589,20 +1609,14 @@ export class Harness implements HarnessAPI {
       this.logger.error("VisionShutdown", String(err));
     }
     // 4.2: Clean up checkpoint directories for this session
-    try { shutdownCheckpointSystem(); } catch {}
+    try { shutdownCheckpointSystem(this.checkpointSystem); } catch {}
+    this.permissionSuggestions.clear();
 
     if (this.appHostManager) {
       try {
         await this.appHostManager.shutdown();
       } catch (err) {
         this.logger.error("AppHostShutdown", String(err));
-      }
-    }
-    if (this.mcpManager) {
-      try {
-        await this.mcpManager.shutdown();
-      } catch (err) {
-        this.logger.error("McpShutdown", String(err));
       }
     }
   }
@@ -1814,7 +1828,7 @@ __DEFERRED_HINT__`;
           permissions,
         });
         this.registeredApps.set(toolName, app.id);
-        if ("addAppNotification" in this.ui) (this.ui as any).addAppNotification?.(app);
+        this.events.emit({ type: "mcp:app:registered", app });
         if (payload !== undefined) {
           this.appHostManager!.pushToApp(app.id, {
             jsonrpc: "2.0",
@@ -1858,7 +1872,7 @@ __DEFERRED_HINT__`;
         data: structuredContent,
       });
       this.registeredApps.set(toolName, app.id);
-      if ("addAppNotification" in this.ui) (this.ui as any).addAppNotification?.(app);
+      this.events.emit({ type: "mcp:app:registered", app });
 
       if (payload !== undefined) {
         this.appHostManager!.pushToApp(app.id, {
@@ -1881,7 +1895,7 @@ __DEFERRED_HINT__`;
           if ((event as any).message?.role === "user") {
             this.logger.info("PreTurnSave", `Saving session pre-turn (${(this.agent.state.messages as any[]).length} messages)`);
             this.sessionManager.trySaveSession(this.agent);
-            this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
+            this.sessionCoordinator.noteSavedMessageCount();
           }
           break;
         }
@@ -1945,7 +1959,7 @@ __DEFERRED_HINT__`;
           // Session is saved by promptAndSave after retries are resolved.
           // This save is a safety net for non-promptAndSave code paths.
           this.sessionManager.trySaveSession(this.agent);
-          this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
+          this.sessionCoordinator.noteSavedMessageCount();
         }
         if (event.type === "agent_start") {
           this.events.emit({ type: "turn:streaming:start" });
@@ -1953,7 +1967,7 @@ __DEFERRED_HINT__`;
         if (event.type === "turn_end") {
           // Save session before broadcasting so sidebar gets fresh metadata
           this.sessionManager.trySaveSession(this.agent);
-          this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
+          this.sessionCoordinator.noteSavedMessageCount();
           const turnEndMsg = event.message as AssistantMessage;
           const rawUsage = turnEndMsg?.usage;
           this.events.emit({ type: "turn:end", stopReason: turnEndMsg?.stopReason, usage: rawUsage ? { input: rawUsage.input, output: rawUsage.output, cacheRead: rawUsage.cacheRead, cacheWrite: rawUsage.cacheWrite, total: rawUsage.totalTokens, cost: { total: rawUsage.cost.total } } : undefined });
@@ -1969,107 +1983,9 @@ __DEFERRED_HINT__`;
         // If the event handler fails, still try to save session
         this.logger.error("AgentEvent", String(err));
         this.sessionManager.trySaveSession(this.agent);
-        this.lastSavedMessageCount = (this.agent.state.messages as any[]).length;
+        this.sessionCoordinator.noteSavedMessageCount();
       }
     });
   }
 
-  private handleMcpEvent(event: MCPClientEvent): void {
-    switch (event.type) {
-      case "progress": {
-        const key = `${event.serverName}:${event.params.progressToken}`;
-        const previous = this.lastMcpProgress.get(key);
-        const next = {
-          progress: event.params.progress,
-          total: event.params.total,
-          message: event.params.message,
-        };
-        this.lastMcpProgress.set(key, next);
-
-        const shouldReport = !previous
-          || event.params.message !== previous.message
-          || this.isProgressComplete(event.params.progress, event.params.total)
-          || this.progressBucket(event.params.progress, event.params.total) !== this.progressBucket(previous.progress, previous.total);
-
-        // Emit harness event for inline progress bars (Web UI)
-        if (event.toolName) {
-          this.events.emit({
-            type: "mcp:tool:progress",
-            toolName: `mcp__${event.serverName}__${event.toolName}`,
-            serverName: event.serverName,
-            progress: event.params.progress,
-            total: event.params.total,
-            message: event.params.message,
-          });
-        }
-        return;
-      }
-      case "message": {
-        const level = (event.params.level ?? "info").toLowerCase();
-        const prefix = `MCP ${event.serverName}`;
-        const text = this.stringifyMcpMessage(event.params.data);
-        const label = event.params.logger ? `${event.params.logger}: ` : "";
-        if (level === "error") {
-          this.events.emit({ type: "ui:error", text: `${prefix}: ${label}${text}` });
-        } else if (level === "warning" || level === "warn") {
-          this.events.emit({ type: "ui:info", text: `${prefix} warning: ${label}${text}` });
-        } else {
-          this.events.emit({ type: "ui:info", text: `${prefix}: ${label}${text}` });
-        }
-        return;
-      }
-      case "tools_list_changed":
-        this.events.emit({ type: "ui:info", text: `MCP ${event.serverName}: refreshing tool list...` });
-        return;
-      case "tools_refreshed":
-        // Successful refreshes are routine (including after idle reconnects) and
-        // should not add persistent system messages to the conversation.
-        return;
-      case "tools_refresh_failed":
-        this.events.emit({ type: "ui:error", text: `MCP ${event.serverName}: tool refresh failed: ${event.error}` });
-        return;
-      case "resources_list_changed":
-        this.events.emit({ type: "ui:info", text: `MCP ${event.serverName}: resources updated` });
-        return;
-      case "cancelled":
-        this.events.emit({ type: "ui:info", text: `MCP ${event.serverName}: request cancelled` + (event.params.reason ? ` (${event.params.reason})` : "") });
-        return;
-      default:
-        return;
-    }
-  }
-
-  private progressBucket(progress?: number, total?: number): number {
-    if (typeof progress !== "number") return -1;
-    if (typeof total === "number" && total > 0) {
-      return Math.min(10, Math.floor((progress / total) * 10));
-    }
-    return Math.floor(progress / 10);
-  }
-
-  private isProgressComplete(progress?: number, total?: number): boolean {
-    if (typeof progress !== "number") return false;
-    if (typeof total === "number" && total > 0) {
-      return progress >= total;
-    }
-    return progress >= 100;
-  }
-
-  private formatProgress(progress?: number, total?: number): string {
-    if (typeof progress !== "number") return "progress update";
-    if (typeof total === "number" && total > 0) {
-      const percent = Math.max(0, Math.min(100, Math.round((progress / total) * 100)));
-      return `progress ${percent}% (${progress}/${total})`;
-    }
-    return `progress ${progress}`;
-  }
-
-  private stringifyMcpMessage(data: unknown): string {
-    if (typeof data === "string") return data;
-    try {
-      return JSON.stringify(data);
-    } catch {
-      return String(data);
-    }
-  }
 }

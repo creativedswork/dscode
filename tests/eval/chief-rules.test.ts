@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { AgentSupervisor } from "../../src/agents/process/supervisor.js";
+import type { EvalApplicationPort } from "../../src/application/harness-api.js";
 import type { SpawnAgentRequest } from "../../src/agents/process/types.js";
-import type { HarnessAPI } from "../../src/core/harness-api.js";
 import {
   normalizeRuleRecords,
   semanticMerge,
@@ -58,12 +57,12 @@ function harness(outputs: string[]) {
   });
   return {
     value: {
-      config: { projectPath: "/project" },
-      agentSupervisor: {
+      currentProjectPath: () => "/project",
+      agents: {
         list: () => [{ role: "main", agentId: "main-1" }],
         spawn,
-      } as unknown as AgentSupervisor,
-    } as unknown as HarnessAPI,
+      },
+    } as unknown as EvalApplicationPort,
     spawn,
   };
 }

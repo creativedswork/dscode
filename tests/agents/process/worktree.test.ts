@@ -6,7 +6,8 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { HarnessEventBus } from "../../../src/core/events.js";
-import { createMainAgentContext, getAgentContext } from "../../../src/agents/process/context.js";
+import { createMainAgentContext } from "../../../src/agents/process/context.js";
+import { getExecutionContext } from "../../../src/kernel/execution-context.js";
 import { AgentSupervisor } from "../../../src/agents/process/supervisor.js";
 import type { AgentApplicationSnapshot } from "../../../src/agents/application/types.js";
 import type {
@@ -57,8 +58,8 @@ describe("background Agent Worktree isolation", () => {
     const runtime: AgentProcessRuntime = {
       capabilities: { suspend: false, messaging: false },
       async start(_input: AgentProcessInput) {
-        const context = getAgentContext();
-        if (!context) throw new Error("missing AgentContext");
+        const context = getExecutionContext();
+        if (!context) throw new Error("missing ExecutionContext");
         await writeFile(join(context.cwd, "shared.txt"), "agent\n");
         return { text: "changed" };
       },
@@ -127,8 +128,8 @@ describe("background Agent Worktree isolation", () => {
     const runtimeFactory = (): AgentProcessRuntime => ({
       capabilities: { suspend: false, messaging: false },
       async start(input: AgentProcessInput) {
-        const context = getAgentContext();
-        if (!context) throw new Error("missing AgentContext");
+        const context = getExecutionContext();
+        if (!context) throw new Error("missing ExecutionContext");
         await writeFile(join(context.cwd, "shared.txt"), `${input.prompt}\n`);
         return { text: input.prompt };
       },

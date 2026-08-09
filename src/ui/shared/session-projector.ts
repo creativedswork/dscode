@@ -1,8 +1,14 @@
-import type { AgentSessionMessage, DisplayMessage } from "./types.js";
-import { ImageCache } from "../utils/image-cache.js";
-import { formatSubagentLabel } from "../ui/shared/agent-label.js";
-import { formatToolArgsForDisplay } from "../ui/shared/tool-args-formatter.js";
-import { createToolResultProjection } from "../ui/shared/tool-result-projection.js";
+import type { AgentSessionMessage } from "../../session/types.js";
+import { formatSubagentLabel } from "./agent-label.js";
+import { formatToolArgsForDisplay } from "./tool-args-formatter.js";
+import { createToolResultProjection } from "./tool-result-projection.js";
+import type { ConversationMessage } from "./types.js";
+
+export interface SessionProjectionOptions {
+  resolveImage?(
+    ref: { type: "image_ref"; hash: string; mimeType: string },
+  ): { readonly data: string; readonly mimeType: string } | undefined;
+}
 
 // ── Helpers ──
 
@@ -96,7 +102,8 @@ export function rebuildDisplayMessages(
   messages: any[],
   agentMessages: AgentSessionMessage[],
   parentSessionId = "unknown",
-): DisplayMessage[] {
+  options: SessionProjectionOptions = {},
+): ConversationMessage[] {
   const recoveredDescriptions = recoverSubagentDescriptions(messages);
   const agentMap = new Map<number, AgentSessionMessage>();
   for (const message of agentMessages) {
@@ -171,8 +178,8 @@ export function rebuildDisplayMessages(
     }
   }
 
-  // Pass 2: build DisplayMessage[] for emitted indices
-  const result: Array<{ message: DisplayMessage; sourceIndex: number }> = [];
+  // Pass 2: build ConversationMessage[] for emitted indices
+  const result: Array<{ message: ConversationMessage; sourceIndex: number }> = [];
 
   for (let i = 0; i < messages.length; i++) {
     if (!output.has(i)) continue;
@@ -183,7 +190,7 @@ export function rebuildDisplayMessages(
     let content = extractText(m.content);
 
     // Images
-    let images: DisplayMessage["images"] = undefined;
+    let images: ConversationMessage["images"] = undefined;
 
     const imageLinkedAgent = agentMessage?.input.attachments?.some(
       (attachment) => attachment.type === "image",
@@ -199,7 +206,7 @@ export function rebuildDisplayMessages(
         ?.filter((attachment) => attachment.type === "image")
         .map((attachment) => attachment.data) ?? [];
       for (const ref of imageRefs) {
-        const cached = ImageCache.getSync(ref);
+        const cached = options.resolveImage?.(ref);
         if (cached) {
           restored.push({ data: cached.data, mimeType: cached.mimeType });
         }
@@ -214,7 +221,7 @@ export function rebuildDisplayMessages(
     // Also check for stored images from native image models
     if (m.images && Array.isArray(m.images) && !images) {
       if (m.images.length > 0 && "data" in m.images[0]) {
-        images = m.images as DisplayMessage["images"];
+        images = m.images as ConversationMessage["images"];
       }
     }
 
@@ -226,8 +233,8 @@ export function rebuildDisplayMessages(
     }
 
     // Tools: extract from content blocks for assistant messages, merge with results
-    let tools: DisplayMessage["tools"] = Array.isArray(m.tools)
-      ? m.tools.map((tool: NonNullable<DisplayMessage["tools"]>[number]) => ({ ...tool }))
+    let tools: ConversationMessage["tools"] = Array.isArray(m.tools)
+      ? m.tools.map((tool: NonNullable<ConversationMessage["tools"]>[number]) => ({ ...tool }))
       : undefined;
     if (m.role === "assistant" && Array.isArray(m.content)) {
       const parsedTools = parsedToolsByAssistant.get(i);
@@ -287,7 +294,7 @@ export function rebuildDisplayMessages(
     .sort((a, b) => a.message.createdAt - b.message.createdAt || a.index - b.index);
 
   for (const { message: agentMessage } of sortedAgentMessages) {
-    const displayMessage: DisplayMessage = {
+    const displayMessage: ConversationMessage = {
       role: "agent",
       content: "",
       createdAt: agentMessage.createdAt,
@@ -307,7 +314,27 @@ export function rebuildDisplayMessages(
         input: agentMessage.input.prompt,
         output: agentMessage.output?.text,
         error: agentMessage.output?.error,
-        tools: agentMessage.tools?.map((tool) => ({ ...tool })),
+        tools: agentMessage.tools?.map((tool) => {
+          const resultDetail = tool.result !== undefined
+            ? createToolResultProjection(tool.name, tool.result, {
+                owner: "agent-process",
+                ownerId: agentMessage.agentId,
+                toolCallId: tool.toolCallId,
+              })
+            : undefined;
+          return {
+            toolCallId: tool.toolCallId,
+            name: tool.name,
+            status: tool.status,
+            args: formatToolArgsForDisplay(tool.name, tool.args),
+            summary: resultDetail?.summary
+              ?? formatToolArgsForDisplay(tool.name, tool.args),
+            resultDetail,
+            startedAt: tool.startedAt,
+            endedAt: tool.endedAt,
+            isError: tool.isError,
+          };
+        }),
         createdAt: agentMessage.createdAt,
         startedAt: agentMessage.startedAt,
         endedAt: agentMessage.endedAt,

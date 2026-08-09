@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
-import type { MemoryEntry } from "../core/types.js";
+import type { MemoryEntry } from "./types.js";
 
 export class MemoryStore {
   private dataDir: string;

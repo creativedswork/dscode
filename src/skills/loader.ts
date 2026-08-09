@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { SkillManifest } from "../core/types.js";
+import type { SkillManifest } from "./types.js";
 
 export function scanSkillDirs(userDir: string, projectDir: string): SkillManifest[] {
   const manifests = new Map<string, SkillManifest>();

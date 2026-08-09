@@ -6,7 +6,5 @@
       "write_file"
     ]
   },
-  "disabledSkills": [
-    "game-engine"
-  ]
+  "disabledSkills": []
 }

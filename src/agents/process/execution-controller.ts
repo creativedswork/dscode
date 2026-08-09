@@ -4,7 +4,11 @@ import type {
   AgentRuntimeSnapshot,
 } from "../runtimes/runtime.js";
 import type { AgentProcessOutput } from "../runtimes/runtime.js";
-import { runWithAgentContext } from "./context.js";
+import {
+  runWithExecutionContext,
+  type ExecutionContext,
+} from "../../kernel/execution-context.js";
+import type { HostFacilities } from "../../kernel/host-facilities.js";
 import type {
   AgentExitResult,
   AgentProcess,
@@ -35,7 +39,11 @@ export class AgentExecutionController {
   private readonly executions = new Map<string, Promise<AgentExitResult>>();
   private readonly requestedExit = new Map<string, "terminated" | "killed">();
 
-  constructor(private readonly callbacks: ExecutionCallbacks) {}
+  constructor(
+    private readonly callbacks: ExecutionCallbacks,
+    private readonly hostId: string,
+    private readonly facilities?: HostFacilities,
+  ) {}
 
   start(agentProcess: AgentProcess, input: AgentProcessInput): Promise<AgentExitResult> {
     const execution = this.run(agentProcess, input);
@@ -122,8 +130,17 @@ export class AgentExecutionController {
           await this.callbacks.checkpoint(agentProcess, snapshot);
         },
       };
-      const output = await runWithAgentContext(
-        agentProcess.context,
+      const executionContext: ExecutionContext = {
+        hostId: this.hostId,
+        processId: agentProcess.agentId,
+        parentProcessId: agentProcess.parentAgentId,
+        sessionId: agentProcess.parentSessionId,
+        application: agentProcess.application.name,
+        cwd: agentProcess.context.cwd,
+        facilities: this.facilities,
+      };
+      const output = await runWithExecutionContext(
+        executionContext,
         () => agentProcess.runtime.start(runtimeInput, controller.signal),
       );
       const state = this.requestedExit.get(agentProcess.agentId) ?? "completed";

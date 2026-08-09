@@ -3,7 +3,7 @@
 // Activated when session has ≥500 steps.
 
 import type { EvalResult, DeviationPoint, RootCause, HarnessRule, PhaseInfo } from "../types.js";
-import type { HarnessAPI } from "../../core/harness-api.js";
+import type { EvalApplicationPort } from "../../application/harness-api.js";
 import type { SerializedSession } from "../../session/types.js";
 import { parseSessionToSteps, type Attribution } from "../schemas.js";
 import type { SessionStats } from "../stats.js";
@@ -84,7 +84,7 @@ function composeEvalResult(sessionStats: SessionStats, report: FocusReport, rule
 
 export async function runFocusPipeline(
   data: SerializedSession,
-  harness: HarnessAPI,
+  harness: EvalApplicationPort,
   sessionStats: SessionStats,
   onLog?: (text: string) => void,
   logger?: Logger,

@@ -340,10 +340,7 @@ describe("MultiAgentTrajectory", () => {
     const supervisor = {
       async loadPersisted(agentIds: readonly string[]) {
         expect(agentIds).toEqual(["agent-member"]);
-        return {
-          found: new Map([["agent-member", persisted]]),
-          missing: [],
-        };
+        return new Map([["agent-member", persisted]]);
       },
     };
 

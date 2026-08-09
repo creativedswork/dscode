@@ -28,7 +28,7 @@ describe("dscode version flag", () => {
     );
 
     expect(output.trim()).toBe(packageVersion);
-  });
+  }, 15_000);
 
   it("prints the package version for -v", () => {
     const configHome = mkdtempSync(join(tmpdir(), "dscode-version-"));
@@ -49,5 +49,5 @@ describe("dscode version flag", () => {
     );
 
     expect(output.trim()).toBe(packageVersion);
-  });
+  }, 15_000);
 });

@@ -1,13 +1,13 @@
-import type { HarnessAPI } from "../core/harness-api.js";
+import type { HarnessAPI } from "../application/harness-api.js";
 import type {
   PermissionPromptContext,
   PermissionPromptResult,
-} from "../core/types.js";
+} from "../permissions/types.js";
 import type { UiBackend } from "./backend.js";
 import { TuiApp } from "./tui-app.js";
 import { AgentActivityProjector } from "./shared/agent-activity.js";
 import { harnessEventToConversationEvent } from "./shared/harness-conversation-adapter.js";
-import { openDashboard } from "../eval/dashboard.js";
+import { openPath } from "./shared/open-path.js";
 
 /**
  * Thin adapter that wraps TuiApp and exposes the UiBackend interface.
@@ -20,8 +20,8 @@ export class TuiBackend implements UiBackend {
   constructor(deps: HarnessAPI) {
     this.tui = new TuiApp(deps);
     this.agentActivityProjector = new AgentActivityProjector(
-      deps.agentSupervisor,
-      () => deps.sessionManager.getCurrentSessionId() ?? undefined,
+      deps.agents,
+      () => deps.sessions.currentId(),
       (activity) => this.tui.upsertAgentActivity(activity),
     );
     const projectAgentActivity = (event: Parameters<AgentActivityProjector["handle"]>[0]) => {
@@ -31,7 +31,7 @@ export class TuiBackend implements UiBackend {
       event: Parameters<typeof harnessEventToConversationEvent>[0],
     ) => {
       const projected = harnessEventToConversationEvent(event, {
-        sessionId: deps.sessionManager.getCurrentSessionId() ?? undefined,
+        sessionId: deps.sessions.currentId(),
       });
       if (projected) this.tui.applyConversationEvent(projected);
     };
@@ -63,7 +63,7 @@ export class TuiBackend implements UiBackend {
     deps.events.on("agent:exit", projectAgentActivity);
     deps.events.on("eval:dashboard", (event) => {
       if (event.state.status === "completed") {
-        openDashboard(event.state.outputPath);
+        openPath(event.state.outputPath);
       }
     });
   }
@@ -75,6 +75,10 @@ export class TuiBackend implements UiBackend {
 
   async waitForExit(): Promise<void> {
     await this.tui.waitForExit();
+  }
+
+  handleInterrupt(): void {
+    this.tui.handleInterrupt();
   }
 
   async shutdown(): Promise<void> {

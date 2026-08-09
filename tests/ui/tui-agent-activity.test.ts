@@ -10,6 +10,7 @@ import {
   TuiThinkingBlock,
 } from "../../src/ui/conversation.js";
 import { visibleWidth } from "@earendil-works/pi-tui";
+import { createHarnessApiFixture } from "../helpers/harness-api.js";
 
 vi.mock("../../src/ui/tui-app.js", () => ({
   TuiApp: class {
@@ -42,15 +43,19 @@ function processFixture(
 
 function setup(process: AgentProcess, currentSessionId = "session-1") {
   const events = new HarnessEventBus({ error: vi.fn() } as any);
-  const backend = new TuiBackend({
+  const base = createHarnessApiFixture();
+  const backend = new TuiBackend(createHarnessApiFixture({
     events,
-    agentSupervisor: {
-      get: (agentId: string) => agentId === process.agentId ? process : undefined,
+    agents: {
+      ...base.agents,
+      get: (agentId: string) =>
+        agentId === process.agentId ? process as any : undefined,
     },
-    sessionManager: {
-      getCurrentSessionId: () => currentSessionId,
+    sessions: {
+      ...base.sessions,
+      currentId: () => currentSessionId,
     },
-  } as any);
+  }));
   return {
     events,
     tui: (backend as any).tui as {

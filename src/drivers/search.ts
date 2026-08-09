@@ -3,7 +3,7 @@ import { join, relative, sep } from "node:path";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
-import { resolveAgentPath } from "../agents/process/context.js";
+import { resolveExecutionPath } from "../kernel/execution-context.js";
 
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".next", "__pycache__", ".dscode"]);
 
@@ -105,7 +105,7 @@ export const grepTool: AgentTool<typeof grepParams> = {
   description: "Search file contents by pattern (regex). Returns matching lines with file paths.",
   parameters: grepParams,
   execute: async (_id, { pattern, path, include, maxResults }) => {
-    const dir = resolveAgentPath(path ?? ".");
+    const dir = resolveExecutionPath(path ?? ".");
     const max = maxResults ?? 50;
 
     if (!(await fileExists(dir))) {
@@ -171,7 +171,7 @@ export const globTool: AgentTool<typeof globParams> = {
   description: "Find files matching a glob pattern.",
   parameters: globParams,
   execute: async (_id, { pattern, cwd: cwdArg }) => {
-    const dir = resolveAgentPath(cwdArg ?? ".");
+    const dir = resolveExecutionPath(cwdArg ?? ".");
 
     if (!(await fileExists(dir))) {
       return {

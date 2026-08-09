@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { execFile, execFileSync, exec, execSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { ImageContent } from "@earendil-works/pi-ai";
 
 const MIME_MAP: Record<string, string> = {
@@ -62,43 +63,22 @@ function win32ClipboardScript(tmpPath: string): string {
 
 // ── Linux clipboard support ──
 
-let _linuxTool: "xclip" | "wl-paste" | "none" | null = null;
-let _linuxToolChecked = false;
-
 function linuxClipboardCommand(): { cmd: string; args: string[] } | null {
-  if (!_linuxToolChecked) {
-    _linuxToolChecked = true;
-    // Prefer Wayland tool if WAYLAND_DISPLAY is set
-    if (process.env.WAYLAND_DISPLAY) {
-      try {
-        execSync("which wl-paste", { stdio: "ignore" });
-        _linuxTool = "wl-paste";
-      } catch {
-        // fall through to xclip
-      }
-    }
-    if (!_linuxTool) {
-      try {
-        execSync("which xclip", { stdio: "ignore" });
-        _linuxTool = "xclip";
-      } catch {
-        _linuxTool = "none";
-      }
-    }
-  }
-
-  if (_linuxTool === "wl-paste") {
+  try {
+    execSync("which wl-paste", { stdio: "ignore" });
     return { cmd: "wl-paste", args: ["-t", "image/png"] };
+  } catch {
+    // Fall through to xclip.
   }
-  if (_linuxTool === "xclip") {
+  try {
+    execSync("which xclip", { stdio: "ignore" });
     return { cmd: "xclip", args: ["-selection", "clipboard", "-t", "image/png", "-o"] };
+  } catch {
+    return null;
   }
-  return null;
 }
 
 // ── Shared clipboard read logic ──
-
-let _pasteSeq = 0;
 
 function resolveImageFromFile(tmpPath: string): ImageContent | null {
   try {
@@ -111,7 +91,7 @@ function resolveImageFromFile(tmpPath: string): ImageContent | null {
 }
 
 export async function readClipboardImage(): Promise<ImageContent | null> {
-  const tmpPath = join(tmpdir(), `dscode_clipboard_${Date.now()}_${++_pasteSeq}.png`);
+  const tmpPath = join(tmpdir(), `dscode_clipboard_${randomUUID()}.png`);
 
   try {
     if (process.platform === "darwin") {
@@ -134,7 +114,7 @@ export async function readClipboardImage(): Promise<ImageContent | null> {
 
 /** Non-blocking clipboard image read with unique temp file per call (safe for concurrent pastes). */
 export function readClipboardImageNonBlocking(): Promise<ImageContent | null> {
-  const tmpPath = join(tmpdir(), `dscode_clipboard_${Date.now()}_${++_pasteSeq}.png`);
+  const tmpPath = join(tmpdir(), `dscode_clipboard_${randomUUID()}.png`);
 
   if (process.platform === "darwin") {
     return new Promise((resolve) => {

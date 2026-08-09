@@ -30,7 +30,10 @@ vi.mock("../../src/eval/chief/pipeline.js", () => ({
 vi.mock("../../src/eval/dashboard.js", () => ({
   generateDashboard: vi.fn(),
   generateDashboardArtifacts: mocks.generateArtifacts,
-  openDashboard: mocks.openDashboard,
+}));
+
+vi.mock("../../src/ui/shared/open-path.js", () => ({
+  openPath: mocks.openDashboard,
 }));
 
 vi.mock("../../src/eval/rules/store.js", () => ({
@@ -127,17 +130,18 @@ function setup(loadSessionFile = vi.fn(async () => sessionData())) {
   events.on("eval:dashboard", (event) => states.push(event.state));
   const harness = {
     events,
-    sessionManager: {
-      getSessionFilePath: vi.fn(() => ({
-        path: "/sessions/target.json",
-        metadata: { id: targetSessionId },
-      })),
-      getCurrentSessionId: vi.fn(() => "INVOKING-SESSION"),
-      loadSessionFile,
-    },
-    agentSupervisor: { list: vi.fn(() => []) },
-    config: { projectPath: "/project" },
-    saveSessionNow: vi.fn(),
+    hostId: () => "host-test",
+    agents: { list: vi.fn(() => []) },
+    currentSessionId: vi.fn(() => "INVOKING-SESSION"),
+    currentProjectPath: () => "/project",
+    saveCurrentSession: vi.fn(),
+    resolveSession: vi.fn(() => ({
+      id: targetSessionId,
+      projectPath: "/project",
+    })),
+    loadSession: loadSessionFile,
+    publish: (event: any) => events.emit(event),
+    sessions: { currentId: () => "INVOKING-SESSION" },
   } as any;
   const ui = {
     addInfo: vi.fn(),

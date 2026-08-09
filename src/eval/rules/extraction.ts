@@ -1,4 +1,4 @@
-import type { HarnessAPI } from "../../core/harness-api.js";
+import type { EvalApplicationPort } from "../../application/harness-api.js";
 import type { SerializedSession } from "../../session/types.js";
 import type { Logger } from "../../utils/logger.js";
 import { runStructuredAgent } from "../chief/runner.js";
@@ -138,7 +138,7 @@ export async function attributeRulesWithAgent(options: {
   graph: ChiefGraph;
   oracles: ChiefOracle[];
   backtrack: ChiefBacktrack;
-  harness: HarnessAPI;
+  harness: EvalApplicationPort;
   run: EvalRunContext;
   signal?: AbortSignal;
   logger?: Logger;
@@ -185,7 +185,7 @@ export async function attributeWithLLM(
   meta: SessionMeta,
   graphStore: CausalGraphStore | null,
   attribution: Attribution | null,
-  harness: HarnessAPI,
+  harness: EvalApplicationPort,
   sessionId: string,
   timestamp: number,
   logger?: Logger,
@@ -199,7 +199,7 @@ export async function attributeWithLLM(
         graph: graphStore?.snapshot() ?? null,
         stats,
       }),
-      workspace: meta.projectPath || harness.config.projectPath,
+      workspace: meta.projectPath || harness.currentProjectPath(),
       stage: "rules",
       validate: validateHarnessRuleOutputs,
       logger,

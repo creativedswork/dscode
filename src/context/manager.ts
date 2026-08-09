@@ -1,4 +1,4 @@
-import type { ContextConfig } from "../core/types.js";
+import type { ContextConfig } from "./types.js";
 import { estimateMessagesTokens, estimateTokens } from "./estimator.js";
 import { dropOldest, slidingWindow } from "./compaction.js";
 

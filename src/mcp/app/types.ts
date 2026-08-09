@@ -45,3 +45,7 @@ export interface ToolUiInfo {
   toolName: string;
   serverName: string;
 }
+
+export interface McpAppResourceProxy {
+  resolveAppUrl(appId: string, suffix: string): string | undefined;
+}

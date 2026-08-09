@@ -7,6 +7,7 @@ import { AgentApplicationFrontmatterSchema } from "./schema.js";
 import type {
   AgentApplication,
   AgentApplicationDraft,
+  AgentDefinition,
   AgentFailureCode,
   AgentFallbackSpec,
   AgentApplicationSource,
@@ -70,7 +71,7 @@ function pickFallback(value: unknown): AgentFallbackSpec[] | undefined {
   });
 }
 
-function compileDraft(content: string, source: AgentApplicationSource): AgentApplicationDraft {
+function compileDraft(content: string): AgentApplicationDraft {
   const { attributes, body } = parseAgentMarkdown(content);
   const unsupported = Object.keys(attributes).filter((key) => !KNOWN_FIELDS.has(key));
   if (unsupported.length > 0) {
@@ -105,38 +106,45 @@ function compileDraft(content: string, source: AgentApplicationSource): AgentApp
   if (!Value.Check(AgentApplicationFrontmatterSchema, frontmatter)) {
     throw new Error("Agent Application frontmatter does not match its TypeBox schema");
   }
-  validateDraft(draft, source);
   return draft;
 }
 
-function validateDraft(draft: AgentApplicationDraft, source: AgentApplicationSource): void {
-  if (!draft.systemPrompt) throw new Error("Application body must contain a system prompt");
-  if (draft.name && !/^[a-zA-Z0-9_-]+$/.test(draft.name)) {
-    throw new Error(`Invalid application name: ${draft.name}`);
+function validateDefinition(
+  definition: AgentDefinition,
+  source: AgentApplicationSource,
+): void {
+  if (!definition.systemPrompt) {
+    throw new Error("Application body must contain a system prompt");
   }
-  if (draft.permissionMode === "bypassPermissions" && source.kind !== "managed") {
+  if (!/^[a-zA-Z0-9_-]+$/.test(definition.name)) {
+    throw new Error(`Invalid application name: ${definition.name}`);
+  }
+  if (
+    definition.permissionMode === "bypassPermissions"
+    && source.kind !== "managed"
+  ) {
     throw new Error("permissionMode=bypassPermissions is restricted to managed applications");
   }
-  if (draft.permissionMode && !["default", "acceptEdits", "plan", "bypassPermissions"].includes(draft.permissionMode)) {
-    throw new Error(`Invalid permissionMode: ${draft.permissionMode}`);
+  if (definition.permissionMode && !["default", "acceptEdits", "plan", "bypassPermissions"].includes(definition.permissionMode)) {
+    throw new Error(`Invalid permissionMode: ${definition.permissionMode}`);
   }
-  if (draft.memory && !["user", "project", "local"].includes(draft.memory)) {
-    throw new Error(`Invalid memory scope: ${draft.memory}`);
+  if (definition.memory && !["user", "project", "local"].includes(definition.memory)) {
+    throw new Error(`Invalid memory scope: ${definition.memory}`);
   }
-  if (draft.isolation && draft.isolation !== "worktree") {
-    throw new Error(`Invalid isolation: ${draft.isolation}`);
+  if (definition.isolation && definition.isolation !== "worktree") {
+    throw new Error(`Invalid isolation: ${definition.isolation}`);
   }
-  if (draft.maxTurns !== undefined && (!Number.isInteger(draft.maxTurns) || draft.maxTurns < 1)) {
+  if (definition.maxTurns !== undefined && (!Number.isInteger(definition.maxTurns) || definition.maxTurns < 1)) {
     throw new Error("maxTurns must be a positive integer");
   }
-  if (draft.mcpServers && Object.keys(draft.mcpServers).length > 0) {
+  if (definition.mcpServers && Object.keys(definition.mcpServers).length > 0) {
     throw new Error("Application-scoped mcpServers are not supported yet");
   }
-  if (draft.hooks && Object.keys(draft.hooks).length > 0) {
+  if (definition.hooks && Object.keys(definition.hooks).length > 0) {
     throw new Error("Application hooks are not supported yet");
   }
   const failureCodes = new Set(["model_unavailable", "model_error", "empty_output"]);
-  for (const fallback of draft.fallback ?? []) {
+  for (const fallback of definition.fallback ?? []) {
     if (fallback.handler !== "ocr") {
       throw new Error(`Unknown fallback handler: ${fallback.handler}`);
     }
@@ -157,12 +165,23 @@ export function compileAgentApplication(
   generation: number,
   base?: AgentApplication,
 ): AgentApplicationSnapshot {
-  const draft = compileDraft(content, source);
+  const definition = parseAgentDefinition(
+    content,
+    basename(source.path, ".md"),
+    base,
+  );
+  return compileAgentDefinition(definition, source, generation);
+}
 
-  const fallbackName = basename(source.path, ".md");
-  const applicationWithoutVersion: Omit<AgentApplication, "digest" | "registryGeneration"> = {
+export function parseAgentDefinition(
+  content: string,
+  fallbackName: string,
+  base?: AgentDefinition,
+): Readonly<AgentDefinition> {
+  const draft = compileDraft(content);
+  const definition: AgentDefinition = {
     name: draft.name ?? base?.name ?? fallbackName,
-    description: draft.description ?? base?.description ?? "",
+    description: draft.description ?? base?.description,
     systemPrompt: draft.systemPrompt,
     tools: draft.tools ?? base?.tools,
     disallowedTools: draft.disallowedTools ?? base?.disallowedTools,
@@ -179,6 +198,24 @@ export function compileAgentApplication(
     mcpServers: draft.mcpServers ?? base?.mcpServers,
     hooks: draft.hooks ?? base?.hooks,
     fallback: draft.fallback ?? base?.fallback,
+  };
+  return Object.freeze(structuredClone(definition));
+}
+
+export function compileAgentDefinition(
+  definition: AgentDefinition,
+  source: AgentApplicationSource,
+  generation: number,
+): AgentApplicationSnapshot {
+  const normalized: AgentDefinition = {
+    ...structuredClone(definition),
+    description: definition.description ?? "",
+    permissionMode: definition.permissionMode ?? "default",
+  };
+  validateDefinition(normalized, source);
+  const applicationWithoutVersion: Omit<AgentApplication, "digest" | "registryGeneration"> = {
+    ...normalized,
+    description: normalized.description ?? "",
     source,
   };
   const application: AgentApplication = {

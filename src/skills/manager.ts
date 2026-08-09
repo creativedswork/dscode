@@ -1,8 +1,8 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { dirname } from "node:path";
 
-import type { DriverRegistry } from "../drivers/registry.js";
-import type { Skill, SkillManifest } from "../core/types.js";
+import type { DriverRegistryPort } from "../drivers/types.js";
+import type { Skill, SkillManifest } from "./types.js";
 import { scanSkillDirs } from "./loader.js";
 
 export function formatLoadedSkill(manifest: SkillManifest): string {
@@ -75,7 +75,7 @@ export class SkillManager {
     return this.activeSkills.has(name);
   }
 
-  activate(name: string, driverRegistry: DriverRegistry): Skill {
+  activate(name: string, driverRegistry: DriverRegistryPort): Skill {
     if (this.activeSkills.has(name)) {
       return this.activeSkills.get(name)!;
     }
@@ -114,7 +114,7 @@ export class SkillManager {
    * skills that no longer exist are automatically deactivated.
    * Must provide driverRegistry so re-activated skills get correct tools.
    */
-  reloadDirs(userSkillsDir: string, projectSkillsDir: string, driverRegistry: DriverRegistry): void {
+  reloadDirs(userSkillsDir: string, projectSkillsDir: string, driverRegistry: DriverRegistryPort): void {
     this.userSkillsDir = userSkillsDir;
     this.projectSkillsDir = projectSkillsDir;
 

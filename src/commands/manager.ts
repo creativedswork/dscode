@@ -1,4 +1,4 @@
-import type { CommandManifest } from "../core/types.js";
+import type { CommandManifest } from "./types.js";
 import { scanCommandDirs } from "./loader.js";
 
 export class CommandManager {

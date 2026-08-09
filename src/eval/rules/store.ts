@@ -8,7 +8,7 @@ import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import type { HarnessRule, RuleStore } from "./types.js";
 import { computeSeverity } from "./types.js";
-import type { HarnessAPI } from "../../core/harness-api.js";
+import type { EvalApplicationPort } from "../../application/harness-api.js";
 import type { Logger } from "../../utils/logger.js";
 import { runStructuredAgent } from "../chief/runner.js";
 import {
@@ -109,7 +109,7 @@ function createEmptyStore(projectPath: string): RuleStore {
 export async function semanticMerge(
   newRules: HarnessRule[],
   existingStore: RuleStore,
-  harness: HarnessAPI,
+  harness: EvalApplicationPort,
   logger?: Logger,
 ): Promise<RuleStore> {
   // Short-circuit: no new rules
@@ -191,7 +191,7 @@ Do not reference IDs outside these two supplied lists.`;
       host: harness,
       application: "eval-rule-merge",
       prompt,
-      workspace: existingStore.projectPath || harness.config.projectPath,
+      workspace: existingStore.projectPath || harness.currentProjectPath(),
       stage: "rules",
       validate,
       logger,

@@ -6,6 +6,7 @@ import {
   projectEvalDashboardState,
   WebUiBackend,
 } from "../../src/ui/web/web-backend.js";
+import { createHarnessApiFixture } from "../helpers/harness-api.js";
 
 const evidence = {
   totalActors: 2,
@@ -19,20 +20,18 @@ const evidence = {
 
 function setupBackend() {
   const events = new HarnessEventBus({ error: vi.fn() } as any);
-  const harness = {
+  const base = createHarnessApiFixture();
+  const harness = createHarnessApiFixture({
     events,
-    agentSupervisor: { get: vi.fn() },
-    sessionManager: { getCurrentSessionId: vi.fn(() => "current") },
-  } as any;
+    sessions: {
+      ...base.sessions,
+      currentId: vi.fn(() => "current"),
+    },
+  });
   const backend = new WebUiBackend({
+    webRoot: ".",
     port: 0,
     harness,
-    config: {
-      projectPath: "/project",
-      provider: "test",
-      modelId: "model",
-    } as any,
-    configStore: {} as any,
   });
   const broadcast = vi.spyOn((backend as any).wsServer, "broadcast");
   return { backend, events, broadcast };

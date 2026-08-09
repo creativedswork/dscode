@@ -25,7 +25,8 @@ function safeFilename(path: string): string {
 
 /**
  * Copies explicitly attached files into the project sandbox when their source
- * lives outside it. The staged path can then be read by Main and SubAgents.
+ * lives outside it. Directories remain absolute path references so attaching a
+ * folder never triggers an unbounded recursive copy.
  */
 export function stageAttachedFiles(
   projectPath: string,
@@ -42,8 +43,9 @@ export function stageAttachedFiles(
       throw new Error(`Attached file not found: ${path}`);
     }
     const info = statSync(source);
+    if (info.isDirectory()) return source;
     if (!info.isFile()) {
-      throw new Error(`Attachment is not a file: ${path}`);
+      throw new Error(`Attachment is not a file or directory: ${path}`);
     }
     if (isWithin(projectRoot, source)) return source;
     if (info.size > MAX_STAGED_FILE_BYTES) {

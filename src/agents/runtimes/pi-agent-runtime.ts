@@ -6,7 +6,6 @@ import type { ImageContent } from "@earendil-works/pi-ai";
 
 import { ImageCache } from "../../drivers/vision/cache.js";
 import type { ImageRef } from "../../session/types.js";
-import { createToolResultProjection } from "../../ui/shared/tool-result-projection.js";
 import type {
   AgentMessage,
   AgentProcessInput,
@@ -83,17 +82,6 @@ export class PiAgentRuntimeAdapter implements AgentProcessRuntime {
         activeToolsById.delete(event.toolCallId);
         const remaining = [...activeToolsById.values()].map((tool) => tool.name);
         const endedAt = Date.now();
-        const resultDetail = createToolResultProjection(
-          event.toolName,
-          event.result,
-          this.processId
-            ? {
-                owner: "agent-process",
-                ownerId: this.processId,
-                toolCallId: event.toolCallId,
-              }
-            : undefined,
-        );
         await input.onProgress?.({
           phase: remaining.length > 0 ? "tool" : "model",
           message: remaining.length > 0
@@ -107,7 +95,8 @@ export class PiAgentRuntimeAdapter implements AgentProcessRuntime {
             startedAt: active?.startedAt ?? endedAt,
             endedAt,
             isError: event.isError,
-            resultDetail,
+            result: sanitize(event.result),
+            resultOwnerId: this.processId,
           },
         });
         if (active && activeToolsById.size === 0) {

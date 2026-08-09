@@ -23,9 +23,9 @@ export interface AgentFallbackSpec {
   on: AgentFailureCode[];
 }
 
-export interface AgentApplication {
+export interface AgentDefinition {
   name: string;
-  description: string;
+  description?: string;
   systemPrompt: string;
   tools?: string[];
   disallowedTools?: string[];
@@ -42,30 +42,17 @@ export interface AgentApplication {
   mcpServers?: Record<string, unknown>;
   hooks?: Record<string, unknown>;
   fallback?: AgentFallbackSpec[];
+}
+
+export interface AgentApplication extends AgentDefinition {
+  description: string;
   source: AgentApplicationSource;
   digest: string;
   registryGeneration: number;
 }
 
-export interface AgentApplicationDraft {
+export interface AgentApplicationDraft extends Omit<AgentDefinition, "name"> {
   name?: string;
-  description?: string;
-  systemPrompt: string;
-  tools?: string[];
-  disallowedTools?: string[];
-  model?: string;
-  effort?: string | number;
-  permissionMode?: AgentApplication["permissionMode"];
-  maxTurns?: number;
-  skills?: string[];
-  initialPrompt?: string;
-  memory?: AgentApplication["memory"];
-  background?: boolean;
-  isolation?: AgentApplication["isolation"];
-  color?: string;
-  mcpServers?: Record<string, unknown>;
-  hooks?: Record<string, unknown>;
-  fallback?: AgentFallbackSpec[];
 }
 
 export interface AgentApplicationDiagnostic {

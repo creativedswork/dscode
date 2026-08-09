@@ -1,9 +1,24 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { PERM_OPTIONS, findPermOptionByKey, navigatePermSelection } from "../../src/ui/conversation.js";
-import { TuiApp } from "../../src/ui/tui-app.js";
+import { TuiApp, TuiProcessingStatus } from "../../src/ui/tui-app.js";
 
 describe("permission prompt navigation", () => {
+  it("reserves a normal layout row only while processing is visible", () => {
+    const content = {
+      render: vi.fn().mockReturnValue(["", "Thinking (0s)"]),
+      invalidate: vi.fn(),
+    };
+    const status = new TuiProcessingStatus(content);
+
+    expect(status.render(80)).toEqual([]);
+    status.setVisible(true);
+    expect(status.render(80)).toEqual(["", "Thinking (0s)"]);
+    expect(content.render).toHaveBeenCalledWith(80);
+    status.invalidate();
+    expect(content.invalidate).toHaveBeenCalled();
+  });
+
   it("wraps when navigating upward from the first option", () => {
     expect(navigatePermSelection(0, -1)).toBe(PERM_OPTIONS.length - 1);
   });
@@ -260,7 +275,7 @@ describe("permission prompt navigation", () => {
       setProcessing,
       addUserMessage,
       addError,
-      deps: { agent: {}, promptAndSave: prompt },
+      deps: { conversation: { prompt } },
     };
 
     await handleSubmit.call(state, "写一个 Test.json 吧");
@@ -291,8 +306,8 @@ describe("permission prompt navigation", () => {
       tipDuration: 0,
       showTip: false,
       loader: { start: vi.fn(), stop: vi.fn(), setMessage: vi.fn() },
-      loaderOverlayHandle: null,
-      tui: { showOverlay: vi.fn().mockReturnValue({ hide: vi.fn() }), requestRender: vi.fn() },
+      processingStatus: { setVisible: vi.fn() },
+      tui: { showOverlay: vi.fn(), requestRender: vi.fn() },
       finalizeIdleSegment: vi.fn(),
       formatElapsed: vi.fn().mockReturnValue("0s"),
     };
@@ -349,10 +364,10 @@ describe("permission prompt navigation", () => {
       tipDuration: 3500,
       showTip: false,
       loader,
-      loaderOverlayHandle: null,
+      processingStatus: { setVisible: vi.fn() },
       conversation: { getActiveExecutionStatus: () => undefined },
       tui: {
-        showOverlay: vi.fn().mockReturnValue({ hide: vi.fn() }),
+        showOverlay: vi.fn(),
         requestRender: vi.fn(),
       },
       finalizeIdleSegment: vi.fn(),
@@ -368,8 +383,11 @@ describe("permission prompt navigation", () => {
     expect(loader.setMessage).not.toHaveBeenCalledWith(
       expect.stringMatching(/Type exit|\/help|twice to exit/),
     );
+    expect(state.processingStatus.setVisible).toHaveBeenCalledWith(true);
+    expect(state.tui.showOverlay).not.toHaveBeenCalled();
 
     setProcessing.call(state, false);
+    expect(state.processingStatus.setVisible).toHaveBeenLastCalledWith(false);
     vi.useRealTimers();
   });
 
@@ -428,13 +446,24 @@ describe("permission prompt navigation", () => {
       drainedSubmitFiles: [],
       editor: { setText: vi.fn(), addToHistory: vi.fn() },
       deps: {
-        agent: { prompt: vi.fn() },
-        modelSupportsImages: true,
-        modelNeedsOcr: false,
-        config: { provider: "openai", modelId: "gpt-4o", atFile: { maxFiles: 5, maxFileSize: 51200, maxTotalSize: 204800 } },
-        projectPath: "/tmp",
-        onSetCwd: vi.fn(),
-        promptWithImages: prompt,
+        conversation: { promptWithImages: prompt },
+        project: {
+          resolveAtFiles: (text: string) => ({
+            text,
+            warnings: [],
+            images: [],
+            reject: false,
+          }),
+          isImagePath: () => true,
+        },
+        settings: {
+          get: () => ({ projectPath: "/tmp" }),
+          modelInfo: () => ({
+            id: "gpt-4o",
+            name: "GPT-4o",
+            supportsImages: true,
+          }),
+        },
       },
       conversation: { addInfo: vi.fn(), addInlineImage: vi.fn() },
       addUserMessage: vi.fn(),
@@ -477,19 +506,27 @@ describe("permission prompt navigation", () => {
       drainedSubmitFiles: [],
       editor: { setText: vi.fn(), addToHistory: vi.fn() },
       deps: {
-        agent: {},
-        config: {
-          provider: "deepseek",
-          modelId: "deepseek-v4-flash",
-          projectPath: "/tmp",
-          atFile: {
-            maxFiles: 5,
-            maxFileSize: 51_200,
-            maxTotalSize: 204_800,
-          },
+        conversation: { prompt },
+        project: {
+          resolveAtFiles: (text: string) => ({
+            text,
+            warnings: [],
+            images: [],
+            reject: false,
+          }),
         },
-        promptAndSave: prompt,
-        sessionManager: { trySaveSession: vi.fn() },
+        settings: {
+          get: () => ({
+            provider: "deepseek",
+            modelId: "deepseek-v4-flash",
+            projectPath: "/tmp",
+          }),
+          modelInfo: () => ({
+            id: "deepseek-v4-flash",
+            name: "DeepSeek",
+            supportsImages: false,
+          }),
+        },
       },
       conversation,
       addUserMessage: vi.fn(),
@@ -518,8 +555,7 @@ describe("permission prompt navigation", () => {
     ) => string | undefined;
     const state = {
       deps: {
-        agent: { state: { messages: [] } },
-        agentSupervisor: { get: () => undefined },
+        conversation: { toolResult: () => undefined },
       },
       persistedAgentResultMessages: new Map([[
         "agent-history",
@@ -551,14 +587,11 @@ describe("permission prompt navigation", () => {
       persistedAgentResultGeneration: 0,
       persistedAgentResultMessages: new Map(),
       deps: {
-        agentSupervisor: {
-          loadPersisted: vi.fn().mockResolvedValue({
-            found: new Map([[
+        agents: {
+          loadPersisted: vi.fn().mockResolvedValue(new Map([[
               "agent-history",
               { runtimeSnapshot: { messages } },
-            ]]),
-            missing: [],
-          }),
+            ]])),
         },
       },
       activityInspector: null,
@@ -581,7 +614,11 @@ describe("permission prompt navigation", () => {
       imagePasteHandler: { drainImages: vi.fn().mockReturnValue([]) },
       drainedSubmitFiles: [],
       editor: { setText: vi.fn(), addToHistory: vi.fn() },
-      deps: { agent: { prompt: vi.fn() }, config: { atFile: {} }, projectPath: "/tmp", onSetCwd: vi.fn(), promptWithImages: vi.fn().mockResolvedValue(undefined) },
+      deps: {
+        images: {
+          readClipboardNonBlocking: vi.fn().mockResolvedValue(null),
+        },
+      },
       addUserMessage: vi.fn(),
       setProcessing: vi.fn(),
     };

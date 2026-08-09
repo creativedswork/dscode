@@ -2,26 +2,28 @@
 // Unit tests for agent-loop, tool sandbox, workspace, progress display, and system prompts.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { ValidationResult } from "../../src/eval/schemas.js";
 
 // ── Test: Workspace ──
 
 describe("workspace", () => {
-  const tmpDir = process.env.TMPDIR ?? "/tmp";
-
   // We test the path resolution functions directly
   it("createWorkspace creates directory structure", async () => {
     const { createWorkspace, workspaceDir } = await import("../../src/eval/focus/workspace.js");
     const { existsSync, mkdirSync, rmSync } = await import("node:fs");
+    const baseDir = mkdtempSync(join(tmpdir(), "dscode-focus-"));
     const testId = `test-agent-${Date.now()}`;
-    const ws = createWorkspace(testId);
+    const ws = createWorkspace(testId, baseDir);
     expect(existsSync(ws)).toBe(true);
     expect(existsSync(ws + "/library")).toBe(true);
     expect(existsSync(ws + "/notebook")).toBe(true);
     expect(existsSync(ws + "/output")).toBe(true);
     expect(existsSync(ws + "/library/steps")).toBe(true);
     // Cleanup
-    rmSync(ws, { recursive: true, force: true });
+    rmSync(baseDir, { recursive: true, force: true });
   });
 
   it("writeLibrary writes all expected files", async () => {
@@ -31,6 +33,7 @@ describe("workspace", () => {
     const { buildSkeleton } = await import("../../src/eval/focus/skeleton.js");
     const { existsSync, rmSync } = await import("node:fs");
     const { readFileSync } = await import("node:fs");
+    const baseDir = mkdtempSync(join(tmpdir(), "dscode-focus-"));
 
     // Build a minimal skeleton
     const steps = Array.from({ length: 100 }, (_, i) => ({
@@ -78,7 +81,7 @@ describe("workspace", () => {
 
     const skeleton = buildSkeleton(steps, ruleResult);
     const testId = `test-wl-${Date.now()}`;
-    const ws = createWorkspace(testId);
+    const ws = createWorkspace(testId, baseDir);
 
     const { fileCount } = writeLibrary(skeleton, steps, ruleResult, "SCAN", ws);
     expect(fileCount).toBeGreaterThanOrEqual(5);
@@ -96,33 +99,35 @@ describe("workspace", () => {
     expect(metaContent).toContain("100");
 
     // Cleanup
-    rmSync(ws, { recursive: true, force: true });
+    rmSync(baseDir, { recursive: true, force: true });
   });
 
   it("cleanOldWorkspaces removes oldest directories", async () => {
     const { createWorkspace, cleanOldWorkspaces, evalBaseDir } =
       await import("../../src/eval/focus/workspace.js");
     const { existsSync, rmSync } = await import("node:fs");
+    const baseDir = mkdtempSync(join(tmpdir(), "dscode-focus-"));
 
     // Create 12 workspaces
     const ids: string[] = [];
     for (let i = 0; i < 12; i++) {
       const id = `test-clean-${Date.now()}-${i}`;
       ids.push(id);
-      createWorkspace(id);
+      createWorkspace(id, baseDir);
       // Small delay to ensure different mtimes
       await new Promise((r) => setTimeout(r, 50));
     }
 
     // Clean, retaining 10
-    const removed = cleanOldWorkspaces(10);
+    const removed = cleanOldWorkspaces(10, baseDir);
     expect(removed).toBeGreaterThanOrEqual(2);
 
     // Cleanup all
     for (const id of ids) {
-      const dir = evalBaseDir() + "/" + id;
+      const dir = evalBaseDir(baseDir) + "/" + id;
       if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
     }
+    rmSync(baseDir, { recursive: true, force: true });
   }, 15000);
 });
 

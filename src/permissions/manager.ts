@@ -1,5 +1,10 @@
-import type { PermissionDecision, PermissionRule, PermissionRuleConfig, PermissionsConfig, PromptUserFn } from "../core/types.js";
-import { loadScopedSettings, projectSettingsPath, saveProjectSettings } from "../core/config.js";
+import type {
+  PermissionDecision,
+  PermissionPolicyStore,
+  PermissionRule,
+  PermissionsConfig,
+  PromptUserFn,
+} from "./types.js";
 import { DEFAULT_RULES } from "./rules.js";
 
 function globToRegex(pattern: string): RegExp {
@@ -36,10 +41,12 @@ export class PermissionManager {
   private onBeforePrompt?: () => void;
   private toolPatternCache = new Map<string, RegExp | null>();
 
-  private projectPath: string;
-
-  constructor(config: PermissionsConfig, promptUser: PromptUserFn, projectPath: string, onBeforePrompt?: () => void) {
-    this.projectPath = projectPath;
+  constructor(
+    config: PermissionsConfig,
+    promptUser: PromptUserFn,
+    private readonly policyStore?: PermissionPolicyStore,
+    onBeforePrompt?: () => void,
+  ) {
     this.defaultDecision = config.defaultDecision;
     this.promptUser = promptUser;
     this.onBeforePrompt = onBeforePrompt;
@@ -100,7 +107,7 @@ export class PermissionManager {
           toolCallId: context.toolCall.id,
         });
         if (result.persistRule) {
-          this.persistRule(result.persistRule);
+          await this.policyStore?.persistRule(result.persistRule);
           this.rules.push({
             tool: result.persistRule.tool,
             argPattern: result.persistRule.argPattern ? new RegExp(result.persistRule.argPattern) : undefined,
@@ -145,38 +152,6 @@ export class PermissionManager {
     const exact = Array.from(this.sessionGrants);
     const patterns = this.sessionGrantPatterns.map((g) => g.pattern);
     return [...exact, ...patterns];
-  }
-
-  private persistRule(rule: PermissionRuleConfig, toolNamePattern?: string): void {
-    const toolName = toolNamePattern ?? rule.tool;
-    const settings = loadScopedSettings(projectSettingsPath(this.projectPath));
-    const permissions = ((settings.permissions as Record<string, unknown> | undefined) ?? {});
-
-    if (rule.decision === "allow") {
-      const allow = Array.isArray(permissions.allow) ? [...permissions.allow] : [];
-      if (!allow.includes(toolName)) {
-        allow.push(toolName);
-      }
-      saveProjectSettings(this.projectPath, {
-        ...settings,
-        permissions: {
-          ...permissions,
-          allow,
-        },
-      });
-    } else if (rule.decision === "deny") {
-      const deny = Array.isArray(permissions.deny) ? [...permissions.deny] : [];
-      if (!deny.includes(toolName)) {
-        deny.push(toolName);
-      }
-      saveProjectSettings(this.projectPath, {
-        ...settings,
-        permissions: {
-          ...permissions,
-          deny,
-        },
-      });
-    }
   }
 
   private evaluate(toolName: string, argsStr: string): { decision: PermissionDecision; reason?: string } {

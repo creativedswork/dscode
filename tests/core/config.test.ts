@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,15 +10,34 @@ describe("config and settings loading", () => {
   const originalProjectPath = process.env.DSCODE_PROJECT_PATH;
   const originalConfigHome = process.env.DSCODE_CONFIG_HOME;
   const originalDataHome = process.env.DSCODE_DATA_HOME;
+  const originalOpenDesignDir = process.env.OPEN_DESIGN_DIR;
+  const originalOdPort = process.env.OD_PORT;
+  const originalHome = process.env.HOME;
+  let isolatedHome: string;
+
+  beforeEach(() => {
+    isolatedHome = mkdtempSync(join(tmpdir(), "dscode-home-"));
+    process.env.HOME = isolatedHome;
+    delete process.env.OPEN_DESIGN_DIR;
+    delete process.env.OD_PORT;
+  });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     process.chdir(originalCwd);
+    rmSync(isolatedHome, { recursive: true, force: true });
     if (originalProjectPath === undefined) delete process.env.DSCODE_PROJECT_PATH;
     else process.env.DSCODE_PROJECT_PATH = originalProjectPath;
     if (originalConfigHome === undefined) delete process.env.DSCODE_CONFIG_HOME;
     else process.env.DSCODE_CONFIG_HOME = originalConfigHome;
     if (originalDataHome === undefined) delete process.env.DSCODE_DATA_HOME;
     else process.env.DSCODE_DATA_HOME = originalDataHome;
+    if (originalOpenDesignDir === undefined) delete process.env.OPEN_DESIGN_DIR;
+    else process.env.OPEN_DESIGN_DIR = originalOpenDesignDir;
+    if (originalOdPort === undefined) delete process.env.OD_PORT;
+    else process.env.OD_PORT = originalOdPort;
+    if (originalHome === undefined) delete process.env.HOME;
+    else process.env.HOME = originalHome;
   });
 
   it("defaults to startup path and does not persist cwd to user config", () => {
@@ -36,7 +55,7 @@ describe("config and settings loading", () => {
     const config = loadConfig();
 
     expect(realpathSync(config.projectPath)).toBe(realpathSync(workspace));
-    expect(realpathSync(process.cwd())).toBe(realpathSync(workspace));
+    expect(realpathSync(process.cwd())).toBe(realpathSync(originalCwd));
 
     // config.json may or may not exist after loadConfig (saveUserProjectCwd removed)
     // If it does exist from a previous run, cwd/cwdProjectPath should not be present
@@ -67,7 +86,7 @@ describe("config and settings loading", () => {
     // Old cwd/cwdProjectPath in config.json should be ignored
     // projectPath should remain at startupPath (workspace), not the old persisted cwd (target)
     expect(realpathSync(config.projectPath)).toBe(realpathSync(workspace));
-    expect(realpathSync(process.cwd())).toBe(realpathSync(workspace));
+    expect(realpathSync(process.cwd())).toBe(realpathSync(originalCwd));
     expect(config.modelId).toBe("deepseek-v4-pro");
 
     rmSync(root, { recursive: true, force: true });
@@ -97,7 +116,7 @@ describe("config and settings loading", () => {
     const config = loadConfig();
 
     expect(realpathSync(config.projectPath)).toBe(realpathSync(otherWorkspace));
-    expect(realpathSync(process.cwd())).toBe(realpathSync(otherWorkspace));
+    expect(realpathSync(process.cwd())).toBe(realpathSync(originalCwd));
 
     rmSync(root, { recursive: true, force: true });
   });
@@ -122,7 +141,7 @@ describe("config and settings loading", () => {
     const config = loadConfig();
 
     expect(realpathSync(config.projectPath)).toBe(realpathSync(workspace));
-    expect(realpathSync(process.cwd())).toBe(realpathSync(workspace));
+    expect(realpathSync(process.cwd())).toBe(realpathSync(originalCwd));
 
     rmSync(root, { recursive: true, force: true });
   });
@@ -246,6 +265,37 @@ describe("config and settings loading", () => {
         allowLegacySseFallback: true,
       }),
     ]);
+
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("leaves Integration namespaces out of the Core runtime config", () => {
+    const root = mkdtempSync(join(tmpdir(), "dscode-config-"));
+    const configHome = join(root, "home");
+    const workspace = join(root, "workspace");
+
+    mkdirSync(configHome, { recursive: true });
+    mkdirSync(join(workspace, ".dscode"), { recursive: true });
+    writeFileSync(
+      join(workspace, ".dscode", "settings.json"),
+      JSON.stringify({
+        integrations: {
+          openDesign: {
+            enabled: true,
+            path: "/open-design",
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    process.env.DSCODE_PROJECT_PATH = workspace;
+    process.env.DSCODE_CONFIG_HOME = configHome;
+    process.env.DSCODE_DATA_HOME = configHome;
+
+    const config = loadConfig();
+
+    expect("integrations" in config).toBe(false);
 
     rmSync(root, { recursive: true, force: true });
   });

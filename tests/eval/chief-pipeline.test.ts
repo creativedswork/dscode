@@ -3,9 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AgentSupervisor } from "../../src/agents/process/supervisor.js";
+import type { EvalApplicationPort } from "../../src/application/harness-api.js";
 import type { SpawnAgentRequest } from "../../src/agents/process/types.js";
-import type { HarnessAPI } from "../../src/core/harness-api.js";
 import {
   runChiefPipeline,
   type ChiefProgressEvent,
@@ -250,11 +249,11 @@ describe("runChiefPipeline", () => {
       };
     });
     const harness = {
-      agentSupervisor: {
+      agents: {
         list: () => [{ role: "main", agentId: "main-current" }],
         spawn,
-      } as unknown as AgentSupervisor,
-    } as unknown as HarnessAPI;
+      },
+    } as unknown as EvalApplicationPort;
 
     const progress: ChiefProgressEvent[] = [];
     const result = await runChiefPipeline({
@@ -350,11 +349,11 @@ describe("runChiefPipeline", () => {
       };
     });
     const harness = {
-      agentSupervisor: {
+      agents: {
         list: () => [{ role: "main", agentId: "main-current" }],
         spawn,
-      } as unknown as AgentSupervisor,
-    } as unknown as HarnessAPI;
+      },
+    } as unknown as EvalApplicationPort;
 
     const result = await runChiefPipeline({ trajectory: input, harness, run });
 

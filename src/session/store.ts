@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import type { SerializedSession, SessionMetadata } from "../core/types.js";
+import type { SerializedSession, SessionMetadata } from "./types.js";
 
 const MAX_INDEX_ENTRIES = 100;
 

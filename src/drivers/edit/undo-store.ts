@@ -1,40 +1,62 @@
-/**
- * In-memory undo snapshot store for the edit tool.
- *
- * Simple Map<string, string> keyed by absolute file path.
- * Stores complete pre-edit file content for one-level undo.
- * Overwrites existing snapshot when editing the same file again.
- * Cleared on edit_undo or session shutdown.
- */
+import { getHostFacility } from "../../kernel/execution-context.js";
 
-const undoSnapshots = new Map<string, string>();
+export const UNDO_STORE_FACILITY = Symbol("dscode.edit-undo");
 
-/** Capture a snapshot of pre-edit file content. */
-export function captureUndoSnapshot(filePath: string, content: string): void {
-  undoSnapshots.set(filePath, content);
+export class UndoSnapshotStore {
+  private readonly snapshots = new Map<string, string>();
+
+  capture(filePath: string, content: string): void {
+    this.snapshots.set(filePath, content);
+  }
+
+  get(filePath: string): string | undefined {
+    return this.snapshots.get(filePath);
+  }
+
+  clear(filePath: string): void {
+    this.snapshots.delete(filePath);
+  }
+
+  has(filePath: string): boolean {
+    return this.snapshots.has(filePath);
+  }
+
+  clearAll(): void {
+    this.snapshots.clear();
+  }
+
+  get size(): number {
+    return this.snapshots.size;
+  }
 }
 
-/** Retrieve the stored snapshot for a file path. */
+function currentStore(): UndoSnapshotStore | undefined {
+  return getHostFacility<UndoSnapshotStore>(UNDO_STORE_FACILITY);
+}
+
+export function captureUndoSnapshot(
+  filePath: string,
+  content: string,
+): void {
+  currentStore()?.capture(filePath, content);
+}
+
 export function getUndoSnapshot(filePath: string): string | undefined {
-  return undoSnapshots.get(filePath);
+  return currentStore()?.get(filePath);
 }
 
-/** Clear the snapshot for a file path (after undo or on new edit). */
 export function clearUndoSnapshot(filePath: string): void {
-  undoSnapshots.delete(filePath);
+  currentStore()?.clear(filePath);
 }
 
-/** Check if a snapshot exists for a file path. */
 export function hasUndoSnapshot(filePath: string): boolean {
-  return undoSnapshots.has(filePath);
+  return currentStore()?.has(filePath) ?? false;
 }
 
-/** Clear all undo snapshots (session shutdown). */
 export function clearAllUndoSnapshots(): void {
-  undoSnapshots.clear();
+  currentStore()?.clearAll();
 }
 
-/** Number of stored snapshots. */
 export function getUndoSnapshotCount(): number {
-  return undoSnapshots.size;
+  return currentStore()?.size ?? 0;
 }

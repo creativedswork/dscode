@@ -1,15 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { Harness } from "../../src/core/harness.js";
+import { ConversationCoordinator } from "../../src/application/conversation-coordinator.js";
+import { SessionCoordinator } from "../../src/application/session-coordinator.js";
 import type {
   AgentExitResult,
   AgentProcess,
 } from "../../src/agents/process/types.js";
 
-function result(
-  agentId: string,
-  output: string,
-): AgentExitResult {
+function result(agentId: string, output: string): AgentExitResult {
   return {
     agentId,
     state: "completed",
@@ -34,7 +32,7 @@ function setup(options: {
     agentId: "agent-research",
     parentSessionId: processSessionId,
     description: "Researcher: verify paper claims",
-    application: { name: "general" } as AgentProcess["application"],
+    application: { name: "general" },
     role: "subagent",
     recording: "session",
     attachment: options.attachment ?? "background",
@@ -42,90 +40,69 @@ function setup(options: {
   } as AgentProcess;
   const prompts: string[] = [];
   const emitted: unknown[] = [];
-  const harness = Object.create(Harness.prototype) as any;
-  Object.assign(harness, {
-    pendingBackgroundContinuationSessions: new Set<string>(),
-    backgroundContinuationDrain: null,
-    shuttingDown: false,
-    sessionSwitchInProgress: false,
-    activeMainTurn: null,
-    agentSupervisor: {
-      get: vi.fn((agentId: string) =>
-        agentId === process.agentId ? process : undefined
-      ),
-      consumeNotifications: vi.fn((sessionId: string) => {
-        if (sessionId !== processSessionId) return [];
-        return notifications.splice(0);
-      }),
-    },
+  const conversation = new ConversationCoordinator();
+  const supervisor = {
+    consumeNotifications: vi.fn((sessionId: string) =>
+      sessionId === processSessionId ? notifications.splice(0) : []
+    ),
+  };
+  const coordinator = new SessionCoordinator({
     sessionManager: {
       getCurrentSessionId: () => currentSessionId,
+    } as any,
+    agentSupervisor: () => supervisor as any,
+    mainAgentId: () => "main",
+    agent: () => ({ state: { messages: [] } }) as any,
+    projectPath: () => "/project",
+    abort: () => {},
+    conversation,
+    logger: { info: vi.fn(), error: vi.fn() } as any,
+    resumeNotifications: async (completed) => {
+      prompts.push(completed.map((item) => item.output).join("\n"));
     },
-    events: {
-      emit: vi.fn((event: unknown) => emitted.push(event)),
-    },
-    logger: { error: vi.fn() },
-    promptAndSaveInternal: vi.fn(async (prompt: string) => {
-      prompts.push(prompt);
-    }),
+    publish: (event) => emitted.push(event),
   });
 
   return {
-    harness,
+    coordinator,
+    conversation,
     process,
     prompts,
     emitted,
+    supervisor,
     setCurrentSessionId(value: string) {
       currentSessionId = value;
     },
     async waitForDrain() {
-      const drain = harness.backgroundContinuationDrain as Promise<void> | null;
+      const drain = (coordinator as any).backgroundDrain as Promise<void> | null;
       if (drain) await drain;
     },
   };
 }
 
-describe("Harness background Agent continuation", () => {
+describe("SessionCoordinator background Agent continuation", () => {
   it("resumes the idle Main Agent with the completed result", async () => {
     const fixture = setup();
-
-    fixture.harness.scheduleBackgroundAgentContinuation(
-      fixture.process.agentId,
-    );
+    fixture.coordinator.scheduleBackgroundProcess(fixture.process);
     await fixture.waitForDrain();
-
-    expect(fixture.prompts).toHaveLength(1);
-    expect(fixture.prompts[0]).toContain("## Researcher");
-    expect(fixture.prompts[0]).toContain("Verified claims");
-    expect(fixture.prompts[0]).toContain(
-      "continue to the next planned step immediately",
-    );
+    expect(fixture.prompts).toEqual(["Verified claims"]);
     expect(fixture.emitted).toContainEqual({ type: "processing:start" });
   });
 
   it("waits for the active Main turn before continuing", async () => {
     const fixture = setup();
-    let finishTurn!: () => void;
+    let finish!: () => void;
     const active = new Promise<void>((resolve) => {
-      finishTurn = resolve;
+      finish = resolve;
     });
-    let tracked: Promise<void>;
-    tracked = active.finally(() => {
-      if (fixture.harness.activeMainTurn === tracked) {
-        fixture.harness.activeMainTurn = null;
-      }
-    });
-    fixture.harness.activeMainTurn = tracked;
-
-    fixture.harness.scheduleBackgroundAgentContinuation(
-      fixture.process.agentId,
-    );
+    const turn = fixture.conversation.run(() => active);
+    fixture.coordinator.scheduleBackgroundProcess(fixture.process);
     await Promise.resolve();
-    expect(fixture.prompts).toHaveLength(0);
-
-    finishTurn();
+    expect(fixture.prompts).toEqual([]);
+    finish();
+    await turn;
     await fixture.waitForDrain();
-    expect(fixture.prompts).toHaveLength(1);
+    expect(fixture.prompts).toEqual(["Verified claims"]);
   });
 
   it("batches parallel completion notifications into one Main turn", async () => {
@@ -135,27 +112,19 @@ describe("Harness background Agent continuation", () => {
         result("agent-source", "Source extraction complete"),
       ],
     });
-
-    fixture.harness.scheduleBackgroundAgentContinuation(
-      fixture.process.agentId,
-    );
+    fixture.coordinator.scheduleBackgroundProcess(fixture.process);
     await fixture.waitForDrain();
-
-    expect(fixture.prompts).toHaveLength(1);
-    expect(fixture.prompts[0]).toContain("Research complete");
-    expect(fixture.prompts[0]).toContain("Source extraction complete");
+    expect(fixture.prompts).toEqual([
+      "Research complete\nSource extraction complete",
+    ]);
   });
 
-  it("does not continue twice when an active turn already consumed the notification", async () => {
+  it("does not continue after another turn consumed the notification", async () => {
     const fixture = setup();
-    fixture.harness.agentSupervisor.consumeNotifications("session-1");
-
-    fixture.harness.scheduleBackgroundAgentContinuation(
-      fixture.process.agentId,
-    );
+    fixture.supervisor.consumeNotifications("session-1");
+    fixture.coordinator.scheduleBackgroundProcess(fixture.process);
     await fixture.waitForDrain();
-
-    expect(fixture.prompts).toHaveLength(0);
+    expect(fixture.prompts).toEqual([]);
   });
 
   it("defers an inactive Session until it becomes current", async () => {
@@ -163,27 +132,19 @@ describe("Harness background Agent continuation", () => {
       currentSessionId: "session-2",
       processSessionId: "session-1",
     });
-
-    fixture.harness.scheduleBackgroundAgentContinuation(
-      fixture.process.agentId,
-    );
+    fixture.coordinator.scheduleBackgroundProcess(fixture.process);
     await fixture.waitForDrain();
-    expect(fixture.prompts).toHaveLength(0);
-
+    expect(fixture.prompts).toEqual([]);
     fixture.setCurrentSessionId("session-1");
-    fixture.harness.startBackgroundContinuationDrain();
+    (fixture.coordinator as any).startBackgroundDrain();
     await fixture.waitForDrain();
-    expect(fixture.prompts).toHaveLength(1);
+    expect(fixture.prompts).toEqual(["Verified claims"]);
   });
 
   it("does not auto-continue for a foreground Agent", async () => {
     const fixture = setup({ attachment: "foreground" });
-
-    fixture.harness.scheduleBackgroundAgentContinuation(
-      fixture.process.agentId,
-    );
+    fixture.coordinator.scheduleBackgroundProcess(fixture.process);
     await fixture.waitForDrain();
-
-    expect(fixture.prompts).toHaveLength(0);
+    expect(fixture.prompts).toEqual([]);
   });
 });

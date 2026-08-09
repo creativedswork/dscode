@@ -23,6 +23,7 @@ import type {
 } from "./types.js";
 import type { AgentProcessStore } from "./store.js";
 import { AgentWorktreeManager } from "./worktree.js";
+import type { HostFacilities } from "../../kernel/host-facilities.js";
 
 export class AgentSupervisor {
   private readonly processes = new Map<string, AgentProcess>();
@@ -41,6 +42,8 @@ export class AgentSupervisor {
     private readonly availableTools: () => readonly string[],
     private readonly maxDepth = 1,
     fallbackRegistry?: AgentFallbackRegistry,
+    hostId = "default",
+    facilities?: HostFacilities,
   ) {
     this.lifecycle = new AgentProcessLifecycle(store, events, logger, this.worktrees);
     this.executionController = new AgentExecutionController({
@@ -61,7 +64,7 @@ export class AgentSupervisor {
               signal,
             )
         : undefined,
-    });
+    }, hostId, facilities);
   }
 
   registerMain(

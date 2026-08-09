@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { HarnessEventBus } from "../../src/core/events.js";
 import type { AgentProcess } from "../../src/agents/process/types.js";
 import { WebUiBackend } from "../../src/ui/web/web-backend.js";
+import { createHarnessApiFixture } from "../helpers/harness-api.js";
 
 function processFixture(
   overrides: Partial<AgentProcess> = {},
@@ -28,38 +29,40 @@ function processFixture(
 function setup(process: AgentProcess) {
   const events = new HarnessEventBus({ error: vi.fn() } as any);
   let currentSessionId = "session-1";
+  let agentMessages: any[] = [];
   const agentSupervisor = {
     get: vi.fn((agentId: string) => agentId === process.agentId ? process : undefined),
     spawn: vi.fn(),
     wait: vi.fn(),
   };
-  const harness = {
+  const base = createHarnessApiFixture();
+  const promptWithImages = vi.fn().mockResolvedValue(undefined);
+  const harness = createHarnessApiFixture({
     events,
-    agentSupervisor,
-    sessionManager: {
-      getCurrentSessionId: () => currentSessionId,
-      getCurrentMetadata: () => null,
-      listSessions: () => [],
-      getTotalActiveMs: () => 0,
-      agentMessages: [],
+    agents: {
+      ...base.agents,
+      get: vi.fn((agentId: string) =>
+        agentId === process.agentId ? process as any : undefined
+      ),
     },
-    agent: { state: { messages: [], model: { name: "model" } } },
-    commandManager: { listManifests: () => [] },
-    contextManager: { getContextWindow: () => 0 },
-    promptWithImages: vi.fn().mockResolvedValue(undefined),
-    promptAndSave: vi.fn().mockResolvedValue(undefined),
-    saveSessionNow: vi.fn(),
-    logger: { info: vi.fn(), error: vi.fn() },
-  } as any;
+    sessions: {
+      ...base.sessions,
+      currentId: () => currentSessionId,
+    },
+    conversation: {
+      ...base.conversation,
+      promptWithImages,
+      snapshot: () => ({
+        messages: [],
+        agentMessages,
+        modelName: "model",
+      }),
+    },
+  });
   const backend = new WebUiBackend({
+    webRoot: ".",
     port: 0,
     harness,
-    configStore: {} as any,
-    config: {
-      projectPath: "/project",
-      provider: "test",
-      modelId: "model",
-    } as any,
   });
   const broadcast = vi.spyOn((backend as any).wsServer, "broadcast");
   return {
@@ -68,6 +71,9 @@ function setup(process: AgentProcess) {
     backend,
     harness,
     agentSupervisor,
+    setAgentMessages(messages: any[]) {
+      agentMessages = messages;
+    },
     setCurrentSessionId(id: string) {
       currentSessionId = id;
     },
@@ -182,9 +188,10 @@ describe("Web Agent Activity projection", () => {
         startedAt,
         endedAt,
         isError: false,
-        resultDetail: status === "completed"
-          ? { summary: `${toolCallId} result`, text: `${toolCallId} result` }
+        result: status === "completed"
+          ? `${toolCallId} result`
           : undefined,
+        resultOwnerId: process.agentId,
       },
     });
 
@@ -201,10 +208,9 @@ describe("Web Agent Activity projection", () => {
         name: "read_file",
         status: "completed",
         args: "path=call-1",
-        resultDetail: {
-          summary: "call-1 result",
+        resultDetail: expect.objectContaining({
           text: "call-1 result",
-        },
+        }),
         endedAt: 1400,
       }),
       expect.objectContaining({
@@ -308,7 +314,8 @@ describe("Web Agent Activity projection", () => {
         startedAt: 1200,
         endedAt: 1300,
         isError: true,
-        resultDetail: { summary: "exit 1", text: "exit 1" },
+        result: "exit 1",
+        resultOwnerId: process.agentId,
       },
     });
 
@@ -318,7 +325,7 @@ describe("Web Agent Activity projection", () => {
         status: "failed",
         args: "command=false",
         isError: true,
-        resultDetail: { summary: "exit 1", text: "exit 1" },
+        resultDetail: expect.objectContaining({ text: "exit 1" }),
       }),
     ]);
   });
@@ -451,8 +458,8 @@ describe("Web Agent Activity projection", () => {
 
   it("rebuilds Session history without creating or resuming processes", () => {
     const process = processFixture();
-    const { backend, harness, agentSupervisor } = setup(process);
-    harness.sessionManager.agentMessages = [{
+    const { backend, agentSupervisor, setAgentMessages } = setup(process);
+    setAgentMessages([{
       role: "subagent",
       agentId: "agent-history",
       application: "general",
@@ -461,7 +468,7 @@ describe("Web Agent Activity projection", () => {
       output: { text: "Done" },
       createdAt: 1000,
       endedAt: 2000,
-    }];
+    }]);
 
     const messages = (backend as any).buildConversationHistory();
 
@@ -493,7 +500,7 @@ describe("Web Agent Activity projection", () => {
       type: "user_message",
       text: "describe this image",
     }));
-    expect(harness.promptWithImages).toHaveBeenCalledWith(
+    expect(harness.conversation.promptWithImages).toHaveBeenCalledWith(
       "describe this image",
       [expect.objectContaining({ type: "image", mimeType: "image/png" })],
       "describe this image",

@@ -1,4 +1,4 @@
-import type { AgentSupervisor } from "../../agents/process/supervisor.js";
+import type { AgentProcessApplicationPort } from "../../application/harness-api.js";
 import type { Logger } from "../../utils/logger.js";
 import type { ValidationResult } from "../schemas.js";
 import {
@@ -8,7 +8,7 @@ import {
 } from "./workspace.js";
 
 export interface StructuredAgentHost {
-  agentSupervisor: AgentSupervisor;
+  agents: Pick<AgentProcessApplicationPort, "list" | "spawn">;
 }
 
 export interface StructuredAgentOptions<T> {
@@ -117,7 +117,7 @@ export async function runStructuredAgent<T>(
 ): Promise<StructuredAgentResult<T>> {
   const maxAttempts = options.maxAttempts ?? 2;
   if (maxAttempts < 1) throw new Error("maxAttempts must be at least 1");
-  const parent = options.host.agentSupervisor.list()
+  const parent = options.host.agents.list()
     .find((process) => process.role === "main");
   if (!parent) throw new Error("Cannot run CHIEF worker without a Main Agent process");
   const workers: string[] = [];
@@ -135,7 +135,7 @@ export async function runStructuredAgent<T>(
       });
     }
     let workerAgentId = "";
-    const worker = await options.host.agentSupervisor.spawn({
+    const worker = await options.host.agents.spawn({
       application: options.application,
       parentAgentId: parent.agentId,
       input: { prompt },

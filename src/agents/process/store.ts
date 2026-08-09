@@ -10,7 +10,9 @@ function projectSlug(projectPath: string): string {
   return `${name.replace(/[^a-zA-Z0-9._-]/g, "-")}-${hash}`;
 }
 
-function serialize(agentProcess: AgentProcess): SerializedAgentProcess {
+export function serializeAgentProcess(
+  agentProcess: AgentProcess,
+): SerializedAgentProcess {
   return {
     version: 1,
     agentId: agentProcess.agentId,
@@ -55,7 +57,7 @@ export class AgentProcessStore {
     await mkdir(this.directory, { recursive: true });
     const path = join(this.directory, `${agentProcess.agentId}.json`);
     const temporary = `${path}.${globalThis.process.pid}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(serialize(agentProcess), null, 2)}\n`, "utf8");
+    await writeFile(temporary, `${JSON.stringify(serializeAgentProcess(agentProcess), null, 2)}\n`, "utf8");
     await rename(temporary, path);
     await this.updateIndex(agentProcess);
   }

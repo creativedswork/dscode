@@ -90,12 +90,15 @@ describe("PiAgentRuntimeAdapter snapshot", () => {
         toolCallId: "call-1",
         toolName: "read_file",
         isError: false,
-        resultDetail: expect.objectContaining({
-          summary: expect.stringContaining("file contents"),
-          text: "file contents",
-        }),
+        result: {
+          content: [{
+            type: "text",
+            text: "file contents",
+          }],
+        },
       }),
     ]);
+    expect(progressDetails[1]).not.toHaveProperty("resultDetail");
     expect(checkpoints).toHaveLength(1);
     expect(listeners.size).toBe(0);
   });
