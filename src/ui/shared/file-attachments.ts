@@ -6,18 +6,13 @@ import {
 } from "node:fs";
 import {
   basename,
-  isAbsolute,
   join,
-  relative,
   resolve,
 } from "node:path";
 
-const MAX_STAGED_FILE_BYTES = 50 * 1024 * 1024;
+import { isCanonicalPathWithin } from "../../application/path-safety.js";
 
-function isWithin(root: string, candidate: string): boolean {
-  const rel = relative(root, candidate);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
+const MAX_STAGED_FILE_BYTES = 50 * 1024 * 1024;
 
 function safeFilename(path: string): string {
   return basename(path).replace(/[\u0000-\u001f\u007f]/g, "_") || "attachment";
@@ -47,7 +42,7 @@ export function stageAttachedFiles(
     if (!info.isFile()) {
       throw new Error(`Attachment is not a file or directory: ${path}`);
     }
-    if (isWithin(projectRoot, source)) return source;
+    if (isCanonicalPathWithin(projectRoot, source)) return source;
     if (info.size > MAX_STAGED_FILE_BYTES) {
       throw new Error(
         `Attachment exceeds ${MAX_STAGED_FILE_BYTES} bytes: ${path}`,

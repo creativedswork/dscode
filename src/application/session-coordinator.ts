@@ -41,7 +41,7 @@ export class SessionCoordinator {
       conversation,
       sessionManager,
     } = this.options;
-    conversation.beginSessionSwitch();
+    conversation.beginTransition("session");
     try {
       const targetId = this.resolveSessionId(request.sessionIdOrPrefix);
       const prepared = await sessionManager.prepareLoad(targetId);
@@ -62,7 +62,7 @@ export class SessionCoordinator {
         agentMessages: prepared.agentMessages,
       };
     } finally {
-      conversation.endSessionSwitch();
+      conversation.endTransition("session");
       this.startBackgroundDrain();
     }
   }
@@ -115,7 +115,7 @@ export class SessionCoordinator {
     if (
       this.backgroundDrain
       || this.options.isShuttingDown?.()
-      || this.options.conversation.isSessionSwitching
+      || this.options.conversation.isTransitioning
       || this.pendingBackgroundSessions.size === 0
       || !this.options.resumeNotifications
     ) return;
@@ -128,7 +128,7 @@ export class SessionCoordinator {
         const current = this.options.sessionManager.getCurrentSessionId();
         if (
           !this.options.isShuttingDown?.()
-          && !this.options.conversation.isSessionSwitching
+          && !this.options.conversation.isTransitioning
           && current
           && this.pendingBackgroundSessions.has(current)
         ) {
@@ -145,7 +145,7 @@ export class SessionCoordinator {
     } = this.options;
     while (
       !this.options.isShuttingDown?.()
-      && !conversation.isSessionSwitching
+      && !conversation.isTransitioning
     ) {
       const sessionId = sessionManager.getCurrentSessionId();
       if (!sessionId || !this.pendingBackgroundSessions.has(sessionId)) return;
@@ -159,7 +159,7 @@ export class SessionCoordinator {
         continue;
       }
       if (
-        conversation.isSessionSwitching
+        conversation.isTransitioning
         || sessionManager.getCurrentSessionId() !== sessionId
       ) continue;
 

@@ -1,7 +1,7 @@
 import {
   serializeArtifactThemeVariables,
   type ArtifactTheme,
-} from "../../../src/ui/shared/artifact-theme.js";
+} from "../../../src/application/artifact-theme.js";
 
 const LEGACY_EVAL_THEME_COLORS: ReadonlyArray<readonly [RegExp, string]> = [
   [/#1e1c19/gi, "var(--bg)"],

@@ -1,11 +1,7 @@
 import type { AgentProcessApplicationPort } from "../../application/harness-api.js";
 import type { Logger } from "../../utils/logger.js";
 import type { ValidationResult } from "../schemas.js";
-import {
-  updateRunStage,
-  type ChiefStage,
-  type EvalRunContext,
-} from "./workspace.js";
+import type { ChiefStage } from "./workspace.js";
 
 export interface StructuredAgentHost {
   agents: Pick<AgentProcessApplicationPort, "list" | "spawn">;
@@ -18,11 +14,13 @@ export interface StructuredAgentOptions<T> {
   workspace: string;
   stage: ChiefStage;
   validate: (value: unknown) => ValidationResult<T>;
-  runContext?: EvalRunContext;
   signal?: AbortSignal;
   logger?: Logger;
   maxAttempts?: number;
-  onWorker?: (agentId: string, attempt: number) => void;
+  onWorker?: (
+    agentId: string,
+    attempt: number,
+  ) => void | Promise<void>;
 }
 
 export interface StructuredAgentResult<T> {
@@ -127,13 +125,6 @@ export async function runStructuredAgent<T>(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     if (options.signal?.aborted) throw abortError();
-    if (options.runContext) {
-      await updateRunStage(options.runContext, options.stage, {
-        status: "running",
-        application: options.application,
-        retryCount: attempt - 1,
-      });
-    }
     let workerAgentId = "";
     const worker = await options.host.agents.spawn({
       application: options.application,
@@ -145,19 +136,11 @@ export async function runStructuredAgent<T>(
       signal: options.signal,
       onSpawn: (agentId) => {
         workerAgentId = agentId;
-        options.onWorker?.(agentId, attempt);
       },
     });
     workerAgentId ||= worker.agentId;
     workers.push(workerAgentId);
-    if (options.runContext) {
-      await updateRunStage(options.runContext, options.stage, {
-        status: "running",
-        application: options.application,
-        workerAgentId,
-        retryCount: attempt - 1,
-      });
-    }
+    await options.onWorker?.(workerAgentId, attempt);
     const completed = worker.result;
     if (options.signal?.aborted || completed?.state === "terminated") {
       throw abortError();
@@ -204,15 +187,6 @@ export async function runStructuredAgent<T>(
     }
   }
 
-  if (options.runContext) {
-    await updateRunStage(options.runContext, options.stage, {
-      status: "failed",
-      application: options.application,
-      workerAgentId: workers.at(-1),
-      retryCount: Math.max(0, workers.length - 1),
-      error: lastErrors.join("; "),
-    });
-  }
   throw new StructuredAgentError(
     `${options.application} failed structured output validation`,
     options.application,

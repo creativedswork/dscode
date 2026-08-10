@@ -97,6 +97,14 @@ export class SettingsRepository {
   }
 
   async patch(path: string, update: SettingsPatch): Promise<Readonly<JsonRecord>> {
+    return this.transact(path, update, async (next) => next);
+  }
+
+  async transact<T>(
+    path: string,
+    update: SettingsPatch,
+    apply: (next: Readonly<JsonRecord>) => Promise<T>,
+  ): Promise<T> {
     const previous = this.queues.get(path) ?? Promise.resolve();
     let release!: () => void;
     const queued = new Promise<void>((resolve) => {
@@ -106,12 +114,22 @@ export class SettingsRepository {
     this.queues.set(path, tail);
 
     await previous;
+    const existed = existsSync(path);
+    const current = this.read(path);
     try {
-      const current = this.read(path);
       const next = update(freeze(clone(current)));
       assertRecord(next, path);
       this.writeAtomic(path, next);
-      return freeze(clone(next));
+      try {
+        return await apply(freeze(clone(next)));
+      } catch (error) {
+        if (existed) {
+          this.writeAtomic(path, current as JsonRecord);
+        } else {
+          rmSync(path, { force: true });
+        }
+        throw error;
+      }
     } finally {
       release();
       if (this.queues.get(path) === tail) this.queues.delete(path);

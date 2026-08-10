@@ -47,14 +47,22 @@ export class PermissionManager {
     private readonly policyStore?: PermissionPolicyStore,
     onBeforePrompt?: () => void,
   ) {
-    this.defaultDecision = config.defaultDecision;
     this.promptUser = promptUser;
     this.onBeforePrompt = onBeforePrompt;
-    this.denyRegexes = config.denyPatterns.map((p) => ({ pattern: p, regex: globToRegex(p) }));
+    this.defaultDecision = config.defaultDecision;
+    this.denyRegexes = [];
+    this.rules = [];
+    this.updateConfig(config);
+  }
 
-    this.rules = [...DEFAULT_RULES];
+  updateConfig(config: PermissionsConfig): void {
+    const denyRegexes = config.denyPatterns.map((pattern) => ({
+      pattern,
+      regex: globToRegex(pattern),
+    }));
+    const rules = [...DEFAULT_RULES];
     for (const rule of config.rules) {
-      this.rules.push({
+      rules.push({
         tool: rule.tool,
         argPattern: rule.argPattern ? new RegExp(rule.argPattern) : undefined,
         decision: rule.decision,
@@ -62,7 +70,11 @@ export class PermissionManager {
         priority: rule.priority ?? 5,
       });
     }
-    this.rules.sort((a, b) => b.priority - a.priority);
+    rules.sort((a, b) => b.priority - a.priority);
+    this.defaultDecision = config.defaultDecision;
+    this.denyRegexes = denyRegexes;
+    this.rules = rules;
+    this.toolPatternCache.clear();
   }
 
   async check(

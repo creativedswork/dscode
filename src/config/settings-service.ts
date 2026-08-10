@@ -32,7 +32,8 @@ export type SettingsChangeReason =
   | "skill"
   | "permission"
   | "project"
-  | "runtime";
+  | "runtime"
+  | "rollback";
 
 export interface SettingsServicePaths {
   readonly userConfig: string;
@@ -155,39 +156,48 @@ export class SettingsService implements PermissionPolicyStore {
     enabled: boolean,
   ): Promise<RuntimeConfigSnapshot> {
     const path = this.options.paths.projectSettings(this.getSnapshot().projectPath);
-    await this.options.repository.patch(path, (settings) => {
-      const disabled = Array.isArray(settings.disabledSkills)
-        ? settings.disabledSkills.filter((item): item is string => typeof item === "string")
-        : [];
-      const next = enabled
-        ? disabled.filter((item) => item !== name)
-        : [...new Set([...disabled, name])];
-      return mergeSettingsPatch(settings, { disabledSkills: next });
-    });
-    return this.refresh("skill");
+    return this.options.repository.transact(
+      path,
+      (settings) => {
+        const disabled = Array.isArray(settings.disabledSkills)
+          ? settings.disabledSkills.filter((item): item is string =>
+              typeof item === "string"
+            )
+          : [];
+        const next = enabled
+          ? disabled.filter((item) => item !== name)
+          : [...new Set([...disabled, name])];
+        return mergeSettingsPatch(settings, { disabledSkills: next });
+      },
+      () => this.refresh("skill"),
+    );
   }
 
   async persistRule(rule: PermissionRuleConfig): Promise<void> {
     const path = this.options.paths.projectSettings(this.getSnapshot().projectPath);
-    await this.options.repository.patch(path, (settings) => {
-      const permissions = settings.permissions
-        && typeof settings.permissions === "object"
-        && !Array.isArray(settings.permissions)
-        ? settings.permissions as JsonRecord
-        : {};
-      const key = rule.decision === "allow" ? "allow" : "deny";
-      const existing = Array.isArray(permissions[key])
-        ? permissions[key].filter((item): item is string => typeof item === "string")
-        : [];
-      const pattern = rule.tool;
-      return mergeSettingsPatch(settings, {
-        permissions: {
-          ...permissions,
-          [key]: [...new Set([...existing, pattern])],
-        },
-      });
-    });
-    await this.refresh("permission");
+    await this.options.repository.transact(
+      path,
+      (settings) => {
+        const permissions = settings.permissions
+          && typeof settings.permissions === "object"
+          && !Array.isArray(settings.permissions)
+          ? settings.permissions as JsonRecord
+          : {};
+        const key = rule.decision === "allow" ? "allow" : "deny";
+        const existing = Array.isArray(permissions[key])
+          ? permissions[key].filter((item): item is string =>
+              typeof item === "string"
+            )
+          : [];
+        return mergeSettingsPatch(settings, {
+          permissions: {
+            ...permissions,
+            [key]: [...new Set([...existing, rule.tool])],
+          },
+        });
+      },
+      () => this.refresh("permission"),
+    );
   }
 
   async replaceProjectRuntime(
@@ -205,8 +215,11 @@ export class SettingsService implements PermissionPolicyStore {
     reason: SettingsChangeReason,
     runtimeOverride: Partial<RuntimeConfig>,
   ): Promise<RuntimeConfigSnapshot> {
-    await this.options.repository.patchObject(this.options.paths.userConfig, partial);
-    return this.refresh(reason, runtimeOverride);
+    return this.options.repository.transact(
+      this.options.paths.userConfig,
+      (current) => mergeSettingsPatch(current, partial),
+      () => this.refresh(reason, runtimeOverride),
+    );
   }
 
   private refresh(
@@ -223,16 +236,22 @@ export class SettingsService implements PermissionPolicyStore {
     reason: SettingsChangeReason,
   ): Promise<RuntimeConfigSnapshot> {
     const previous = this.getSnapshot();
-    const next = this.options.runtimeStore.replace(config, false);
+    const next = this.options.runtimeStore.replace(config);
     try {
       await this.options.onApplied?.(previous, next, reason);
-      this.options.runtimeStore.notify();
       return next;
     } catch (error) {
       this.options.runtimeStore.replace(
         previous as unknown as RuntimeConfig,
-        false,
       );
+      try {
+        await this.options.onApplied?.(next, previous, "rollback");
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          "Runtime configuration apply and rollback both failed",
+        );
+      }
       throw error;
     }
   }

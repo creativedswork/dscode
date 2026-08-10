@@ -100,6 +100,48 @@ describe("conversationReducer — Agent Activity", () => {
     expect(second[0].agentActivity).toEqual(completed);
   });
 
+  it("keeps Main Assistant streaming across interleaved Agent activity", () => {
+    let messages = conversationReducer([], {
+      type: "assistant_start",
+      messageId: "assistant-main",
+    });
+    messages = conversationReducer(messages, {
+      type: "tool_start",
+      toolCallId: "spawn-1",
+      name: "spawn_agent",
+      args: { application: "general" },
+    });
+    messages = conversationReducer(messages, {
+      type: "agent_activity",
+      activity: runningActivity,
+    });
+    messages = conversationReducer(messages, {
+      type: "tool_end",
+      toolCallId: "spawn-1",
+      name: "spawn_agent",
+      result: "completed",
+      isError: false,
+    });
+    messages = conversationReducer(messages, {
+      type: "text_delta",
+      delta: "Delegation completed.",
+    });
+    messages = conversationReducer(messages, { type: "assistant_end" });
+
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({
+      id: "assistant-main",
+      role: "assistant",
+      content: "Delegation completed.",
+      isStreaming: false,
+    });
+    expect(messages[0].tools?.[0]).toMatchObject({
+      toolCallId: "spawn-1",
+      result: "completed",
+    });
+    expect(messages[1].role).toBe("agent");
+  });
+
   it("restores agent-role messages from ready", () => {
     const result = conversationReducer([], {
       type: "ready",

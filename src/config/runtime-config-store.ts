@@ -19,9 +19,6 @@ function snapshot(config: RuntimeConfig): RuntimeConfigSnapshot {
 
 export class RuntimeConfigStore {
   private current: RuntimeConfigSnapshot;
-  private readonly listeners = new Set<
-    (config: RuntimeConfigSnapshot) => void
-  >();
 
   constructor(initial: RuntimeConfig) {
     this.current = snapshot(initial);
@@ -31,24 +28,9 @@ export class RuntimeConfigStore {
     return this.current;
   }
 
-  replace(
-    config: RuntimeConfig,
-    notify: boolean = true,
-  ): RuntimeConfigSnapshot {
+  replace(config: RuntimeConfig): RuntimeConfigSnapshot {
     const next = snapshot(config);
     this.current = next;
-    if (notify) this.notify();
     return next;
-  }
-
-  notify(): void {
-    for (const listener of this.listeners) listener(this.current);
-  }
-
-  onChange(listener: (config: RuntimeConfigSnapshot) => void): () => void {
-    this.listeners.add(listener);
-    return () => {
-      this.listeners.delete(listener);
-    };
   }
 }

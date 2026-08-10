@@ -3,6 +3,23 @@ import type { ServerEvent, ClientCommand } from "../types";
 
 export type EventHandler = (event: ServerEvent) => void;
 
+const TOKEN_KEY = "dscode.web.token";
+
+function webSocketUrl(): string {
+  const pageUrl = new URL(window.location.href);
+  const queryToken = pageUrl.searchParams.get("token");
+  if (queryToken) {
+    window.sessionStorage.setItem(TOKEN_KEY, queryToken);
+    pageUrl.searchParams.delete("token");
+    window.history.replaceState(null, "", pageUrl);
+  }
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const url = new URL(`${protocol}//${window.location.host}/ws`);
+  const token = queryToken ?? window.sessionStorage.getItem(TOKEN_KEY);
+  if (token) url.searchParams.set("token", token);
+  return url.toString();
+}
+
 export function useWebSocket(onEvent: EventHandler) {
   const wsRef = useRef<WebSocket | null>(null);
   const [connected, setConnected] = useState(false);
@@ -13,11 +30,7 @@ export function useWebSocket(onEvent: EventHandler) {
   const connect = useCallback(() => {
     if (wsRef.current?.readyState === WebSocket.OPEN) return;
 
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const host = window.location.host;
-    const url = `${protocol}//${host}/ws`;
-
-    const ws = new WebSocket(url);
+    const ws = new WebSocket(webSocketUrl());
     wsRef.current = ws;
 
     ws.onopen = () => {

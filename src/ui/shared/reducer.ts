@@ -13,15 +13,24 @@ function toolHasEnded(tool: ToolCallEntry): boolean {
   return tool.resultDetail !== undefined || tool.result !== "";
 }
 
+function streamingAssistantIndex(messages: readonly UIMessage[]): number {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message.role === "assistant" && message.isStreaming) return index;
+  }
+  return -1;
+}
+
 function updateLastOrCreate(
   prev: UIMessage[],
   update: (msg: UIMessage) => Partial<UIMessage>,
   options: { messageId?: string; createdAt?: number } = {},
 ): UIMessage[] {
   const next = [...prev];
-  const last = next[next.length - 1];
-  if (last?.isStreaming) {
-    next[next.length - 1] = { ...last, ...update(last) };
+  const index = streamingAssistantIndex(next);
+  if (index >= 0) {
+    const current = next[index];
+    next[index] = { ...current, ...update(current) };
   } else {
     next.push({
       id: options.messageId ?? `assistant-${options.createdAt ?? Date.now()}`,
@@ -90,7 +99,9 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
       ];
 
     case "assistant_start": {
-      if (prev.at(-1)?.isStreaming) return prev;
+      if (prev.some(
+        (message) => message.role === "assistant" && message.isStreaming,
+      )) return prev;
       return [
         ...prev,
         {
@@ -144,25 +155,27 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
 
     case "tool_progress": {
       const next = [...prev];
-      const last = next[next.length - 1];
-      if (last?.isStreaming && last.tools) {
-        const tools = last.tools.map((t) =>
+      const index = streamingAssistantIndex(next);
+      const current = index >= 0 ? next[index] : undefined;
+      if (current?.tools) {
+        const tools = current.tools.map((t) =>
           (event.toolCallId
             ? t.toolCallId === event.toolCallId
             : t.name === event.name && !toolHasEnded(t))
             ? { ...t, progress: event.progress, progressTotal: event.total, progressMessage: event.message }
             : t,
         );
-        next[next.length - 1] = { ...last, tools };
+        next[index] = { ...current, tools };
       }
       return next;
     }
 
     case "tool_end": {
       const next = [...prev];
-      const last = next[next.length - 1];
-      if (last?.isStreaming) {
-        const tools = (last.tools ?? []).map((t) =>
+      const index = streamingAssistantIndex(next);
+      const current = index >= 0 ? next[index] : undefined;
+      if (current) {
+        const tools = (current.tools ?? []).map((t) =>
           t.toolCallId === event.toolCallId
             ? {
                 ...t,
@@ -173,7 +186,7 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
               }
             : t,
         );
-        next[next.length - 1] = { ...last, tools };
+        next[index] = { ...current, tools };
       }
       return next;
     }
@@ -199,9 +212,9 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
 
     case "assistant_end": {
       const next = [...prev];
-      const last = next[next.length - 1];
-      if (last?.isStreaming) {
-        next[next.length - 1] = { ...last, isStreaming: false };
+      const index = streamingAssistantIndex(next);
+      if (index >= 0) {
+        next[index] = { ...next[index], isStreaming: false };
       }
       return next;
     }

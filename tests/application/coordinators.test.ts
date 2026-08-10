@@ -142,15 +142,25 @@ describe("Application coordinators", () => {
 
   it("does not commit project state when MCP preparation fails", async () => {
     const commit = vi.fn();
+    const save = vi.fn();
+    const previous = {
+      dataDir: "/old-data",
+      projectPath: "/old",
+      mcp: [{ name: "old" } as any],
+    } as any;
     const coordinator = new ProjectCoordinator({
       resolve: (path) => path,
       exists: () => true,
+      currentRuntime: () => previous,
       prepareRuntime: async () => ({
         dataDir: "/data",
         projectPath: "/next",
         mcp: [{ name: "broken" } as any],
       }) as any,
-      saveCurrentSession: commit,
+      beginTransition: vi.fn(),
+      endTransition: vi.fn(),
+      quiesce: async () => {},
+      saveCurrentSession: save,
       reloadMcp: async () => {
         throw new Error("connection refused");
       },
@@ -163,11 +173,9 @@ describe("Application coordinators", () => {
       rebindMainSession: async () => {
         commit();
       },
-      reloadSkills: commit,
       replaceRuntime: async () => {
         commit();
       },
-      rebuildPrompt: commit,
       reportError: vi.fn(),
     });
 
@@ -176,6 +184,63 @@ describe("Application coordinators", () => {
       error: expect.stringContaining("connection refused"),
     });
     expect(commit).not.toHaveBeenCalled();
+    expect(save).toHaveBeenCalledOnce();
+  });
+
+  it("rolls project owners back in reverse order after a partial commit", async () => {
+    const state = {
+      mcp: "old",
+      session: "old",
+      memory: "old",
+      process: "old",
+      applications: "old",
+      main: "old",
+    };
+    let transition = false;
+    const previous = {
+      dataDir: "/old-data",
+      projectPath: "/old",
+      mcp: [{ name: "old" } as any],
+    } as any;
+    const coordinator = new ProjectCoordinator({
+      resolve: (path) => path,
+      exists: () => true,
+      currentRuntime: () => previous,
+      prepareRuntime: async (projectPath) => ({
+        dataDir: projectPath === "/old" ? "/old-data" : "/next-data",
+        projectPath,
+        mcp: [{ name: projectPath === "/old" ? "old" : "next" } as any],
+      }) as any,
+      beginTransition: () => { transition = true; },
+      endTransition: () => { transition = false; },
+      quiesce: async () => {},
+      saveCurrentSession: vi.fn(),
+      reloadMcp: async (servers) => { state.mcp = servers[0]?.name ?? ""; },
+      updateSessionProject: (_dataDir, path) => { state.session = path; },
+      updateMemoryProject: (_dataDir, path) => { state.memory = path; },
+      updateProcessProject: (path) => { state.process = path; },
+      updateApplications: async (path) => { state.applications = path; },
+      rebindMainSession: async (path) => {
+        state.main = path;
+        if (path === "/next") throw new Error("rebind failed");
+      },
+      replaceRuntime: vi.fn(async () => {}),
+      reportError: vi.fn(),
+    });
+
+    await expect(coordinator.switchProject("/next")).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining("rebind failed"),
+    });
+    expect(state).toEqual({
+      mcp: "old",
+      session: "/old",
+      memory: "/old",
+      process: "/old",
+      applications: "/old",
+      main: "/old",
+    });
+    expect(transition).toBe(false);
   });
 
   it("keeps Harness headless and leaves UI selection to CLI bootstrap", () => {

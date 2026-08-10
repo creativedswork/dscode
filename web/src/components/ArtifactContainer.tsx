@@ -1,11 +1,11 @@
 import { useMemo } from "react";
-import type { ArtifactTheme } from "../../../src/ui/shared/artifact-theme.js";
+import type { ArtifactTheme } from "../../../src/application/artifact-theme.js";
 import {
   applyArtifactTheme,
   prepareEvalArtifactHtml,
 } from "../utils/artifactTheme.js";
 
-export type { ArtifactTheme } from "../../../src/ui/shared/artifact-theme.js";
+export type { ArtifactTheme } from "../../../src/application/artifact-theme.js";
 
 export interface ArtifactPresentation {
   kind: "session_dashboard" | "eval_dashboard";

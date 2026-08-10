@@ -103,6 +103,71 @@ describe("PiAgentRuntimeAdapter snapshot", () => {
     expect(listeners.size).toBe(0);
   });
 
+  it("cooperatively suspends before tool execution and resumes through a gate", async () => {
+    const listeners = new Set<(event: any, signal: AbortSignal) => Promise<void> | void>();
+    const runController = new AbortController();
+    let releaseToolEvent = () => {};
+    const toolEventReady = new Promise<void>((resolve) => {
+      releaseToolEvent = resolve;
+    });
+    let promptStarted = () => {};
+    const promptReady = new Promise<void>((resolve) => {
+      promptStarted = resolve;
+    });
+    let toolExecuted = false;
+    const agent = {
+      state: {
+        messages: [{
+          role: "assistant",
+          content: [{ type: "text", text: "done" }],
+        }],
+      },
+      subscribe(listener: (event: any, signal: AbortSignal) => Promise<void> | void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      async prompt() {
+        promptStarted();
+        await toolEventReady;
+        for (const listener of listeners) {
+          await listener({
+            type: "tool_execution_start",
+            toolCallId: "call-1",
+            toolName: "read_file",
+          }, runController.signal);
+        }
+        toolExecuted = true;
+        for (const listener of listeners) {
+          await listener({
+            type: "tool_execution_end",
+            toolCallId: "call-1",
+            toolName: "read_file",
+            isError: false,
+          }, runController.signal);
+          await listener({ type: "turn_end" }, runController.signal);
+        }
+      },
+      abort: () => runController.abort(),
+      waitForIdle: vi.fn(),
+    };
+    const runtime = new PiAgentRuntimeAdapter(agent as any);
+    const execution = runtime.start(
+      { prompt: "inspect" },
+      runController.signal,
+    );
+    await promptReady;
+
+    const suspended = runtime.suspend();
+    releaseToolEvent();
+    await suspended;
+    expect(runtime.capabilities.suspend).toBe(true);
+    expect(toolExecuted).toBe(false);
+
+    await runtime.continue();
+    await execution;
+    expect(toolExecuted).toBe(true);
+  });
+
   it("serializes parallel tool events when the runtime does not await subscribers", async () => {
     const listeners = new Set<(event: any) => Promise<void> | void>();
     const agent = {

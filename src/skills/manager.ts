@@ -1,4 +1,3 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { dirname } from "node:path";
 
 import type { DriverRegistryPort } from "../drivers/types.js";
@@ -37,13 +36,9 @@ export function formatLoadedSkill(manifest: SkillManifest): string {
 
 export class SkillManager {
   private manifests = new Map<string, SkillManifest>();
-  private activeSkills = new Map<string, Skill>();
-  private userSkillsDir: string;
-  private projectSkillsDir: string;
+  private activeSkills = new Set<string>();
 
   constructor(userSkillsDir: string, projectSkillsDir: string) {
-    this.userSkillsDir = userSkillsDir;
-    this.projectSkillsDir = projectSkillsDir;
     const externalManifests = scanSkillDirs(userSkillsDir, projectSkillsDir);
     for (const m of externalManifests) {
       this.manifests.set(m.name, m);
@@ -66,7 +61,10 @@ export class SkillManager {
   listAll(): { skill: Skill | SkillManifest; active: boolean }[] {
     const result: { skill: Skill | SkillManifest; active: boolean }[] = [];
     for (const [, manifest] of this.manifests) {
-      result.push({ skill: manifest, active: this.activeSkills.has(manifest.name) });
+      result.push({
+        skill: manifest,
+        active: this.activeSkills.has(manifest.name),
+      });
     }
     return result;
   }
@@ -76,10 +74,6 @@ export class SkillManager {
   }
 
   activate(name: string, driverRegistry: DriverRegistryPort): Skill {
-    if (this.activeSkills.has(name)) {
-      return this.activeSkills.get(name)!;
-    }
-
     const manifest = this.manifests.get(name);
     if (!manifest) {
       throw new Error(`Skill not found: ${name}`);
@@ -100,7 +94,7 @@ export class SkillManager {
       source: manifest.source,
     };
 
-    this.activeSkills.set(name, skill);
+    this.activeSkills.add(name);
     return skill;
   }
 
@@ -114,12 +108,13 @@ export class SkillManager {
    * skills that no longer exist are automatically deactivated.
    * Must provide driverRegistry so re-activated skills get correct tools.
    */
-  reloadDirs(userSkillsDir: string, projectSkillsDir: string, driverRegistry: DriverRegistryPort): void {
-    this.userSkillsDir = userSkillsDir;
-    this.projectSkillsDir = projectSkillsDir;
-
+  reloadDirs(
+    userSkillsDir: string,
+    projectSkillsDir: string,
+    _driverRegistry: DriverRegistryPort,
+  ): void {
     // Remember which skills were active before reload
-    const prevActive = new Set(this.activeSkills.keys());
+    const prevActive = new Set(this.activeSkills);
 
     // Clear and re-scan
     this.manifests.clear();
@@ -130,24 +125,13 @@ export class SkillManager {
       this.manifests.set(m.name, m);
     }
 
-    // Re-activate skills that still exist
+    // Keep active names whose manifests still exist. Tool objects are resolved
+    // only when activation is requested; they are not a second capability model.
     for (const name of prevActive) {
       if (this.manifests.has(name)) {
-        try {
-          this.activate(name, driverRegistry);
-        } catch {
-          // Skill exists but activation failed — silently skip
-        }
+        this.activeSkills.add(name);
       }
     }
-  }
-
-  getTools(): AgentTool<any>[] {
-    const tools: AgentTool<any>[] = [];
-    for (const skill of this.activeSkills.values()) {
-      tools.push(...skill.tools);
-    }
-    return tools;
   }
 
   getSystemPromptSection(): string {
@@ -166,11 +150,16 @@ export class SkillManager {
     // Active skills section: shows name, description, and allowed tools
     if (this.activeSkills.size > 0) {
       const lines = ["## Active Skills"];
-      for (const [, skill] of this.activeSkills) {
-        lines.push(`### ${skill.name}`);
-        lines.push(`Description: ${skill.description}`);
-        const toolNames = skill.tools.map((t) => t.name).join(", ");
-        lines.push(`Allowed tools: ${toolNames}`);
+      for (const name of this.activeSkills) {
+        const manifest = this.manifests.get(name);
+        if (!manifest) continue;
+        lines.push(`### ${manifest.name}`);
+        lines.push(`Description: ${manifest.description}`);
+        lines.push(
+          manifest.tools?.length
+            ? `Allowed tools: ${manifest.tools.join(", ")}`
+            : "Allowed tools: all driver tools",
+        );
         lines.push("");
       }
       sections.push(lines.join("\n"));

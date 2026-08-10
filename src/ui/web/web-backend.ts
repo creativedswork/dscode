@@ -1,7 +1,8 @@
 import { createServer, request as httpRequest } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { randomBytes } from "node:crypto";
 import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync } from "node:fs";
-import { join, extname } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import type { UiBackend } from "../backend.js";
 import type { PublicRuntimeConfigSnapshot } from "../../config/types.js";
@@ -12,21 +13,22 @@ import type {
 import type {
   AgentSessionMessage,
   PendingPermission,
+  SessionMetadata,
 } from "../../session/types.js";
 import { executeSlashCommand, getSlashCommandAutocomplete, resolveCustomCommand } from "../commands.js";
 import type { HarnessAPI } from "../../application/harness-api.js";
 import type {
-  AppInstance,
   McpAppResourceProxy,
 } from "../../mcp/app/types.js";
 import { rebuildDisplayMessages } from "../shared/session-projector.js";
 import { AgentActivityProjector } from "../shared/agent-activity.js";
 import { harnessEventToConversationEvent } from "../shared/harness-conversation-adapter.js";
 import { formatAgentDisplayId } from "../shared/agent-id.js";
-import { serializeArtifactThemeVariables } from "../shared/artifact-theme.js";
+import { serializeArtifactThemeVariables } from "../../application/artifact-theme.js";
 import { stageAttachedFiles } from "../shared/file-attachments.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
 import type { EvalDashboardState } from "../../core/events.js";
+import { isCanonicalPathWithin } from "../../application/path-safety.js";
 import type {
   ClientCommand,
   ServerEvent,
@@ -34,7 +36,6 @@ import type {
   SessionInfo,
   ConversationMessage,
   McpServerInfo,
-  McpAppInfo,
   ToolCallEntry,
   EvalDashboardServerEvent,
 } from "./protocol.js";
@@ -130,6 +131,42 @@ export function formatDashboardDuration(ms: number): string {
   return `${hrs}h ${min % 60}m`;
 }
 
+export function projectSessionListEvent(
+  harness: HarnessAPI,
+): Extract<ServerEvent, { type: "sessions" }> {
+  const currentSessionId = harness.sessions.currentId();
+  const sessions = [...harness.sessions.list()];
+  const current = harness.sessions.currentMetadata();
+  if (
+    currentSessionId
+    && current
+    && !sessions.some((session) => session.id === currentSessionId)
+  ) {
+    sessions.unshift(current);
+  }
+  const project = (session: SessionMetadata): SessionInfo => ({
+    id: session.id,
+    title: session.title,
+    updatedAt: session.updatedAt,
+    createdAt: session.createdAt,
+    messageCount: session.messageCount,
+    modelProvider: session.modelProvider,
+    modelId: session.modelId,
+    projectPath: session.projectPath || "",
+    preview: session.preview || "",
+    totalActiveMs: session.id === currentSessionId
+      ? harness.sessions.totalActiveMs()
+      : session.totalActiveMs ?? 0,
+    contentHash: session.contentHash ?? "",
+    pendingPermission: session.pendingPermission,
+  });
+  return {
+    type: "sessions",
+    currentSessionId,
+    data: sessions.slice(0, 50).map(project),
+  };
+}
+
 export function buildDashboardSubagentSummary(
   agentMessages: AgentSessionMessage[],
 ) {
@@ -221,6 +258,7 @@ export interface WebUiOptions {
   harness: HarnessAPI;
   projectRoot?: string;
   webRoot: string;
+  token?: string;
 }
 
 /**
@@ -248,20 +286,15 @@ export class WebUiBackend implements UiBackend {
   private pendingImages: ImageContent[] = [];
 
   // Message accumulation for the current assistant turn
-  private currentAssistant: {
-    thinking: string;
-    text: string;
-    tools: ToolCallEntry[];
-  } | null = null;
+  private currentAssistant: { tools: ToolCallEntry[] } | null = null;
 
   // Context window broadcast throttling
   private contextWindowThrottleTimer: ReturnType<typeof setTimeout> | null = null;
   private contextWindowThrottlePending: boolean = false;
   private lastArtifactHtml: string = "";
-  private isAssistantTurn: boolean = false;
-  private syntheticToolCallSequence = 0;
   private readonly agentActivityProjector: AgentActivityProjector;
   private readonly webRoot: string;
+  private readonly token: string;
 
   private get config(): PublicRuntimeConfigSnapshot {
     return this.harness.settings.get();
@@ -282,8 +315,9 @@ export class WebUiBackend implements UiBackend {
     this.port = options.port;
     this.harness = options.harness;
     this.webRoot = options.webRoot;
+    this.token = options.token ?? randomBytes(32).toString("base64url");
 
-    this.wsServer = new WsServer();
+    this.wsServer = new WsServer({ token: this.token });
 
     // Create HTTP server
     this.httpServer = createServer((req, res) => {
@@ -326,7 +360,6 @@ export class WebUiBackend implements UiBackend {
       if (projected) this.broadcast(projected);
     });
     h.events.on("llm:text:delta", (e) => {
-      if (this.currentAssistant && e.delta != null) this.currentAssistant.text += e.delta;
       const projected = projectConversationEvent(e);
       if (projected) this.broadcast(projected);
     });
@@ -365,18 +398,17 @@ export class WebUiBackend implements UiBackend {
       this.broadcast(projected);
       this.broadcastContextWindow(false);    });
     h.events.on("turn:streaming:start", () => {
-      this.currentAssistant = { thinking: "", text: "", tools: [] };
+      this.currentAssistant = { tools: [] };
       const projected = projectConversationEvent({ type: "turn:streaming:start" });
       if (projected) this.broadcast(projected);
       this.startSessionTimeBroadcast();
-      this.isAssistantTurn = true;    });
+    });
     h.events.on("turn:end", (event) => {
       this.broadcastSessionTime();
       const toolsForBroadcast = this.currentAssistant?.tools ?? [];
       this.currentAssistant = null;
       const projected = projectConversationEvent(event);
       if (projected) this.broadcast(projected);
-      this.isAssistantTurn = false;
       this.broadcastContextWindow(true, toolsForBroadcast);
       this.pushSessionListToAll();
     });
@@ -430,7 +462,7 @@ export class WebUiBackend implements UiBackend {
     });
 
     return new Promise((resolve, reject) => {
-      this.httpServer.on("error", (err: NodeJS.ErrnoException) => {
+      this.httpServer.once("error", (err: NodeJS.ErrnoException) => {
         if (err.code === "EADDRINUSE") {
           console.log("");
           console.log(`  \u001b[33m⚠ Port ${this.port} is already in use.\u001b[0m`);
@@ -441,10 +473,11 @@ export class WebUiBackend implements UiBackend {
           resolve();
           return;
         }
+        reject(err);
       });
-      this.httpServer.listen(this.port, () => {
+      this.httpServer.listen(this.port, "127.0.0.1", () => {
         console.log(`
-  DSCode Web UI ready at http://localhost:${this.port}
+  DSCode Web UI ready at http://127.0.0.1:${this.port}/?token=${encodeURIComponent(this.token)}
 `);
         resolve();
       });
@@ -460,77 +493,6 @@ export class WebUiBackend implements UiBackend {
     this.httpServer.close();
     if (this.exitResolve) this.exitResolve();
   }
-
-  // ── UiBackend Conversation ──
-
-  addUserMessage(text: string): void {
-    // Images are sent separately via the chat command path
-    this.broadcast({ type: "user_message", text });
-  }
-
-  startAssistantMessage(): void {
-    this.currentAssistant = { thinking: "", text: "", tools: [] };
-    this.broadcast({ type: "assistant_start" });
-    this.startSessionTimeBroadcast();
-  }
-
-
-
-  thinkingDelta(delta: string): void {
-    if (this.currentAssistant && delta != null) {
-      this.currentAssistant.thinking += delta;
-    }
-    this.broadcast({ type: "thinking_delta", delta });
-  }
-
-  textDelta(delta: string): void {
-    if (this.currentAssistant && delta != null) {
-      this.currentAssistant.text += delta;
-    }
-    this.broadcast({ type: "text_delta", delta });
-  }
-
-  toolStart(name: string, args: unknown, toolCallId?: string): void {
-    this.broadcast({
-      type: "tool_start",
-      toolCallId: toolCallId ?? `legacy-${++this.syntheticToolCallSequence}`,
-      name,
-      args,
-    });
-  }
-
-  finishAssistantMessage(): void {
-    this.broadcastSessionTime();
-    this.stopSessionTimeBroadcast();
-    const toolsForBroadcast2 = this.currentAssistant?.tools ?? [];
-    this.currentAssistant = null;
-    this.broadcast({ type: "assistant_end" });
-    this.broadcastContextWindow(true, toolsForBroadcast2);
-
-    {
-      const sessions2 = this.harness.sessions.list();
-      const currentId2 = this.harness.sessions.currentId();
-      let sessionList2 = [...sessions2];
-      if (currentId2) {
-        const currentMeta = this.harness.sessions.currentMetadata();
-        if (currentMeta && !sessionList2.find((s: any) => s.id === currentId2)) {
-          sessionList2 = [currentMeta, ...sessionList2];
-        }
-      }
-      this.wsServer.broadcast({
-        type: "sessions",
-        currentSessionId: currentId2 ?? undefined,
-        data: sessionList2.slice(0, 50).map((s: any) => ({
-          id: s.id, title: s.title, updatedAt: s.updatedAt, createdAt: s.createdAt,
-          messageCount: s.messageCount, modelProvider: s.modelProvider, modelId: s.modelId,
-          projectPath: s.projectPath || "", preview: s.preview || "",
-          totalActiveMs: s.id === currentId2 ? this.harness.sessions.totalActiveMs() : (s.totalActiveMs ?? 0),
-          contentHash: s.contentHash ?? "",
-          pendingPermission: s.pendingPermission || undefined,
-        })),
-
-      });
-    }  }
 
   private startSessionTimeBroadcast(): void {
     if (this.sessionTimeInterval) return;
@@ -557,34 +519,12 @@ export class WebUiBackend implements UiBackend {
     }
   }
 
-  // ── UiBackend System Messages ──
-
   addInfo(text: string, display: "toast" | "panel" = "toast"): void {
     this.broadcast({ type: "info", text, display });
   }
 
   addError(text: string): void {
     this.broadcast({ type: "error", text });
-  }
-
-  addWarning(text: string): void {
-    this.broadcast({ type: "warning", text });
-  }
-  addRetry(info: { attempt: number; maxRetries: number; delayMs: number; error: string; level: "stream" | "turn" }): void {
-    this.broadcast({ type: "retry", info });
-  }
-
-  // ── MCP App Notification (called by Harness when app is registered) ──
-
-  addAppNotification(app: AppInstance): void {
-    // Build URL relative to the web server — proxy through the main server
-    const appUrl = `/mcp-app/${app.id}`;
-    const appInfo: McpAppInfo = {
-      toolName: `mcp_${app.serverName}_${app.toolName}`,
-      appUrl,
-      resourceUri: app.resourceUri,
-    };
-    this.broadcast({ type: "mcp_app", app: appInfo });
   }
 
   // ── UiBackend Permission ──
@@ -674,16 +614,6 @@ export class WebUiBackend implements UiBackend {
     return this.harness.sessions.currentMetadata()?.pendingPermission;
   }
 
-  // ── UiBackend Processing ──
-
-  setProcessing(processing: boolean): void {
-    this.broadcast({
-      type: "loader",
-      state: processing ? "show" : "hide",
-      text: processing ? "Thinking..." : undefined,
-    });
-  }
-
   // ── UiBackend MCP ──
 
   private mutableMcpSnapshot(): McpServerInfo[] {
@@ -715,11 +645,6 @@ export class WebUiBackend implements UiBackend {
     this.broadcast({ type: "mcp_open_browser" });
   }
 
-  // ── UiBackend Config Watch ──
-
-  onConfigChange(): void {
-    this.broadcast({ type: "config", data: this.buildConfigData() });
-  }
   // ── Private: WebSocket handling ──
 
   private handleConnect(client: WebSocketClient): void {
@@ -791,9 +716,15 @@ export class WebUiBackend implements UiBackend {
           const uploadDir = join(this.config.projectPath, ".dscode", "uploads", sessionId);
           mkdirSync(uploadDir, { recursive: true });
           const tempPaths: string[] = [];
-          for (const uf of cmd.uploadedFiles) {
-            const tempName = `${ts}-${uf.name}`;
+          for (const [index, uf] of cmd.uploadedFiles.entries()) {
+            const originalName = basename(uf.name)
+              .replace(/[\u0000-\u001f\u007f]/g, "_")
+              || "attachment";
+            const tempName = `${ts}-${index + 1}-${originalName}`;
             const tempPath = join(uploadDir, tempName);
+            if (!isCanonicalPathWithin(uploadDir, tempPath)) {
+              throw new Error(`Upload path escapes session directory: ${uf.name}`);
+            }
             writeFileSync(tempPath, Buffer.from(uf.content, "base64"));
             tempPaths.push(tempPath);
           }
@@ -1150,58 +1081,11 @@ export class WebUiBackend implements UiBackend {
   }
 
   private pushSessionList(client: WebSocketClient): void {
-    const sessions = this.harness.sessions.list();
-    const currentId = this.harness.sessions.currentId();
-    // Always include the current session even if it has no messages yet
-    let sessionList = [...sessions];
-    if (currentId) {
-      const currentMeta = this.harness.sessions.currentMetadata();
-      if (currentMeta && !sessionList.find((s: any) => s.id === currentId)) {
-        sessionList = [currentMeta, ...sessionList];
-      }
-    }
-    client.send({
-      type: "sessions",
-      currentSessionId: currentId,
-      data: sessionList.slice(0, 50).map((s: any) => ({
-        id: s.id,
-        title: s.title,
-        updatedAt: s.updatedAt,
-        createdAt: s.createdAt,
-        messageCount: s.messageCount,
-        modelProvider: s.modelProvider,
-        modelId: s.modelId,
-        projectPath: s.projectPath || "",
-        preview: s.preview || "",
-        totalActiveMs: s.id === currentId ? this.harness.sessions.totalActiveMs() : (s.totalActiveMs ?? 0),
-        contentHash: s.contentHash ?? "",
-        pendingPermission: s.pendingPermission || undefined,
-      })),
-    });
+    client.send(projectSessionListEvent(this.harness));
   }
 
   private pushSessionListToAll(): void {
-    const sessions = this.harness.sessions.list();
-    const currentId = this.harness.sessions.currentId();
-    let sessionList = [...sessions];
-    if (currentId) {
-      const currentMeta = this.harness.sessions.currentMetadata();
-      if (currentMeta && !sessionList.find((s: any) => s.id === currentId)) {
-        sessionList = [currentMeta, ...sessionList];
-      }
-    }
-    this.wsServer.broadcast({
-      type: "sessions",
-      currentSessionId: currentId,
-      data: sessionList.slice(0, 50).map((s: any) => ({
-        id: s.id, title: s.title, updatedAt: s.updatedAt, createdAt: s.createdAt,
-        messageCount: s.messageCount, modelProvider: s.modelProvider, modelId: s.modelId,
-        projectPath: s.projectPath || "", preview: s.preview || "",
-        totalActiveMs: s.id === currentId ? this.harness.sessions.totalActiveMs() : (s.totalActiveMs ?? 0),
-        contentHash: s.contentHash ?? "",
-        pendingPermission: s.pendingPermission || undefined,
-      })),
-    });
+    this.wsServer.broadcast(projectSessionListEvent(this.harness));
   }
 
   private async handleConfig(
@@ -1296,21 +1180,7 @@ export class WebUiBackend implements UiBackend {
   ): Promise<void> {
     switch (cmd.action) {
       case "list": {
-        const sessions = this.harness.sessions.list();
-        const data: SessionInfo[] = sessions.slice(0, 50).map((s: any) => ({
-          id: s.id,
-          title: s.title,
-          updatedAt: s.updatedAt,
-          createdAt: s.createdAt,
-          messageCount: s.messageCount,
-          modelProvider: s.modelProvider,
-          modelId: s.modelId,
-          projectPath: s.projectPath || "",
-          preview: s.preview || "",
-          totalActiveMs: s.totalActiveMs ?? 0,
-          contentHash: s.contentHash ?? "",
-        }));
-        client.send({ type: "sessions", data });
+        this.pushSessionList(client);
         break;
       }
       case "save": {
@@ -1321,23 +1191,7 @@ export class WebUiBackend implements UiBackend {
           client.send({ type: "error", text: `Failed to save session: ${err.message}` });
           return;
         }
-        const sessions = this.harness.sessions.list();
-        client.send({
-          type: "sessions",
-          data: sessions.slice(0, 50).map((s: any) => ({
-            id: s.id,
-            title: s.title,
-            updatedAt: s.updatedAt,
-            createdAt: s.createdAt,
-            messageCount: s.messageCount,
-            modelProvider: s.modelProvider,
-            modelId: s.modelId,
-            projectPath: s.projectPath || "",
-            preview: s.preview || "",
-            totalActiveMs: s.totalActiveMs ?? 0,
-            contentHash: s.contentHash ?? "",
-          })),
-        });
+        this.pushSessionList(client);
         break;
       }
       case "load": {
@@ -1389,25 +1243,7 @@ export class WebUiBackend implements UiBackend {
         }
         this.cleanupUploadDir(cmd.id);
         client.send({ type: "info", display: "toast", text: "Session deleted." });
-        const sessions = this.harness.sessions.list();
-        const currentId = this.harness.sessions.currentId();
-        client.send({
-          type: "sessions",
-          currentSessionId: currentId,
-          data: sessions.slice(0, 50).map((s: any) => ({
-            id: s.id,
-            title: s.title,
-            updatedAt: s.updatedAt,
-            createdAt: s.createdAt,
-            messageCount: s.messageCount,
-            modelProvider: s.modelProvider,
-            modelId: s.modelId,
-            projectPath: s.projectPath || "",
-            preview: s.preview || "",
-            totalActiveMs: s.totalActiveMs ?? 0,
-            contentHash: s.contentHash ?? "",
-          })),
-        });
+        this.pushSessionList(client);
         break;
       }
     }
@@ -1617,14 +1453,25 @@ export class WebUiBackend implements UiBackend {
 
   private serveSpa(req: IncomingMessage, res: ServerResponse): void {
     const webDist = this.webRoot;
-
-    let filePath = join(webDist, req.url === "/" ? "index.html" : req.url!);
-
-    // Normalize: strip query/hash
-    const qIdx = filePath.indexOf("?");
-    if (qIdx >= 0) filePath = filePath.slice(0, qIdx);
-    const hIdx = filePath.indexOf("#");
-    if (hIdx >= 0) filePath = filePath.slice(0, hIdx);
+    let pathname: string;
+    try {
+      pathname = decodeURIComponent(
+        new URL(req.url ?? "/", "http://localhost").pathname,
+      );
+    } catch {
+      res.writeHead(400);
+      res.end("Bad Request");
+      return;
+    }
+    const relativePath = pathname === "/"
+      ? "index.html"
+      : pathname.replace(/^\/+/, "");
+    const filePath = resolve(webDist, relativePath);
+    if (!isCanonicalPathWithin(webDist, filePath)) {
+      res.writeHead(404);
+      res.end("Not Found");
+      return;
+    }
 
     const ext = extname(filePath);
     const mimeTypes: Record<string, string> = {

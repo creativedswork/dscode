@@ -44,9 +44,14 @@ function messageText(message: PiAgentMessage | undefined): string {
 
 export class PiAgentRuntimeAdapter implements AgentProcessRuntime {
   readonly capabilities = {
-    suspend: false,
+    suspend: true,
     messaging: true,
   } as const;
+  private pauseRequested = false;
+  private paused = false;
+  private pauseReached: (() => void) | undefined;
+  private pausePromise: Promise<void> | undefined;
+  private resumePause: (() => void) | undefined;
 
   constructor(
     readonly agent: PiAgentRuntime,
@@ -107,8 +112,18 @@ export class PiAgentRuntimeAdapter implements AgentProcessRuntime {
       }
     };
     let eventQueue = Promise.resolve();
-    const unsubscribe = this.agent.subscribe((event) => {
-      const operation = eventQueue.then(() => handleEvent(event));
+    const unsubscribe = this.agent.subscribe((event, eventSignal) => {
+      const operation = eventQueue.then(async () => {
+        await handleEvent(event);
+        if (
+          event.type === "tool_execution_start"
+          || event.type === "tool_execution_end"
+          || event.type === "turn_end"
+          || event.type === "agent_end"
+        ) {
+          await this.pauseAtBoundary(eventSignal);
+        }
+      });
       eventQueue = operation.catch(() => {});
       return operation;
     });
@@ -148,18 +163,41 @@ export class PiAgentRuntimeAdapter implements AgentProcessRuntime {
         details: { messageCount: messages.length },
       };
     } finally {
+      this.cancelPause();
       unsubscribe();
       signal.removeEventListener("abort", onAbort);
     }
   }
 
   async terminate(): Promise<void> {
+    this.cancelPause();
     this.agent.abort();
     await this.agent.waitForIdle();
   }
 
   kill(): void {
+    this.cancelPause();
     this.agent.abort();
+  }
+
+  async suspend(): Promise<void> {
+    if (this.paused) return;
+    if (!this.pauseRequested) {
+      this.pauseRequested = true;
+      this.pausePromise = new Promise<void>((resolve) => {
+        this.pauseReached = resolve;
+      });
+    }
+    await this.pausePromise;
+  }
+
+  async continue(): Promise<void> {
+    this.pauseRequested = false;
+    this.paused = false;
+    this.pausePromise = undefined;
+    this.pauseReached = undefined;
+    this.resumePause?.();
+    this.resumePause = undefined;
   }
 
   sendMessage(message: AgentMessage): void {
@@ -179,6 +217,32 @@ export class PiAgentRuntimeAdapter implements AgentProcessRuntime {
         ? (lastAssistant as { usage?: unknown }).usage
         : undefined,
     };
+  }
+
+  private async pauseAtBoundary(signal: AbortSignal): Promise<void> {
+    if (!this.pauseRequested) return;
+    this.paused = true;
+    this.pauseReached?.();
+    await new Promise<void>((resolve) => {
+      const resume = () => {
+        signal.removeEventListener("abort", resume);
+        if (this.resumePause === resume) this.resumePause = undefined;
+        resolve();
+      };
+      this.resumePause = resume;
+      if (signal.aborted) resume();
+      else signal.addEventListener("abort", resume, { once: true });
+    });
+  }
+
+  private cancelPause(): void {
+    this.pauseRequested = false;
+    this.paused = false;
+    this.pauseReached?.();
+    this.pauseReached = undefined;
+    this.pausePromise = undefined;
+    this.resumePause?.();
+    this.resumePause = undefined;
   }
 }
 

@@ -1,3 +1,11 @@
+import {
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { checkAgentCapability } from "../../../src/agents/process/capability.js";
@@ -59,36 +67,56 @@ describe("Agent capability monotonicity", () => {
   });
 
   it("removes mutating tools from plan and unisolated background Agents", () => {
+    const mutatingParent = {
+      ...parent,
+      allowedTools: [...parent.allowedTools, "edit_undo"],
+    };
     const planContext = deriveAgentContext({
       application: application({ permissionMode: "plan" }),
-      parent: { ...parent, deniedTools: [] },
-      availableTools: [...parent.allowedTools],
+      parent: { ...mutatingParent, deniedTools: [] },
+      availableTools: [...mutatingParent.allowedTools],
       attachment: "foreground",
     });
     const backgroundContext = deriveAgentContext({
       application: application(),
-      parent: { ...parent, deniedTools: [] },
-      availableTools: [...parent.allowedTools],
+      parent: { ...mutatingParent, deniedTools: [] },
+      availableTools: [...mutatingParent.allowedTools],
       attachment: "background",
     });
 
     expect(planContext.allowedTools).not.toContain("write_file");
     expect(planContext.allowedTools).not.toContain("bash");
+    expect(planContext.allowedTools).not.toContain("edit_undo");
     expect(backgroundContext.allowedTools).not.toContain("write_file");
     expect(backgroundContext.allowedTools).not.toContain("bash");
+    expect(backgroundContext.allowedTools).not.toContain("edit_undo");
   });
 
-  it("rejects file paths outside the Agent cwd", () => {
-    const context = deriveAgentContext({
-      application: application({ tools: ["read_file"] }),
-      parent,
-      availableTools: [...parent.allowedTools],
-      attachment: "foreground",
-    });
+  it("rejects lexical and symlink paths outside the Agent cwd", () => {
+    const root = mkdtempSync(join(tmpdir(), "dscode-capability-"));
+    const outside = mkdtempSync(join(tmpdir(), "dscode-capability-outside-"));
+    try {
+      writeFileSync(join(root, "a.ts"), "local");
+      writeFileSync(join(outside, "secret"), "secret");
+      symlinkSync(outside, join(root, "escape"));
+      const context = deriveAgentContext({
+        application: application({ tools: ["read_file"] }),
+        parent: { ...parent, cwd: root },
+        availableTools: [...parent.allowedTools],
+        attachment: "foreground",
+      });
 
-    expect(checkAgentCapability(context, "read_file", { path: "src/a.ts" })).toBeUndefined();
-    expect(checkAgentCapability(context, "read_file", { path: "../secret" }))
-      .toMatchObject({ block: true });
+      expect(checkAgentCapability(context, "read_file", { path: "a.ts" }))
+        .toBeUndefined();
+      expect(checkAgentCapability(context, "read_file", { path: "../secret" }))
+        .toMatchObject({ block: true });
+      expect(checkAgentCapability(context, "read_file", {
+        path: "escape/secret",
+      })).toMatchObject({ block: true });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 
   it("preserves the capability subset property across tool combinations", () => {

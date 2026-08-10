@@ -20,10 +20,10 @@ export interface ConversationPromptOptions {
 
 export class ConversationCoordinator {
   private activeTurn: Promise<void> | null = null;
-  private sessionSwitchInProgress = false;
+  private transition: "session" | "project" | null = null;
 
-  get isSessionSwitching(): boolean {
-    return this.sessionSwitchInProgress;
+  get isTransitioning(): boolean {
+    return this.transition !== null;
   }
 
   get currentTurn(): Promise<void> | null {
@@ -31,9 +31,11 @@ export class ConversationCoordinator {
   }
 
   run(operation: () => Promise<void>): Promise<void> {
-    if (this.sessionSwitchInProgress) {
+    if (this.transition) {
       return Promise.reject(
-        new Error("Cannot submit a prompt while a session switch is in progress"),
+        new Error(
+          `Cannot submit a prompt while a ${this.transition} switch is in progress`,
+        ),
       );
     }
     if (this.activeTurn) {
@@ -52,15 +54,15 @@ export class ConversationCoordinator {
     return this.run(() => this.executePrompt(options));
   }
 
-  beginSessionSwitch(): void {
-    if (this.sessionSwitchInProgress) {
-      throw new Error("A session switch is already in progress");
+  beginTransition(kind: "session" | "project"): void {
+    if (this.transition) {
+      throw new Error(`A ${this.transition} switch is already in progress`);
     }
-    this.sessionSwitchInProgress = true;
+    this.transition = kind;
   }
 
-  endSessionSwitch(): void {
-    this.sessionSwitchInProgress = false;
+  endTransition(kind: "session" | "project"): void {
+    if (this.transition === kind) this.transition = null;
   }
 
   async quiesce(abort: () => void): Promise<void> {

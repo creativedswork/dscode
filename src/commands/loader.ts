@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { parse } from "yaml";
 
 import type { CommandManifest } from "./types.js";
 
@@ -96,10 +97,21 @@ export function parseCommandFile(
   const frontmatter = parts[1];
   const body = parts.slice(2).join("---").trim();
 
-  const parsed = parseFrontmatter(frontmatter);
+  let parsed: ParsedFrontmatter;
+  try {
+    parsed = parse(frontmatter) as ParsedFrontmatter;
+  } catch {
+    return null;
+  }
 
   // description is required
-  if (!parsed.description) return null;
+  if (typeof parsed.description !== "string" || !parsed.description) {
+    return null;
+  }
+  parsed.description = parsed.description.replace(/\n$/, "");
+  if (parsed.name !== undefined && typeof parsed.name !== "string") {
+    return null;
+  }
 
   // name is optional: if present, must match derived name (sanity check)
   if (parsed.name !== undefined && normalizeName(parsed.name) !== normalizeName(derivedName)) {
@@ -121,133 +133,4 @@ export function parseCommandFile(
 interface ParsedFrontmatter {
   name?: string;
   description?: string;
-}
-
-function parseFrontmatter(text: string): ParsedFrontmatter {
-  const result: ParsedFrontmatter = {};
-  const lines = text.split("\n");
-
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-
-    const nameMatch = line.match(/^name:\s*(.+)/);
-    if (nameMatch) {
-      result.name = unquote(nameMatch[1].trim());
-      i++;
-      continue;
-    }
-
-    const blockDescMatch = line.match(/^description:\s*([>|][-+]?)\s*$/);
-    if (blockDescMatch) {
-      const style = blockDescMatch[1];
-      const { value, endIdx } = consumeBlockScalar(lines, i + 1, style);
-      result.description = value;
-      i = endIdx;
-      continue;
-    }
-
-    const descMatch = line.match(/^description:\s*(.+)/);
-    if (descMatch) {
-      result.description = unquote(descMatch[1].trim());
-      i++;
-      continue;
-    }
-
-    i++;
-  }
-
-  return result;
-}
-
-function unquote(s: string): string {
-  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
-    return s.slice(1, -1);
-  }
-  return s;
-}
-
-function consumeBlockScalar(
-  lines: string[],
-  startIdx: number,
-  style: string,
-): { value: string; endIdx: number } {
-  const isFolded = style.startsWith(">");
-  const chomp = style.length > 1 ? style[style.length - 1] : undefined;
-
-  const contentLines: string[] = [];
-  let i = startIdx;
-
-  while (i < lines.length) {
-    const ln = lines[i];
-    if (ln.trim() === "") {
-      contentLines.push("");
-      i++;
-      continue;
-    }
-    if (ln.startsWith("  ") || ln.startsWith("\t")) {
-      contentLines.push(ln.replace(/^[ \t]+/, ""));
-      i++;
-      continue;
-    }
-    break;
-  }
-
-  let value: string;
-  if (isFolded) {
-    value = foldLines(contentLines);
-  } else {
-    value = contentLines.join("\n");
-  }
-
-  if (chomp === "-") {
-    value = value.replace(/\n+$/, "");
-  } else if (chomp === "+") {
-    // Keep all trailing newlines — already done
-  } else {
-    // Default: clip — single trailing newline
-    value = value.replace(/\n+$/, "");
-  }
-
-  return { value, endIdx: i };
-}
-
-function foldLines(lines: string[]): string {
-  const result: string[] = [];
-  let paragraph: string[] = [];
-
-  const flush = () => {
-    if (paragraph.length > 0) {
-      result.push(paragraph.join(" "));
-      paragraph = [];
-    }
-  };
-
-  for (const ln of lines) {
-    if (ln === "") {
-      flush();
-      result.push("");
-    } else {
-      paragraph.push(ln);
-    }
-  }
-  flush();
-
-  // Collapse consecutive blank lines into single paragraph breaks
-  const out: string[] = [];
-  let prevBlank = false;
-  for (const ln of result) {
-    if (ln === "") {
-      if (!prevBlank) out.push(ln);
-      prevBlank = true;
-    } else {
-      out.push(ln);
-      prevBlank = false;
-    }
-  }
-  // Trim trailing blank lines
-  while (out.length > 0 && out[out.length - 1] === "") {
-    out.pop();
-  }
-  return out.join("\n");
 }

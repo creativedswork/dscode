@@ -1,13 +1,12 @@
 // ── Dashboard HTML Generator ──
-import type { CascadeEdge } from "./focus/types.js";
 // Generates a theme-aware, self-contained HTML diagnostic dashboard.
 
 import { writeFileSync, mkdirSync, existsSync, renameSync, rmSync } from "node:fs";
 import { exec } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { dirname } from "node:path";
-import { serializeArtifactThemeVariables } from "./dashboard-theme.js";
-import type { EvalResult } from "./types.js";
+import { serializeArtifactThemeVariables } from "../application/artifact-theme.js";
+import type { CascadeEdge, EvalResult } from "./types.js";
 import type { ChiefAttribution } from "./chief/types.js";
 
 type DashboardAttribution = NonNullable<EvalResult["attribution"]>;

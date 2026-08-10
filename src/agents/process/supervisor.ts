@@ -296,15 +296,22 @@ export class AgentSupervisor {
 
   async suspend(agentId: string): Promise<void> {
     const agentProcess = this.require(agentId);
+    if (!["running", "waiting"].includes(agentProcess.state)) {
+      throw new Error(`Agent process ${agentId} is not active`);
+    }
     if (!agentProcess.runtime.capabilities.suspend || !agentProcess.runtime.suspend) {
       throw new Error(`Agent process ${agentId} does not support suspend`);
     }
     await agentProcess.runtime.suspend();
+    if (agentProcess.exit) return;
     await this.lifecycle.transition(agentProcess, "stopped");
   }
 
   async continue(agentId: string): Promise<void> {
     const agentProcess = this.require(agentId);
+    if (agentProcess.state !== "stopped") {
+      throw new Error(`Agent process ${agentId} is not suspended`);
+    }
     if (!agentProcess.runtime.capabilities.suspend || !agentProcess.runtime.continue) {
       throw new Error(`Agent process ${agentId} does not support continue`);
     }
@@ -314,7 +321,7 @@ export class AgentSupervisor {
 
   sendMessage(agentId: string, content: string): void {
     const agentProcess = this.require(agentId);
-    if (!["running", "stopped"].includes(agentProcess.state)) {
+    if (!["running", "waiting", "stopped"].includes(agentProcess.state)) {
       throw new Error(`Agent process ${agentId} has already exited`);
     }
     const runtime = agentProcess.runtime;

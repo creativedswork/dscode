@@ -3,35 +3,15 @@ import type {
   ToolResultProjection,
   ToolResultRef,
 } from "./types.js";
+import {
+  findToolResultText,
+  toolResultText,
+} from "../../application/tool-result-text.js";
 import { formatToolArgsForDisplay } from "./tool-args-formatter.js";
 import { formatToolResultForUI } from "./tool-result-formatter.js";
 
 export const TOOL_RESULT_INLINE_CHAR_LIMIT = 16_000;
-
-export function toolResultText(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (value == null) return "";
-  if (typeof value === "object") {
-    const content = (value as { content?: unknown }).content;
-    if (Array.isArray(content)) {
-      const text = content
-        .filter((item): item is { type: "text"; text: string } =>
-          Boolean(item)
-          && typeof item === "object"
-          && (item as { type?: unknown }).type === "text"
-          && typeof (item as { text?: unknown }).text === "string",
-        )
-        .map((item) => item.text)
-        .join("\n");
-      if (text) return text;
-    }
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
+export { findToolResultText, toolResultText };
 
 export function createToolResultProjection(
   toolName: string,
@@ -48,25 +28,6 @@ export function createToolResultProjection(
     return { summary, text, ...counts };
   }
   return { summary, ref, ...counts };
-}
-
-export function findToolResultText(
-  messages: readonly unknown[],
-  toolCallId: string,
-): string | undefined {
-  for (const candidate of messages) {
-    if (!candidate || typeof candidate !== "object") continue;
-    const message = candidate as {
-      role?: unknown;
-      toolCallId?: unknown;
-      content?: unknown;
-    };
-    if (message.role !== "toolResult" || message.toolCallId !== toolCallId) {
-      continue;
-    }
-    return toolResultText({ content: message.content });
-  }
-  return undefined;
 }
 
 export type ToolResultRefResolver = (ref: ToolResultRef) => string | undefined;

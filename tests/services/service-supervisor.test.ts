@@ -234,6 +234,43 @@ describe("ServiceSupervisor", () => {
     );
   });
 
+  it("replaces changed specs and recreates stopped services", async () => {
+    const first = makeChild(211);
+    const second = makeChild(212);
+    const third = makeChild(213);
+    const spawnProcess = vi.fn()
+      .mockReturnValueOnce(first)
+      .mockReturnValueOnce(second)
+      .mockReturnValueOnce(third);
+    const killProcess = vi.fn((child: ChildProcess, signal: NodeJS.Signals) => {
+      (child as FakeChild).finish(null, signal);
+    });
+    const supervisor = new ServiceSupervisor(makeLogger(), {
+      spawnProcess,
+      killProcess,
+    });
+    const original = makeSpec();
+
+    const firstHandle = await supervisor.ensure(original);
+    const secondHandle = await supervisor.ensure(makeSpec({
+      command: {
+        ...original.command,
+        args: ["--serve", "--port", "5678"],
+      },
+    }));
+
+    expect(killProcess).toHaveBeenCalledWith(first, "SIGTERM");
+    expect(firstHandle.status).toBe("stopped");
+    expect(secondHandle.pid).toBe(212);
+
+    second.finish(0);
+    await Promise.resolve();
+    const thirdHandle = await supervisor.ensure(original);
+
+    expect(spawnProcess).toHaveBeenCalledTimes(3);
+    expect(thirdHandle.pid).toBe(213);
+  });
+
   it("routes child stdout and stderr through the scoped logger", async () => {
     const logger = makeLogger();
     const child = makeChild(301);

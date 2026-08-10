@@ -4,6 +4,7 @@ import type { AgentAttachment, AgentContext } from "./types.js";
 const MUTATING_TOOLS = new Set([
   "write_file",
   "edit",
+  "edit_undo",
   "overwrite_file",
   "bash",
 ]);

@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import { promisify } from "node:util";
 
+import { isCanonicalPathWithin } from "../../application/path-safety.js";
 import type {
   AgentProcess,
   ContextSelection,
@@ -14,11 +15,6 @@ import type {
 const execFileAsync = promisify(execFile);
 const DEFAULT_MAX_BYTES = 64_000;
 const MAX_CONTEXT_BYTES = 256_000;
-
-function isWithin(root: string, candidate: string): boolean {
-  const path = relative(root, candidate);
-  return path === "" || (!path.startsWith("..") && !isAbsolute(path));
-}
 
 function findByProperty(value: unknown, property: string, expected: string): unknown {
   if (!value || typeof value !== "object") return undefined;
@@ -107,7 +103,7 @@ export class ContextAssembler {
     }
     if (item.type === "file") {
       const path = resolve(parent.context.cwd, item.path);
-      if (!isWithin(parent.context.cwd, path)) {
+      if (!isCanonicalPathWithin(parent.context.cwd, path)) {
         throw new Error(`Selected file is outside parent cwd: ${item.path}`);
       }
       const content = await readFile(path, "utf8");
@@ -120,14 +116,31 @@ export class ContextAssembler {
       return content.split("\n").slice(start - 1, end).join("\n");
     }
 
+    let commit: string | undefined;
+    if (item.scope === "commit") {
+      if (!item.ref) throw new Error("commit diff selection requires ref");
+      if (item.ref.startsWith("-")) {
+        throw new Error("commit diff ref cannot start with '-'");
+      }
+      const resolved = await execFileAsync(
+        "git",
+        ["rev-parse", "--verify", "--end-of-options", `${item.ref}^{commit}`],
+        {
+          cwd: parent.context.cwd,
+          maxBuffer: 4096,
+        },
+      );
+      commit = resolved.stdout.trim();
+      if (!/^[a-f0-9]{40,64}$/i.test(commit)) {
+        throw new Error(`commit diff ref did not resolve to an object ID: ${item.ref}`);
+      }
+    }
+
     const args = item.scope === "working-tree"
       ? ["diff", "--"]
       : item.scope === "staged"
       ? ["diff", "--cached", "--"]
-      : item.ref
-      ? ["show", "--format=", item.ref, "--"]
-      : [];
-    if (args.length === 0) throw new Error("commit diff selection requires ref");
+      : ["show", "--format=", commit!, "--"];
     args.push(...(item.paths ?? []));
     const { stdout } = await execFileAsync("git", args, {
       cwd: parent.context.cwd,

@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -62,14 +62,13 @@ function baseConfig(projectPath: string): RuntimeConfig {
   };
 }
 
-function fixture() {
+function fixture(applied = vi.fn()) {
   const projectPath = root();
   const repository = new SettingsRepository();
   const initial = baseConfig(projectPath);
   const runtimeStore = new RuntimeConfigStore(initial);
   const userConfig = join(projectPath, "config", "config.json");
   const projectSettings = join(projectPath, ".dscode", "settings.json");
-  const applied = vi.fn();
   const resolveRuntimeConfig = () => {
     const command = repository.readOrEmpty(userConfig);
     const project = repository.readOrEmpty(projectSettings);
@@ -108,10 +107,8 @@ afterEach(() => {
 });
 
 describe("SettingsService", () => {
-  it("persists, applies, masks, and notifies exactly once", async () => {
+  it("persists, applies, and masks through one transaction", async () => {
     const { service, runtimeStore, userConfig, applied } = fixture();
-    const notified = vi.fn();
-    runtimeStore.onChange(notified);
 
     const previous = runtimeStore.get();
     await service.setApiKey("secret-key-123456");
@@ -123,7 +120,6 @@ describe("SettingsService", () => {
     expect(service.getPublicSnapshot().apiKey).toBe("sec****3456");
     expect(previous.apiKey).toBeUndefined();
     expect(applied).toHaveBeenCalledOnce();
-    expect(notified).toHaveBeenCalledOnce();
   });
 
   it("uses one project patch path for Skill and Permission commands", async () => {
@@ -162,5 +158,22 @@ describe("SettingsService", () => {
     );
     expect(first.applied).toHaveBeenCalledOnce();
     expect(second.applied).toHaveBeenCalledOnce();
+  });
+
+  it("rolls back the runtime owners and SSoT file when apply fails", async () => {
+    const applied = vi.fn()
+      .mockRejectedValueOnce(new Error("owner failed"))
+      .mockResolvedValueOnce(undefined);
+    const { service, runtimeStore, userConfig } = fixture(applied);
+
+    await expect(service.setApiKey("secret-key-123456"))
+      .rejects.toThrow("owner failed");
+
+    expect(runtimeStore.get().apiKey).toBeUndefined();
+    expect(existsSync(userConfig)).toBe(false);
+    expect(applied).toHaveBeenCalledTimes(2);
+    expect(applied.mock.calls[1][0].apiKey).toBe("secret-key-123456");
+    expect(applied.mock.calls[1][1].apiKey).toBeUndefined();
+    expect(applied.mock.calls[1][2]).toBe("rollback");
   });
 });

@@ -23,6 +23,10 @@ export class ContextManager {
     this.config = config;
   }
 
+  updateConfig(config: ContextConfig): void {
+    this.config = config;
+  }
+
   updateModel(contextWindow: number, maxTokens: number): void {
     this.contextWindow = contextWindow;
     this.maxTokens = maxTokens;

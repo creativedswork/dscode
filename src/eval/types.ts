@@ -78,6 +78,21 @@ export interface TimelineEvent {
   severity?: "ok" | "warn" | "danger";
 }
 
+export type CascadeMechanism =
+  | "data_contamination"
+  | "irreversible_lock_in"
+  | "perception_blind_spot"
+  | "repair_cascade"
+  | "taste_drift_propagation";
+
+export interface CascadeEdge {
+  fromZoneId: string;
+  fromStepId: number;
+  toZoneId: string;
+  toStepId: number;
+  dataItem: string;
+  mechanism: CascadeMechanism;
+}
 
 export interface EvalResult {
   metadata: SessionMeta;
@@ -92,7 +107,7 @@ export interface EvalResult {
   attribution: Attribution | ChiefAttribution | null;
   rulesApplied: string[];
   recoveryArcs?: Array<RecoveryArc | ChiefRecoveryArc>;
-  cascadePath?: import("./focus/types.js").CascadeEdge[];
+  cascadePath?: CascadeEdge[];
   actors?: TrajectoryActor[];
   trajectoryEvidence?: TrajectoryEvidenceSummary;
   trajectory?: {

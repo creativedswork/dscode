@@ -167,33 +167,6 @@ tools: [read_file]
     expect(b!.active).toBe(false);
   });
 
-  it("should return tools from all active skills", () => {
-    createSkillDir(userSkillsDir, "skill-a", `---
-name: skill-a
-description: Skill A
-tools: [read_file]
----
-`);
-    createSkillDir(userSkillsDir, "skill-b", `---
-name: skill-b
-description: Skill B
-tools: [bash]
----
-`);
-    const manager = new SkillManager(userSkillsDir, projectSkillsDir);
-    manager.activate("skill-a", driverRegistry);
-    manager.activate("skill-b", driverRegistry);
-
-    const tools = manager.getTools();
-    const toolNames = tools.map((t) => t.name).sort();
-    expect(toolNames).toEqual(["bash", "read_file"]);
-  });
-
-  it("should return empty tools when no skills active", () => {
-    const manager = new SkillManager(userSkillsDir, projectSkillsDir);
-    expect(manager.getTools()).toEqual([]);
-  });
-
   it("reminds the model that loading a Skill must continue into execution", () => {
     const text = formatLoadedSkill({
       name: "visual-post",
@@ -243,7 +216,7 @@ tools: [read_file]
     expect(manager.getSystemPromptSection()).toBe("");
   });
 
-  it("should not duplicate activate a skill", () => {
+  it("keeps activation idempotent without caching Tool objects", () => {
     createSkillDir(userSkillsDir, "my-skill", `---
 name: my-skill
 description: My skill
@@ -253,7 +226,11 @@ tools: [read_file]
     const manager = new SkillManager(userSkillsDir, projectSkillsDir);
     const first = manager.activate("my-skill", driverRegistry);
     const second = manager.activate("my-skill", driverRegistry);
-    expect(second).toBe(first); // same reference
+    expect(second).not.toBe(first);
+    expect(second.tools.map((tool) => tool.name)).toEqual(
+      first.tools.map((tool) => tool.name),
+    );
+    expect(manager.isActive("my-skill")).toBe(true);
   });
 
   it("should prefer project skill over user skill with same name", () => {

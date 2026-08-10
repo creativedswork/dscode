@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { isDeepStrictEqual } from "node:util";
 
 import type { Logger } from "../utils/logger.js";
 import type {
@@ -81,7 +82,15 @@ export class ServiceSupervisor implements ManagedServiceController {
     if (signal?.aborted) throw abortError();
 
     const existing = this.records.get(spec.id);
-    if (existing) return existing.handle;
+    if (existing) {
+      const reusable = isDeepStrictEqual(existing.spec, spec)
+        && !["failed", "stopped", "stopping"].includes(existing.status);
+      if (reusable) return existing.handle;
+
+      existing.healthAbort?.abort();
+      if (existing.ownership === "owned") await this.stop(spec.id);
+      this.deleteRecord(existing);
+    }
 
     const record = this.createRecord(spec);
     this.records.set(spec.id, record);
@@ -100,7 +109,7 @@ export class ServiceSupervisor implements ManagedServiceController {
           spec.health.preflightTimeoutMs ?? Math.min(2000, spec.health.timeoutMs),
         );
       } catch (error) {
-        this.records.delete(spec.id);
+        this.deleteRecord(record);
         throw signal?.aborted ? abortError() : error;
       } finally {
         signal?.removeEventListener("abort", abortFromCaller);
@@ -115,7 +124,7 @@ export class ServiceSupervisor implements ManagedServiceController {
     }
 
     if (signal?.aborted || this.shuttingDown) {
-      this.records.delete(spec.id);
+      this.deleteRecord(record);
       throw signal?.aborted
         ? abortError()
         : new Error("ServiceSupervisor is shutting down");
@@ -197,6 +206,12 @@ export class ServiceSupervisor implements ManagedServiceController {
     };
 
     return record;
+  }
+
+  private deleteRecord(record: ServiceRecord): void {
+    if (this.records.get(record.spec.id) === record) {
+      this.records.delete(record.spec.id);
+    }
   }
 
   private spawnOwned(record: ServiceRecord): ChildProcess | undefined {

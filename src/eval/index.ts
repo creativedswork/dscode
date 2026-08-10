@@ -10,7 +10,6 @@ import { Logger } from "../utils/logger.js";
 import { getHostLogger } from "../utils/logger.js";
 import { computeStats } from "./stats.js";
 import { generateDashboard, generateDashboardArtifacts, openDashboard } from "./dashboard.js";
-import { analyzeWithLLM } from "./llm.js";
 import { loadRuleStore, semanticMerge, saveRuleStore } from "./rules/store.js";
 import { loadMultiAgentTrajectory } from "./trajectory.js";
 import { runChiefPipeline, type ChiefProgressEvent } from "./chief/pipeline.js";
@@ -253,7 +252,16 @@ export async function runEval(
   }
 }
 
-export { computeStats, generateDashboard, openDashboard, analyzeWithLLM };
-export type { EvalResult, PhaseInfo, DeviationPoint, RootCause, SessionMeta, ToolStats, TimelineEvent, CompactMessage, HarnessRule } from "./types.js";
-export type { SessionSkeleton, FocusReport, AttentionZone, ZoneAnalysis, ScanResult, FocusAttribution, CascadeEdge } from "./focus/types.js";
-export { buildSkeleton } from "./focus/skeleton.js";
+export { computeStats, generateDashboard, openDashboard };
+export type {
+  CascadeEdge,
+  CompactMessage,
+  DeviationPoint,
+  EvalResult,
+  HarnessRule,
+  PhaseInfo,
+  RootCause,
+  SessionMeta,
+  TimelineEvent,
+  ToolStats,
+} from "./types.js";

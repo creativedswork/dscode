@@ -70,7 +70,7 @@ export class AgentProcessLifecycle {
       pending.push(exit);
       this.notifications.set(agentProcess.parentSessionId, pending);
     }
-    void this.persist(agentProcess);
+    await this.persist(agentProcess);
     this.events.emit({ type: "agent:state", agentId: agentProcess.agentId, previous, state });
     this.events.emit({ type: "agent:exit", result: exit });
     return exit;

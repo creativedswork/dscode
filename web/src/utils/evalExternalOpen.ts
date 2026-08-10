@@ -1,4 +1,4 @@
-import type { ArtifactTheme } from "../../../src/ui/shared/artifact-theme.js";
+import type { ArtifactTheme } from "../../../src/application/artifact-theme.js";
 import { prepareEvalArtifactHtml } from "./artifactTheme.js";
 
 export interface EvalObjectUrlApi {

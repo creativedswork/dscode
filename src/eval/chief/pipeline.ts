@@ -378,6 +378,10 @@ export async function runChiefPipeline(
       message: `${application} is running`,
     });
     try {
+      await updateRunStage(run, stage, {
+        status: "running",
+        application,
+      });
       const result = await runStructuredAgent({
         host: harness,
         application,
@@ -385,12 +389,17 @@ export async function runChiefPipeline(
         workspace: run.runRoot,
         stage,
         validate,
-        runContext: run,
         signal,
         logger,
-        onWorker: (agentId, attempt) => {
+        onWorker: async (agentId, attempt) => {
           workerAgentId = agentId;
           retryCount = attempt - 1;
+          await updateRunStage(run, stage, {
+            status: "running",
+            application,
+            workerAgentId: agentId,
+            retryCount,
+          });
           emit({
             stage,
             application,
@@ -424,6 +433,13 @@ export async function runChiefPipeline(
         durationMs: Date.now() - startedAt,
         retryCount,
         message: error instanceof Error ? error.message : String(error),
+      });
+      await updateRunStage(run, stage, {
+        status: "failed",
+        application,
+        workerAgentId,
+        retryCount,
+        error: error instanceof Error ? error.message : String(error),
       });
       throw error;
     }
@@ -477,6 +493,10 @@ export async function runChiefPipeline(
       status: "running",
       message: "eval-rule-attribution is running",
     });
+    await updateRunStage(run, "rules", {
+      status: "running",
+      application: "eval-rule-attribution",
+    });
     try {
       rules = await attributeRulesWithAgent({
         trajectory,
@@ -488,9 +508,15 @@ export async function runChiefPipeline(
         run,
         signal,
         logger,
-        onWorker: (agentId, attempt) => {
+        onWorker: async (agentId, attempt) => {
           rulesWorkerAgentId = agentId;
           rulesRetryCount = attempt - 1;
+          await updateRunStage(run, "rules", {
+            status: "running",
+            application: "eval-rule-attribution",
+            workerAgentId: agentId,
+            retryCount: rulesRetryCount,
+          });
           emit({
             stage: "rules",
             application: "eval-rule-attribution",
@@ -528,6 +554,13 @@ export async function runChiefPipeline(
         durationMs: Date.now() - rulesStartedAt,
         retryCount: rulesRetryCount,
         message: error instanceof Error ? error.message : String(error),
+      });
+      await updateRunStage(run, "rules", {
+        status: "failed",
+        application: "eval-rule-attribution",
+        workerAgentId: rulesWorkerAgentId,
+        retryCount: rulesRetryCount,
+        error: error instanceof Error ? error.message : String(error),
       });
     }
     const result = composeResult(trajectory, graph, oracles, backtrack, attribution, rules);

@@ -37,7 +37,7 @@ import { MCPManager } from "../mcp/manager.js";
 import { mcpDriverName } from "../mcp/names.js";
 import { AppHostManager } from "../mcp/app/host.js";
 import { inferLayout } from "../mcp/app/mdx-inference.js";
-import { findToolResultText } from "../session/tool-results.js";
+import { findToolResultText } from "../application/tool-result-text.js";
 import type {
   HarnessAPI,
   UserInteractionPort,
@@ -80,7 +80,6 @@ import { HarnessEventBus } from "./events.js";
 import type { Logger } from "../utils/logger.js";
 import { AgentApplicationRegistry } from "../agents/application/registry.js";
 import type { AgentApplicationSnapshot } from "../agents/application/types.js";
-import { AgentProcessRuntimeFactory } from "../agents/runtimes/factory.js";
 import { PiAgentRuntimeAdapter } from "../agents/runtimes/pi-agent-runtime.js";
 import {
   OcrFallbackHandler,
@@ -174,7 +173,6 @@ export class Harness {
   appHostManager?: AppHostManager;
   configStore: RuntimeConfigStore;
   readonly settings: SettingsService;
-  config: RuntimeConfig;
   readonly logger: Logger;
   readonly events: HarnessEventBus;
   readonly api: HarnessAPI;
@@ -182,9 +180,9 @@ export class Harness {
   private readonly imageStore: import("../drivers/vision/types.js").ImageStorePort;
   applicationRegistry: AgentApplicationRegistry;
   agentSupervisor!: AgentSupervisor;
-  private runtimeFactory!: AgentProcessRuntimeFactory;
   private processStore: AgentProcessStore;
   private mainAgentId = "";
+  private agentProcessDriverRegistered = false;
   private userInteraction: UserInteractionPort = {
     requestPermission: async () => ({ decision: "deny" }),
   };
@@ -218,8 +216,12 @@ export class Harness {
     return this.mcpController.manager;
   }
 
+  get config(): RuntimeConfig {
+    return this.configStore.get() as RuntimeConfig;
+  }
+
   constructor(
-    config: RuntimeConfig,
+    _config: RuntimeConfig,
     logger: Logger,
     dependencies: HarnessDependencies,
     debug?: boolean,
@@ -237,7 +239,6 @@ export class Harness {
         this.applySettingsSnapshot(previous, next, reason),
     );
     this.debug = debug ?? false;
-    this.config = this.configStore.get() as RuntimeConfig;
     this.applicationRegistry = dependencies.applicationRegistry;
     this.processStore = dependencies.processStore;
     this.sessionManager = dependencies.sessionManager;
@@ -320,7 +321,15 @@ export class Harness {
     this.projectCoordinator = new ProjectCoordinator({
       resolve,
       exists: existsSync,
+      currentRuntime: () => this.config as RuntimeConfig,
       prepareRuntime: dependencies.prepareProjectRuntime,
+      beginTransition: () =>
+        this.conversationCoordinator.beginTransition("project"),
+      endTransition: () =>
+        this.conversationCoordinator.endTransition("project"),
+      quiesce: () => this.conversationCoordinator.quiesce(
+        () => this.abort(),
+      ),
       saveCurrentSession: () => this.sessionCoordinator.saveNow(),
       reloadMcp: (servers) => this.mcpController.reload(servers),
       updateSessionProject: (dataDir, projectPath) =>
@@ -341,14 +350,8 @@ export class Harness {
           );
         }
       },
-      reloadSkills: (projectPath) => this.skillManager.reloadDirs(
-        this.config.userSkillsDir,
-        join(projectPath, ".dscode", "skills"),
-        this.driverRegistry,
-      ),
       replaceRuntime: (next) => this.settings.replaceProjectRuntime(next)
         .then(() => undefined),
-      rebuildPrompt: () => this.rebuildSystemPrompt(),
       reportError: (scope, error) =>
         this.logger.error(scope, String(error)),
     });
@@ -831,8 +834,6 @@ export class Harness {
     const model = resolveModel(this.config.provider, this.config.modelId);
     this.contextManager.updateModel(model.contextWindow, model.maxTokens);
 
-    const maxTokens = this.config.maxTokens;
-    const apiKey = this.config.apiKey;
     const self = this;
     this.piAgentRuntime = this.createMainAgent({
       initialState: {
@@ -844,7 +845,7 @@ export class Harness {
       streamFn: (m: Model<Api>, ctx: Context, opts?: SimpleStreamOptions) => streamSimple(m, ctx, {
         ...opts,
         apiKey: opts?.apiKey ?? self.config.apiKey,
-        maxTokens,
+        maxTokens: self.config.maxTokens,
         timeoutMs: 120_000,
         maxRetries: self.config.retry.maxRetries,
         maxRetryDelayMs: self.config.retry.maxDelayMs,
@@ -915,15 +916,12 @@ export class Harness {
 
     this.bindEvents();
     const session = this.sessionManager.createSession(this.config.provider, this.config.modelId);
-    this.runtimeFactory = new AgentProcessRuntimeFactory(
-      (application, context, agentId) =>
-        this.agentRuntimeCoordinator.create(application, context, agentId),
-    );
     const fallbackRegistry = new AgentFallbackRegistry();
     fallbackRegistry.register(new OcrFallbackHandler(this.events));
     this.agentSupervisor = new AgentSupervisor(
       this.applicationRegistry,
-      (application, context, agentId) => this.runtimeFactory.create(application, context, agentId),
+      (application, context, agentId) =>
+        this.agentRuntimeCoordinator.create(application, context, agentId),
       this.processStore,
       this.events,
       this.logger,
@@ -961,14 +959,7 @@ export class Harness {
       );
     };
     this.events.on("session:created", (event) => updateMainSession(event.id));
-    if (this.config.agents.enabled) {
-      this.driverRegistry.register({
-        name: "agent-process",
-        description: "Agent process creation, inspection, waiting, signalling, and IPC",
-        tools: makeAgentProcessTools(this.agentSupervisor, this.mainAgentId),
-        source: "builtin",
-      });
-    }
+    await this.syncAgentProcessDriver(this.config.agents.enabled);
     await this.dumpDebugPrompt();
   }
 
@@ -1531,50 +1522,100 @@ export class Harness {
     await this.settings.setThinking(level);
   }
 
-  private applySettingsSnapshot(
+  private async applySettingsSnapshot(
     previous: RuntimeConfigSnapshot,
     next: RuntimeConfigSnapshot,
     reason: SettingsChangeReason,
-  ): void {
-    this.config = next as unknown as RuntimeConfig;
-    this.events.emit({
-      type: "config:change",
-      data: this.settings.getPublicSnapshot(),
-    });
+  ): Promise<void> {
+    const modelChanged = Boolean(this.piAgentRuntime) && (
+      previous.provider !== next.provider
+      || previous.modelId !== next.modelId
+    );
+    const model = modelChanged
+      ? resolveModel(next.provider, next.modelId)
+      : undefined;
+
+    this.permissionManager.updateConfig(
+      next.permissions as RuntimeConfig["permissions"],
+    );
     this.imagePipeline?.updateConfig({
       visionConfig: next.vision as RuntimeConfig["vision"],
       fallbackApiKey: next.apiKey,
     });
-    if (!this.piAgentRuntime) return;
-
+    this.contextManager.updateConfig(
+      next.context as RuntimeConfig["context"],
+    );
+    this.memoryManager.updateConfig(
+      next.memory as RuntimeConfig["memory"],
+    );
     if (
-      reason === "model"
-      || reason === "provider"
-      || (
-        reason === "project"
-        && (
-          previous.provider !== next.provider
-          || previous.modelId !== next.modelId
-        )
+      previous.userCommandsDir !== next.userCommandsDir
+      || previous.projectCommandsDir !== next.projectCommandsDir
+    ) {
+      this.commandManager.reloadDirs(
+        next.userCommandsDir,
+        next.projectCommandsDir,
+      );
+    }
+    if (
+      reason === "project"
+      || reason === "runtime"
+      || reason === "rollback"
+      || reason === "skill"
+      || previous.userSkillsDir !== next.userSkillsDir
+      || previous.projectSkillsDir !== next.projectSkillsDir
+    ) {
+      this.skillManager.reloadDirs(
+        next.userSkillsDir,
+        next.projectSkillsDir,
+        this.driverRegistry,
+      );
+      const disabled = new Set(next.disabledSkills);
+      for (const name of this.skillManager.listAllSkillNames()) {
+        if (disabled.has(name)) {
+          this.skillManager.deactivate(name);
+        } else {
+          this.skillManager.activate(name, this.driverRegistry);
+        }
+      }
+      for (const name of next.skills) {
+        if (!disabled.has(name) && this.skillManager.getManifest(name)) {
+          this.skillManager.activate(name, this.driverRegistry);
+        }
+      }
+    }
+    await this.syncAgentProcessDriver(next.agents.enabled);
+
+    if (model) {
+      this.agent.state.model = model;
+      this.contextManager.updateModel(model.contextWindow, model.maxTokens);
+      this.agent.reset();
+      this.events.emit({ type: "ui:conversation:clear" });
+    }
+    if (
+      this.piAgentRuntime
+      && (
+        modelChanged
+        || previous.thinkingLevel !== next.thinkingLevel
       )
     ) {
-      const model = resolveModel(next.provider, next.modelId);
-      this.agent.state.model = model;
       this.agent.state.thinkingLevel = next.thinkingLevel;
-      this.contextManager.updateModel(model.contextWindow, model.maxTokens);
-      if (
-        previous.provider !== next.provider
-        || previous.modelId !== next.modelId
-      ) {
-        this.agent.reset();
-        this.events.emit({ type: "ui:conversation:clear" });
-        this.rebuildSystemPrompt();
-      }
-      return;
+    }
+    if (
+      modelChanged
+      || reason === "project"
+      || reason === "runtime"
+      || reason === "rollback"
+      || reason === "skill"
+    ) {
+      this.rebuildSystemPrompt();
     }
 
-    if (reason === "thinking") {
-      this.agent.state.thinkingLevel = next.thinkingLevel;
+    if (reason !== "rollback") {
+      this.events.emit({
+        type: "config:change",
+        data: this.settings.getPublicSnapshot(),
+      });
     }
   }
 
@@ -1582,13 +1623,37 @@ export class Harness {
     return this.projectCoordinator.switchProject(cwd);
   }
 
+  private async syncAgentProcessDriver(enabled: boolean): Promise<void> {
+    if (!this.agentSupervisor || !this.mainAgentId) return;
+    if (enabled && !this.agentProcessDriverRegistered) {
+      this.driverRegistry.register({
+        name: "agent-process",
+        description: "Agent process creation, inspection, waiting, signalling, and IPC",
+        tools: makeAgentProcessTools(this.agentSupervisor, this.mainAgentId),
+        source: "builtin",
+      });
+      this.agentProcessDriverRegistered = true;
+    } else if (!enabled && this.agentProcessDriverRegistered) {
+      this.driverRegistry.unregister("agent-process");
+      this.agentProcessDriverRegistered = false;
+    } else {
+      return;
+    }
+
+    if (this.piAgentRuntime) {
+      await this.mcpController.refreshCatalog();
+    }
+  }
+
   async shutdown(): Promise<void> {
     this.sessionCoordinator.stopAutoSave();
     // Save session FIRST, before any other shutdown steps.
     // This ensures data is persisted even if later steps fail.
     // Also save regardless of shuttingDown flag — this is the last chance to persist.
-    this.sessionManager.trySaveSession(this.agent);
-    this.sessionCoordinator.noteSavedMessageCount();
+    if (this.piAgentRuntime) {
+      this.sessionManager.trySaveSession(this.agent);
+      this.sessionCoordinator.noteSavedMessageCount();
+    }
 
     if (this.shuttingDown) return;
     this.shuttingDown = true;
@@ -1598,10 +1663,12 @@ export class Harness {
     } catch (err) {
       this.logger.error("McpShutdown", String(err));
     }
-    try {
-      await this.agentSupervisor.shutdown();
-    } catch (err) {
-      this.logger.error("AgentSupervisorShutdown", String(err));
+    if (this.agentSupervisor) {
+      try {
+        await this.agentSupervisor.shutdown();
+      } catch (err) {
+        this.logger.error("AgentSupervisorShutdown", String(err));
+      }
     }
     try {
       await this.imagePipeline.shutdown();

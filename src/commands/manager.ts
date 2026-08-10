@@ -5,6 +5,11 @@ export class CommandManager {
   private manifests = new Map<string, CommandManifest>();
 
   constructor(userCommandsDir: string, projectCommandsDir: string) {
+    this.reloadDirs(userCommandsDir, projectCommandsDir);
+  }
+
+  reloadDirs(userCommandsDir: string, projectCommandsDir: string): void {
+    this.manifests.clear();
     const externalManifests = scanCommandDirs(userCommandsDir, projectCommandsDir);
     for (const m of externalManifests) {
       this.manifests.set(m.name, m);

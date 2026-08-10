@@ -5,11 +5,11 @@ import { Agent as PiAgentRuntime } from "@earendil-works/pi-agent-core";
 import { AgentApplicationRegistry } from "../agents/application/registry.js";
 import { AgentProcessStore } from "../agents/process/store.js";
 import type {
+  HarnessAPI,
   UserInteractionPort,
 } from "../application/harness-api.js";
 import {
   AgentHostStartError,
-  type AgentHost,
   type AgentHostState,
 } from "../application/agent-host.js";
 import type { AgentDefinition } from "../agents/application/types.js";
@@ -41,8 +41,7 @@ import { SkillManager } from "../skills/manager.js";
 import { CommandManager } from "../commands/manager.js";
 import { HOST_LOGGER_FACILITY, type Logger } from "../utils/logger.js";
 import { ServiceSupervisor } from "../services/service-supervisor.js";
-import { IntegrationRegistry } from "../integrations/registry.js";
-import { OpenDesignIntegration } from "../integrations/open-design/index.js";
+import { prepareOpenDesignRuntime } from "../integrations/open-design/index.js";
 import { createIntegrationSettingsSource } from "../integrations/settings-source.js";
 import type { IntegrationRuntimeOverride } from "../integrations/types.js";
 import { HostFacilityRegistry } from "../kernel/host-facilities.js";
@@ -80,8 +79,14 @@ export interface StandardAgentHostOptions {
   agentDefinitions?: readonly AgentDefinition[];
 }
 
-export interface StandardAgentHost extends AgentHost {
+export interface StandardAgentHost {
+  readonly id: string;
+  readonly api: HarnessAPI;
+  state(): AgentHostState;
   initialize(): Promise<void>;
+  start(): Promise<void>;
+  shutdown(): Promise<void>;
+  bindUserInteraction(port: UserInteractionPort): void;
   save(): void;
   appResourceProxy(): McpAppResourceProxy | undefined;
 }
@@ -94,10 +99,6 @@ export async function createStandardAgentHost(
   const services = new ServiceSupervisor(logger, {
     environment: options.environment,
   });
-  const integrations = new IntegrationRegistry(
-    services,
-    logger,
-  ).register(new OpenDesignIntegration());
   const prepareProjectRuntime = async (
     projectPath: string,
     overrides: readonly IntegrationRuntimeOverride[] = [],
@@ -116,10 +117,12 @@ export async function createStandardAgentHost(
       projectPath,
       environment: options.environment,
     });
-    return (await integrations.prepare(
+    return (await prepareOpenDesignRuntime(
       baseConfig,
       source,
-      overrides,
+      services,
+      logger,
+      overrides.find((override) => override.id === "open-design"),
     )).config;
   };
   const config = await prepareProjectRuntime(
@@ -241,23 +244,30 @@ export async function createStandardAgentHost(
   let startPromise: Promise<void> | undefined;
   let shutdownPromise: Promise<void> | undefined;
   let releasePromise: Promise<void> | undefined;
-  const initialize = (): Promise<void> => {
-    if (initialized) return Promise.resolve();
-    initializePromise ??= harness.initialize().then(() => {
-      initialized = true;
-    });
-    return initializePromise;
-  };
   const release = async (): Promise<void> => {
     releasePromise ??= (async () => {
       try {
-        if (initialized) await harness.shutdown();
+        await harness.shutdown();
       } finally {
-        await integrations.shutdown();
+        await services.shutdown();
         facilities.clear();
       }
     })();
     return releasePromise;
+  };
+  const initialize = (): Promise<void> => {
+    if (initialized) return Promise.resolve();
+    initializePromise ??= (async () => {
+      try {
+        await harness.initialize();
+        initialized = true;
+      } catch (error) {
+        state = "failed";
+        await release();
+        throw error;
+      }
+    })();
+    return initializePromise;
   };
   const shutdown = (): Promise<void> => {
     if (shutdownPromise) return shutdownPromise;

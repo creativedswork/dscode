@@ -4,10 +4,10 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { RuntimeConfig } from "../../../src/config/types.js";
-import { IntegrationRegistry } from "../../../src/integrations/registry.js";
-import { OpenDesignIntegration } from "../../../src/integrations/open-design/index.js";
+import { prepareOpenDesignRuntime } from "../../../src/integrations/open-design/index.js";
 import { createOpenDesignMcpConfig } from "../../../src/integrations/open-design/mcp.js";
 import type { OpenDesignIntegrationConfig } from "../../../src/integrations/open-design/types.js";
+import type { IntegrationRuntimeOverride } from "../../../src/integrations/types.js";
 import type { ManagedServiceController, ManagedServiceHandle } from "../../../src/services/types.js";
 
 const roots: string[] = [];
@@ -70,12 +70,22 @@ function makeServices(handle = makeHandle()): ManagedServiceController {
   };
 }
 
-function makeRegistry(
+function prepare(
   services: ManagedServiceController,
   logger = makeLogger(),
-): IntegrationRegistry {
-  return new IntegrationRegistry(services, logger)
-    .register(new OpenDesignIntegration());
+): (
+  config: RuntimeConfig,
+  source: ReturnType<typeof makeSource>,
+  overrides?: readonly IntegrationRuntimeOverride[],
+) => ReturnType<typeof prepareOpenDesignRuntime> {
+  return (config, source, overrides = []) =>
+    prepareOpenDesignRuntime(
+      config,
+      source,
+      services,
+      logger,
+      overrides.find((override) => override.id === "open-design"),
+    );
 }
 
 afterEach(() => {
@@ -112,9 +122,9 @@ describe("Open Design MCP integration", () => {
 
   it("contributes nothing when the integration is disabled", async () => {
     const services = makeServices();
-    const registry = makeRegistry(services);
+    const prepareRuntime = prepare(services);
 
-    const prepared = await registry.prepare(makeConfig(), makeSource({
+    const prepared = await prepareRuntime(makeConfig(), makeSource({
       enabled: false,
       port: 7456,
       autoStart: true,
@@ -122,14 +132,15 @@ describe("Open Design MCP integration", () => {
 
     expect(prepared.config.mcp).toEqual([]);
     expect(services.ensure).not.toHaveBeenCalled();
+    expect(services.shutdown).toHaveBeenCalledOnce();
   });
 
   it("contributes MCP without owning a manually managed daemon", async () => {
     const root = makeOpenDesignRoot();
     const services = makeServices();
-    const registry = makeRegistry(services);
+    const prepareRuntime = prepare(services);
 
-    const prepared = await registry.prepare(makeConfig(), makeSource({
+    const prepared = await prepareRuntime(makeConfig(), makeSource({
       enabled: true,
       path: root,
       port: 7456,
@@ -138,14 +149,15 @@ describe("Open Design MCP integration", () => {
 
     expect(prepared.config.mcp.map((server) => server.name)).toEqual(["open-design"]);
     expect(services.ensure).not.toHaveBeenCalled();
+    expect(services.shutdown).toHaveBeenCalledOnce();
   });
 
   it("normalizes the --with-od runtime override into managed startup", async () => {
     const root = makeOpenDesignRoot();
     const services = makeServices(makeHandle("healthy", "owned"));
-    const registry = makeRegistry(services);
+    const prepareRuntime = prepare(services);
 
-    const prepared = await registry.prepare(
+    const prepared = await prepareRuntime(
       makeConfig(),
       makeSource({
         enabled: false,
@@ -182,9 +194,9 @@ describe("Open Design MCP integration", () => {
     };
     const baseMcp = [persistentOpenDesign, github];
     const logger = makeLogger();
-    const registry = makeRegistry(makeServices(), logger);
+    const prepareRuntime = prepare(makeServices(), logger);
 
-    const prepared = await registry.prepare(makeConfig(baseMcp), makeSource({
+    const prepared = await prepareRuntime(makeConfig(baseMcp), makeSource({
       enabled: true,
       path: root,
       port: 7456,
@@ -205,12 +217,12 @@ describe("Open Design MCP integration", () => {
   it("keeps startup non-blocking when the managed service is unhealthy", async () => {
     const root = makeOpenDesignRoot();
     const logger = makeLogger();
-    const registry = makeRegistry(
+    const prepareRuntime = prepare(
       makeServices(makeHandle("unhealthy", "owned")),
       logger,
     );
 
-    const prepared = await registry.prepare(makeConfig(), makeSource({
+    const prepared = await prepareRuntime(makeConfig(), makeSource({
       enabled: true,
       path: root,
       port: 7456,
@@ -227,9 +239,9 @@ describe("Open Design MCP integration", () => {
       transport: "stdio" as const,
       command: "github-command",
     };
-    const registry = makeRegistry(makeServices());
+    const prepareRuntime = prepare(makeServices());
 
-    const prepared = await registry.prepare(makeConfig([github]), makeSource({
+    const prepared = await prepareRuntime(makeConfig([github]), makeSource({
       enabled: true,
       path: "/missing/open-design",
       port: 7456,
@@ -245,9 +257,9 @@ describe("Open Design MCP integration", () => {
   it("does not prepare an invalid typed configuration", async () => {
     const root = makeOpenDesignRoot();
     const services = makeServices();
-    const registry = makeRegistry(services);
+    const prepareRuntime = prepare(services);
 
-    const prepared = await registry.prepare(makeConfig(), {
+    const prepared = await prepareRuntime(makeConfig(), {
       ...makeSource({
         enabled: true,
         path: root,

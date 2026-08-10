@@ -67,6 +67,20 @@ export class McpController {
     await this.rebuildCatalog(manager);
   }
 
+  async refreshCatalog(): Promise<void> {
+    if (this.currentManager) {
+      await this.rebuildCatalog(this.currentManager);
+      return;
+    }
+    this.options.tools.initialize(this.options.makeSkillTool());
+    this.options.applyTools(
+      this.options.tools.buildToolsForRequest(),
+      this.options.tools.buildDeferredToolsHint(),
+    );
+    await this.options.refreshCapabilities();
+    await this.options.afterCatalogChange?.();
+  }
+
   async connect(serverName: string): Promise<void> {
     const manager = this.requireManager();
     await manager.connectServer(serverName);

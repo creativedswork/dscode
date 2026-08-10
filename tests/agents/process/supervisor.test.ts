@@ -406,7 +406,12 @@ describe("AgentSupervisor", () => {
     });
 
     supervisor.sendMessage(spawned.agentId, "new requirement");
-    expect(runtime.messages).toEqual(["new requirement"]);
+    supervisor.require(spawned.agentId).state = "waiting";
+    supervisor.sendMessage(spawned.agentId, "while tool is running");
+    expect(runtime.messages).toEqual([
+      "new requirement",
+      "while tool is running",
+    ]);
     await supervisor.kill(spawned.agentId);
     expect(() => supervisor.sendMessage(spawned.agentId, "too late"))
       .toThrow("already exited");
