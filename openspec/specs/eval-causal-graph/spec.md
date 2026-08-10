@@ -2,7 +2,7 @@
 
 ## Purpose
 
-基于 CHIFF（From Flat Logs to Causal Graphs）方法论的 session 因果图分析引擎。将 dscode session 日志从扁平消息序列转换为结构化的因果图（包含子任务分解、Agent OTAR 节点、数据流边、Agent 依赖边），并通过反事实推理（Rule1/2/3/4）定位单一根因。支持 Completion-based 快速路径（<500 steps）和 Agent-based Focus 路径（≥500 steps）。
+基于 CHIFF（From Flat Logs to Causal Graphs）方法论的 session 因果图分析引擎。将 dscode session 日志从扁平消息序列转换为结构化的因果图（包含子任务分解、Agent OTAR 节点、数据流边、Agent 依赖边），并通过统一的 CHIEF pipeline 和反事实推理定位单一根因。
 ## Requirements
 ### Requirement: Session Parsing to History Steps
 
@@ -228,15 +228,17 @@ All LLM responses SHALL be parsed via `extractJSON(text)` to locate a JSON block
 - **THEN** the system SHALL retry once with a format correction hint
 - **AND** a second invalid response SHALL return an error to the caller
 
-### Requirement: Pipeline Output Consistency
+### Requirement: CHIEF Pipeline Output Consistency
 
-The Agent-based focus pipeline SHALL produce `EvalResult` output that is structurally identical to the completion-based pipeline.
+The Supervisor-backed CHIEF pipeline SHALL produce one validated `EvalResult`
+shape for every Session size and Agent topology.
 
-#### Scenario: Agent pipeline produces valid EvalResult
+#### Scenario: CHIEF pipeline produces valid EvalResult
 
-- **WHEN** the Agent-based pipeline completes successfully
-- **THEN** `composeEvalResult` SHALL produce an `EvalResult` with all required fields
-- **AND** the result SHALL pass the same validation as the completion-based pipeline
+- **WHEN** the CHIEF pipeline completes successfully
+- **THEN** it SHALL produce an `EvalResult` with all required fields
+- **AND** Dashboard generation SHALL consume that result without a legacy
+  pipeline adapter
 
 ### Requirement: CHIEF Virtual Oracle Synthesis
 

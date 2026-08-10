@@ -3,46 +3,52 @@
 ## Purpose
 TBD - created by archiving change add-open-design-daemon-auto-start. Update Purpose after archive.
 ## Requirements
-### Requirement: Auto-generate open-design MCP entry from .env
-When `--with-od` is passed and `OPEN_DESIGN_DIR` is set, the system SHALL ensure `~/.mcp.json` contains a valid `open-design` MCP server entry pointing to the local daemon CLI.
+### Requirement: Open Design MCP configuration is derived in memory
+An enabled Open Design integration SHALL derive one `MCPServerConfig` named `open-design` from its validated integration path and port and contribute it to Harness configuration before MCPManager initialization.
 
-#### Scenario: Entry is created when missing
-- **WHEN** `~/.mcp.json` does not contain an `open-design` key
-- **THEN** the system SHALL add the entry with:
-  - `"command": "npx"`
-  - `"args": ["tsx", "<OPEN_DESIGN_DIR>/apps/daemon/src/cli.ts", "mcp", "--daemon-url", "http://127.0.0.1:<OD_PORT>"]`
-- **AND** other existing entries in `~/.mcp.json` SHALL remain unchanged
+#### Scenario: Enabled integration contributes MCP server
+- **WHEN** `integrations.openDesign.enabled` is true with valid configuration
+- **THEN** the integration SHALL contribute an MCP server named `open-design`
+- **AND** its command SHALL invoke the local Open Design daemon CLI in MCP mode
+- **AND** its daemon URL SHALL use the configured port
 
-#### Scenario: Entry is updated when path differs
-- **WHEN** `~/.mcp.json` contains an `open-design` entry but `args[1]` (the daemon CLI path) does not match `<OPEN_DESIGN_DIR>/apps/daemon/src/cli.ts`
-- **THEN** the system SHALL update `args[1]` and `args[4]` (the `--daemon-url` port) to match the current `.env` values
+#### Scenario: Disabled integration contributes nothing
+- **WHEN** `integrations.openDesign.enabled` is false
+- **THEN** the integration SHALL NOT contribute an `open-design` MCP server
 
-#### Scenario: Entry is left unchanged when matching
-- **WHEN** `~/.mcp.json` contains an `open-design` entry with matching path and port
-- **THEN** the system SHALL NOT modify the file
+#### Scenario: Tilde path is normalized
+- **WHEN** the configured Open Design path starts with `~`
+- **THEN** the derived daemon CLI argument SHALL contain an expanded absolute path
 
-#### Scenario: ~/.mcp.json does not exist
-- **WHEN** `~/.mcp.json` does not exist
-- **THEN** the system SHALL create it with `{ "mcpServers": { "open-design": { ... } } }`
+### Requirement: Integration contribution merge is deterministic
+Integration-contributed MCP servers SHALL be merged with loaded user and project MCP servers by server name without changing unrelated entries.
 
-#### Scenario: ~/.mcp.json is not writable
-- **WHEN** `~/.mcp.json` exists but cannot be written (permission denied)
-- **THEN** the system SHALL print a warning and skip the auto-config
-- **AND** dscode SHALL continue startup
+#### Scenario: No persistent name conflict exists
+- **WHEN** no loaded MCP server is named `open-design`
+- **THEN** the generated Open Design server SHALL be appended to Harness MCP configuration
+- **AND** all loaded MCP servers SHALL remain unchanged
 
-#### Scenario: Auto-config only runs with --with-od
-- **WHEN** `--with-od` is not passed
-- **THEN** the system SHALL NOT read or modify `~/.mcp.json`
+#### Scenario: Persistent open-design entry conflicts
+- **WHEN** an enabled integration and persistent MCP configuration both define `open-design`
+- **THEN** the integration-derived definition SHALL be used for the current run
+- **AND** the system SHALL emit a configuration-conflict diagnostic
+- **AND** the persistent entry SHALL remain unchanged on disk
 
-### Requirement: MCP entry path is local and absolute
-The generated MCP entry SHALL reference the daemon CLI via a local absolute file path (not a remote package or registry).
+### Requirement: Startup does not mutate persistent MCP files
+Preparing the Open Design integration SHALL NOT create, update, or delete user or project MCP configuration files.
 
-#### Scenario: Path is local
-- **WHEN** the MCP entry is generated
-- **THEN** `args[1]` SHALL be an absolute path under `OPEN_DESIGN_DIR`/`apps/daemon/src/cli.ts`
-- **AND** the `command` SHALL be `npx` (not a remote registry reference)
+#### Scenario: User MCP file does not exist
+- **WHEN** the Open Design integration is prepared and `~/.mcp.json` does not exist
+- **THEN** startup SHALL NOT create `~/.mcp.json`
+- **AND** the integration-derived MCP server SHALL still be available in memory
 
-#### Scenario: OPEN_DESIGN_DIR tilde is expanded
-- **WHEN** `OPEN_DESIGN_DIR` is set to `~/Workspace/DeepSeekSpace/open-design`
-- **THEN** the path written to `~/.mcp.json` SHALL be the expanded absolute path (e.g., `/Users/.../open-design/apps/daemon/src/cli.ts`)
+#### Scenario: User MCP file contains stale generated entry
+- **WHEN** `~/.mcp.json` contains an older `open-design` entry
+- **THEN** startup SHALL NOT rewrite or delete that entry
+- **AND** the system SHALL use deterministic in-memory merge precedence
+
+#### Scenario: Integration preparation fails
+- **WHEN** Open Design configuration cannot produce a valid MCP server definition
+- **THEN** the system SHALL emit a diagnostic
+- **AND** unrelated persistent MCP servers SHALL continue to initialize
 

@@ -37,11 +37,17 @@ Harness 初始化 SHALL 通过 AgentSupervisor 创建 Main Agent。Main Agent SH
 - **WHEN** Harness 完成 initialize
 - **THEN** Process Table 中存在且仅存在一个根 Main Agent
 
-### Requirement: AgentProcessRuntimeFactory
+### Requirement: Unified Runtime Creation
 
-系统 SHALL 使用统一 AgentProcessRuntimeFactory 从不可变 Application snapshot 创建 PiAgentRuntimeAdapter。所有 Main Agent 与 SubAgent MUST 使用该执行链，MVP 不提供 Application 专用 PipelineRuntime。
+系统 SHALL 由 `AgentRuntimeCoordinator` 从不可变 Application snapshot 创建
+`PiAgentRuntimeAdapter`，并将 runtime creator 函数直接提供给
+`AgentSupervisor`。所有 Main Agent 与 SubAgent MUST 使用该执行链，MVP
+不提供 Application 专用 PipelineRuntime。
 
-Factory SHALL 复用允许共享的 model registry、Driver definitions、MCP connections、Logger 和 EventBus，并 SHALL 隔离 runtime state、messages、ContextManager、ToolRegistry discovery、PermissionManager grants、AbortController 和 Usage。
+Runtime creator SHALL 复用允许共享的 model registry、Driver definitions、
+MCP connections、Logger 和 EventBus，并 SHALL 隔离 runtime state、
+messages、ContextManager、ToolRegistry discovery、PermissionManager grants、
+AbortController 和 Usage。系统 SHALL NOT 为该单一函数适配增加纯转发 Factory。
 
 #### Scenario: 工具发现隔离
 - **WHEN** 子进程通过 search_tools 发现一个 MCP 工具
@@ -49,7 +55,7 @@ Factory SHALL 复用允许共享的 model registry、Driver definitions、MCP co
 
 #### Scenario: Vision Runtime
 - **WHEN** AgentSupervisor 启动 Bundled vision Application
-- **THEN** Factory 创建与其他 SubAgent 相同的 PiAgentRuntimeAdapter，并应用 Vision snapshot 的 Prompt、model 和空 capability
+- **THEN** Runtime creator 创建与其他 SubAgent 相同的 PiAgentRuntimeAdapter，并应用 Vision snapshot 的 Prompt、model 和空 capability
 
 ### Requirement: Agent fallback 执行策略
 
@@ -179,4 +185,3 @@ AgentSupervisor 创建 SubAgent 时 SHALL 从 Main Agent Process 的当前
 #### Scenario: 后续独立任务触发 spawn
 - **WHEN** Main Agent 已完成到 Session B 的重绑定，随后由新任务启动 SubAgent
 - **THEN** 新 SubAgent 的 parentSessionId 为 B，parentAgentId 仍为 Main Agent ID
-

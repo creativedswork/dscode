@@ -12,12 +12,15 @@ dscode 是一个基于 `@earendil-works/pi-agent-core`、`@earendil-works/pi-ai`
 
 | Agent 概念 | OS 类比 | dscode 职责 |
 |-----------|---------|------------|
-| Harness | Kernel | 组装组件，协调进程、权限、I/O 与生命周期 |
+| Harness | Kernel | 以 Application coordinator 形式协调进程、权限、I/O 与生命周期 |
 | Model | CPU / 计算引擎 | 执行推理计算 |
 | Agent Runtime | 进程执行环境 | 驱动单个 Agent 的 prompt、tool-call 和事件循环 |
 | System Prompt | 进程启动策略 / 只读指令段 | 为 Runtime 装载身份、规则和行为约束 |
 
-System Prompt 影响单个进程如何执行，但不管理其他进程或资源，因此不是 Kernel。
+这里的 Kernel 是运行时职责类比，不是源码目录名。物理上，`Harness` 位于
+`src/application/harness.ts`，concrete wiring 位于 `src/bootstrap/`，
+`src/kernel/` 只保存 Execution Context、日志和路径安全等基础原语。System Prompt
+影响单个进程如何执行，但不管理其他进程或资源，因此不是 Kernel。
 
 ### 应用与进程
 
@@ -84,13 +87,13 @@ Agent → mcp__<server>__<tool> → schema / ToolRegistry → MCP Driver → MCP
 | MCP Client / Proxy | Device Driver / 协议适配器 | 把 Tool Call 转换为 MCP 请求 |
 | Open Design daemon | 用户态设备服务进程 | 执行设备能力并暴露 HTTP 服务 |
 | ServiceSupervisor | init / systemd | 启动、健康检查、重启和关闭受管服务进程 |
-| IntegrationRegistry | 设备安装与组装清单 | 组合配置、服务声明和 MCP Driver 贡献 |
+| Open Design integration | 设备配置与适配模块 | 解析配置、声明服务并贡献 MCP Driver |
 
 调用路径与启动路径彼此独立：
 
 ```text
 调用: Agent → ToolRegistry → MCP Driver → Open Design MCP Proxy → OD daemon
-启动: IntegrationRegistry → ServiceSupervisor → OD daemon
+启动: Bootstrap → Open Design integration → ServiceSupervisor → OD daemon
 ```
 
 这与 FUSE 类似：VFS 请求通过 FUSE Driver 转发给用户态文件系统 daemon。
@@ -122,6 +125,11 @@ Table，也没有 AgentContext、Session、模型循环或 capability set。
 | Worktree Isolation | Filesystem Namespace / Sandbox | 为后台写进程隔离 cwd、分支和文件修改 |
 
 Skill 编排 Tool，但不实现底层资源访问；真正连接资源的是 Driver。
+
+Skill 与 MCP 在 Presentation 中可以同属 “Capabilities” 分组，但源码所有权保持独立：
+`src/skills/` 负责 SKILL.md 扫描、instructions 激活和 Tool allowlist；
+`src/mcp/` 负责 JSON-RPC、transport、连接、重连、Server state 和动态 Driver 贡献。
+二者没有共享生命周期、基类或 Registry，UI 分组不定义后端 ownership。
 
 ### 通信与恢复
 
@@ -462,17 +470,23 @@ permission 规则在 `settings.json` 中配置（路径 denyPatterns、自定义
 
 | 后端 | 实现 | 入口 |
 |------|------|------|
-| `TuiBackend` | `@earendil-works/pi-tui` + HarnessEventBus adapter | `dscode` (终端模式) |
-| `WebBackend` | WebSocket + HTTP server | `dscode --web` |
+| `TuiBackend` | `src/ui/tui/` + HarnessEventBus adapter | `dscode` (终端模式) |
+| `WebUiBackend` | `src/ui/web/` + WebSocket/HTTP | `dscode --web` |
 
 两者通过统一的 Harness 事件和 `UiBackend` 生命周期/权限接口消费 Agent 能力。
-TUI 与 Web 分别将事件投影到各自的 conversation model。
+TUI 与 Web 分别将事件投影到各自的 conversation model；双端共用的 reducer、
+projector 和展示数据模型位于 `src/ui/shared/`。Presentation 中的 MCP/Skill 分组
+不意味着两者共享后端生命周期。
 
 ### 前端
 
 Web 模式下的前端是独立 Vite + React 项目（`web/`），通过 WebSocket 与后端通信。
 
 ### Slash Commands
+
+内建 dispatch、自定义 manifest loader/manager、执行上下文和 Presenter port 均由
+`src/slash-commands/` 拥有。TUI 与 Web 结构化实现 `SlashCommandPresenter`，
+Slash Command 不导入 concrete Presentation adapter。
 
 | 命令 | 功能 |
 |------|------|
@@ -500,9 +514,9 @@ CLI adapter
 ```
 
 `createStandardAgentHost()` 创建标准 headless Host，包括 Agent、Session、Tool、
-Skill、Memory、Permission、MCP、Integration 和受管服务能力，但不创建 TUI/Web。
+Skill、Memory、Permission、MCP、Open Design 和受管服务能力，但不创建 TUI/Web。
 `cli-main.ts` 只追加参数解析、环境快照、UI 选择、signal/fatal handler 和
-`process.exit()`。`core/main.ts` 仅保留兼容启动入口。
+`process.exit()`；开发、构建和发布均直接使用该入口，不存在兼容转发模块。
 
 `Harness` 是 Application lifecycle facade，不是 concrete service locator。
 Conversation、Session、Project、MCP 和 Agent Runtime 工作流分别由专用
@@ -515,13 +529,20 @@ Coordinator 负责；Harness 只排序生命周期、构建 system prompt 并委
 | Host 生命周期与 concrete wiring | Bootstrap | `AgentHost` |
 | Commands、Queries、Events | Application | `HarnessAPI` |
 | Process identity 与 cwd attribution | Kernel | `ExecutionContext` |
-| Agent definition、snapshot、process | Agent | owner-defined immutable contracts |
+| Agent authoring、compiler、snapshot | `agents/definitions` | `AgentDefinition`、immutable snapshot |
+| Agent runtime、process lifecycle | `agents/process`、`agents/runtimes` | Process contracts 与 events |
 | Settings 文件与运行快照 | Config | Repository、Service、Snapshot |
-| Session、Memory、Permission、MCP | 各 Feature | owner ports 与 snapshots |
+| Slash Command | `slash-commands` | `HarnessAPI` + `SlashCommandPresenter` |
+| Project file resolution 与 attachment | `project-files` | resolver 与 staging API |
+| Skill instructions 与 Tool allowlist | `skills` | Skill snapshot |
+| MCP protocol、transport 与连接 | `mcp` | MCP state 与 Driver contribution |
+| Session、Memory、Permission | 各 Feature | owner ports 与 snapshots |
 | 文件、Shell、Vision、MCP transport | Driver / Adapter | Driver ports |
 | TUI、Web、live/replay projection | Presentation | `HarnessAPI` + UI models |
 
-模块类型由功能所有者定义；不存在跨领域 `core/types.ts` 类型仓库。
+`src/application/` 仅表示用例协调；领域名 `AgentApplication` 的定义位于
+`src/agents/definitions/`。模块类型由功能所有者定义，不存在跨领域类型仓库、
+`core/` 或 `utils/` catch-all。
 
 ### System Prompt 构建
 
@@ -593,27 +614,55 @@ SemVer 承诺。
 
 ## 目录结构
 
+源码顶层目录由架构检查显式分类；未知目录会失败，`src/core/` 和 `src/utils/`
+被明确禁止。
+
+```mermaid
+flowchart LR
+    Bootstrap["Bootstrap"] --> Application["Application"]
+    Bootstrap --> Presentation["Presentation"]
+    Bootstrap --> Features["Feature owners"]
+    Bootstrap --> Adapters["Adapters"]
+    Presentation --> Application
+    Presentation --> Slash["Slash Commands"]
+    Presentation --> ProjectFiles["Project Files"]
+    Application --> Features
+    Application --> Kernel["Kernel primitives"]
+    Features --> Kernel
+    Adapters --> Kernel
+```
+
 ```
 src/
-├── bootstrap/      # concrete composition root 与 CLI process adapter
-├── application/    # HarnessAPI、AgentHost contract、Coordinators
-├── kernel/         # ExecutionContext ABI、Host facilities
-├── agents/         # Definition、Process、Runtime、process tools
-├── config/         # owner types、Repository、SettingsService、snapshots
-├── core/           # Harness lifecycle facade、事件组合、兼容入口
-├── services/       # 外部服务进程监管（非 Agent Process）
-├── integrations/   # 外部设备配置、服务声明与 MCP contribution
-├── session/        # owner-neutral Session 持久化
-├── context/        # token 预算、压缩与 invalidation
-├── memory/         # 长期记忆
-├── drivers/        # FS、Shell、Search、Edit、Vision 与 MCP adapters
-├── checkpoint/     # Host-owned 文件回滚设施
-├── skills/         # Skill loader 与 activation
-├── mcp/            # MCP client、manager 与 App Host
-├── models/         # immutable provider/model catalog
-├── permissions/    # policy、prompt queue、Host-owned suggestions
-├── resources/      # owner-neutral resource identity
-└── ui/             # TUI/Web 与 shared live/replay projectors
+├── bootstrap/          # Bootstrap: concrete composition 与 CLI process adapter
+├── kernel/             # Kernel: ExecutionContext、Logger、path safety、facilities
+├── application/        # Application: Harness/API/events、AgentHost、Coordinators
+├── agents/
+│   ├── definitions/    # Feature: Agent authoring、compiler、registry、snapshot
+│   ├── process/        # Feature/Persistence: process lifecycle 与 store
+│   ├── runtimes/       # Feature: 同构 Runtime adapters
+│   └── tools/          # Feature: process tools
+├── slash-commands/     # Feature: builtins、custom manifests、Presenter port
+├── project-files/      # Feature: @file resolution 与 attachment staging
+├── skills/             # Feature: SKILL.md loader、activation、Tool allowlist
+├── mcp/                # Feature: protocol、transport、connection、App Host
+├── config/             # Feature: loader、Repository、SettingsService、snapshots
+├── session/            # Feature/Persistence: Session lifecycle 与 store
+├── context/            # Feature: token 预算、压缩与 invalidation
+├── memory/             # Feature: 长期记忆
+├── models/             # Feature: immutable provider/model catalog
+├── permissions/        # Feature: policy、prompt queue、suggestions
+├── eval/               # Feature: CHIEF evaluation
+├── resources/          # Feature: owner-neutral resource identity
+├── drivers/            # Adapter: FS、Shell、Search、Edit、Vision
+├── integrations/
+│   └── open-design/    # Adapter: Open Design config、service、MCP contribution
+├── services/           # Adapter: 外部服务进程监管
+├── checkpoint/         # Persistence: Host-owned 文件回滚设施
+└── ui/                 # Presentation lifecycle port
+    ├── shared/         # 双端 projector、reducer、model、formatter
+    ├── tui/            # TUI-only input、rendering、theme、image、browser
+    └── web/            # Web backend、protocol、WebSocket server
 
 web/                # Web 前端（独立 Vite + React 项目）
 ```

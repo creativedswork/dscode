@@ -3,7 +3,9 @@
 Session data layer types — ImageRef, generic AgentSessionMessage, session metadata, and display model.
 ## Requirements
 ### Requirement: ImageRef Type Definition
-The system SHALL define an `ImageRef` type for referencing cached images in session messages. This type SHALL be exported from `ImagePipeline`'s types module (`src/image-pipeline/types.ts`) and re-exported for backward compatibility.
+The system SHALL define `ImageRef` in the resource module that owns cached image
+identity. Session SHALL import the owner-defined contract rather than a UI or
+pipeline implementation type.
 
 #### Scenario: ImageRef structure
 - **WHEN** a session message contains an image reference
@@ -12,7 +14,9 @@ The system SHALL define an `ImageRef` type for referencing cached images in sess
 - **AND** `mimeType` SHALL be the MIME type (e.g. "image/jpeg")
 
 ### Requirement: SubAgent Message Log
-The system SHALL record child Agent executions in a generic `agentMessages` array within the parent session. Full child transcripts SHALL remain in AgentProcessStore and SHALL NOT be inserted into the Main Agent `messages` array.
+The system SHALL record child Agent executions in a presentation-neutral
+`agentMessages` array within the parent Session. Full child transcripts SHALL
+remain in AgentProcessStore and SHALL NOT enter Main Agent messages.
 
 #### Scenario: Vision Agent log structure
 - **WHEN** a Vision Agent exits
@@ -28,6 +32,22 @@ The system SHALL record child Agent executions in a generic `agentMessages` arra
 - **WHEN** a version 2 session containing `visionMessages` is loaded
 - **THEN** the system SHALL expose those entries as generic `AgentSessionMessage` records
 - **AND** the next save SHALL write version 3 `agentMessages` without `visionMessages`
+
+### Requirement: Session data model has no Presentation dependency
+
+Session types, stores, managers, and migrations MUST NOT import from `src/ui/`.
+They SHALL return domain snapshots that Presentation can project.
+
+#### Scenario: Architecture dependencies are checked
+
+- **WHEN** Session production code imports a UI model or formatter
+- **THEN** architecture verification SHALL fail
+
+#### Scenario: Session replay is requested
+
+- **WHEN** TUI or Web loads a Session
+- **THEN** HarnessAPI SHALL return a presentation-neutral snapshot
+- **AND** the selected adapter SHALL project it into canonical conversation state
 
 ### Requirement: Image Recovery on Session Load
 The system SHALL attempt to recover images when loading a session by reading from the image cache via `ImagePipeline`'s internal `ImageCache`.

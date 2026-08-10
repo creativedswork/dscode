@@ -283,3 +283,36 @@ Main Tool、Agent Activity 和 history-ready snapshot。UI adapters MAY 使用�
 - **THEN** TUI 和 Web renderer 消费相同 UIMessage/AgentActivity 数据
 - **AND** TUI 不建立独立的 replay-only Tool matching 规则
 
+### Requirement: Canonical conversation types are Presentation-owned
+
+`UIMessage`, `ToolCallEntry`, `AgentActivity`, and `ToolResultProjection` SHALL
+remain Presentation-owned types. Runtime and persistence owners SHALL expose
+domain records that pure projectors convert into these types.
+
+#### Scenario: Runtime Tool record is projected
+
+- **WHEN** Presentation receives a runtime Tool execution record
+- **THEN** a pure projector SHALL create or update `ToolCallEntry`
+- **AND** Runtime SHALL remain unaware of the projected type
+
+#### Scenario: Session is rebuilt for display
+
+- **WHEN** Presentation receives a persisted Session snapshot
+- **THEN** a projector SHALL produce canonical conversation messages
+- **AND** Session persistence SHALL not embed Presentation DTOs
+
+### Requirement: Conversation projectors are pure boundary adapters
+
+Live-event and persisted-snapshot projectors SHALL be deterministic,
+side-effect-free, and SHALL not inspect or mutate domain stores.
+
+#### Scenario: Same execution is projected twice
+
+- **WHEN** a projector receives identical snapshots and events
+- **THEN** it SHALL return structurally equivalent canonical output
+
+#### Scenario: Tool detail requires full text
+
+- **WHEN** a projected Tool entry contains a stable result reference
+- **THEN** Presentation SHALL resolve it through HarnessAPI
+- **AND** the projector SHALL not inspect Agent or Session stores

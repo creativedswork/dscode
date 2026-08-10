@@ -1,4 +1,11 @@
-## ADDED Requirements
+# cli-cwd-flag Specification
+
+## Purpose
+
+Define explicit CLI workspace selection without mutating process-global cwd or
+coupling Web asset resolution to the selected project.
+
+## Requirements
 
 ### Requirement: CLI --cwd flag sets startup working directory
 The CLI entry point in `src/bootstrap/cli-main.ts` SHALL accept a `--cwd <path>` option. When provided, the resolved absolute path SHALL be used as the startup working directory (`startupPath` / `projectPath`), taking precedence over the `DSCODE_PROJECT_PATH` environment variable and `process.cwd()`.
@@ -6,11 +13,12 @@ The CLI entry point in `src/bootstrap/cli-main.ts` SHALL accept a `--cwd <path>`
 #### Scenario: --cwd with valid absolute path
 - **WHEN** dscode is invoked as `dscode --cwd /home/user/myproject`
 - **THEN** `startupPath` SHALL be `/home/user/myproject`
-- **AND** `process.chdir("/home/user/myproject")` SHALL be called during `loadConfig()`
+- **AND** the standard Agent Host SHALL use that path as its workspace
+- **AND** process-global cwd SHALL remain unchanged
 
 #### Scenario: --cwd with relative path
 - **WHEN** dscode is invoked as `dscode --cwd ./myproject`
-- **THEN** `startupPath` SHALL be `path.resolve(process.cwd(), "./myproject")`
+- **THEN** `startupPath` SHALL be resolved against the CLI process working directory captured at startup
 
 #### Scenario: --cwd takes precedence over DSCODE_PROJECT_PATH
 - **WHEN** dscode is invoked as `DSCODE_PROJECT_PATH=/other dscode --cwd /home/user/myproject`
@@ -18,32 +26,30 @@ The CLI entry point in `src/bootstrap/cli-main.ts` SHALL accept a `--cwd <path>`
 
 #### Scenario: --cwd composes with --debug
 - **WHEN** dscode is invoked as `dscode --cwd /home/user/myproject --debug`
-- **THEN** both the `--cwd` path SHALL be applied AND debug mode SHALL be enabled
+- **THEN** the Host workspace SHALL be `/home/user/myproject`
+- **AND** debug mode SHALL be enabled
 
 #### Scenario: --cwd composes with --web
 - **WHEN** dscode is invoked as `dscode --cwd /home/user/myproject --web --web-port 8080`
-- **THEN** the working directory SHALL be `/home/user/myproject` AND the web server SHALL start on port 8080
-- **AND** the web server SHALL serve the SPA frontend assets from the dscode project root's `dist/web/` directory (not from the `--cwd` directory)
-
-#### Scenario: --cwd with --web serves frontend from project root
-- **WHEN** dscode is invoked as `dscode --cwd /home/user/myproject --web`
-- **AND** the dscode project root is `/opt/dscode`
-- **THEN** `process.chdir("/home/user/myproject")` SHALL be called for tool execution context
-- **AND** the web server SHALL resolve `dist/web/index.html` from `/opt/dscode/dist/web/` (not `/home/user/myproject/dist/web/`)
-- **AND** the browser loading `http://localhost:3000` SHALL receive the SPA correctly, not a 404
+- **THEN** the Host workspace SHALL be `/home/user/myproject`
+- **AND** the Web server SHALL start on port 8080
+- **AND** built SPA assets SHALL resolve independently of the Host workspace
 
 #### Scenario: No --cwd flag (backward compatible)
 - **WHEN** dscode is invoked without `--cwd`
-- **THEN** behavior SHALL be unchanged: `startupPath` resolves from `DSCODE_PROJECT_PATH` or `process.cwd()` as before
+- **THEN** `startupPath` SHALL resolve from the captured `DSCODE_PROJECT_PATH` or startup cwd
 
 ### Requirement: loadConfig accepts optional cliCwd parameter
-The `loadConfig()` function in `src/config/loader.ts` SHALL accept an optional `cliCwd?: string` parameter. When `cliCwd` is provided and non-empty, it SHALL be resolved and used as `startupPath` instead of the `DSCODE_PROJECT_PATH` / `process.cwd()` fallback chain.
+The `loadConfig()` function in `src/config/loader.ts` SHALL accept an optional
+`cliCwd` argument plus explicit environment and startup-cwd options. It MUST NOT
+mutate `process.cwd()` or `process.env`.
 
 #### Scenario: cliCwd provided
-- **WHEN** `loadConfig({ cliCwd: "/home/user/myproject" })` is called
+- **WHEN** `loadConfig("/home/user/myproject", options)` is called
 - **THEN** `startupPath` SHALL be the resolved absolute path of `/home/user/myproject`
 - **AND** `projectPath` SHALL equal `startupPath`
 
 #### Scenario: cliCwd omitted or undefined
-- **WHEN** `loadConfig()` is called without `cliCwd` or with `cliCwd: undefined`
-- **THEN** behavior SHALL be identical to the current implementation (uses `DSCODE_PROJECT_PATH` or `process.cwd()`)
+- **WHEN** `loadConfig(undefined, options)` is called
+- **THEN** `startupPath` SHALL resolve from `options.environment.DSCODE_PROJECT_PATH` or `options.currentWorkingDirectory`
+- **AND** the loader SHALL not mutate process-global state

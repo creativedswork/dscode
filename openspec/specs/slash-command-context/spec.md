@@ -1,91 +1,99 @@
 # slash-command-context Specification
 
 ## Purpose
-TBD - created by archiving change code-maintainability-refactor. Update Purpose after archive.
+
+Define Slash Commands as a presentation-neutral feature using HarnessAPI and
+an owner-defined Presenter port shared by TUI and Web.
+
 ## Requirements
-### Requirement: SlashCommandContext depends on HarnessAPI and UiBackend
-The slash command execution context SHALL be redefined as `SlashCommandContext` containing `{ harness: HarnessAPI, ui: UiBackend }`. The previous `CommandContext` type with `tui: TuiApp` SHALL be removed. Slash command `execute` functions SHALL receive this new context.
 
-#### Scenario: Slash command accesses agent via harness
-- **WHEN** a slash command needs the agent
-- **THEN** it accesses `context.harness.agent` instead of `context.agent`
+### Requirement: SlashCommandContext depends on HarnessAPI and SlashCommandPresenter
 
-#### Scenario: Slash command accesses session via harness
-- **WHEN** a slash command needs the session manager
-- **THEN** it accesses `context.harness.sessionManager` instead of `context.sessionManager`
+The Slash Command execution context SHALL contain the narrow HarnessAPI surface
+and `SlashCommandPresenter`. It MUST NOT expose Agent, Manager, Registry, Store,
+TuiApp, or WebUiBackend internals.
 
-#### Scenario: Slash command modifies config via harness
-- **WHEN** a slash command needs to change model or thinking settings
-- **THEN** it calls `context.harness.setModel(id)`, `context.harness.setThinking(level)`, etc.
+#### Scenario: Slash command accesses Application behavior
 
-#### Scenario: Slash command displays info via ui
-- **WHEN** a slash command needs to show an informational message
-- **THEN** it calls `context.ui.addInfo(text)` — works for both TUI and Web
+- **WHEN** a command needs conversation, Session, settings, MCP, Skill, Agent, or Eval behavior
+- **THEN** it SHALL call the corresponding HarnessAPI command or query
 
-#### Scenario: Slash command requests permission via ui
-- **WHEN** a slash command needs user permission
-- **THEN** it calls `context.ui.getPromptPermission()()` — works for both TUI and Web
+#### Scenario: Slash command displays information
+
+- **WHEN** a command completes or fails
+- **THEN** it SHALL call the Presenter response port
+- **AND** TUI and Web SHALL provide equivalent behavior
+
+#### Scenario: Slash command performs a Presenter-specific action
+
+- **WHEN** a command clears conversation, opens the MCP browser, replays messages, or stages an image
+- **THEN** that operation SHALL be declared on `SlashCommandPresenter`
+- **AND** implementation SHALL not probe a concrete backend
 
 ### Requirement: No TuiApp dependency in slash commands
-No slash command implementation SHALL import or reference `TuiApp`. All UI interaction SHALL go through the `UiBackend` interface.
 
-#### Scenario: Slash command file has no TuiApp import
-- **WHEN** the refactoring is complete
-- **THEN** no file in `src/slash-commands/` imports `TuiApp` or a concrete Web adapter
+No file under `src/slash-commands/` SHALL import a concrete TUI or Web adapter.
+Architecture verification SHALL reject such a dependency.
+
+#### Scenario: Slash command feature has no Presentation adapter import
+
+- **WHEN** architecture verification scans Slash Commands
+- **THEN** no import SHALL resolve to `src/ui/tui/` or `src/ui/web/`
 
 ### Requirement: WebUiBackend removes mockTui
-The `WebUiBackend` class SHALL NOT contain a `mockTui` object. Slash command execution in the Web path SHALL use `{ harness: this.harness, ui: this }` directly since `WebUiBackend` implements `UiBackend`.
 
-#### Scenario: mockTui removed
-- **WHEN** the refactoring is complete
-- **THEN** `web-backend.ts` contains no variable or property named `mockTui`
+WebUiBackend SHALL use a real `SlashCommandPresenter` adapter and MUST NOT
+construct a mock TUI object.
 
-#### Scenario: Web slash commands execute with real UiBackend
-- **WHEN** a slash command is executed in web mode
-- **THEN** the context's `ui` is the `WebUiBackend` instance, not a mock
+#### Scenario: Web executes a command
+
+- **WHEN** Web receives Slash Command input
+- **THEN** it SHALL invoke the shared dispatcher with HarnessAPI and its Presenter adapter
 
 ### Requirement: executeSlashCommand signature updated
-The `executeSlashCommand` function SHALL accept `SlashCommandContext` as its context parameter instead of the old `CommandContext`.
 
-#### Scenario: TUI calls executeSlashCommand
-- **WHEN** `TuiApp` processes a slash command input
-- **THEN** it calls `executeSlashCommand(text, { harness: this.deps.harness, ui: this.tui })` (or equivalent with the new TuiBackend pattern)
+The shared Slash Command dispatcher SHALL accept boundary-safe
+`SlashCommandContext`. TUI and Web SHALL call the same implementation.
 
-#### Scenario: Web calls executeSlashCommand
-- **WHEN** `WebUiBackend` processes a slash command input
-- **THEN** it calls `executeSlashCommand(text, { harness: this.harness, ui: this })`
+#### Scenario: TUI executes a command
+
+- **WHEN** TUI parses Slash Command input
+- **THEN** it SHALL call the dispatcher with HarnessAPI and a TUI Presenter
+
+#### Scenario: Web executes a command
+
+- **WHEN** Web parses Slash Command input
+- **THEN** it SHALL call the same dispatcher with HarnessAPI and a Web Presenter
 
 ### Requirement: eval Command Registered in executeSlashCommand
 
-The `executeSlashCommand` function SHALL route `/eval` commands to the eval command handler. The eval command SHALL be defined with name `"eval"`, description `"Analyze a session and generate diagnostic dashboard (/eval [session_id])"`, and an execute function that receives `(args: string, ctx: SlashCommandContext)`.
+The `/eval [session_id]` command SHALL remain registered and SHALL use Eval and
+Session Application ports rather than concrete stores or Managers.
 
-The execute function SHALL:
-1. Parse `args.trim()` as the session ID (or `null` for current session)
-2. Call `runEval(sessionId, ctx)` from the eval module
-3. `runEval` SHALL handle session resolution, analysis, dashboard generation, and browser opening
-4. The entire flow SHALL be wrapped in try/catch for graceful error handling
+#### Scenario: Historical Session is evaluated
 
-#### Scenario: /eval command routes to eval handler
+- **WHEN** the user runs `/eval <session_id>`
+- **THEN** the Eval port SHALL resolve and load the persisted domain snapshot
+- **AND** current Main Process and Session behavior SHALL remain unchanged
 
-- **WHEN** the user types `/eval 00MPX37L8`
-- **THEN** `executeSlashCommand` SHALL parse `commandName` as `"eval"` and `args` as `"00MPX37L8"`
-- **AND** invoke the eval command's execute function with those arguments and the SlashCommandContext
+#### Scenario: Eval reports progress
 
-#### Scenario: /eval command uses SlashCommandContext
+- **WHEN** Eval starts, progresses, completes, or fails
+- **THEN** it SHALL publish Eval-owned events and a typed command result
+- **AND** the Presenter SHALL render feedback without Eval importing UI modules
 
-- **WHEN** the eval command executes
-- **THEN** it SHALL access `ctx.harness.sessionManager` for session lookup via `getSessionFilePath()` and `loadSessionFile()`
-- **AND** it SHALL access `ctx.harness.config` for model provider/key configuration
-- **AND** it SHALL access `ctx.ui.addInfo()` and `ctx.ui.addError()` for user feedback
-- **AND** it SHALL NOT import or reference `TuiApp`
+#### Scenario: Eval command appears in help
 
-#### Scenario: /eval appears in help text
+- **WHEN** available commands are queried
+- **THEN** `/eval` SHALL retain its documented name and description
 
-- **WHEN** the user types `/help` or views slash command documentation
-- **THEN** the eval command SHALL be listed among available commands with its description
+### Requirement: Slash Command implementation has one source owner
 
-#### Scenario: /eval errors are caught gracefully
+Built-in definitions, custom manifest loading, command management, dispatch, execution context, and Presenter contracts SHALL live under
+`src/slash-commands/`.
 
-- **WHEN** any unexpected error occurs during `/eval` execution
-- **THEN** the system SHALL display `[error] eval: <message>` via `ctx.ui.addError()`
-- **AND** NOT crash or leave the agent in an inconsistent state
+#### Scenario: Built-in and custom commands are enumerated
+
+- **WHEN** TUI or Web requests autocomplete or dispatch
+- **THEN** built-in and custom commands SHALL come from the same feature owner
+- **AND** existing names, arguments, help text, and behavior SHALL remain unchanged

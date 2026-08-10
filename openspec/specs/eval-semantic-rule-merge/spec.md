@@ -35,7 +35,7 @@ The LLM output SHALL be a JSON array of merge decisions, where each decision con
 
 #### Scenario: No new rules to merge
 
-- **WHEN** Step 7 produced an empty `HarnessRule[]`
+- **WHEN** the rules stage produced an empty `HarnessRule[]`
 - **THEN** Step 8 SHALL skip the LLM call
 - **AND** the existing store SHALL be preserved unchanged
 
