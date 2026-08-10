@@ -31,7 +31,7 @@ No slash command implementation SHALL import or reference `TuiApp`. All UI inter
 
 #### Scenario: Slash command file has no TuiApp import
 - **WHEN** the refactoring is complete
-- **THEN** no file in `src/ui/commands.ts` or slash command implementations imports `TuiApp`
+- **THEN** no file in `src/slash-commands/` imports `TuiApp` or a concrete Web adapter
 
 ### Requirement: WebUiBackend removes mockTui
 The `WebUiBackend` class SHALL NOT contain a `mockTui` object. Slash command execution in the Web path SHALL use `{ harness: this.harness, ui: this }` directly since `WebUiBackend` implements `UiBackend`.
@@ -89,4 +89,3 @@ The execute function SHALL:
 - **WHEN** any unexpected error occurs during `/eval` execution
 - **THEN** the system SHALL display `[error] eval: <message>` via `ctx.ui.addError()`
 - **AND** NOT crash or leave the agent in an inconsistent state
-

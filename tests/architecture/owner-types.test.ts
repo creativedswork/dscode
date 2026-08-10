@@ -1,6 +1,10 @@
 import { describe, expectTypeOf, it } from "vitest";
 
-import type { CommandManifest } from "../../src/commands/types.js";
+import type {
+  CommandManifest,
+  SlashCommandContext,
+  SlashCommandPresenter,
+} from "../../src/slash-commands/types.js";
 import type { RuntimeConfig } from "../../src/config/types.js";
 import type { ContextConfig } from "../../src/context/types.js";
 import type { Driver } from "../../src/drivers/types.js";
@@ -36,5 +40,7 @@ describe("owner-defined contracts", () => {
     expectTypeOf<Skill>().toHaveProperty("tools");
     expectTypeOf<SkillManifest>().toHaveProperty("path");
     expectTypeOf<CommandManifest>().toHaveProperty("body");
+    expectTypeOf<SlashCommandContext>().toHaveProperty("harness");
+    expectTypeOf<SlashCommandPresenter>().toHaveProperty("addInfo");
   });
 });

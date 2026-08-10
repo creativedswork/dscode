@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { promisify } from "node:util";
 
-import { isCanonicalPathWithin } from "../../application/path-safety.js";
+import { isCanonicalPathWithin } from "../../kernel/path-safety.js";
 import type {
   AgentProcess,
   ContextSelection,

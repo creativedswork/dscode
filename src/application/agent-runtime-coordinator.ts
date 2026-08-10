@@ -7,8 +7,8 @@ import type {
   SimpleStreamOptions,
 } from "@earendil-works/pi-ai";
 
-import type { AgentApplicationSnapshot } from "../agents/application/types.js";
-import { loadAgentMemory } from "../agents/application/memory.js";
+import type { AgentApplicationSnapshot } from "../agents/definitions/types.js";
+import { loadAgentMemory } from "../agents/definitions/memory.js";
 import { checkAgentCapability } from "../agents/process/capability.js";
 import type {
   AgentContext,
@@ -25,7 +25,7 @@ import { makeAgentProcessTools } from "../agents/tools/process-tools.js";
 import type { RuntimeConfig } from "../config/types.js";
 import { ContextManager } from "../context/manager.js";
 import type { DriverRegistryPort } from "../drivers/types.js";
-import type { HarnessEvent } from "../core/events.js";
+import type { HarnessEvent } from "../application/events.js";
 import { getEnvApiKey, resolveModel } from "../models/index.js";
 import { streamSimple } from "../models/index.js";
 import { PermissionManager } from "../permissions/manager.js";

@@ -144,7 +144,7 @@ async function main() {
   mkdirSync(distDir, { recursive: true });
   const outfile = resolve(rootDir, "dist", "dscode.mjs");
   await esbuild.build({
-    entryPoints: [resolve(rootDir, "src", "core", "main.ts")],
+    entryPoints: [resolve(rootDir, "src", "bootstrap", "cli-main.ts")],
     bundle: true,
     platform: "node",
     target: "node20",

@@ -2,7 +2,7 @@ import { Agent as PiAgentRuntime } from "@earendil-works/pi-agent-core";
 import type { Api, Context, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 
-import { AgentApplicationRegistry } from "../../../src/agents/application/registry.js";
+import { AgentApplicationRegistry } from "../../../src/agents/definitions/registry.js";
 import { PiAgentRuntimeAdapter } from "../../../src/agents/runtimes/pi-agent-runtime.js";
 import {
   getEnvApiKey,

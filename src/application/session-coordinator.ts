@@ -5,8 +5,8 @@ import type {
   AgentExitResult,
   AgentProcess,
 } from "../agents/process/types.js";
-import type { HarnessEvent } from "../core/events.js";
-import type { Logger } from "../utils/logger.js";
+import type { HarnessEvent } from "../application/events.js";
+import type { Logger } from "../kernel/logger.js";
 import type { SessionManager } from "../session/manager.js";
 import type {
   SwitchSessionRequest,

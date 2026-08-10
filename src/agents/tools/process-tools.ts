@@ -7,7 +7,7 @@ import { Type } from "@earendil-works/pi-ai";
 
 import { ImageCache } from "../../drivers/vision/cache.js";
 import { readImageFile } from "../../drivers/vision/reader.js";
-import { isImagePath } from "../../utils/at-file-resolver.js";
+import { isImagePath } from "../../project-files/resolver.js";
 import type { AgentSupervisor } from "../process/supervisor.js";
 import type {
   AgentExitResult,

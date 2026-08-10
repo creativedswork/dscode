@@ -1,12 +1,12 @@
 import { randomUUID } from "node:crypto";
 
-import type { HarnessEventBus } from "../../core/events.js";
-import type { Logger } from "../../utils/logger.js";
-import type { AgentApplicationRegistry } from "../application/registry.js";
+import type { HarnessEventBus } from "../../application/events.js";
+import type { Logger } from "../../kernel/logger.js";
+import type { AgentApplicationRegistry } from "../definitions/registry.js";
 import type {
   AgentApplicationSnapshot,
   AgentApplicationSummary,
-} from "../application/types.js";
+} from "../definitions/types.js";
 import type { AgentProcessRuntime } from "../runtimes/runtime.js";
 import { deriveAgentContext } from "./context.js";
 import { ContextAssembler } from "./context-selection.js";

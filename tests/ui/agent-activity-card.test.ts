@@ -133,7 +133,7 @@ describe("AgentActivityCard", () => {
             toolCallId: "call-read",
             name: "read_file",
             status: "completed",
-            summary: "src/core/harness.ts",
+            summary: "src/application/harness.ts",
             startedAt: 1200,
             endedAt: 1300,
           }],

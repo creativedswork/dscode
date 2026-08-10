@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 
-import { isCanonicalPathWithin } from "../../application/path-safety.js";
+import { isCanonicalPathWithin } from "../../kernel/path-safety.js";
 import type { AgentContext } from "./types.js";
 
 const PATH_ARGUMENTS: Record<string, string[]> = {

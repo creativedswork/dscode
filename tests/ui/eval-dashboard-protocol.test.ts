@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { HarnessEventBus } from "../../src/core/events.js";
-import type { EvalDashboardState } from "../../src/core/events.js";
+import { HarnessEventBus } from "../../src/application/events.js";
+import type { EvalDashboardState } from "../../src/application/events.js";
 import {
   projectEvalDashboardState,
   WebUiBackend,

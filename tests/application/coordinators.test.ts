@@ -244,7 +244,7 @@ describe("Application coordinators", () => {
   });
 
   it("keeps Harness headless and leaves UI selection to CLI bootstrap", () => {
-    const harnessSource = readFileSync("src/core/harness.ts", "utf8");
+    const harnessSource = readFileSync("src/application/harness.ts", "utf8");
     const hostSource = readFileSync(
       "src/bootstrap/create-standard-agent-host.ts",
       "utf8",

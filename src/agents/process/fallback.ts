@@ -1,7 +1,7 @@
 import type {
   AgentApplicationSnapshot,
   AgentFailureCode,
-} from "../application/types.js";
+} from "../definitions/types.js";
 import type {
   AgentProcessInput,
   AgentProcessOutput,

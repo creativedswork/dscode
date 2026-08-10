@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { HarnessEventBus } from "../../../src/core/events.js";
+import { HarnessEventBus } from "../../../src/application/events.js";
 import { createMainAgentContext } from "../../../src/agents/process/context.js";
 import { getExecutionContext } from "../../../src/kernel/execution-context.js";
 import { AgentSupervisor } from "../../../src/agents/process/supervisor.js";
-import type { AgentApplicationSnapshot } from "../../../src/agents/application/types.js";
+import type { AgentApplicationSnapshot } from "../../../src/agents/definitions/types.js";
 import type {
   AgentProcessInput,
   AgentProcessRuntime,
@@ -43,7 +43,7 @@ describe("background Agent Worktree isolation", () => {
       name: "main",
       description: "main",
       systemPrompt: "main",
-      source: { kind: "internal", path: "src/core/harness.ts" },
+      source: { kind: "internal", path: "src/application/harness.ts" },
       digest: "m".repeat(64),
       registryGeneration: 1,
     };
@@ -113,7 +113,7 @@ describe("background Agent Worktree isolation", () => {
       name: "main",
       description: "main",
       systemPrompt: "main",
-      source: { kind: "internal", path: "src/core/harness.ts" },
+      source: { kind: "internal", path: "src/application/harness.ts" },
       digest: "m".repeat(64),
       registryGeneration: 1,
     };

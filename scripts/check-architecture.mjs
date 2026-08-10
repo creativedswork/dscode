@@ -5,6 +5,7 @@ import ts from "typescript";
 
 import {
   evaluateDependency,
+  evaluateSourcePath,
   normalizeSourcePath,
   relativeImportTarget,
 } from "./architecture/rules.mjs";
@@ -28,7 +29,27 @@ function sourceFiles(directory) {
   return files.sort();
 }
 
-function moduleSpecifiers(path) {
+function isTypeOnlyDeclaration(node) {
+  if (ts.isImportDeclaration(node)) {
+    const clause = node.importClause;
+    if (!clause) return false;
+    if (clause.phaseModifier === ts.SyntaxKind.TypeKeyword) return true;
+    return clause.name === undefined
+      && clause.namedBindings !== undefined
+      && ts.isNamedImports(clause.namedBindings)
+      && clause.namedBindings.elements.length > 0
+      && clause.namedBindings.elements.every((element) => element.isTypeOnly);
+  }
+  return node.isTypeOnly
+    || (
+      node.exportClause !== undefined
+      && ts.isNamedExports(node.exportClause)
+      && node.exportClause.elements.length > 0
+      && node.exportClause.elements.every((element) => element.isTypeOnly)
+    );
+}
+
+function moduleImports(path) {
   const text = readFileSync(path, "utf8");
   const source = ts.createSourceFile(
     path,
@@ -45,26 +66,33 @@ function moduleSpecifiers(path) {
       && node.moduleSpecifier
       && ts.isStringLiteralLike(node.moduleSpecifier)
     ) {
-      specifiers.push(node.moduleSpecifier.text);
+      specifiers.push({
+        specifier: node.moduleSpecifier.text,
+        typeOnly: isTypeOnlyDeclaration(node),
+      });
     } else if (
       ts.isCallExpression(node)
       && node.expression.kind === ts.SyntaxKind.ImportKeyword
       && node.arguments.length === 1
       && ts.isStringLiteralLike(node.arguments[0])
     ) {
-      specifiers.push(node.arguments[0].text);
+      specifiers.push({ specifier: node.arguments[0].text, typeOnly: false });
     } else if (
       ts.isImportTypeNode(node)
       && ts.isLiteralTypeNode(node.argument)
       && ts.isStringLiteralLike(node.argument.literal)
     ) {
-      specifiers.push(node.argument.literal.text);
+      specifiers.push({ specifier: node.argument.literal.text, typeOnly: true });
     }
     ts.forEachChild(node, visit);
   }
 
   visit(source);
-  return [...new Set(specifiers)].sort();
+  return [...new Map(
+    specifiers.map((item) => [`${item.specifier}:${item.typeOnly}`, item]),
+  ).values()].sort((a, b) =>
+    a.specifier.localeCompare(b.specifier) || Number(a.typeOnly) - Number(b.typeOnly)
+  );
 }
 
 function resolveSourceTarget(from, specifier) {
@@ -100,10 +128,16 @@ export function collectArchitectureViolations() {
   const violations = new Map();
   for (const absoluteFrom of sourceFiles(sourceRoot)) {
     const from = normalizeSourcePath(relative(root, absoluteFrom));
-    for (const specifier of moduleSpecifiers(absoluteFrom)) {
+    for (const item of evaluateSourcePath(from)) {
+      violations.set(item.key, item);
+    }
+    for (const imported of moduleImports(absoluteFrom)) {
+      const { specifier } = imported;
       const to = resolveSourceTarget(absoluteFrom, specifier);
       if (!to) continue;
-      for (const item of evaluateDependency(from, to)) violations.set(item.key, item);
+      for (const item of evaluateDependency(from, to, imported)) {
+        violations.set(item.key, item);
+      }
     }
   }
   return [...violations.values()].sort((a, b) => a.key.localeCompare(b.key));

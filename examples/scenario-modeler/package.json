@@ -8,7 +8,7 @@
     "start": "node ../../dist/dscode.mjs",
     "start:server": "tsx server.ts",
     "start:stdio": "tsx server.ts --stdio",
-    "demo": "tsx ../../src/core/main.ts",
+    "demo": "tsx ../../src/bootstrap/cli-main.ts",
     "demo:server": "tsx server.ts"
   },
   "dependencies": {

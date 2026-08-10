@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { AgentApplicationSnapshot } from "../../../src/agents/application/types.js";
+import type { AgentApplicationSnapshot } from "../../../src/agents/definitions/types.js";
 import { createMainAgentContext } from "../../../src/agents/process/context.js";
 import { AgentSupervisor } from "../../../src/agents/process/supervisor.js";
 import type {
   AgentProcessInput,
   AgentProcessRuntime,
 } from "../../../src/agents/runtimes/runtime.js";
-import { HarnessEventBus } from "../../../src/core/events.js";
+import { HarnessEventBus } from "../../../src/application/events.js";
 
 function application(name: string): AgentApplicationSnapshot {
   return {

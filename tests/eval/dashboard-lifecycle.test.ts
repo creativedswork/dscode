@@ -42,16 +42,16 @@ vi.mock("../../src/eval/rules/store.js", () => ({
   saveRuleStore: mocks.saveRuleStore,
 }));
 
-vi.mock("../../src/ui/tui-app.js", () => ({
+vi.mock("../../src/ui/tui/app.js", () => ({
   TuiApp: class {
     upsertAgentActivity = vi.fn();
   },
 }));
 
-import { HarnessEventBus } from "../../src/core/events.js";
-import type { EvalDashboardState } from "../../src/core/events.js";
+import { HarnessEventBus } from "../../src/application/events.js";
+import type { EvalDashboardState } from "../../src/application/events.js";
 import { runEval } from "../../src/eval/index.js";
-import { TuiBackend } from "../../src/ui/tui-backend.js";
+import { TuiBackend } from "../../src/ui/tui/backend.js";
 
 const targetSessionId = "TARGET-SESSION-CANONICAL";
 const runId = "run-123456";

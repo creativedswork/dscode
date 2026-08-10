@@ -1,5 +1,5 @@
 import type { HarnessAPI } from "../../src/application/harness-api.js";
-import { HarnessEventBus } from "../../src/core/events.js";
+import { HarnessEventBus } from "../../src/application/events.js";
 
 export function createHarnessApiFixture(
   overrides: Partial<HarnessAPI> = {},

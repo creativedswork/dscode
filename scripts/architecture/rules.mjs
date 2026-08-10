@@ -1,15 +1,43 @@
 import { posix } from "node:path";
 
 export const DESIGNATED_COMPOSITION_ROOTS = new Set([
-  "src/core/main.ts",
   "src/bootstrap/cli-main.ts",
   "src/bootstrap/create-standard-agent-host.ts",
+]);
+
+export const SOURCE_ROOT_LAYERS = new Map([
+  ["agents", "feature"],
+  ["application", "application"],
+  ["bootstrap", "bootstrap"],
+  ["checkpoint", "persistence"],
+  ["config", "feature"],
+  ["context", "feature"],
+  ["drivers", "adapter"],
+  ["eval", "feature"],
+  ["integrations", "adapter"],
+  ["kernel", "kernel"],
+  ["mcp", "feature"],
+  ["memory", "feature"],
+  ["models", "feature"],
+  ["permissions", "feature"],
+  ["project-files", "feature"],
+  ["resources", "feature"],
+  ["services", "adapter"],
+  ["session", "feature"],
+  ["skills", "feature"],
+  ["slash-commands", "feature"],
+  ["ui", "presentation"],
 ]);
 
 const PERSISTENCE_FILES = new Set([
   "src/agents/process/store.ts",
   "src/session/store.ts",
 ]);
+
+const PRESENTATION_FEATURE_OWNERS = [
+  "src/project-files/",
+  "src/slash-commands/",
+];
 
 export function normalizeSourcePath(path) {
   return path.replaceAll("\\", "/").replace(/^\.\//, "");
@@ -18,33 +46,15 @@ export function normalizeSourcePath(path) {
 export function classifySource(path) {
   const normalized = normalizeSourcePath(path);
   if (DESIGNATED_COMPOSITION_ROOTS.has(normalized)) return "bootstrap";
-  if (normalized.startsWith("src/bootstrap/")) return "bootstrap";
-  if (normalized.startsWith("src/kernel/")) return "kernel";
-  if (normalized.startsWith("src/ui/")) return "presentation";
-  if (PERSISTENCE_FILES.has(normalized) || normalized.startsWith("src/checkpoint/")) {
-    return "persistence";
-  }
-  if (
-    normalized.startsWith("src/drivers/")
-    || normalized.startsWith("src/integrations/")
-    || normalized.startsWith("src/services/")
-  ) {
-    return "adapter";
-  }
-  if (
-    normalized.startsWith("src/core/")
-    || normalized.startsWith("src/application/")
-  ) {
-    return "application";
-  }
-  if (normalized.startsWith("src/")) return "feature";
-  return "external";
+  if (PERSISTENCE_FILES.has(normalized)) return "persistence";
+  if (!normalized.startsWith("src/")) return "external";
+  const root = normalized.slice("src/".length).split("/", 1)[0];
+  return SOURCE_ROOT_LAYERS.get(root) ?? "unknown";
 }
 
 export function isOwnerContract(path) {
   const normalized = normalizeSourcePath(path);
-  return normalized.endsWith("/types.ts")
-    && normalized !== "src/core/types.ts";
+  return normalized.endsWith("/types.ts");
 }
 
 function violation(rule, from, to, detail) {
@@ -57,7 +67,31 @@ function violation(rule, from, to, detail) {
   };
 }
 
-export function evaluateDependency(fromPath, toPath) {
+export function evaluateSourcePath(path) {
+  const normalized = normalizeSourcePath(path);
+  if (
+    normalized.startsWith("src/core/")
+    || normalized.startsWith("src/utils/")
+  ) {
+    return [violation(
+      "forbidden-catch-all-root",
+      normalized,
+      normalized,
+      "Source files must be owned by a specific Bootstrap, Kernel, Application, feature, adapter, persistence, or Presentation root.",
+    )];
+  }
+  if (classifySource(normalized) === "unknown") {
+    return [violation(
+      "unknown-source-root",
+      normalized,
+      normalized,
+      "Every top-level source root must have an explicit architecture classification.",
+    )];
+  }
+  return [];
+}
+
+export function evaluateDependency(fromPath, toPath, importMetadata = {}) {
   const from = normalizeSourcePath(fromPath);
   const to = normalizeSourcePath(toPath);
   if (from === to || !from.startsWith("src/") || !to.startsWith("src/")) return [];
@@ -65,6 +99,10 @@ export function evaluateDependency(fromPath, toPath) {
 
   const fromLayer = classifySource(from);
   const toLayer = classifySource(to);
+  const usesOwnerContract = importMetadata.typeOnly === true && isOwnerContract(to);
+  const usesPresentationFeature = PRESENTATION_FEATURE_OWNERS.some((prefix) =>
+    to.startsWith(prefix)
+  );
   const violations = [];
 
   if (fromLayer === "bootstrap" && fromLayer !== toLayer) {
@@ -88,7 +126,8 @@ export function evaluateDependency(fromPath, toPath) {
   if (
     fromLayer === "presentation"
     && !["presentation", "application", "kernel"].includes(toLayer)
-    && !isOwnerContract(to)
+    && !usesOwnerContract
+    && !usesPresentationFeature
   ) {
     violations.push(violation(
       "presentation-uses-application-ports",
@@ -110,22 +149,13 @@ export function evaluateDependency(fromPath, toPath) {
   if (
     fromLayer === "application"
     && toLayer === "adapter"
-    && !isOwnerContract(to)
+    && !usesOwnerContract
   ) {
     violations.push(violation(
       "application-uses-owner-ports",
       from,
       to,
       "Application coordination must depend on owner-defined ports instead of concrete adapters.",
-    ));
-  }
-
-  if (to === "src/core/types.ts" && from !== to) {
-    violations.push(violation(
-      "no-core-type-bag",
-      from,
-      to,
-      "Production modules must import contracts from their semantic owner.",
     ));
   }
 

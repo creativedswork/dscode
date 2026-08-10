@@ -2,7 +2,7 @@ import type {
   AgentProcessState,
   SerializedAgentProcess,
 } from "../../agents/process/types.js";
-import type { HarnessEvent } from "../../core/events.js";
+import type { HarnessEvent } from "../../application/events.js";
 import type {
   AgentActivity,
   AgentActivityProgress,

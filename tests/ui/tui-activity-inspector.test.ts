@@ -4,7 +4,7 @@ import {
   buildTuiInspectableActivities,
   selectCurrentActivity,
   TuiActivityInspector,
-} from "../../src/ui/tui-activity-inspector.js";
+} from "../../src/ui/tui/activity-inspector.js";
 import type { UIMessage } from "../../src/ui/shared/types.js";
 
 function stripAnsi(text: string): string {

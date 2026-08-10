@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import type { HarnessRule, RuleStore } from "./types.js";
 import { computeSeverity } from "./types.js";
 import type { EvalApplicationPort } from "../../application/harness-api.js";
-import type { Logger } from "../../utils/logger.js";
+import type { Logger } from "../../kernel/logger.js";
 import { runStructuredAgent } from "../chief/runner.js";
 import {
   validateMergeDecisions,

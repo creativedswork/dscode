@@ -16,7 +16,7 @@ import {
   consumePendingNotices,
   recordInvalidation,
 } from "../../../src/context/anchor-invalidation.js";
-import { Logger } from "../../../src/utils/logger.js";
+import { Logger } from "../../../src/kernel/logger.js";
 import { HostFacilityRegistry } from "../../../src/kernel/host-facilities.js";
 import {
   captureUndoSnapshot,

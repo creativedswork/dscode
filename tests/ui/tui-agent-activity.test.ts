@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { HarnessEventBus } from "../../src/core/events.js";
+import { HarnessEventBus } from "../../src/application/events.js";
 import type { AgentProcess } from "../../src/agents/process/types.js";
 import {
   ConversationView,
@@ -8,18 +8,18 @@ import {
   formatUserMessageForTui,
   TuiAgentActivityCard,
   TuiThinkingBlock,
-} from "../../src/ui/conversation.js";
+} from "../../src/ui/tui/conversation.js";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { createHarnessApiFixture } from "../helpers/harness-api.js";
 
-vi.mock("../../src/ui/tui-app.js", () => ({
+vi.mock("../../src/ui/tui/app.js", () => ({
   TuiApp: class {
     upsertAgentActivity = vi.fn();
     addInfo = vi.fn();
   },
 }));
 
-import { TuiBackend } from "../../src/ui/tui-backend.js";
+import { TuiBackend } from "../../src/ui/tui/backend.js";
 
 function processFixture(
   overrides: Partial<AgentProcess> = {},

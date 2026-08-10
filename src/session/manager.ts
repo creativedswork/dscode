@@ -15,8 +15,8 @@ import { SessionStore } from "./store.js";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import type { HarnessEventBus } from "../core/events.js";
-import type { Logger } from "../utils/logger.js";
+import type { HarnessEventBus } from "../application/events.js";
+import type { Logger } from "../kernel/logger.js";
 
 export interface LoadResult {
   success: boolean;

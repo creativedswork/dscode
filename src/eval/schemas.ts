@@ -3,7 +3,7 @@
 // All types map to the dscode session format: thinking → toolCall → toolResult.
 
 import type { SerializedSession } from "../session/types.js";
-import type { Logger } from "../utils/logger.js";
+import type { Logger } from "../kernel/logger.js";
 
 // ── Step 0: Parsed History Steps ──
 

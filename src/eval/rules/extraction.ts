@@ -1,5 +1,5 @@
 import type { EvalApplicationPort } from "../../application/harness-api.js";
-import type { Logger } from "../../utils/logger.js";
+import type { Logger } from "../../kernel/logger.js";
 import { runStructuredAgent } from "../chief/runner.js";
 import type { ChiefAttribution } from "../chief/types.js";
 import type { ChiefBacktrack, ChiefGraph, ChiefOracle } from "../chief/types.js";

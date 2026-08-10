@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 
 import { checkAgentCapability } from "../../../src/agents/process/capability.js";
 import { deriveAgentContext } from "../../../src/agents/process/context.js";
-import type { AgentApplicationSnapshot } from "../../../src/agents/application/types.js";
+import type { AgentApplicationSnapshot } from "../../../src/agents/definitions/types.js";
 import type { AgentContext } from "../../../src/agents/process/types.js";
 
 const parent: AgentContext = {

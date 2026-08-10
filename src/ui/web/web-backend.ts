@@ -15,7 +15,7 @@ import type {
   PendingPermission,
   SessionMetadata,
 } from "../../session/types.js";
-import { executeSlashCommand, getSlashCommandAutocomplete, resolveCustomCommand } from "../commands.js";
+import { executeSlashCommand, getSlashCommandAutocomplete, resolveCustomCommand } from "../../slash-commands/builtins.js";
 import type { HarnessAPI } from "../../application/harness-api.js";
 import type {
   McpAppResourceProxy,
@@ -25,10 +25,10 @@ import { AgentActivityProjector } from "../shared/agent-activity.js";
 import { harnessEventToConversationEvent } from "../shared/harness-conversation-adapter.js";
 import { formatAgentDisplayId } from "../shared/agent-id.js";
 import { serializeArtifactThemeVariables } from "../../application/artifact-theme.js";
-import { stageAttachedFiles } from "../shared/file-attachments.js";
+import { stageAttachedFiles } from "../../project-files/attachments.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
-import type { EvalDashboardState } from "../../core/events.js";
-import { isCanonicalPathWithin } from "../../application/path-safety.js";
+import type { EvalDashboardState } from "../../application/events.js";
+import { isCanonicalPathWithin } from "../../kernel/path-safety.js";
 import type {
   ClientCommand,
   ServerEvent,

@@ -18,11 +18,11 @@
     "LICENSE"
   ],
   "scripts": {
-    "start": "tsx --env-file=.env src/core/main.ts",
+    "start": "tsx --env-file=.env src/bootstrap/cli-main.ts",
     "build": "node scripts/build.mjs",
     "build:web": "cd web && npm run build",
     "ci:check": "npm run lockfile:check && rm -rf dist node_modules web/node_modules && npm ci && cd web && npm install && cd .. && npm run build && echo \"\n✅ CI check passed\"",
-    "dev:web": "tsx --env-file=.env src/core/main.ts --web & cd web && npm run dev",
+    "dev:web": "tsx --env-file=.env src/bootstrap/cli-main.ts --web & cd web && npm run dev",
     "package:verify": "node scripts/verify-package.mjs",
     "architecture:check": "node scripts/check-architecture.mjs",
     "architecture:baseline": "node scripts/check-architecture.mjs --write-baseline",

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createStandardAgentHost } from "../../src/bootstrap/create-standard-agent-host.js";
 import { AgentHostStartError } from "../../src/application/agent-host.js";
-import { loadConfig } from "../../src/core/config.js";
+import { loadConfig } from "../../src/config/loader.js";
 
 const temporaryDirectories: string[] = [];
 

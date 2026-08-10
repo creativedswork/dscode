@@ -15,7 +15,7 @@ import type {
 } from "../mcp/types.js";
 import type { MCPManager } from "../mcp/manager.js";
 import { mcpDriverName } from "../mcp/names.js";
-import type { HarnessEvent } from "../core/events.js";
+import type { HarnessEvent } from "../application/events.js";
 import type { ImageContent } from "@earendil-works/pi-ai";
 
 export interface McpControllerOptions {

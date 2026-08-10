@@ -1,5 +1,5 @@
-import type { HarnessEventBus } from "../../core/events.js";
-import type { Logger } from "../../utils/logger.js";
+import type { HarnessEventBus } from "../../application/events.js";
+import type { Logger } from "../../kernel/logger.js";
 import type {
   AgentProcessProgress,
   AgentRuntimeSnapshot,

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { HarnessEventBus } from "../../src/core/events.js";
+import { HarnessEventBus } from "../../src/application/events.js";
 import type { AgentProcess } from "../../src/agents/process/types.js";
 import { WebUiBackend } from "../../src/ui/web/web-backend.js";
 import { createHarnessApiFixture } from "../helpers/harness-api.js";

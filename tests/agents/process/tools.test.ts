@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ImageCache } from "../../../src/drivers/vision/cache.js";
-import type { AgentApplicationSummary } from "../../../src/agents/application/types.js";
+import type { AgentApplicationSummary } from "../../../src/agents/definitions/types.js";
 import type { AgentSupervisor } from "../../../src/agents/process/supervisor.js";
 import {
   AGENT_PROCESS_TOOL_NAMES,

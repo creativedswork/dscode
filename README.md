@@ -46,6 +46,12 @@ The CLI is assembled on the same reusable headless Agent Host used by internal
 tests. TUI/Web and process signal handling remain CLI adapters. This is an
 internal architecture boundary, not a published SDK or public npm API.
 
+Source ownership follows the same boundary: `src/application/` coordinates use
+cases, Agent authoring lives in `src/agents/definitions/`, Slash Commands and
+project files have dedicated feature roots, and TUI/Web live under
+`src/ui/tui/` and `src/ui/web/`. Skills and MCP remain independent sibling
+owners despite appearing together in the UI.
+
 </td>
 </tr>
 <tr>

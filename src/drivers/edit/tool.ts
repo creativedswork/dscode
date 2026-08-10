@@ -1,4 +1,4 @@
-import { getHostLogger } from "../../utils/logger.js";
+import { getHostLogger } from "../../kernel/logger.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, stat } from "node:fs/promises";
 import { resolveExecutionPath } from "../../kernel/execution-context.js";

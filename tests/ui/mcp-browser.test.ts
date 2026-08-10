@@ -12,8 +12,8 @@ import {
   reduceMcpBrowserState,
   renderMcpServerList,
   renderMcpToolList,
-} from "../../src/ui/mcp-browser.js";
-import type { McpBrowserState } from "../../src/ui/mcp-browser.js";
+} from "../../src/ui/tui/mcp-browser.js";
+import type { McpBrowserState } from "../../src/ui/tui/mcp-browser.js";
 import type { MCPServerState } from "../../src/mcp/types.js";
 
 function makeSkillTool() {

@@ -4,14 +4,14 @@ import { fileURLToPath } from "node:url";
 import { randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 
-import { loadConfig } from "../core/config.js";
+import { loadConfig } from "../config/loader.js";
 import {
   createStandardAgentHost,
   type StandardAgentHost,
 } from "./create-standard-agent-host.js";
-import { Logger } from "../utils/logger.js";
-import { PackageResourceProvider } from "../agents/application/package-resources.js";
-import type { IntegrationRuntimeOverride } from "../integrations/types.js";
+import { Logger } from "../kernel/logger.js";
+import { PackageResourceProvider } from "../agents/definitions/package-resources.js";
+import type { IntegrationRuntimeOverride } from "../integrations/open-design/types.js";
 import type { UiBackend } from "../ui/backend.js";
 import { resolveBuiltResource } from "../resources/runtime.js";
 
@@ -194,7 +194,7 @@ async function main(): Promise<void> {
     }
     ui = webUi;
   } else {
-    const { TuiBackend } = await import("../ui/tui-backend.js");
+    const { TuiBackend } = await import("../ui/tui/backend.js");
     ui = new TuiBackend(host.api);
   }
 

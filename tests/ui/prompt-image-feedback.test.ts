@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
-import { TuiApp } from "../../src/ui/tui-app.js";
+import { TuiApp } from "../../src/ui/tui/app.js";
 import { syncTextareaHeight } from "../../web/src/components/MessageInput.js";
 
 const ROOT = process.cwd();

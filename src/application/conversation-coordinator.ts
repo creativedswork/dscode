@@ -1,4 +1,4 @@
-import type { HarnessEvent } from "../core/events.js";
+import type { HarnessEvent } from "../application/events.js";
 import type { ImageContent } from "@earendil-works/pi-ai";
 
 export interface ConversationPromptOptions {

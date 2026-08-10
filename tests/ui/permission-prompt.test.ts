@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { PERM_OPTIONS, findPermOptionByKey, navigatePermSelection } from "../../src/ui/conversation.js";
-import { TuiApp, TuiProcessingStatus } from "../../src/ui/tui-app.js";
+import { PERM_OPTIONS, findPermOptionByKey, navigatePermSelection } from "../../src/ui/tui/conversation.js";
+import { TuiApp, TuiProcessingStatus } from "../../src/ui/tui/app.js";
 
 describe("permission prompt navigation", () => {
   it("reserves a normal layout row only while processing is visible", () => {

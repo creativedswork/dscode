@@ -3,11 +3,11 @@ import { join } from "node:path";
 
 import type { RuntimeConfig } from "../../config/types.js";
 import type { ManagedServiceController } from "../../services/types.js";
-import type { Logger } from "../../utils/logger.js";
+import type { Logger } from "../../kernel/logger.js";
 import type {
   IntegrationRuntimeOverride,
   IntegrationSettingsSource,
-} from "../types.js";
+} from "./types.js";
 import {
   applyOpenDesignOverride,
   expandOpenDesignPath,

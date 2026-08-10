@@ -5,13 +5,13 @@ import type {
   SpawnAgentRequest,
   SpawnAgentResult,
 } from "../agents/process/types.js";
-import type { CommandManifest } from "../commands/types.js";
+import type { CommandManifest } from "../slash-commands/types.js";
 import type {
   PublicRuntimeConfigSnapshot,
   RuntimeConfig,
 } from "../config/types.js";
 import type { UsageCategory } from "../context/manager.js";
-import type { HarnessEvent, HarnessEventType } from "../core/events.js";
+import type { HarnessEvent, HarnessEventType } from "../application/events.js";
 import type { MemoryEntry } from "../memory/types.js";
 import type { MCPServerState } from "../mcp/types.js";
 import type { PermissionRuleConfig } from "../permissions/types.js";

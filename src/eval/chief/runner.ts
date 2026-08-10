@@ -1,5 +1,5 @@
 import type { AgentProcessApplicationPort } from "../../application/harness-api.js";
-import type { Logger } from "../../utils/logger.js";
+import type { Logger } from "../../kernel/logger.js";
 import type { ValidationResult } from "../schemas.js";
 import type { ChiefStage } from "./workspace.js";
 

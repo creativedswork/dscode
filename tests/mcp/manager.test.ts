@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { Type } from "@earendil-works/pi-ai";
 
-import { buildMcpServers } from "../../src/ui/mcp-browser.js";
+import { buildMcpServers } from "../../src/ui/tui/mcp-browser.js";
 import { DriverRegistry } from "../../src/drivers/registry.js";
 import { ToolRegistry } from "../../src/drivers/tool-registry.js";
 import { makeDiscoveryDriver } from "../../src/drivers/discovery.js";

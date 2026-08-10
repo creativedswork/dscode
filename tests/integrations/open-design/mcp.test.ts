@@ -7,7 +7,7 @@ import type { RuntimeConfig } from "../../../src/config/types.js";
 import { prepareOpenDesignRuntime } from "../../../src/integrations/open-design/index.js";
 import { createOpenDesignMcpConfig } from "../../../src/integrations/open-design/mcp.js";
 import type { OpenDesignIntegrationConfig } from "../../../src/integrations/open-design/types.js";
-import type { IntegrationRuntimeOverride } from "../../../src/integrations/types.js";
+import type { IntegrationRuntimeOverride } from "../../../src/integrations/open-design/types.js";
 import type { ManagedServiceController, ManagedServiceHandle } from "../../../src/services/types.js";
 
 const roots: string[] = [];

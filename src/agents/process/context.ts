@@ -1,4 +1,4 @@
-import type { AgentApplicationSnapshot } from "../application/types.js";
+import type { AgentApplicationSnapshot } from "../definitions/types.js";
 import type { AgentAttachment, AgentContext } from "./types.js";
 
 const MUTATING_TOOLS = new Set([

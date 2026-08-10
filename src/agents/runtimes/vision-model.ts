@@ -1,4 +1,4 @@
-import type { AgentApplicationSnapshot } from "../application/types.js";
+import type { AgentApplicationSnapshot } from "../definitions/types.js";
 import type { VisionConfig } from "../../drivers/vision/types.js";
 
 export interface VisionModelResolutionConfig {

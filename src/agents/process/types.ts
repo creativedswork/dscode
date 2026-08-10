@@ -1,4 +1,4 @@
-import type { AgentApplicationSnapshot } from "../application/types.js";
+import type { AgentApplicationSnapshot } from "../definitions/types.js";
 import type {
   AgentAttachment as AgentInputAttachment,
   AgentProcessRuntime,

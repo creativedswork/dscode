@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { Agent as PiAgentRuntime } from "@earendil-works/pi-agent-core";
 
-import { AgentApplicationRegistry } from "../agents/application/registry.js";
+import { AgentApplicationRegistry } from "../agents/definitions/registry.js";
 import { AgentProcessStore } from "../agents/process/store.js";
 import type {
   HarnessAPI,
@@ -12,7 +12,7 @@ import {
   AgentHostStartError,
   type AgentHostState,
 } from "../application/agent-host.js";
-import type { AgentDefinition } from "../agents/application/types.js";
+import type { AgentDefinition } from "../agents/definitions/types.js";
 import type { McpAppResourceProxy } from "../mcp/app/types.js";
 import { SettingsRepository } from "../config/settings-repository.js";
 import { RuntimeConfigStore } from "../config/runtime-config-store.js";
@@ -22,12 +22,12 @@ import { ContextManager } from "../context/manager.js";
 import {
   loadConfig,
   projectSettingsPath,
-} from "../core/config.js";
+} from "../config/loader.js";
 import {
   Harness,
   type HarnessDependencies,
-} from "../core/harness.js";
-import { HarnessEventBus } from "../core/events.js";
+} from "../application/harness.js";
+import { HarnessEventBus } from "../application/events.js";
 import { makeDiscoveryDriver } from "../drivers/discovery.js";
 import { DriverRegistry } from "../drivers/registry.js";
 import { ToolRegistry } from "../drivers/tool-registry.js";
@@ -38,12 +38,12 @@ import { MemoryManager } from "../memory/manager.js";
 import { PermissionManager } from "../permissions/manager.js";
 import { SessionManager } from "../session/manager.js";
 import { SkillManager } from "../skills/manager.js";
-import { CommandManager } from "../commands/manager.js";
-import { HOST_LOGGER_FACILITY, type Logger } from "../utils/logger.js";
+import { CommandManager } from "../slash-commands/manager.js";
+import { HOST_LOGGER_FACILITY, type Logger } from "../kernel/logger.js";
 import { ServiceSupervisor } from "../services/service-supervisor.js";
 import { prepareOpenDesignRuntime } from "../integrations/open-design/index.js";
-import { createIntegrationSettingsSource } from "../integrations/settings-source.js";
-import type { IntegrationRuntimeOverride } from "../integrations/types.js";
+import { createIntegrationSettingsSource } from "../integrations/open-design/settings.js";
+import type { IntegrationRuntimeOverride } from "../integrations/open-design/types.js";
 import { HostFacilityRegistry } from "../kernel/host-facilities.js";
 import {
   CHECKPOINT_FACILITY,

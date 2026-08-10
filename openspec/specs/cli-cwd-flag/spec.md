@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: CLI --cwd flag sets startup working directory
-The CLI entry point in `src/core/main.ts` SHALL accept a `--cwd <path>` option. When provided, the resolved absolute path SHALL be used as the startup working directory (`startupPath` / `projectPath`), taking precedence over the `DSCODE_PROJECT_PATH` environment variable and `process.cwd()`.
+The CLI entry point in `src/bootstrap/cli-main.ts` SHALL accept a `--cwd <path>` option. When provided, the resolved absolute path SHALL be used as the startup working directory (`startupPath` / `projectPath`), taking precedence over the `DSCODE_PROJECT_PATH` environment variable and `process.cwd()`.
 
 #### Scenario: --cwd with valid absolute path
 - **WHEN** dscode is invoked as `dscode --cwd /home/user/myproject`
@@ -37,7 +37,7 @@ The CLI entry point in `src/core/main.ts` SHALL accept a `--cwd <path>` option. 
 - **THEN** behavior SHALL be unchanged: `startupPath` resolves from `DSCODE_PROJECT_PATH` or `process.cwd()` as before
 
 ### Requirement: loadConfig accepts optional cliCwd parameter
-The `loadConfig()` function in `src/core/config.ts` SHALL accept an optional `cliCwd?: string` parameter. When `cliCwd` is provided and non-empty, it SHALL be resolved and used as `startupPath` instead of the `DSCODE_PROJECT_PATH` / `process.cwd()` fallback chain.
+The `loadConfig()` function in `src/config/loader.ts` SHALL accept an optional `cliCwd?: string` parameter. When `cliCwd` is provided and non-empty, it SHALL be resolved and used as `startupPath` instead of the `DSCODE_PROJECT_PATH` / `process.cwd()` fallback chain.
 
 #### Scenario: cliCwd provided
 - **WHEN** `loadConfig({ cliCwd: "/home/user/myproject" })` is called

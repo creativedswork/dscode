@@ -10,7 +10,7 @@ import { homedir } from "node:os";
 import type { ImageContent } from "@earendil-works/pi-ai";
 
 import { getHostFacility } from "../../kernel/execution-context.js";
-import { Logger } from "../../utils/logger.js";
+import { Logger } from "../../kernel/logger.js";
 import type { ImageRef } from "./types.js";
 
 const DEFAULT_CACHE_DIR = join(homedir(), ".dscode", "data", "images");

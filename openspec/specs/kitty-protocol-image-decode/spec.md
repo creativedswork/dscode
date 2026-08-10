@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Decode Kitty image protocol payload from paste events
-The system SHALL decode base64-encoded image data from Kitty terminal graphics protocol APC sequences received as paste input, instead of discarding the data and falling back to system clipboard. Decoding SHALL happen in `handleKittyImageProtocol` in `src/ui/tui-app.ts`.
+The system SHALL decode base64-encoded image data from Kitty terminal graphics protocol APC sequences received as paste input, instead of discarding the data and falling back to system clipboard. Decoding SHALL happen in `handleKittyImageProtocol` in `src/ui/tui/app.ts`.
 
 The Kitty APC sequence format is: `ESC _ G <key>=<value>,... ; <base64> ESC \`
 - `f=24` indicates PNG format

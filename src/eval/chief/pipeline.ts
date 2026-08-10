@@ -1,6 +1,6 @@
 import type { EvalApplicationPort } from "../../application/harness-api.js";
 import { formatAgentDisplayId } from "../format.js";
-import type { Logger } from "../../utils/logger.js";
+import type { Logger } from "../../kernel/logger.js";
 import type { CausalGraphSnapshot } from "../schemas.js";
 import { attributeRulesWithAgent } from "../rules/extraction.js";
 import type { HarnessRule } from "../rules/types.js";
