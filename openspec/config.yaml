@@ -14,13 +14,21 @@ context: |
      prototype artifact exists. Load `prototype-workflow` (which loads
      `html-output`) and use `docs/prototypes/README.md` for constraints.
 
-  2. **explore options → prototypes** (behavioral rule for explore mode):
+  2. **prototype lifecycle** (apply + archive):
+     `docs/prototypes/` is a staging directory. After implementation, apply
+     MUST classify each HTML prototype as `archive` or `delete`. Disposable
+     prototypes are deleted immediately; durable, current design evidence is
+     moved during archive to
+     `docs/prototypes/archive/YYYY-MM-DD-<change-name>/`. The retention
+     decision and rationale are recorded in the change's `prototype.md`.
+
+  3. **explore options → prototypes** (behavioral rule for explore mode):
     When exploring a problem and multiple approaches emerge, do NOT ask the user
     "which one?" — instead, create visual comparisons (ASCII diagrams for
     architecture/logic, HTML prototypes for UI/frontend) showing each option
     side-by-side. The user compares with their eyes, not their imagination.
 
-  3. **consolidate** (pre-archive, auto-triggered):
+  4. **consolidate** (pre-archive, auto-triggered):
      Before archiving, merge the current proposal with related archived change
      proposals into a unified narrative (consolidate.md). Scans archive/ for
      related changes by topic/keywords. Always generated — even if no related

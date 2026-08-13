@@ -3,9 +3,14 @@ import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 
 import { resolveRuntimeResource } from "../../resources/runtime.js";
-import type { AppInstance, McpUiResourceCsp, McpUiResourcePermissions } from "./types.js";
+import type {
+  AppInstance,
+  McpAppResourceProxy,
+  McpUiResourceCsp,
+  McpUiResourcePermissions,
+} from "./types.js";
 import type { MCPManager } from "../manager.js";
-import { generateMdxRuntimeBundle } from "../../ui/mdx/runtime-bundle.js";
+import { generateMdxRuntimeBundle } from "./runtime-bundle.js";
 
 function findSandboxPath(): string {
   return resolveRuntimeResource("mcp", "sandbox.html");
@@ -50,7 +55,7 @@ function readBody(req: http.IncomingMessage): Promise<string> {
   });
 }
 
-export class AppHostManager {
+export class AppHostManager implements McpAppResourceProxy {
   private server: http.Server | null = null;
   private port = 0;
   private apps = new Map<string, AppInstance>();
@@ -96,6 +101,13 @@ export class AppHostManager {
   unregisterApp(id: string): void { this.apps.delete(id); }
 
   getApp(id: string): AppInstance | undefined { return this.apps.get(id); }
+
+  resolveAppUrl(appId: string, suffix: string): string | undefined {
+    const app = this.apps.get(appId);
+    if (!app) return undefined;
+    const base = new URL(app.localUrl);
+    return `${base.origin}${suffix || `/app/${appId}`}`;
+  }
 
   pushToApp(appId: string, message: object): void {
     const clients = this.sseClients.get(appId);

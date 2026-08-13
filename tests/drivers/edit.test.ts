@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect } from "vitest";
 import { readFileSync, writeFileSync, unlinkSync, existsSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -12,6 +12,42 @@ import {
   ANCHOR_FORMAT_VERSION,
 } from "../../src/drivers/edit/hash.js";
 import { editTool } from "../../src/drivers/edit/index.js";
+import {
+  bindExecutionContext,
+} from "../../src/kernel/execution-context.js";
+import { HostFacilityRegistry } from "../../src/kernel/host-facilities.js";
+import {
+  UNDO_STORE_FACILITY,
+  UndoSnapshotStore,
+} from "../../src/drivers/edit/undo-store.js";
+import {
+  ANCHOR_INVALIDATION_FACILITY,
+  AnchorInvalidationStore,
+} from "../../src/context/anchor-invalidation.js";
+
+let releaseExecutionContext: (() => void) | undefined;
+
+beforeEach(() => {
+  const facilities = new HostFacilityRegistry()
+    .register(UNDO_STORE_FACILITY, new UndoSnapshotStore())
+    .register(
+      ANCHOR_INVALIDATION_FACILITY,
+      new AnchorInvalidationStore(),
+    );
+  releaseExecutionContext = bindExecutionContext({
+    hostId: "edit-test-host",
+    processId: "edit-test-process",
+    sessionId: "edit-test-session",
+    application: "edit-test",
+    cwd: tmpdir(),
+    facilities,
+  });
+});
+
+afterEach(() => {
+  releaseExecutionContext?.();
+  releaseExecutionContext = undefined;
+});
 
 // --- computeLineHash ---
 

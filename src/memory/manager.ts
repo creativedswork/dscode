@@ -1,4 +1,4 @@
-import type { MemoryConfig, MemoryEntry } from "../core/types.js";
+import type { MemoryConfig, MemoryEntry } from "./types.js";
 import { MemoryStore } from "./store.js";
 
 function memoryId(): string {
@@ -16,6 +16,10 @@ export class MemoryManager {
 
   updateProjectPath(dataDir: string, projectPath: string): void {
     this.store = new MemoryStore(dataDir, projectPath);
+  }
+
+  updateConfig(config: MemoryConfig): void {
+    this.config = config;
   }
 
   getRelevantMemories(): string {

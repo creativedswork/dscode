@@ -1,7 +1,7 @@
-import { Logger } from "../../utils/logger.js";
+import { getHostLogger } from "../../kernel/logger.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile, stat } from "node:fs/promises";
-import { resolveAgentPath } from "../../agents/process/context.js";
+import { resolveExecutionPath } from "../../kernel/execution-context.js";
 
 async function fileExists(path: string): Promise<boolean> {
   try {
@@ -38,7 +38,11 @@ import {
 import { captureUndoSnapshot } from "./undo-store.js";
 import { validateSyntax, isSyntaxCheckSupported } from "./syntax-validate.js";
 
-const _editLogger = new Logger({ type: "harness", id: process.env.DSCODE_RUNTIME_ID ?? "unknown" });
+const _editLogger = {
+  warn(tag: string, message: string): void {
+    getHostLogger()?.warn(tag, message);
+  },
+};
 
 const editParams = Type.Object({
   path: Type.String({ description: "Absolute path of the file to edit" }),
@@ -193,7 +197,7 @@ export const editTool: AgentTool<typeof editParams> = {
     if (file_path && !path) {
       _editLogger.warn('Edit', 'file_path is deprecated, use path instead');
     }
-    const resolved = resolveAgentPath(effectivePath);
+    const resolved = resolveExecutionPath(effectivePath);
 
     if (!(await fileExists(resolved))) {
       return {

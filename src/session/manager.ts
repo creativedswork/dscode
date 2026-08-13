@@ -7,14 +7,16 @@ import type {
   SerializedSession,
   SessionMetadata,
   VisionMessage,
-} from "../core/types.js";
-import { ImageCache } from "../utils/image-cache.js";
+  PendingPermission,
+} from "./types.js";
+import { ImageCache } from "../drivers/vision/cache.js";
+import type { ImageStorePort } from "../drivers/vision/types.js";
 import { SessionStore } from "./store.js";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
-import type { HarnessEventBus } from "../core/events.js";
-import type { Logger } from "../utils/logger.js";
+import type { HarnessEventBus } from "../application/events.js";
+import type { Logger } from "../kernel/logger.js";
 
 export interface LoadResult {
   success: boolean;
@@ -69,6 +71,7 @@ export function computeSessionContentHash(
     .map((message) => ({
       agentId: message.agentId,
       application: message.application,
+      description: message.description,
       state: message.state,
       prompt: message.input.prompt,
       output: message.output?.text,
@@ -206,7 +209,10 @@ function isTitleBetter(current: string, candidate: string): boolean {
  * Mutates the message in-place: removes `images` field and injects
  * ImageContent blocks back into `content`.
  */
-async function restoreImagesFromCache(msg: any): Promise<void> {
+async function restoreImagesFromCache(
+  msg: any,
+  imageStore: ImageStorePort,
+): Promise<void> {
   const refs = msg.images as any[] | undefined;
   if (!refs || refs.length === 0) return;
 
@@ -218,7 +224,7 @@ async function restoreImagesFromCache(msg: any): Promise<void> {
       continue;
     }
     // Handle ImageRef format ({type: "image_ref", hash, mimeType}) — restore from cache
-    const cached = await ImageCache.get(ref);
+    const cached = await imageStore.get(ref);
     if (cached) {
       restored.push(cached);
     }
@@ -240,11 +246,18 @@ export class SessionManager {
   private _legacyVisionMessages: VisionMessage[] = [];
   private accumulatedMs = 0;
   private activeSince: number | null = null;
+  private readonly imageStore: ImageStorePort;
 
-  constructor(dataDir: string, projectPath: string, logger: Logger) {
+  constructor(
+    dataDir: string,
+    projectPath: string,
+    logger: Logger,
+    imageStore: ImageStorePort = ImageCache,
+  ) {
     this.logger = logger;
     this.projectPath = projectPath;
     this.store = new SessionStore(dataDir, projectPath);
+    this.imageStore = imageStore;
   }
 
   get agentMessages(): AgentSessionMessage[] {
@@ -361,7 +374,7 @@ export class SessionManager {
     this.events?.emit({ type: "session:saved", id: this.current!.id });
   }
 
-  saveSession(agent: PiAgentRuntime, pendingPermission?: import("../core/types.js").PendingPermission): void {
+  saveSession(agent: PiAgentRuntime, pendingPermission?: PendingPermission): void {
     if (!this.current) return;
     const messages = agent.state.messages as any[];
     if (messages.length === 0) return;
@@ -411,10 +424,14 @@ export class SessionManager {
 
       // Cache images synchronously and store references instead of inline base64
       copy.images = imageBlocks.map((b: any) => {
-        const ref = ImageCache.putSync({ type: "image", data: b.data, mimeType: b.mimeType ?? "image/png" });
+        const ref = this.imageStore.putSync({
+          type: "image",
+          data: b.data,
+          mimeType: b.mimeType ?? "image/png",
+        });
         return { type: "image_ref" as const, hash: ref.hash, mimeType: ref.mimeType };
       });
-      copy.content = copy.content.filter((b: any) => b.type !== "image");
+      copy.content  = copy.content.filter((b: any) => b.type !== "image");
       return copy;
     });
 
@@ -442,7 +459,7 @@ export class SessionManager {
     this.events?.emit({ type: "session:saved", id: this.current!.id });
   }
 
-  trySaveSession(agent: PiAgentRuntime, pendingPermission?: import("../core/types.js").PendingPermission): void {
+  trySaveSession(agent: PiAgentRuntime, pendingPermission?: PendingPermission): void {
     try {
       this.saveSession(agent, pendingPermission);
     } catch (err) {
@@ -455,7 +472,7 @@ export class SessionManager {
     const messages = session.messages as any[];
 
     for (const message of messages) {
-      await restoreImagesFromCache(message);
+      await restoreImagesFromCache(message, this.imageStore);
     }
 
     return {
@@ -592,5 +609,10 @@ export class SessionManager {
 
   getCurrentMetadata(): SessionMetadata | null {
     return this.current;
+  }
+
+  setPendingPermission(pendingPermission: PendingPermission | undefined): void {
+    if (!this.current) return;
+    this.current.pendingPermission = pendingPermission;
   }
 }

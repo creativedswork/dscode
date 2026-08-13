@@ -1,0 +1,6 @@
+schema: spec-driven-plus
+created: 2026-08-09
+goal: Replace concrete cross-layer leakage with owner-defined contracts, narrow
+  application ports, enforceable dependency rules, and an instance-isolated
+  standard Agent Host boundary without changing user-visible behavior or
+  publishing an SDK in this change.

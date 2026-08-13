@@ -145,29 +145,3 @@ export class SnapshotStore {
     if (idx >= 0) this.lruKeys.splice(idx, 1);
   }
 }
-
-// --- Singleton access ---
-
-let _snapshotStore: SnapshotStore | null = null;
-
-export function initSnapshotStore(opts?: {
-  maxSnapshotsPerFile?: number;
-  maxTotalSnapshots?: number;
-}): SnapshotStore {
-  _snapshotStore = new SnapshotStore(
-    opts?.maxSnapshotsPerFile ?? 5,
-    opts?.maxTotalSnapshots ?? 500,
-  );
-  return _snapshotStore;
-}
-
-export function getSnapshotStore(): SnapshotStore | null {
-  return _snapshotStore;
-}
-
-export function shutdownSnapshotStore(): void {
-  if (_snapshotStore) {
-    _snapshotStore.clear();
-    _snapshotStore = null;
-  }
-}

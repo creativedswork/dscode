@@ -118,7 +118,7 @@ The Eval view SHALL present starting, long-running and failed states outside the
 
 ### Requirement: Eval view follows the approved prototype
 
-The WebUI Eval presentation SHALL follow `docs/prototypes/show-eval-dashboard-in-webui-embedded-report.html`, including the always-visible shell-level three-mode navigation, Eval-only main area, target/run metadata toolbar, starting/running/completed/failed states, read-only footer and responsive behavior. Starting, Running and Failed SHALL fill the available Chat main-area width and height using the same outer gutter as ChatView rather than a fixed-width centered card. It SHALL NOT render explanatory Chat or Session Dashboard placeholder pages inside the Eval main area.
+The WebUI Eval presentation SHALL follow `docs/prototypes/archive/2026-08-05-show-eval-dashboard-in-webui/show-eval-dashboard-in-webui-embedded-report.html`, including the always-visible shell-level three-mode navigation, Eval-only main area, target/run metadata toolbar, starting/running/completed/failed states, read-only footer and responsive behavior. Starting, Running and Failed SHALL fill the available Chat main-area width and height using the same outer gutter as ChatView rather than a fixed-width centered card. It SHALL NOT render explanatory Chat or Session Dashboard placeholder pages inside the Eval main area.
 
 #### Scenario: Eval mode owns the main area
 

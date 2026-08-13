@@ -40,7 +40,10 @@ The system SHALL provide a `HarnessEventBus` class with a discriminated union ev
 
 ### Requirement: HarnessEvent complete event catalog
 
-The `HarnessEvent` discriminated union SHALL include all event types in the catalog: LLM streaming (`llm:thinking:delta`, `llm:text:delta`, `llm:retry`, `llm:usage`), Tool (`tool:start`, `tool:end`), Turn lifecycle (`turn:start`, `turn:streaming:start`, `turn:streaming:end`, `turn:end`, `turn:abort`, `turn:error`), Processing (`processing:start`, `processing:stop`), Session (`session:created`, `session:loaded`, `session:saved`, `session:deleted`), UI (`message:user`, `ui:info`, `ui:error`, `ui:warning`, `ui:image:pending`, `ui:conversation:clear`, `ui:focus:editor`), Config (`config:change`), and MCP (`mcp:state`, `mcp:browser:open`, `mcp:app:registered`).
+The Application event catalog SHALL compose owner-defined payload contracts for
+LLM, Tool, Turn, Processing, Session, UI notification, Config, MCP, Agent
+Process, and Eval events. Presentation SHALL project these payloads rather than
+features importing UI models.
 
 #### Scenario: Discriminated union type-checking
 
@@ -86,14 +89,34 @@ The `turn:abort` event SHALL include a `reason` field with value `"user"` or `"s
 
 ### Requirement: HarnessEventBus ownership and lifecycle
 
-The `HarnessEventBus` SHALL be created by `Harness` in its constructor as `this.events`. It SHALL be exposed to consumers via `HarnessAPI.events`. The bus SHALL exist for the full lifetime of the Harness instance — no start/stop lifecycle.
+The concrete `HarnessEventBus` SHALL be created by Bootstrap and injected into
+Harness for the lifetime of one Agent Host. Internal coordinators SHALL publish
+through the event bus; HarnessAPI consumers SHALL receive only its subscribe-only
+event-source port.
 
-#### Scenario: Harness creates event bus
+#### Scenario: Composition Root creates event bus
 
-- **WHEN** `new Harness(config)` is called
-- **THEN** `this.events` SHALL be a new `HarnessEventBus` instance
+- **WHEN** Bootstrap assembles an Agent Host
+- **THEN** it SHALL create the concrete event bus before Harness and UI adapters
 
 #### Scenario: Event bus accessible via HarnessAPI
 
 - **WHEN** a consumer accesses `harness.events`
-- **THEN** it SHALL receive the `HarnessEventBus` instance without type errors
+- **THEN** it SHALL receive the subscribe-only event source
+- **AND** SHALL not be able to emit or clear events
+
+### Requirement: Event payloads are presentation-neutral
+
+Application and feature event modules MUST NOT import `src/ui/`, Web protocol
+types, or TUI models.
+
+#### Scenario: MCP connection state is emitted
+
+- **WHEN** MCP publishes connection state
+- **THEN** the event SHALL carry an MCP-owned snapshot
+- **AND** Presentation SHALL derive Web and TUI models
+
+#### Scenario: Architecture check scans event modules
+
+- **WHEN** an event contract imports a Presentation type
+- **THEN** architecture verification SHALL fail

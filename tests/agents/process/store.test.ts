@@ -15,6 +15,66 @@ afterEach(async () => {
 });
 
 describe("AgentProcessStore", () => {
+  it("keeps an existing Agent bound to its creation project after switching", async () => {
+    const dataDir = await mkdtemp(join(tmpdir(), "dscode-process-store-"));
+    temporaryDirectories.push(dataDir);
+    const store = new AgentProcessStore(dataDir, "/project-a");
+    const process: AgentProcess = {
+      agentId: "agent-old-project",
+      parentSessionId: "session-1",
+      application: {
+        name: "general",
+        description: "General",
+        systemPrompt: "Prompt",
+        source: { kind: "bundled" as const, path: "general.md" },
+        digest: "a".repeat(64),
+        registryGeneration: 1,
+      },
+      role: "subagent" as const,
+      state: "running" as const,
+      attachment: "background" as const,
+      recording: "process-only" as const,
+      contextMode: "minimal" as const,
+      context: {
+        agentId: "agent-old-project",
+        cwd: "/project-a",
+        parentSessionId: "session-1",
+        depth: 1,
+        attachment: "background" as const,
+        allowedTools: [],
+        deniedTools: [],
+      },
+      runtime: {
+        capabilities: { suspend: false, messaging: false },
+        async start() { return { text: "" }; },
+        async terminate() {},
+        kill() {},
+      },
+      createdAt: 1,
+    };
+
+    await store.save(process);
+    store.updateProjectPath("/project-b");
+    process.state = "completed";
+    await store.save(process);
+
+    const directories = await readdir(
+      join(dataDir, "agent-processes", "by-project"),
+    );
+    expect(directories).toHaveLength(1);
+    const record = JSON.parse(await readFile(
+      join(
+        dataDir,
+        "agent-processes",
+        "by-project",
+        directories[0],
+        `${process.agentId}.json`,
+      ),
+      "utf8",
+    ));
+    expect(record.state).toBe("completed");
+  });
+
   it("atomically persists versioned metadata without serializing Runtime", async () => {
     const dataDir = await mkdtemp(join(tmpdir(), "dscode-process-store-"));
     temporaryDirectories.push(dataDir);
@@ -23,6 +83,7 @@ describe("AgentProcessStore", () => {
       agentId: "agent-1",
       parentAgentId: "main-1",
       parentSessionId: "session-1",
+      description: "Researcher: inspect implementation",
       application: {
         name: "general",
         description: "General",
@@ -66,6 +127,7 @@ describe("AgentProcessStore", () => {
       version: 1,
       agentId: "agent-1",
       recording: "process-only",
+      description: "Researcher: inspect implementation",
       application: {
         digest: "a".repeat(64),
         registryGeneration: 2,
@@ -84,6 +146,7 @@ describe("AgentProcessStore", () => {
     expect(JSON.parse(indexRaw)).toEqual([
       expect.objectContaining({
         agentId: "agent-1",
+        description: "Researcher: inspect implementation",
         state: "completed",
         recording: "process-only",
       }),

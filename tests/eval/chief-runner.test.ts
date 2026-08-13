@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { AgentSupervisor } from "../../src/agents/process/supervisor.js";
 import type { SpawnAgentRequest } from "../../src/agents/process/types.js";
 import {
   runStructuredAgent,
@@ -26,10 +25,10 @@ function host(outputs: Array<{ state?: string; output?: string; error?: string }
   });
   return {
     value: {
-      agentSupervisor: {
+      agents: {
         list: () => [{ role: "main", agentId: "main-1" }],
         spawn,
-      } as unknown as AgentSupervisor,
+      },
     },
     spawn,
   };

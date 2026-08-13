@@ -42,6 +42,16 @@ dscode is designed as an operating system for Agents: the Harness is the Kernel,
 
 **Applications are configured. Agents are processes. Sessions are TTYs.**
 
+The CLI is assembled on the same reusable headless Agent Host used by internal
+tests. TUI/Web and process signal handling remain CLI adapters. This is an
+internal architecture boundary, not a published SDK or public npm API.
+
+Source ownership follows the same boundary: `src/application/` coordinates use
+cases, Agent authoring lives in `src/agents/definitions/`, Slash Commands and
+project files have dedicated feature roots, and TUI/Web live under
+`src/ui/tui/` and `src/ui/web/`. Skills and MCP remain independent sibling
+owners despite appearing together in the UI.
+
 </td>
 </tr>
 <tr>
@@ -158,7 +168,7 @@ discovery priority, and process tools, or read the full
 ## MCP in 30 seconds
 
 ```jsonc
-// ~/.dscode/settings.json
+// ~/.mcp.json
 {
   "mcpServers": {
     "blender": {
@@ -173,7 +183,11 @@ discovery priority, and process tools, or read the full
 }
 ```
 
-dscode auto-connects on launch. Tools appear as `mcp_blender_*` and `mcp_playwright_*`. MCP servers can also serve sandboxed UI via the App Host — no boilerplate, no SDK, no glue code.
+dscode auto-connects on launch. Tools appear as `mcp__blender__*` and
+`mcp__playwright__*`. Agent.md Applications can allow an exact connected tool,
+such as `tools: [mcp__github__search_repos]`; MCP Server definitions remain in
+`.mcp.json`. MCP servers can also serve sandboxed UI via the App Host — no
+boilerplate, no SDK, no glue code.
 
 ### See what MCP can do
 
@@ -228,19 +242,13 @@ dscode uses two levels of `settings.json`, merged with project settings overridi
 ```jsonc
 // ~/.dscode/settings.json
 {
-  // --- MCP Servers ---
-  "mcpServers": {
-    "blender": {
-      "command": "uvx",
-      "args": ["blender-mcp"]
-    },
-    "playwright": {
-      "command": "npx",
-      "args": ["@anthropic/mcp-playwright"]
-    },
-    "my-api": {
-      "url": "https://my-mcp.example.com/mcp",
-      "headers": { "Authorization": "Bearer <token>" }
+  // --- External Integrations ---
+  "integrations": {
+    "openDesign": {
+      "enabled": true,
+      "path": "/path/to/open-design",
+      "port": 7456,
+      "autoStart": true
     }
   },
 
@@ -289,6 +297,25 @@ dscode uses two levels of `settings.json`, merged with project settings overridi
 
 ### MCP server config
 
+MCP servers use user-level `~/.mcp.json` or project-level `.mcp.json`, not the
+Open Design integration object in `settings.json`:
+
+```jsonc
+{
+  "mcpServers": {
+    "blender": {
+      "command": "uvx",
+      "args": ["blender-mcp"],
+      "env": { "BLENDER_HOST": "127.0.0.1" }
+    },
+    "my-api": {
+      "url": "https://my-mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```
+
 Each server under `mcpServers` supports:
 
 | Field | Type | Description |
@@ -296,7 +323,7 @@ Each server under `mcpServers` supports:
 | `command` | string | Executable (for stdio transport) |
 | `args` | string[] | Arguments passed to the command |
 | `url` | string | HTTP endpoint (for streamable-http transport) |
-| `env` | object | Extra environment variables for the server process |
+| `env` | object | Extra environment variables passed only to this MCP server process |
 | `headers` | object | Custom HTTP headers |
 | `transport` | string | `"stdio"` \| `"streamable-http"` \| `"sse"` (auto-detected if omitted) |
 | `preferredProtocolVersion` | string | `"2025-11-25"` \| `"2025-03-26"` \| `"2024-11-05"` |
@@ -307,7 +334,8 @@ Each server under `mcpServers` supports:
 
 ### Environment variables
 
-All settings can also be set via environment variables for CI / containers:
+Some runtime settings have dedicated environment-variable overrides for CI and
+containers. `settings.json` does not have a generic `env` field:
 
 | Variable | Setting |
 |----------|---------|
@@ -326,6 +354,8 @@ All settings can also be set via environment variables for CI / containers:
 | `DSCODE_RETRY_MAX_RETRIES` | Retry max retries |
 | `DSCODE_RETRY_BASE_DELAY_MS` | Retry base delay |
 | `DSCODE_RETRY_MAX_DELAY_MS` | Retry max delay |
+| `OPEN_DESIGN_DIR` | Legacy Open Design repository path fallback |
+| `OD_PORT` | Legacy Open Design daemon port fallback (default: `7456`) |
 
 ---
 
@@ -349,23 +379,95 @@ cd open-design
 npm install
 ```
 
-Then configure the MCP server in `~/.dscode/settings.json`:
+### Recommended configuration: settings.json
+
+Enable the integration in user-level `~/.dscode/settings.json` or project-level
+`.dscode/settings.json`:
 
 ```jsonc
 {
-  "mcpServers": {
-    "open-design": {
-      "command": "npx",
-      "args": [
-        "tsx",
-        "/path/to/open-design/apps/daemon/src/cli.ts",
-        "mcp",
-        "--daemon-url",
-        "http://127.0.0.1:7456"
-      ]
+  "integrations": {
+    "openDesign": {
+      "enabled": true,
+      "path": "/path/to/open-design",
+      "port": 7456,
+      "autoStart": true
     }
   }
 }
+```
+
+Open Design uses the typed `path` and `port` fields above. Do not place
+`OPEN_DESIGN_DIR` or `OD_PORT` in an `env` object in `settings.json`;
+`mcpServers.<name>.env` belongs to `.mcp.json` and only configures that MCP child
+process.
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `false` | Contribute the Open Design MCP server and enable the integration |
+| `path` | none | Local Open Design repository path; `~` is supported |
+| `port` | `7456` | Daemon port and MCP proxy target |
+| `autoStart` | `true` | Ask dscode to ensure the daemon is running |
+
+Project fields override matching user fields. Set `autoStart: false` when the
+daemon is managed externally. In that mode, dscode contributes the MCP proxy
+but does not start or stop the daemon.
+
+### Compatibility configuration: .env
+
+Existing `.env` setups remain supported:
+
+```bash
+cp .env.example .env
+```
+
+```dotenv
+OPEN_DESIGN_DIR=~/Workspace/DeepSeekSpace/open-design
+OD_PORT=7456
+```
+
+Start dscode with the one-run compatibility flag:
+
+```bash
+dscode --with-od
+# Development checkout:
+node ./dist/dscode.mjs --with-od
+```
+
+The compatibility values provide `path` and `port`; `--with-od` enables the
+integration and requests auto-start for that invocation. The direct CLI reads
+only `OPEN_DESIGN_DIR` and `OD_PORT` from the project `.env`. It does not import
+unrelated variables or write configuration back to disk.
+
+Configuration precedence is:
+
+1. `integrations.openDesign` in user/project `settings.json`
+2. `OPEN_DESIGN_DIR` and `OD_PORT` already present in the process environment
+3. `OPEN_DESIGN_DIR` and `OD_PORT` in the project `.env`
+4. Disabled defaults with port `7456`
+
+If either settings scope contains an `integrations.openDesign` object, legacy
+environment values are ignored, including when typed configuration explicitly
+sets `enabled: false`.
+
+### Runtime behavior
+
+When auto-start is active, dscode:
+
+1. Probes `http://127.0.0.1:<port>/api/projects`.
+2. Reuses a healthy externally managed daemon without claiming ownership.
+3. Otherwise starts `od --port <port> --no-open` through `ServiceSupervisor`.
+4. Derives the `open-design` MCP server in memory without modifying
+   `~/.mcp.json` or project configuration.
+5. Captures daemon output in `~/.dscode/logs/dscode.log`, applies bounded
+   restart protection, and stops only the daemon process owned by dscode.
+
+For troubleshooting, confirm that
+`<integrations.openDesign.path>/apps/daemon/src/cli.ts` exists, inspect
+`~/.dscode/logs/dscode.log`, and check readiness with:
+
+```bash
+curl http://127.0.0.1:7456/api/projects
 ```
 
 ---

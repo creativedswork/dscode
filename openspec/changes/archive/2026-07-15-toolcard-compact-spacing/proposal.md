@@ -8,7 +8,7 @@ The ToolCard component has a visually excessive gap (~19px) between the header a
 
 Additionally, the Markdown `<pre>` uses inline styles for `border`, `borderRadius`, and `backgroundColor`, which CSS selectors cannot override even with correct layering. And `.tool-card-body-inner` lacks `background: var(--color-bg)` which `.mcp-raw-block` has.
 
-The v5 prototype (`builtin-tool-result-rendering-fix-v5.html`) documents the true root cause and fix.
+The visual debugging iteration identified and documented the true root cause and fix below.
 
 ## What Changes
 
@@ -31,5 +31,5 @@ The v5 prototype (`builtin-tool-result-rendering-fix-v5.html`) documents the tru
 
 - **CSS**: `web/src/index.css` — move `.tool-card-body-inner pre` out of `@layer components` to unlayered section; add `background: var(--color-bg)` to `.tool-card-body-inner`; add `.md-pre-base` class
 - **Component**: `web/src/components/Markdown.tsx` — replace `<pre>` inline `style={{}}` with `className="md-pre-base ..."`
-- **Prototype**: `docs/prototypes/builtin-tool-result-rendering-fix-v5.html` — true root cause analysis and fix visualization
+- **Prototype retention**: the one-off cascade-layer debugging HTML was deleted after implementation; the durable diagnosis is preserved in this proposal and `design.md`
 - **No breaking changes** — `md-pre-base` class produces identical appearance to previous inline styles for all existing contexts; unlayered CSS only affects ToolCard-scoped selectors

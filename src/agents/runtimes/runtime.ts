@@ -1,6 +1,6 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
 
-import type { AgentFailureCode } from "../application/types.js";
+import type { AgentFailureCode } from "../definitions/types.js";
 import type { ImageRef } from "../../session/types.js";
 
 export type AgentAttachment =
@@ -8,10 +8,20 @@ export type AgentAttachment =
   | { type: "file"; uri: string }
   | { type: "text"; text: string };
 
+export interface AgentProcessProgress {
+  phase: string;
+  executionId?: string;
+  current?: number;
+  total?: number;
+  message?: string;
+  details?: unknown;
+}
+
 export interface AgentProcessInput {
   prompt: string;
   attachments?: AgentAttachment[];
   onStateChange?: (state: "running" | "waiting") => void | Promise<void>;
+  onProgress?: (progress: AgentProcessProgress) => void | Promise<void>;
   onCheckpoint?: (snapshot: AgentRuntimeSnapshot) => void | Promise<void>;
 }
 

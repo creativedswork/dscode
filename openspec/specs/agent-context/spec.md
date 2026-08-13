@@ -1,7 +1,9 @@
 # agent-context Specification
 
 ## Purpose
-TBD - created by archiving change subagent-design-proposal. Update Purpose after archive.
+
+Define Agent Process context together with the Kernel-owned Execution Context
+ABI used for concurrent identity, cwd, Host attribution, and Driver isolation.
 ## Requirements
 ### Requirement: AgentContext 表示进程执行环境
 
@@ -29,19 +31,52 @@ Main Agent SHALL 拥有 role 为 `main`、无 parentAgentId、depth 为 0 的 Ag
 
 ### Requirement: 并发安全 cwd
 
-文件、Shell、Checkpoint 和路径相关工具 SHALL 从 AgentContext 获取 cwd。SubAgent MUST NOT 调用 `process.chdir()` 修改全局工作目录。
+文件、Shell、Checkpoint、Logger 和路径相关 Adapter SHALL 从 Kernel Execution
+Context 获取 cwd 与执行归因。SubAgent MUST NOT 调用 `process.chdir()` 修改全局
+工作目录，Driver MUST NOT 读取 Agent Process Table 或 PCB。
 
 #### Scenario: Worktree 与主工作区并行
 - **WHEN** Agent A 在主工作区运行且 Agent B 在 Worktree 运行
-- **THEN** 两者解析同一相对路径时得到各自 cwd 下的不同绝对路径
+- **THEN** 两者解析同一相对路径时得到各自 Execution Context cwd 下的不同绝对路径
+- **AND** Driver 不需要知道 AgentProcess 的具体结构
+
+#### Scenario: 非 Agent 调用 Driver
+
+- **WHEN** 测试或受信 Application 在没有 AgentContext 时调用 Driver
+- **THEN** Adapter SHALL 使用显式 Execution Context 或已定义的安全 fallback
 
 ### Requirement: 进程上下文 API
 
-系统 SHALL 提供 `runWithAgentContext(context, fn)` 和 `getAgentContext()`。所有 AgentRuntime 启动入口 MUST 使用 `runWithAgentContext` 包裹。
+系统 SHALL 提供 Kernel-owned `runWithExecutionContext(context, fn)` 和
+`getExecutionContext()`。Main Agent 与 SubAgent Runtime 入口 MUST 绑定对应进程
+的不可变 Execution Context。
 
 #### Scenario: 异步链传播
-- **WHEN** runWithAgentContext 内经过多个 await 后调用 getAgentContext
-- **THEN** 返回原始 AgentContext
+- **WHEN** runWithExecutionContext 内经过多个 await 后调用 getExecutionContext
+- **THEN** 返回原始不可变执行上下文
+
+#### Scenario: Agent Process 绑定上下文
+
+- **WHEN** AgentSupervisor 启动 Main Agent 或 SubAgent Runtime
+- **THEN** Runtime 入口 SHALL 绑定对应 Execution Context
+- **AND** Kernel ABI SHALL 不依赖 Agent Runtime、Driver 或 Presentation
+
+### Requirement: Execution Context is a Kernel ABI
+
+Execution Context SHALL contain跨 Driver 与 Service 所需的最小 Host、Process、
+Session、Application 和 cwd 身份。Agent-specific capability、attachment、
+parent/depth 和 Worktree 状态 SHALL remain in AgentContext.
+
+#### Scenario: Driver resolves a path
+
+- **WHEN** FS、Shell、Search 或 Edit Driver 解析相对路径
+- **THEN** 它 SHALL 只依赖 Kernel Execution Context accessor
+
+#### Scenario: Logger adds attribution
+
+- **WHEN** Logger 在已绑定上下文中记录工作
+- **THEN** 它 SHALL 附加可用的 Host 与 Process 归因
+- **AND** SHALL not import Agent Process implementation modules
 
 ### Requirement: 日志与事件归因
 

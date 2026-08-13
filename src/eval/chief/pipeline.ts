@@ -1,5 +1,6 @@
-import type { HarnessAPI } from "../../core/harness-api.js";
-import type { Logger } from "../../utils/logger.js";
+import type { EvalApplicationPort } from "../../application/harness-api.js";
+import { formatAgentDisplayId } from "../format.js";
+import type { Logger } from "../../kernel/logger.js";
 import type { CausalGraphSnapshot } from "../schemas.js";
 import { attributeRulesWithAgent } from "../rules/extraction.js";
 import type { HarnessRule } from "../rules/types.js";
@@ -48,7 +49,7 @@ export interface ChiefProgressEvent {
 
 export interface RunChiefPipelineOptions {
   trajectory: MultiAgentTrajectory;
-  harness: HarnessAPI;
+  harness: EvalApplicationPort;
   run: EvalRunContext;
   signal?: AbortSignal;
   logger?: Logger;
@@ -195,7 +196,7 @@ function toSnapshot(
   const subtaskIds = new Set(graph.subtasks.map((subtask) => subtask.id));
   const displayActor = (agentId: string) => {
     const actor = actorById.get(agentId);
-    return actor ? `${actor.application} (${agentId.slice(0, 6)})` : agentId;
+    return actor ? `${actor.application} (${formatAgentDisplayId(agentId)})` : agentId;
   };
   return {
     subtasks: graph.subtasks.map((subtask) => {
@@ -377,6 +378,10 @@ export async function runChiefPipeline(
       message: `${application} is running`,
     });
     try {
+      await updateRunStage(run, stage, {
+        status: "running",
+        application,
+      });
       const result = await runStructuredAgent({
         host: harness,
         application,
@@ -384,12 +389,17 @@ export async function runChiefPipeline(
         workspace: run.runRoot,
         stage,
         validate,
-        runContext: run,
         signal,
         logger,
-        onWorker: (agentId, attempt) => {
+        onWorker: async (agentId, attempt) => {
           workerAgentId = agentId;
           retryCount = attempt - 1;
+          await updateRunStage(run, stage, {
+            status: "running",
+            application,
+            workerAgentId: agentId,
+            retryCount,
+          });
           emit({
             stage,
             application,
@@ -397,7 +407,7 @@ export async function runChiefPipeline(
             index,
             status: "running",
             retryCount,
-            message: `${application} (${agentId.slice(0, 6)}) is running`,
+            message: `${application} (${formatAgentDisplayId(agentId)}) is running`,
           });
         },
       });
@@ -423,6 +433,13 @@ export async function runChiefPipeline(
         durationMs: Date.now() - startedAt,
         retryCount,
         message: error instanceof Error ? error.message : String(error),
+      });
+      await updateRunStage(run, stage, {
+        status: "failed",
+        application,
+        workerAgentId,
+        retryCount,
+        error: error instanceof Error ? error.message : String(error),
       });
       throw error;
     }
@@ -476,6 +493,10 @@ export async function runChiefPipeline(
       status: "running",
       message: "eval-rule-attribution is running",
     });
+    await updateRunStage(run, "rules", {
+      status: "running",
+      application: "eval-rule-attribution",
+    });
     try {
       rules = await attributeRulesWithAgent({
         trajectory,
@@ -487,9 +508,15 @@ export async function runChiefPipeline(
         run,
         signal,
         logger,
-        onWorker: (agentId, attempt) => {
+        onWorker: async (agentId, attempt) => {
           rulesWorkerAgentId = agentId;
           rulesRetryCount = attempt - 1;
+          await updateRunStage(run, "rules", {
+            status: "running",
+            application: "eval-rule-attribution",
+            workerAgentId: agentId,
+            retryCount: rulesRetryCount,
+          });
           emit({
             stage: "rules",
             application: "eval-rule-attribution",
@@ -497,7 +524,7 @@ export async function runChiefPipeline(
             index: 6,
             status: "running",
             retryCount: rulesRetryCount,
-            message: `eval-rule-attribution (${agentId.slice(0, 6)}) is running`,
+            message: `eval-rule-attribution (${formatAgentDisplayId(agentId)}) is running`,
           });
         },
       });
@@ -527,6 +554,13 @@ export async function runChiefPipeline(
         durationMs: Date.now() - rulesStartedAt,
         retryCount: rulesRetryCount,
         message: error instanceof Error ? error.message : String(error),
+      });
+      await updateRunStage(run, "rules", {
+        status: "failed",
+        application: "eval-rule-attribution",
+        workerAgentId: rulesWorkerAgentId,
+        retryCount: rulesRetryCount,
+        error: error instanceof Error ? error.message : String(error),
       });
     }
     const result = composeResult(trajectory, graph, oracles, backtrack, attribution, rules);

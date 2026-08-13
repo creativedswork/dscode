@@ -3,13 +3,13 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import type { HarnessAPI } from "../core/harness-api.js";
-import type { UiBackend } from "../ui/backend.js";
+import type { EvalApplicationPort } from "../application/harness-api.js";
+import { formatAgentDisplayId } from "./format.js";
 import type { SerializedSession } from "../session/types.js";
-import { Logger } from "../utils/logger.js";
+import { Logger } from "../kernel/logger.js";
+import { getHostLogger } from "../kernel/logger.js";
 import { computeStats } from "./stats.js";
 import { generateDashboard, generateDashboardArtifacts, openDashboard } from "./dashboard.js";
-import { analyzeWithLLM } from "./llm.js";
 import { loadRuleStore, semanticMerge, saveRuleStore } from "./rules/store.js";
 import { loadMultiAgentTrajectory } from "./trajectory.js";
 import { runChiefPipeline, type ChiefProgressEvent } from "./chief/pipeline.js";
@@ -24,20 +24,29 @@ function evalDir(): string {
   return join(homedir(), ".dscode", "eval");
 }
 
+export interface EvalPresenter {
+  addInfo(text: string): void;
+  addError(text: string): void;
+}
+
 export async function runEval(
   sessionId: string | null,
-  ctx: { harness: HarnessAPI; ui: UiBackend },
+  ctx: { harness: EvalApplicationPort; ui: EvalPresenter },
 ): Promise<void> {
   const { harness, ui } = ctx;
-  const manager = harness.sessionManager;
-  const runtimeId = process.env.DSCODE_RUNTIME_ID ?? "unknown";
-  const evalLogger = new Logger({ type: "harness", id: runtimeId });
+  const evalLogger = getHostLogger() ?? {
+    clear: () => {},
+    debug: () => {},
+    info: () => {},
+    warn: () => {},
+    error: () => {},
+  } as unknown as Logger;
   const evalStartedAt = Date.now();
   const requestedSessionId = sessionId ?? undefined;
   let activeRun: EvalRunContext | undefined;
   let resolvedTargetSessionId: string | undefined;
 
-  harness.events.emit({
+  harness.publish({
     type: "eval:dashboard",
     state: {
       status: "starting",
@@ -47,7 +56,7 @@ export async function runEval(
   });
 
   const failBeforeRun = (error: string, targetSessionId?: string) => {
-    harness.events.emit({
+    harness.publish({
       type: "eval:dashboard",
       state: {
         status: "failed",
@@ -56,7 +65,7 @@ export async function runEval(
         error,
       },
     });
-    (ui as any).addError(error);
+    ui.addError(error);
   };
 
   try {
@@ -65,31 +74,31 @@ export async function runEval(
     let sessionData: SerializedSession | null = null;
 
     if (sessionId) {
-      const found = manager.getSessionFilePath(sessionId);
+      const found = harness.resolveSession(sessionId);
       if (!found) {
         failBeforeRun(`Session not found: ${sessionId}`);
         return;
       }
-      resolvedId = found.metadata.id;
+      resolvedId = found.id;
       resolvedTargetSessionId = resolvedId;
-      sessionData = await manager.loadSessionFile(resolvedId);
+      sessionData = await harness.loadSession(resolvedId) ?? null;
       if (!sessionData) {
         failBeforeRun(`Failed to load session: ${resolvedId}`, resolvedId);
         return;
       }
     } else {
-      const currentId = manager.getCurrentSessionId();
+      const currentId = harness.currentSessionId();
       if (!currentId) {
         failBeforeRun("No session to evaluate. Usage: /eval [session_id]");
         return;
       }
       resolvedId = currentId;
       resolvedTargetSessionId = resolvedId;
-      sessionData = await manager.loadSessionFile(resolvedId);
+      sessionData = await harness.loadSession(resolvedId) ?? null;
       if (!sessionData) {
         // Session is current but not yet persisted; save it first
-        harness.saveSessionNow();
-        sessionData = await manager.loadSessionFile(resolvedId);
+        harness.saveCurrentSession();
+        sessionData = await harness.loadSession(resolvedId) ?? null;
         if (!sessionData) {
           failBeforeRun("Failed to load current session data.", resolvedId);
           return;
@@ -98,20 +107,20 @@ export async function runEval(
     }
 
     evalLogger.clear();
-    (ui as any).addInfo(`正在分析 session ${resolvedId.slice(0, 8)}...`);
+    ui.addInfo(`正在分析 session ${resolvedId.slice(0, 8)}...`);
 
     // onLog pushes to TUI only — no terminal output
-    const onLog = (msg: string) => { (ui as any).addInfo(msg); };
+    const onLog = (msg: string) => { ui.addInfo(msg); };
 
-    const trajectory = await loadMultiAgentTrajectory(sessionData, harness.agentSupervisor);
-    const invokingSessionId = manager.getCurrentSessionId() ?? resolvedId;
+    const trajectory = await loadMultiAgentTrajectory(sessionData, harness.agents);
+    const invokingSessionId = harness.currentSessionId() ?? resolvedId;
     const run = await createEvalRun(trajectory, invokingSessionId);
     activeRun = run;
     const reportProgress = (event: ChiefProgressEvent) => {
       const marker = event.status === "done" ? "OK" : event.status === "failed" ? "FAILED" : "...";
-      const worker = event.workerAgentId ? ` (${event.workerAgentId.slice(0, 6)})` : "";
+      const worker = event.workerAgentId ? ` (${formatAgentDisplayId(event.workerAgentId)})` : "";
       onLog(`[${event.index}/${event.total}] ${event.application}${worker} ${marker}`);
-      harness.events.emit({
+      harness.publish({
         type: "eval:dashboard",
         state: {
           status: "running",
@@ -145,7 +154,8 @@ export async function runEval(
       onProgress: reportProgress,
     });
     // Step 8: LLM semantic rule merge (use session's projectPath, not harness cwd)
-    const projectPath = sessionData?.metadata?.projectPath ?? harness.config?.projectPath;
+    const projectPath = sessionData?.metadata?.projectPath
+      ?? harness.currentProjectPath();
     if (projectPath) {
       const store = loadRuleStore(projectPath, evalLogger);
       const merged = await semanticMerge(result.rules, store, harness, evalLogger);
@@ -187,7 +197,7 @@ export async function runEval(
     await finishEvalRun(run, "completed");
     activeRun = undefined;
 
-    harness.events.emit({
+    harness.publish({
       type: "eval:dashboard",
       state: {
         status: "completed",
@@ -207,12 +217,12 @@ export async function runEval(
       ? ` | Confidence: ${(result.attribution.confidence * 100).toFixed(0)}%`
       : "";
     const rulesTriggered = result.rules ? result.rules.length : 0;
-    const workerCount = harness.agentSupervisor.list().filter((process) =>
+    const workerCount = harness.agents.list().filter((process) =>
       process.recording === "process-only"
       && process.role === "subagent"
       && process.context.cwd === run.runRoot
     ).length;
-    (ui as any).addInfo(
+    ui.addInfo(
       `Dashboard generated: ${outputPath}\n` +
       `[${analysisLabel}] Target: ${resolvedId.slice(0, 8)} | Duration: ${Date.now() - evalStartedAt}ms | ` +
       `Workers: ${workerCount} | Actors: ${trajectory.actors.length} | Evidence: ${trajectory.evidence.completeness} | ` +
@@ -227,7 +237,7 @@ export async function runEval(
     if (err instanceof Error && err.stack) {
       evalLogger.error("Pipeline", `stack:\n${err.stack}`);
     }
-    harness.events.emit({
+    harness.publish({
       type: "eval:dashboard",
       state: {
         status: "failed",
@@ -238,11 +248,20 @@ export async function runEval(
         error,
       },
     });
-    (ui as any).addError(`eval: ${error}`);
+    ui.addError(`eval: ${error}`);
   }
 }
 
-export { computeStats, generateDashboard, openDashboard, analyzeWithLLM };
-export type { EvalResult, PhaseInfo, DeviationPoint, RootCause, SessionMeta, ToolStats, TimelineEvent, CompactMessage, HarnessRule } from "./types.js";
-export type { SessionSkeleton, FocusReport, AttentionZone, ZoneAnalysis, ScanResult, FocusAttribution, CascadeEdge } from "./focus/types.js";
-export { buildSkeleton } from "./focus/skeleton.js";
+export { computeStats, generateDashboard, openDashboard };
+export type {
+  CascadeEdge,
+  CompactMessage,
+  DeviationPoint,
+  EvalResult,
+  HarnessRule,
+  PhaseInfo,
+  RootCause,
+  SessionMeta,
+  TimelineEvent,
+  ToolStats,
+} from "./types.js";

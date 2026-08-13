@@ -31,7 +31,22 @@ Archive a completed change in the experimental workflow.
 
    **If no consolidate artifact:** Skip to step 3.
 
-3. **Archive**
+3. **Finalize prototype lifecycle**
+
+   For `spec-driven-plus`, read `<changeRoot>/prototype.md`.
+
+   - If it is a non-UI stub, continue.
+   - If any retention decision is missing or `pending`, load
+     `prototype-workflow` and decide `archive` or `delete` for every HTML file.
+   - Delete `delete` files and stale references.
+   - Move `archive` files to
+     `docs/prototypes/archive/YYYY-MM-DD-<change-name>/`.
+   - Update all repository references and remove old
+     `docs/prototypes/README.md` entries.
+   - Verify the staging paths are absent and repository search finds no old
+     references. Stop on archive-path conflicts rather than overwriting.
+
+4. **Archive**
 
    Run `npx openspec archive <name> --yes`. This single command handles:
    - Artifact completion check (proposal, specs, tasks)
@@ -41,7 +56,15 @@ Archive a completed change in the experimental workflow.
 
    If it fails, fix the reported errors and re-run.
 
+5. **Report**
+
+   Include the archived change path, spec sync result, and the archived/deleted
+   prototype paths (or `not applicable`).
+
 **Guardrails**
-- Step 2 (consolidate) is the ONLY step you control. `npx openspec archive` handles everything else.
+- Steps 2 and 3 are the required pre-archive operations.
+  `npx openspec archive` handles artifact checks, spec sync, and moving the change.
+- Step 3 is the mandatory prototype lifecycle gate for `spec-driven-plus`.
 - NEVER skip step 2 for spec-driven-plus schemas.
 - Never manually move directories — always use `npx openspec archive --yes`.
+- Never leave completed-change prototypes in the `docs/prototypes/` staging root.

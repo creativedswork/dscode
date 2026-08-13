@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, useLayoutEffect } from "react";
 import type { ImageAttachment, FileAttachment, FileListItem, ViewMode } from "../types";
 import { PaperPlaneTilt, Folder, File, Image, TextAlignLeft, Video, SpeakerHigh, FilePdf, Archive, X } from "@phosphor-icons/react";
 
@@ -14,6 +14,12 @@ interface MessageInputProps {
   projectPath: string;
   onToast?: (type: "warning" | "error", text: string) => void;
   viewMode?: ViewMode;
+}
+
+interface PendingImagePreview {
+  id: number;
+  name: string;
+  previewUrl: string;
 }
 
 function fileToImageAttachment(file: File): Promise<ImageAttachment> {
@@ -104,6 +110,15 @@ function formatFileSize(bytes: number): string {
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 const MAX_TOTAL_SIZE = 50 * 1024 * 1024; // 50 MB
 
+export function syncTextareaHeight(
+  textarea: Pick<HTMLTextAreaElement, "scrollHeight" | "style">,
+  hasContent: boolean,
+): void {
+  textarea.style.height = "";
+  if (!hasContent) return;
+  textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+}
+
 export function MessageInput({
   onSend,
   onAbort,
@@ -119,6 +134,7 @@ export function MessageInput({
 }: MessageInputProps) {
   const [text, setText] = useState("");
   const [images, setImages] = useState<ImageAttachment[]>([]);
+  const [pendingImages, setPendingImages] = useState<PendingImagePreview[]>([]);
   const [uploadedFiles, setUploadedFiles] = useState<{ name: string; size: number; content: string }[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [showSlashMenu, setShowSlashMenu] = useState(false);
@@ -132,7 +148,54 @@ export function MessageInput({
   const historyCursorRef = useRef<number>(-1);
   const draftRef = useRef<string>("");
   const isComposingRef = useRef(false);
+  const nextPendingImageIdRef = useRef(0);
+  const pendingImageUrlsRef = useRef(new Map<number, string>());
   const MAX_HISTORY = 100;
+
+  useEffect(() => {
+    return () => {
+      for (const previewUrl of pendingImageUrlsRef.current.values()) {
+        URL.revokeObjectURL(previewUrl);
+      }
+      pendingImageUrlsRef.current.clear();
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    if (textareaRef.current) {
+      syncTextareaHeight(textareaRef.current, text.length > 0);
+    }
+  }, [text]);
+
+  const finishPendingImage = useCallback((id: number): boolean => {
+    const previewUrl = pendingImageUrlsRef.current.get(id);
+    if (!previewUrl) return false;
+
+    pendingImageUrlsRef.current.delete(id);
+    URL.revokeObjectURL(previewUrl);
+    setPendingImages((prev) => prev.filter((image) => image.id !== id));
+    return true;
+  }, []);
+
+  const queueImageFile = useCallback((file: File) => {
+    const id = ++nextPendingImageIdRef.current;
+    const previewUrl = URL.createObjectURL(file);
+    pendingImageUrlsRef.current.set(id, previewUrl);
+    setPendingImages((prev) => [...prev, { id, name: file.name, previewUrl }]);
+
+    void fileToImageAttachment(file).then(
+      (image) => {
+        if (finishPendingImage(id)) {
+          setImages((prev) => [...prev, image]);
+        }
+      },
+      () => {
+        if (finishPendingImage(id)) {
+          onToast?.("error", `Could not prepare image '${file.name}'`);
+        }
+      },
+    );
+  }, [finishPendingImage, onToast]);
 
   const filteredCommands = slashCommands.filter(
     (c) => !slashFilter || c.name.startsWith(slashFilter.slice(1)),
@@ -154,6 +217,7 @@ export function MessageInput({
   }, [fileListItems]);
 
   const handleSubmit = useCallback(() => {
+    if (pendingImages.length > 0) return;
     const trimmed = text.trim();
     if (!trimmed && images.length === 0 && uploadedFiles.length === 0) return;
     // Push to history if non-empty and not duplicate of last entry
@@ -167,13 +231,16 @@ export function MessageInput({
     const uploadPayload = uploadedFiles.length > 0
       ? uploadedFiles.map(f => ({ name: f.name, content: f.content }))
       : undefined;
+    if (textareaRef.current) {
+      syncTextareaHeight(textareaRef.current, false);
+    }
     onSend(trimmed, images.length > 0 ? images : undefined, undefined, uploadPayload);
     setText("");
     setImages([]);
     setUploadedFiles([]);
     setShowSlashMenu(false);
     setShowFileMenu(false);
-  }, [text, images, uploadedFiles, onSend]);
+  }, [text, images, pendingImages, uploadedFiles, onSend]);
 
   const navigateToDirectory = (dirPath: string) => {
     const textarea = textareaRef.current;
@@ -362,9 +429,14 @@ export function MessageInput({
       e.preventDefault();
       if (!processing) handleSubmit();
     }
-    if (e.key === "Backspace" && !text && images.length > 0) {
+    if (e.key === "Backspace" && !text && (pendingImages.length > 0 || images.length > 0)) {
       e.preventDefault();
-      setImages((prev) => prev.slice(0, -1));
+      const pendingImage = pendingImages[pendingImages.length - 1];
+      if (pendingImage) {
+        finishPendingImage(pendingImage.id);
+      } else {
+        setImages((prev) => prev.slice(0, -1));
+      }
     }
   };
 
@@ -401,37 +473,30 @@ export function MessageInput({
     }
   };
 
-  const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const items = e.clipboardData.items;
-    const imageItems: DataTransferItem[] = [];
+    const imageFiles: File[] = [];
 
     for (let i = 0; i < items.length; i++) {
       if (isImageItem(items[i])) {
-        imageItems.push(items[i]);
+        const file = items[i].getAsFile();
+        if (file) imageFiles.push(file);
       }
     }
 
-    if (imageItems.length > 0) {
+    if (imageFiles.length > 0) {
       e.preventDefault();
-      const newImages: ImageAttachment[] = [];
-      for (const item of imageItems) {
-        const file = item.getAsFile();
-        if (file) {
-          try {
-            const img = await fileToImageAttachment(file);
-            newImages.push(img);
-          } catch {
-            // skip
-          }
-        }
-      }
-      setImages((prev) => [...prev, ...newImages]);
+      imageFiles.forEach(queueImageFile);
     }
-  }, []);
+  }, [queueImageFile]);
 
   const removeImage = useCallback((index: number) => {
     setImages((prev) => prev.filter((_, i) => i !== index));
   }, []);
+
+  const removePendingImage = useCallback((id: number) => {
+    finishPendingImage(id);
+  }, [finishPendingImage]);
 
   const removeUploadedFile = useCallback((index: number) => {
     setUploadedFiles((prev) => prev.filter((_, i) => i !== index));
@@ -456,21 +521,21 @@ export function MessageInput({
     const droppedFiles = e.dataTransfer.files;
     if (droppedFiles.length === 0) return;
 
-    const newImages: ImageAttachment[] = [];
     const newUploads: { name: string; size: number; content: string }[] = [];
     let totalSize = 0;
 
     for (let i = 0; i < droppedFiles.length; i++) {
       const file = droppedFiles[i];
+      if (file.type.startsWith("image/")) {
+        queueImageFile(file);
+      }
+    }
+
+    for (let i = 0; i < droppedFiles.length; i++) {
+      const file = droppedFiles[i];
 
       if (file.type.startsWith("image/")) {
-        // Image: read as base64, same as paste
-        try {
-          const img = await fileToImageAttachment(file);
-          newImages.push(img);
-        } catch {
-          // skip
-        }
+        continue;
       } else {
         // Non-image: read as base64, upload to server as temp file
         if (file.size > MAX_FILE_SIZE) {
@@ -500,9 +565,6 @@ export function MessageInput({
       }
     }
 
-    if (newImages.length > 0) {
-      setImages((prev) => [...prev, ...newImages]);
-    }
     if (newUploads.length > 0) {
       setUploadedFiles((prev) => [...prev, ...newUploads]);
     }
@@ -510,13 +572,12 @@ export function MessageInput({
     requestAnimationFrame(() => {
       textareaRef.current?.focus();
     });
-  }, [processing]);
+  }, [onToast, processing, queueImageFile]);
 
   const adjustHeight = () => {
     const ta = textareaRef.current;
     if (ta) {
-      ta.style.height = "auto";
-      ta.style.height = Math.min(ta.scrollHeight, 200) + "px";
+      syncTextareaHeight(ta, ta.value.length > 0);
     }
   };
 
@@ -687,8 +748,35 @@ export function MessageInput({
         </div>
       )}
 
-      {images.length > 0 && (
+      {(pendingImages.length > 0 || images.length > 0) && (
         <div className="flex flex-wrap gap-2 mb-2 max-w-4xl mx-auto">
+          {pendingImages.map((image) => (
+            <div key={`pending-${image.id}`} className="relative group">
+              <img
+                src={image.previewUrl}
+                alt={`Preparing ${image.name || "image"}`}
+                className="h-16 w-16 object-cover rounded opacity-50"
+                style={{ border: "1px solid var(--color-border)" }}
+              />
+              <div
+                className="absolute inset-0 flex items-center justify-center rounded text-[10px] font-medium"
+                style={{ color: "var(--color-text)", backgroundColor: "color-mix(in srgb, var(--color-surface) 55%, transparent)" }}
+              >
+                Preparing...
+              </div>
+              <button
+                onClick={() => removePendingImage(image.id)}
+                className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                style={{
+                  backgroundColor: "var(--color-error-text)",
+                  color: "#fff",
+                }}
+                title="Remove image"
+              >
+                &times;
+              </button>
+            </div>
+          ))}
           {images.map((img, i) => (
             <div key={i} className="relative group">
               <img
@@ -755,8 +843,9 @@ export function MessageInput({
         ) : (
           <button
             onClick={handleSubmit}
-            disabled={!text.trim() && images.length === 0 && uploadedFiles.length === 0}
+            disabled={pendingImages.length > 0 || (!text.trim() && images.length === 0 && uploadedFiles.length === 0)}
             className="btn-primary shrink-0"
+            title={pendingImages.length > 0 ? "Preparing image attachments" : "Send"}
           >
             <PaperPlaneTilt size={16} weight="bold" />
           </button>

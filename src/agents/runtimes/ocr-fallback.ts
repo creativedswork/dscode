@@ -1,6 +1,6 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
 
-import type { HarnessEventBus } from "../../core/events.js";
+import type { HarnessEventBus } from "../../application/events.js";
 import { ImageCache } from "../../drivers/vision/cache.js";
 import { ocrImages } from "../../drivers/vision/ocr.js";
 import type { ImageRef } from "../../session/types.js";

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ImageManager } from "../../src/ui/image-manager.js";
+import { ImageManager } from "../../src/ui/tui/image-manager.js";
 
 function makeImg(data = "abcd"): { type: "image"; data: string; mimeType: string } {
   return { type: "image" as const, data, mimeType: "image/png" };

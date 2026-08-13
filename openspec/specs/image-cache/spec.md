@@ -3,7 +3,7 @@
 Content-addressed image cache — resize, compress, deduplicate, and store images to disk.
 ## Requirements
 ### Requirement: Image Resize and Compression
-The system SHALL resize images to a unified height of 480 pixels, maintaining original aspect ratio for width. This functionality SHALL be provided by `ImageCache` as a sub-module of `ImagePipeline` at `src/image-pipeline/cache.ts`.
+The system SHALL resize images to a unified height of 480 pixels, maintaining original aspect ratio for width. This functionality SHALL be provided by `ImageCache` as a sub-module of `ImagePipeline` at `src/drivers/vision/cache.ts`.
 
 #### Scenario: Uploaded image is larger than 480px tall
 - **WHEN** a user uploads an image with height > 480px
@@ -53,13 +53,9 @@ The `ImageCache` system SHALL accept and store images originating from MCP tool 
 - **AND** return the same `ImageRef` with the existing hash
 
 ### Requirement: ImageCache re-exported from ImagePipeline
-The `ImagePipeline` module SHALL re-export `ImageCache` from `src/image-pipeline/cache.ts` for consumers that need direct cache access. Existing imports of `ImageCache` from `src/utils/image-cache.ts` SHALL continue to work via a re-export shim during migration.
+The `ImagePipeline` module SHALL re-export `ImageCache` from
+`src/drivers/vision/cache.ts` for consumers that need direct cache access.
 
 #### Scenario: ImageCache accessible via ImagePipeline
-- **WHEN** a consumer imports `ImageCache` from `src/image-pipeline/index.js`
+- **WHEN** a consumer imports `ImageCache` from `src/drivers/vision/index.js`
 - **THEN** it receives the same `ImageCache` class as before
-
-#### Scenario: Old import path works during migration
-- **WHEN** a consumer imports from `src/utils/image-cache.js`
-- **THEN** it SHALL re-export from `src/image-pipeline/cache.js` until all consumers are migrated
-

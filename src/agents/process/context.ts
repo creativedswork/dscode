@@ -1,33 +1,13 @@
-import { AsyncLocalStorage } from "node:async_hooks";
-import { isAbsolute, resolve } from "node:path";
-
-import type { AgentApplicationSnapshot } from "../application/types.js";
+import type { AgentApplicationSnapshot } from "../definitions/types.js";
 import type { AgentAttachment, AgentContext } from "./types.js";
 
 const MUTATING_TOOLS = new Set([
   "write_file",
   "edit",
+  "edit_undo",
   "overwrite_file",
   "bash",
 ]);
-
-const agentContextStorage = new AsyncLocalStorage<AgentContext>();
-
-export function runWithAgentContext<T>(
-  context: AgentContext,
-  operation: () => T,
-): T {
-  return agentContextStorage.run(context, operation);
-}
-
-export function getAgentContext(): AgentContext | undefined {
-  return agentContextStorage.getStore();
-}
-
-export function resolveAgentPath(path: string): string {
-  if (isAbsolute(path)) return resolve(path);
-  return resolve(getAgentContext()?.cwd ?? process.cwd(), path);
-}
 
 export interface DeriveAgentContextOptions {
   application: AgentApplicationSnapshot;

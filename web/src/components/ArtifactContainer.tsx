@@ -1,4 +1,11 @@
 import { useMemo } from "react";
+import type { ArtifactTheme } from "../../../src/application/artifact-theme.js";
+import {
+  applyArtifactTheme,
+  prepareEvalArtifactHtml,
+} from "../utils/artifactTheme.js";
+
+export type { ArtifactTheme } from "../../../src/application/artifact-theme.js";
 
 export interface ArtifactPresentation {
   kind: "session_dashboard" | "eval_dashboard";
@@ -8,6 +15,7 @@ export interface ArtifactPresentation {
 
 interface ArtifactContainerProps {
   presentation: ArtifactPresentation;
+  theme: ArtifactTheme;
 }
 
 function cleanHtml(raw: string): string {
@@ -19,12 +27,14 @@ function cleanHtml(raw: string): string {
   return h;
 }
 
-export function ArtifactContainer({ presentation }: ArtifactContainerProps) {
+export function ArtifactContainer({ presentation, theme }: ArtifactContainerProps) {
   const { kind, html, loading } = presentation;
   const renderedHtml = useMemo(() => {
     if (loading || !html) return "";
-    return kind === "eval_dashboard" ? html : cleanHtml(html);
-  }, [html, kind, loading]);
+    return kind === "eval_dashboard"
+      ? prepareEvalArtifactHtml(html, theme)
+      : applyArtifactTheme(cleanHtml(html), theme);
+  }, [html, kind, loading, theme]);
 
   if (loading || !renderedHtml) {
     return (
@@ -48,12 +58,16 @@ export function ArtifactContainer({ presentation }: ArtifactContainerProps) {
         srcDoc={renderedHtml}
         sandbox="allow-same-origin"
         className="flex-1 w-full border-0"
-        style={{ backgroundColor: "var(--color-bg)", minHeight: "100%" }}
+        style={{
+          backgroundColor: "var(--color-bg)",
+          colorScheme: theme,
+          minHeight: "100%",
+        }}
         title={kind === "eval_dashboard" ? "CHIEF evaluation report" : "Session Dashboard"}
       />
       {kind === "session_dashboard" && (
         <div className="text-xs px-2 py-0.5" style={{ color: "var(--color-text-muted)", borderTop: "1px solid var(--color-border)" }}>
-          {renderedHtml.length} bytes
+          {cleanHtml(html).length} bytes
         </div>
       )}
     </div>

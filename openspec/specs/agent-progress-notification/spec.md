@@ -49,21 +49,38 @@ background Agent 退出时，系统 SHALL 立即通知 UI，并 SHALL 将结构�
 - **WHEN** 后台 Agent 在 Main Agent 另一轮运行期间退出
 - **THEN** UI 显示完成状态，退出通知在下一个安全上下文注入点进入 Main Agent
 
-### Requirement: 默认不自动唤醒 Main Agent
+### Requirement: 事件驱动 Main Agent continuation
 
-MVP 中后台退出 MUST NOT 自动对空闲 Main Agent 发起新的模型请求。通知 SHALL 在下一用户轮次或已有 Agent Loop 的安全 follow-up 点注入。
+当前 Session 的 background Agent 退出时，系统 SHALL 自动将完成通知传递给 Main
+Agent 并继续当前任务。Main Agent 忙碌时，系统 MUST 等待当前 turn 完成后再启动内部
+continuation；Main Agent 空闲时，系统 SHALL 直接启动 continuation。该内部通知 MUST
+保留在模型会话上下文中，但 MUST NOT 渲染为用户消息。系统 SHOULD 将同一安全调度点
+已完成的多个 background Agent 结果合并到一次 continuation。
 
 #### Scenario: 空闲时完成
-- **WHEN** Main Agent 已空闲且后台 Agent 完成
-- **THEN** UI 展示结果但不自动产生新的 LLM 调用
+- **WHEN** Main Agent 已空闲且当前 Session 的 background Agent 完成
+- **THEN** 系统注入完成通知并自动启动 Main Agent continuation
+- **AND** Main Agent 使用结果继续依赖步骤，不等待新的用户消息
 
-### Requirement: 进程输出可查询
+#### Scenario: Main Agent 忙碌时完成
+- **WHEN** background Agent 在 Main Agent turn 运行期间完成
+- **THEN** 系统等待该 turn 结束，在下一个安全边界注入完成通知
 
-AgentProcessStore SHALL 保存最新进度、已产生输出和终态结果，使 `get_agent_output` 在 Agent 运行中和退出后均可读取。
+#### Scenario: 并行 Agent 同批完成
+- **WHEN** 同一父 Session 的多个 background Agent 在 continuation 启动前完成
+- **THEN** 系统将这些完成结果合并到一次 Main Agent continuation
 
-#### Scenario: 运行中查询
-- **WHEN** Main Agent 查询尚未完成的后台 Agent
-- **THEN** 返回 running、当前进度和截至当前的输出，不伪造最终结果
+#### Scenario: 内部通知恢复显示
+- **WHEN** Session 历史包含内部 agent_notifications 消息
+- **THEN** 模型上下文保留该消息，但 Conversation 不显示伪造的用户消息
+
+### Requirement: 进程状态内部可观测
+
+AgentProcessStore SHALL 保存最新进度、已产生输出和终态结果，供 Runtime、UI、恢复流程和系统诊断读取。模型可见工具 MUST NOT 通过轮询该状态等待后台 Agent。
+
+#### Scenario: UI 展示运行中进度
+- **WHEN** background Agent 仍在运行
+- **THEN** UI 从生命周期事件或内部 Process 状态展示当前进度，不要求 Main Agent 查询
 
 ### Requirement: 父 Session 路由
 
@@ -72,6 +89,7 @@ AgentProcessStore SHALL 保存最新进度、已产生输出和终态结果，�
 #### Scenario: 用户切换 Session
 - **WHEN** Session A 的后台 Agent 在 UI 当前显示 Session B 时完成
 - **THEN** 通知保存到 Session A，Session B 不接收该上下文
+- **AND** 仅当 Session A 再次成为当前 Session 时才可启动其 Main Agent continuation
 
 ### Requirement: Agent 生命周期 UI snapshot
 
@@ -114,3 +132,53 @@ UI adapter SHALL 避免对状态和进度均未变化的连续事件重复发送
 - **WHEN** 同一 Agent 连续产生内容相同的 progress snapshot
 - **THEN** adapter MAY 丢弃后续重复 snapshot
 - **AND** 不影响最终 exit snapshot 的发送
+
+### Requirement: Agent Tool progress 使用稳定 identity
+
+SubAgent Runtime SHALL 为 Tool execution start/end 发布结构化 Agent progress。每个
+Tool progress MUST 包含 executionId、toolCallId、toolName、Tool 状态和时间信息。
+
+#### Scenario: Tool execution start
+- **WHEN** PiAgentRuntimeAdapter 接收 `tool_execution_start`
+- **THEN** 系统发布 status=running 的 Agent Tool progress
+- **AND** executionId 等于当前 Agent Process identity
+- **AND** toolCallId 等于 Runtime Tool Call identity
+
+#### Scenario: Tool execution end
+- **WHEN** PiAgentRuntimeAdapter 接收 `tool_execution_end`
+- **THEN** 系统使用相同 executionId 和 toolCallId 发布 completed 或 failed progress
+- **AND** progress 包含 isError 与 endedAt
+
+#### Scenario: 并行 Tool
+- **WHEN** 同一 SubAgent 同时执行两个 Tool Call
+- **THEN** 两个 Tool Activity 使用不同 toolCallId 独立更新
+- **AND** 一个 Tool 完成不得覆盖另一个 Tool 的 running 状态
+
+### Requirement: Agent Permission progress 绑定 Execution
+
+SubAgent Permission prompt SHALL 发布带 executionId 的结构化 Agent progress，并
+SHALL 在 Permission 解决后发布 resolution。
+
+#### Scenario: Permission prompt 开始
+- **WHEN** SubAgent PermissionManager 请求用户批准 bash
+- **THEN** 系统发布 phase=permission、status=waiting 的 Agent progress
+- **AND** progress 包含 agentId/executionId、toolName 与 preview
+
+#### Scenario: Permission prompt 结束
+- **WHEN** 用户允许或拒绝 Permission
+- **THEN** 系统发布 status=resolved 的 Permission progress
+- **AND** UI 可从对应 Execution 清除 prompt
+
+### Requirement: Agent Tool timeline snapshot 去重
+
+UI adapter SHALL 按 executionId 与 toolCallId 合并 Tool lifecycle，并 SHALL 避免相同
+状态的重复 progress 产生重复 Tool row。
+
+#### Scenario: 重复 Tool start
+- **WHEN** adapter 连续收到同一 toolCallId 的相同 running progress
+- **THEN** Agent Activity 中仅保留一条 Tool Activity
+
+#### Scenario: Tool 完成后 Agent exit
+- **WHEN** Tool completed progress 后收到 Agent exit
+- **THEN** 终态 Agent Activity 保留已完成 Tool timeline
+- **AND** exit snapshot 不删除或复制 Tool row

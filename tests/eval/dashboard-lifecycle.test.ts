@@ -30,7 +30,10 @@ vi.mock("../../src/eval/chief/pipeline.js", () => ({
 vi.mock("../../src/eval/dashboard.js", () => ({
   generateDashboard: vi.fn(),
   generateDashboardArtifacts: mocks.generateArtifacts,
-  openDashboard: mocks.openDashboard,
+}));
+
+vi.mock("../../src/ui/shared/open-path.js", () => ({
+  openPath: mocks.openDashboard,
 }));
 
 vi.mock("../../src/eval/rules/store.js", () => ({
@@ -39,16 +42,16 @@ vi.mock("../../src/eval/rules/store.js", () => ({
   saveRuleStore: mocks.saveRuleStore,
 }));
 
-vi.mock("../../src/ui/tui-app.js", () => ({
+vi.mock("../../src/ui/tui/app.js", () => ({
   TuiApp: class {
     upsertAgentActivity = vi.fn();
   },
 }));
 
-import { HarnessEventBus } from "../../src/core/events.js";
-import type { EvalDashboardState } from "../../src/core/events.js";
+import { HarnessEventBus } from "../../src/application/events.js";
+import type { EvalDashboardState } from "../../src/application/events.js";
 import { runEval } from "../../src/eval/index.js";
-import { TuiBackend } from "../../src/ui/tui-backend.js";
+import { TuiBackend } from "../../src/ui/tui/backend.js";
 
 const targetSessionId = "TARGET-SESSION-CANONICAL";
 const runId = "run-123456";
@@ -127,17 +130,18 @@ function setup(loadSessionFile = vi.fn(async () => sessionData())) {
   events.on("eval:dashboard", (event) => states.push(event.state));
   const harness = {
     events,
-    sessionManager: {
-      getSessionFilePath: vi.fn(() => ({
-        path: "/sessions/target.json",
-        metadata: { id: targetSessionId },
-      })),
-      getCurrentSessionId: vi.fn(() => "INVOKING-SESSION"),
-      loadSessionFile,
-    },
-    agentSupervisor: { list: vi.fn(() => []) },
-    config: { projectPath: "/project" },
-    saveSessionNow: vi.fn(),
+    hostId: () => "host-test",
+    agents: { list: vi.fn(() => []) },
+    currentSessionId: vi.fn(() => "INVOKING-SESSION"),
+    currentProjectPath: () => "/project",
+    saveCurrentSession: vi.fn(),
+    resolveSession: vi.fn(() => ({
+      id: targetSessionId,
+      projectPath: "/project",
+    })),
+    loadSession: loadSessionFile,
+    publish: (event: any) => events.emit(event),
+    sessions: { currentId: () => "INVOKING-SESSION" },
   } as any;
   const ui = {
     addInfo: vi.fn(),
@@ -165,6 +169,7 @@ beforeEach(() => {
       targetSessionId,
       stage: "prepare",
       application: "coordinator",
+      workerAgentId: "agent-abcdef123",
       index: 1,
       total: 7,
       status: "done",
@@ -239,6 +244,12 @@ describe("Eval Dashboard lifecycle", () => {
     expect(mocks.generateArtifacts).toHaveBeenCalledOnce();
     expect(mocks.generateArtifacts.mock.calls[0][1]).toHaveLength(2);
     expect(mocks.openDashboard).not.toHaveBeenCalled();
+    expect(ui.addInfo).toHaveBeenCalledWith(
+      expect.stringContaining("[1/7] coordinator (abcdef) OK"),
+    );
+    expect(ui.addInfo).not.toHaveBeenCalledWith(
+      expect.stringContaining("(agent-)"),
+    );
   });
 
   it("publishes failed without generating or presenting partial HTML", async () => {

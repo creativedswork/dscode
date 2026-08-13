@@ -5,7 +5,7 @@
 
 ## 2. Migrate existing prototype
 
-- [x] 2.1 Move `mcp-toolcard-execution-view-prototype.html` from project root to `docs/prototypes/mcp-toolcard-execution-view-prototype.html`
+- [x] 2.1 Move `mcp-toolcard-execution-view-prototype.html` from project root to `docs/prototypes/archive/2026-07-14-fix-explore-prototype-html/mcp-toolcard-execution-view-prototype.html`
 - [x] 2.2 Verify the HTML file loads correctly from the new location in a browser
 
 ## 3. Update explore command files

@@ -36,7 +36,8 @@ When ready to implement, run /opsx:apply
    Before creating the change directory, check `docs/prototypes/` for HTML files
    matching the change name (e.g., `<change-name>-*.html`):
    - **If found**: Read the prototype HTML files — they are the design source-of-truth
-     from explore. These will be referenced in the prototype artifact.
+     from explore. Reference them in the prototype artifact and initialize each
+     retention decision as `pending`; implementation finalizes that decision.
    - **If not found and the change involves UI**: STOP proposal artifact generation.
      Load `prototype-workflow`, generate and browser-validate a self-contained HTML
      prototype in `docs/prototypes/`, then continue. A text-only visual direction
@@ -124,3 +125,5 @@ After completing all artifacts, summarize:
 - If context is critically unclear, ask the user - but prefer making reasonable decisions to keep momentum
 - If a change with that name already exists, ask if user wants to continue it or create a new one
 - Verify each artifact file exists after writing before proceeding to next
+- For UI changes, initialize one `Prototype Retention` row per HTML file with
+  decision `pending`

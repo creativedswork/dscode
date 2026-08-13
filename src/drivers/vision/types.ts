@@ -1,6 +1,11 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { ImageRef } from "../../session/types.js";
-import type { VisionConfig } from "../../core/types.js";
+import type { ImageRef } from "../../resources/images/types.js";
+
+export interface VisionConfig {
+  provider: string;
+  model: string;
+  key?: string;
+}
 
 /** Result of processing images through the pipeline. */
 export interface ProcessResult {
@@ -38,5 +43,25 @@ export interface ProcessOptions {
   visionConfig?: VisionConfig;
 }
 
+export interface ImageProcessingPort {
+  process(
+    images: ImageContent[],
+    text: string,
+    options?: ProcessOptions,
+  ): Promise<ProcessResult>;
+  updateConfig(config: {
+    visionConfig?: VisionConfig;
+    fallbackApiKey?: string;
+  }): void;
+  shutdown(): Promise<void>;
+}
+
+export interface ImageStorePort {
+  put(image: ImageContent): Promise<ImageRef>;
+  get(ref: ImageRef): Promise<ImageContent | null>;
+  getSync(ref: ImageRef): ImageContent | null;
+  putSync(image: ImageContent): ImageRef;
+}
+
 // Re-export commonly used types for consumers
-export type { ImageRef, ImageContent, VisionConfig };
+export type { ImageRef, ImageContent };

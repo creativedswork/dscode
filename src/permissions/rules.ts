@@ -1,4 +1,4 @@
-import type { PermissionRule } from "../core/types.js";
+import type { PermissionRule } from "./types.js";
 
 export const DEFAULT_RULES: PermissionRule[] = [
   { tool: "search_tools", decision: "allow", priority: 10 },

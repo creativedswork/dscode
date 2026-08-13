@@ -1,9 +1,12 @@
 import { randomUUID } from "node:crypto";
 
-import type { HarnessEventBus } from "../../core/events.js";
-import type { Logger } from "../../utils/logger.js";
-import type { AgentApplicationRegistry } from "../application/registry.js";
-import type { AgentApplicationSnapshot } from "../application/types.js";
+import type { HarnessEventBus } from "../../application/events.js";
+import type { Logger } from "../../kernel/logger.js";
+import type { AgentApplicationRegistry } from "../definitions/registry.js";
+import type {
+  AgentApplicationSnapshot,
+  AgentApplicationSummary,
+} from "../definitions/types.js";
 import type { AgentProcessRuntime } from "../runtimes/runtime.js";
 import { deriveAgentContext } from "./context.js";
 import { ContextAssembler } from "./context-selection.js";
@@ -20,6 +23,7 @@ import type {
 } from "./types.js";
 import type { AgentProcessStore } from "./store.js";
 import { AgentWorktreeManager } from "./worktree.js";
+import type { HostFacilities } from "../../kernel/host-facilities.js";
 
 export class AgentSupervisor {
   private readonly processes = new Map<string, AgentProcess>();
@@ -38,10 +42,13 @@ export class AgentSupervisor {
     private readonly availableTools: () => readonly string[],
     private readonly maxDepth = 1,
     fallbackRegistry?: AgentFallbackRegistry,
+    hostId = "default",
+    facilities?: HostFacilities,
   ) {
     this.lifecycle = new AgentProcessLifecycle(store, events, logger, this.worktrees);
     this.executionController = new AgentExecutionController({
       transition: (agentProcess, state) => this.lifecycle.transition(agentProcess, state),
+      progress: (agentProcess, progress) => this.lifecycle.progress(agentProcess, progress),
       output: (agentProcess, text) => this.lifecycle.output(agentProcess, text),
       checkpoint: (agentProcess, snapshot) =>
         this.lifecycle.checkpoint(agentProcess, snapshot),
@@ -57,7 +64,7 @@ export class AgentSupervisor {
               signal,
             )
         : undefined,
-    });
+    }, hostId, facilities);
   }
 
   registerMain(
@@ -139,6 +146,7 @@ export class AgentSupervisor {
       agentId,
       parentAgentId: parent.agentId,
       parentSessionId: parent.parentSessionId,
+      description: options.description,
       application,
       role: "subagent",
       state: "created",
@@ -157,6 +165,7 @@ export class AgentSupervisor {
       agentId,
       parentAgentId: parent.agentId,
       application: application.name,
+      description: options.description,
       attachment,
       input: options.input.displayPrompt ?? options.input.prompt,
     });
@@ -206,6 +215,16 @@ export class AgentSupervisor {
       .sort((a, b) => a.createdAt - b.createdAt);
   }
 
+  listApplications(): readonly AgentApplicationSummary[] {
+    return Object.freeze(this.registry.list().map((application) =>
+      Object.freeze({
+        name: application.name,
+        description: application.description,
+        source: Object.freeze({ ...application.source }),
+      })
+    ));
+  }
+
   get(agentId: string): AgentProcess | undefined {
     return this.processes.get(agentId);
   }
@@ -233,6 +252,30 @@ export class AgentSupervisor {
     }
   }
 
+  async updateMainCapabilities(
+    agentId: string,
+    availableTools: readonly string[],
+  ): Promise<void> {
+    const agentProcess = this.require(agentId);
+    if (agentProcess.role !== "main") {
+      throw new Error(`Agent process ${agentId} is not the Main Process`);
+    }
+    const previousContext = agentProcess.context;
+    const denied = new Set(previousContext.deniedTools);
+    agentProcess.context = Object.freeze({
+      ...previousContext,
+      allowedTools: Object.freeze(
+        [...new Set(availableTools)].filter((tool) => !denied.has(tool)),
+      ),
+    });
+    try {
+      await this.lifecycle.persistRequired(agentProcess);
+    } catch (error) {
+      agentProcess.context = previousContext;
+      throw error;
+    }
+  }
+
   require(agentId: string): AgentProcess {
     const agentProcess = this.get(agentId);
     if (!agentProcess) throw new Error(`Unknown Agent process: ${agentId}`);
@@ -253,15 +296,22 @@ export class AgentSupervisor {
 
   async suspend(agentId: string): Promise<void> {
     const agentProcess = this.require(agentId);
+    if (!["running", "waiting"].includes(agentProcess.state)) {
+      throw new Error(`Agent process ${agentId} is not active`);
+    }
     if (!agentProcess.runtime.capabilities.suspend || !agentProcess.runtime.suspend) {
       throw new Error(`Agent process ${agentId} does not support suspend`);
     }
     await agentProcess.runtime.suspend();
+    if (agentProcess.exit) return;
     await this.lifecycle.transition(agentProcess, "stopped");
   }
 
   async continue(agentId: string): Promise<void> {
     const agentProcess = this.require(agentId);
+    if (agentProcess.state !== "stopped") {
+      throw new Error(`Agent process ${agentId} is not suspended`);
+    }
     if (!agentProcess.runtime.capabilities.suspend || !agentProcess.runtime.continue) {
       throw new Error(`Agent process ${agentId} does not support continue`);
     }
@@ -271,7 +321,7 @@ export class AgentSupervisor {
 
   sendMessage(agentId: string, content: string): void {
     const agentProcess = this.require(agentId);
-    if (!["running", "stopped"].includes(agentProcess.state)) {
+    if (!["running", "waiting", "stopped"].includes(agentProcess.state)) {
       throw new Error(`Agent process ${agentId} has already exited`);
     }
     const runtime = agentProcess.runtime;

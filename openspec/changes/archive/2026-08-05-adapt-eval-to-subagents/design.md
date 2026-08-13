@@ -188,7 +188,7 @@ Dashboard 保留现有统计、Causal Graph、Recovery Arc、Harness Rules 和 R
 - 根因 Actor、Step/Agent 粒度、置信度和四阶段筛选证据。
 - summary-only/missing transcript 的醒目告警。
 
-交互和视觉依据为 `docs/prototypes/adapt-eval-to-subagents.html`。Dashboard 仍是无外部依赖的自包含 HTML。
+交互和视觉依据为 `docs/prototypes/archive/2026-08-05-adapt-eval-to-subagents/adapt-eval-to-subagents.html`。Dashboard 仍是无外部依赖的自包含 HTML。
 
 ### 9. CHIFF 更正为 CHIEF
 

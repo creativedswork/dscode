@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import type { AgentApplicationSnapshot } from "../../../src/agents/application/types.js";
+import type { AgentApplicationSnapshot } from "../../../src/agents/definitions/types.js";
 import { resolveVisionApplicationConfig } from "../../../src/agents/runtimes/vision-model.js";
 
 function application(model?: string): AgentApplicationSnapshot {

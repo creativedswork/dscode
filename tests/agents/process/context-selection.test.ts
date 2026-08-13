@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -23,6 +23,7 @@ function parent(cwd: string): AgentProcess {
     role: "main",
     state: "running",
     attachment: "foreground",
+    recording: "session",
     contextMode: "minimal",
     context: {
       agentId: "main",
@@ -83,8 +84,11 @@ describe("ContextAssembler", () => {
 
   it("rejects path escapes and applies explicit overflow policy", async () => {
     const root = await mkdtemp(join(tmpdir(), "dscode-selected-"));
-    temporaryDirectories.push(root);
+    const outside = await mkdtemp(join(tmpdir(), "dscode-selected-outside-"));
+    temporaryDirectories.push(root, outside);
     await writeFile(join(root, "large.txt"), "x".repeat(500));
+    await writeFile(join(outside, "secret.txt"), "secret");
+    await symlink(outside, join(root, "escape"));
     const assembler = new ContextAssembler();
 
     await expect(assembler.assemble({
@@ -93,6 +97,16 @@ describe("ContextAssembler", () => {
     await expect(assembler.assemble({
       items: [{ type: "message", messageId: "other-session-message" }],
     }, parent(root))).rejects.toThrow("not visible");
+    await expect(assembler.assemble({
+      items: [{ type: "file", path: "escape/secret.txt" }],
+    }, parent(root))).rejects.toThrow("outside parent cwd");
+    await expect(assembler.assemble({
+      items: [{
+        type: "diff",
+        scope: "commit",
+        ref: "--output=/tmp/dscode-selected-context",
+      }],
+    }, parent(root))).rejects.toThrow("cannot start with");
 
     const truncated = await assembler.assemble({
       items: [{ type: "file", path: "large.txt" }],

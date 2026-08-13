@@ -3,12 +3,7 @@ import type { Api, AssistantMessage, AssistantMessageEventStream, Context, Model
 import { createProvider, lazyApi, envApiKeyAuth } from "@earendil-works/pi-ai";
 import { DASHSCOPE_BASE, QWEN_MODELS } from "./qwen.js";
 import { KIMI_BASE_URL, KIMI_MODELS } from "./kimi.js";
-import type { ThinkingLevel } from "../core/types.js";
-
-type ModelFactory = (modelId: string) => Model<Api>;
-
-const providerFactories = new Map<string, ModelFactory>();
-const customModelDefs = new Map<string, { id: string; name: string }[]>();
+import type { ThinkingLevel } from "./types.js";
 
 const models = builtinModels();
 
@@ -34,25 +29,13 @@ const kimiProvider = createProvider({
 models.setProvider(kimiProvider);
 models.setProvider(qwenProvider);
 
-export function registerProvider(
-  name: string,
-  factory: ModelFactory,
-  models?: { id: string; name: string }[],
-): void {
-  providerFactories.set(name, factory);
-  if (models) customModelDefs.set(name, models);
-}
-
 export function getAllProviders(): string[] {
-  const builtin = models.getProviders().map((p) => p.id);
-  const custom = Array.from(providerFactories.keys());
-  return [...new Set([...builtin, ...custom])];
+  return models.getProviders().map((provider) => provider.id);
 }
 
 export function getAllModels(provider: string): { id: string; name: string }[] {
   const builtin = models.getModels(provider as any).map((m) => ({ id: m.id, name: m.name }));
-  if (builtin.length > 0) return builtin;
-  return customModelDefs.get(provider) ?? [];
+  return builtin;
 }
 
 export function getVisionModels(provider: string): { id: string; name: string }[] {
@@ -74,12 +57,6 @@ export function getVisionProviders(): string[] {
 export function resolveModel(provider: string, modelId: string): Model<Api> {
   const builtin = models.getModel(provider, modelId);
   if (builtin) return builtin;
-
-  const factory = providerFactories.get(provider);
-  if (factory) {
-    const model = factory(modelId);
-    if (model) return model;
-  }
 
   throw new Error(`Unknown model: ${modelId} for provider ${provider}`);
 }
@@ -167,10 +144,13 @@ const API_KEY_ENV_VARS: Record<string, string> = {
   "xiaomi-token-plan-sgp": "XIAOMI_TOKEN_PLAN_SGP_API_KEY",
 };
 
-export function getEnvApiKey(provider: string): string | undefined {
+export function getEnvApiKey(
+  provider: string,
+  environment: Readonly<Record<string, string | undefined>> = process.env,
+): string | undefined {
   const envVar = API_KEY_ENV_VARS[provider];
-  if (envVar && process.env[envVar]) {
-    return process.env[envVar];
+  if (envVar && environment[envVar]) {
+    return environment[envVar];
   }
   return undefined;
 }

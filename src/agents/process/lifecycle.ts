@@ -1,6 +1,9 @@
-import type { HarnessEventBus } from "../../core/events.js";
-import type { Logger } from "../../utils/logger.js";
-import type { AgentRuntimeSnapshot } from "../runtimes/runtime.js";
+import type { HarnessEventBus } from "../../application/events.js";
+import type { Logger } from "../../kernel/logger.js";
+import type {
+  AgentProcessProgress,
+  AgentRuntimeSnapshot,
+} from "../runtimes/runtime.js";
 import type { AgentProcessStore } from "./store.js";
 import type {
   AgentExitResult,
@@ -21,6 +24,14 @@ export class AgentProcessLifecycle {
 
   output(agentProcess: AgentProcess, text: string): void {
     this.events.emit({ type: "agent:output", agentId: agentProcess.agentId, text });
+  }
+
+  progress(agentProcess: AgentProcess, progress: AgentProcessProgress): void {
+    this.events.emit({
+      type: "agent:progress",
+      agentId: agentProcess.agentId,
+      ...progress,
+    });
   }
 
   async checkpoint(
@@ -59,7 +70,7 @@ export class AgentProcessLifecycle {
       pending.push(exit);
       this.notifications.set(agentProcess.parentSessionId, pending);
     }
-    void this.persist(agentProcess);
+    await this.persist(agentProcess);
     this.events.emit({ type: "agent:state", agentId: agentProcess.agentId, previous, state });
     this.events.emit({ type: "agent:exit", result: exit });
     return exit;

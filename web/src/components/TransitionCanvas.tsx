@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import type { Particle, ImpactRing, Shard, TimestampEntry } from "../animation/types";
 import {
+  groupCascadeColliderFragments,
   hasRenderableColliderContent,
   selectNextCascadeRowIndex,
 } from "../animation/cascade";
@@ -15,6 +16,7 @@ type Phase = "cascade" | "gather" | "formed";
 
 interface CascadeRow {
   el: HTMLElement;
+  elements: HTMLElement[];
   top: number;
   left: number;
   width: number;
@@ -184,9 +186,13 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
     const scrollContainer = sc;
     let prevScrollTop = 0;
     let prevOverflow = "";
+    let prevOpacity = "";
+    let prevTransition = "";
     if (scrollContainer) {
       prevScrollTop = scrollContainer.scrollTop;
       prevOverflow = scrollContainer.style.overflow;
+      prevOpacity = scrollContainer.style.opacity;
+      prevTransition = scrollContainer.style.transition;
       scrollContainer.style.overflow = "hidden";
     }
 
@@ -259,6 +265,14 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       const all = container.querySelectorAll<HTMLElement>("[data-collider]");
       const canvasRect = canvas!.getBoundingClientRect();
       const rows: CascadeRow[] = [];
+      const fragments: Array<{
+        el: HTMLElement;
+        blockId: string | null;
+        top: number;
+        bottom: number;
+        left: number;
+        right: number;
+      }> = [];
       const clusterHalf = Math.abs(CLUSTER_OFFSETS[0].ox); // 40px
 
       all.forEach((el) => {
@@ -286,7 +300,11 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         let width = rect.width;
 
         // ── Content-tight width for text-like colliders ──
-        if (colliderType === "text-line" || colliderType === "code-line" || colliderType === "tool-result-line") {
+        if (
+          colliderType === "text-block"
+          || colliderType === "code-line"
+          || colliderType === "tool-result-line"
+        ) {
           const text = el.textContent || "";
           const computedStyle = getComputedStyle(el);
           measureCtx.font = `${computedStyle.fontWeight || "400"} ${computedStyle.fontSize} "${computedStyle.fontFamily.split(",")[0].replace(/"/g, "")}", sans-serif`;
@@ -294,23 +312,52 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
           width = Math.min(rect.width, measuredWidth);
         }
 
-        // ── Random landing X ──
         const left = rect.left - canvasRect.left;
+        fragments.push({
+          el,
+          blockId: colliderType === "text-line"
+            ? el.dataset.colliderBlock ?? null
+            : null,
+          top,
+          bottom,
+          left,
+          right: left + width,
+        });
+      });
+
+      const groups = groupCascadeColliderFragments(
+        fragments.map((fragment, index) => ({
+          index,
+          blockId: fragment.blockId,
+          top: fragment.top,
+          bottom: fragment.bottom,
+          left: fragment.left,
+          right: fragment.right,
+        })),
+      );
+
+      groups.forEach((group) => {
+        const elements = group.indices.map((index) => fragments[index].el);
+        const width = group.right - group.left;
+        const height = group.bottom - group.top;
+
+        // ── Random landing X ──
         let landingX: number;
         if (width >= CLUSTER_WIDTH) {
-          const lo = left + clusterHalf;
-          const hi = left + width - clusterHalf;
+          const lo = group.left + clusterHalf;
+          const hi = group.right - clusterHalf;
           landingX = lo + rand(0, hi - lo);
         } else {
-          landingX = left + width / 2;
+          landingX = group.left + width / 2;
         }
 
         rows.push({
-          el,
-          top,
-          left,
+          el: elements[0],
+          elements,
+          top: group.top,
+          left: group.left,
           width,
-          height: rect.height,
+          height,
           landingX,
           struck: false,
         });
@@ -329,6 +376,21 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       }
 
       return rows;
+    }
+
+    function measureRow(
+      row: CascadeRow,
+      canvasRect: DOMRect,
+    ): { top: number; bottom: number; left: number; right: number } {
+      const rects = row.elements.map((element) =>
+        element.getBoundingClientRect()
+      );
+      return {
+        top: Math.min(...rects.map((rect) => rect.top)) - canvasRect.top,
+        bottom: Math.max(...rects.map((rect) => rect.bottom)) - canvasRect.top,
+        left: Math.min(...rects.map((rect) => rect.left)) - canvasRect.left,
+        right: Math.max(...rects.map((rect) => rect.right)) - canvasRect.left,
+      };
     }
 
     // ── Timestamp list builder ──
@@ -474,8 +536,12 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
 
       if (text.length > 80) {
         spawnParticles(el);
+        el.style.transition = "opacity 180ms ease-out";
+        el.style.opacity = "0";
         return;
       }
+
+      const originalColor = getComputedStyle(el).color;
 
       // Hide original children (preserve layout)
       for (const child of Array.from(el.children)) {
@@ -489,8 +555,11 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       clone.style.top = "0";
       clone.style.left = "0";
       clone.style.pointerEvents = "none";
+      clone.style.color = originalColor;
       el.style.position = "relative";
       el.style.overflow = "visible";
+      el.style.color = "transparent";
+      el.style.textDecorationColor = "transparent";
 
       const chars = [...text];
       const style = document.createElement("style");
@@ -528,6 +597,7 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
     function destroyCodeLine(el: HTMLElement): void {
       const originalText = el.textContent || "";
       const chars = [...originalText];
+      const originalColor = getComputedStyle(el).color;
 
       // Hide original children (preserve layout)
       for (const child of Array.from(el.children)) {
@@ -542,8 +612,11 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       clone.style.top = "0";
       clone.style.left = "0";
       clone.style.pointerEvents = "none";
+      clone.style.color = originalColor;
       el.style.position = "relative";
       el.style.overflow = "visible";
+      el.style.color = "transparent";
+      el.style.textDecorationColor = "transparent";
 
       function corrupt(ratio: number, jitter: number): void {
         const result = chars.map((ch, i) => {
@@ -650,6 +723,7 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
     function destroyToolHeader(el: HTMLElement): void {
       const text = el.textContent || "";
       const chars = [...text];
+      const originalColor = getComputedStyle(el).color;
 
       // Hide original children (preserve layout)
       for (const child of Array.from(el.children)) {
@@ -663,8 +737,11 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       clone.style.top = "0";
       clone.style.left = "0";
       clone.style.pointerEvents = "none";
+      clone.style.color = originalColor;
       el.style.position = "relative";
       el.style.overflow = "visible";
+      el.style.color = "transparent";
+      el.style.textDecorationColor = "transparent";
 
       const styleId = `th-scatter-${Date.now()}`;
       const style = document.createElement("style");
@@ -703,8 +780,11 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       const text = el.textContent || "";
       if (text.length > 100) {
         spawnParticles(el);
+        el.style.transition = "opacity 180ms ease-out";
+        el.style.opacity = "0";
         return;
       }
+      const originalColor = getComputedStyle(el).color;
 
       // Hide original children (preserve layout)
       for (const child of Array.from(el.children)) {
@@ -718,8 +798,11 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       clone.style.top = "0";
       clone.style.left = "0";
       clone.style.pointerEvents = "none";
+      clone.style.color = originalColor;
       el.style.position = "relative";
       el.style.overflow = "visible";
+      el.style.color = "transparent";
+      el.style.textDecorationColor = "transparent";
 
       const chars = [...text];
       const styleId = `trl-scatter-${Date.now()}`;
@@ -756,7 +839,7 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
     function destroyByType(el: HTMLElement, impactX: number, impactY: number): void {
       const type = el.getAttribute("data-collider");
       switch (type) {
-        case "text-line":
+        case "text-block":
           destroyTextLine(el);
           break;
         case "code-line":
@@ -803,6 +886,16 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
     function startGather(): void {
       if (s.gatherStarted) return;
       s.gatherStarted = true;
+      if (scrollContainer) {
+        scrollContainer.style.transition = "opacity 120ms ease-out";
+        scrollContainer.style.opacity = "0";
+      } else {
+        s.rows.forEach((row) => {
+          row.elements.forEach((element) => {
+            element.style.opacity = "0";
+          });
+        });
+      }
       s.phase = "gather";
       s.phaseTime = 0;
       s.targetPoints = renderTargets();
@@ -830,13 +923,13 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       const liveCurrentTop = currentRow.top;
 
       const liveCandidates = s.rows.map((candidate, index) => {
-        const rect = candidate.el.getBoundingClientRect();
+        const geometry = measureRow(candidate, canvasRect);
         return {
           index,
           struck: candidate.struck,
-          top: rect.top - canvasRect.top,
-          bottom: rect.bottom - canvasRect.top,
-          left: rect.left - canvasRect.left,
+          top: geometry.top,
+          bottom: geometry.bottom,
+          left: geometry.left,
         };
       });
       const nextIndex = selectNextCascadeRowIndex(
@@ -880,7 +973,7 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
         }
         const children = current.querySelectorAll<HTMLElement>("[data-collider]");
         const allDone = [...children].every((child) => {
-          const childRow = s.rows.find((r) => r.el === child);
+          const childRow = s.rows.find((r) => r.elements.includes(child));
           if (childRow && !childRow.struck) return false;
           return true;
         });
@@ -1002,7 +1095,9 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       const impactX = row.landingX;
       const impactY = row.top + row.height * 0.35;
 
-      destroyByType(row.el, impactX, impactY);
+      row.elements.forEach((element) => {
+        destroyByType(element, impactX, impactY);
+      });
       // ── Recursive parent container cleanup ──
       cleanupParents(row.el);
 
@@ -1021,11 +1116,11 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
 
         for (let i = 0; i < s.rows.length; i++) {
           const r = s.rows[i];
-          const rect = r.el.getBoundingClientRect();
-          r.top = rect.top - canvasRect.top;
-          r.left = rect.left - canvasRect.left;
-          r.width = rect.width;
-          r.height = rect.height;
+          const geometry = measureRow(r, canvasRect);
+          r.top = geometry.top;
+          r.left = geometry.left;
+          r.width = geometry.right - geometry.left;
+          r.height = geometry.bottom - geometry.top;
         }
         s.rows.sort((a, b) => a.top - b.top);
         c.rowIndex = s.rows.findIndex(r => r === row);
@@ -1050,6 +1145,10 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
 
       // If no rows, transition after 2s
       if (s.rows.length === 0 && s.phaseTime > 2000 && !s.gatherStarted) {
+        startGather();
+        return;
+      }
+      if (s.phaseTime > SAFETY_TIMEOUT_MS && !s.gatherStarted) {
         startGather();
         return;
       }
@@ -1519,6 +1618,8 @@ export function TransitionCanvas({ artifactReady, onComplete, scrollContainerRef
       document.body.style.cursor = prevCursor;
       if (scrollContainer) {
         scrollContainer.style.overflow = prevOverflow;
+        scrollContainer.style.opacity = prevOpacity;
+        scrollContainer.style.transition = prevTransition;
         scrollContainer.scrollTop = prevScrollTop;
       }
     };

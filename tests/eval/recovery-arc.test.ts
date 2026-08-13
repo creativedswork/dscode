@@ -236,14 +236,13 @@ describe("Recovery Timeline — Dashboard Rendering (Task 7.3)", () => {
     expect(html).not.toContain("恢复时间线");
   });
 
-  it("uses correct color: effective=green #3fb950", () => {
+  it("uses the theme success token for effective recovery", () => {
     const arc = makeRecoveryArc({ effective: true });
     const result = makeEvalResult({ recoveryArcs: [arc] });
     const html = generateDashboardHTML(result);
 
-    // The effective step background should use COLORS.ok = #3fb950
-    // For effective=true, the correction step pill uses effectiveColor=COLORS.ok
-    expect(html).toContain("#3fb950");
+    expect(html).toContain("background:var(--success)");
+    expect(html).not.toContain("#3fb950");
   });
 
   it("renders rootCauseHypothesis as a callout with 💡 icon", () => {

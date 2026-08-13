@@ -1,20 +1,15 @@
-import type { HarnessAPI } from "../../core/harness-api.js";
-import type { SerializedSession } from "../../session/types.js";
-import type { Logger } from "../../utils/logger.js";
+import type { EvalApplicationPort } from "../../application/harness-api.js";
+import type { Logger } from "../../kernel/logger.js";
 import { runStructuredAgent } from "../chief/runner.js";
 import type { ChiefAttribution } from "../chief/types.js";
 import type { ChiefBacktrack, ChiefGraph, ChiefOracle } from "../chief/types.js";
 import type { EvalRunContext } from "../chief/workspace.js";
-import type { CausalGraphStore } from "../graph-store.js";
 import {
   validateHarnessRuleOutputs,
-  type Attribution,
   type HarnessRuleOutput,
-  type HistoryStep,
   type ValidationResult,
 } from "../schemas.js";
 import type { MultiAgentTrajectory, TrajectoryActor } from "../trajectory.js";
-import type { SessionMeta, ToolStats } from "../types.js";
 import type { HarnessRule } from "./types.js";
 
 function promptForRules(context: unknown): string {
@@ -138,7 +133,7 @@ export async function attributeRulesWithAgent(options: {
   graph: ChiefGraph;
   oracles: ChiefOracle[];
   backtrack: ChiefBacktrack;
-  harness: HarnessAPI;
+  harness: EvalApplicationPort;
   run: EvalRunContext;
   signal?: AbortSignal;
   logger?: Logger;
@@ -159,7 +154,6 @@ export async function attributeRulesWithAgent(options: {
     workspace: options.run.runRoot,
     stage: "rules",
     validate: (value) => validateApplicationRuleOutputs(value, options.trajectory),
-    runContext: options.run,
     signal: options.signal,
     logger: options.logger,
     onWorker: options.onWorker,
@@ -172,49 +166,4 @@ export async function attributeRulesWithAgent(options: {
     options.trajectory.actors,
     options.attribution,
   );
-}
-
-/**
- * Legacy compatibility wrapper. It still uses the standard Agent Application
- * runtime and never calls a model provider directly.
- */
-export async function attributeWithLLM(
-  _data: SerializedSession,
-  _steps: HistoryStep[],
-  stats: ToolStats,
-  meta: SessionMeta,
-  graphStore: CausalGraphStore | null,
-  attribution: Attribution | null,
-  harness: HarnessAPI,
-  sessionId: string,
-  timestamp: number,
-  logger?: Logger,
-): Promise<HarnessRule[]> {
-  try {
-    const result = await runStructuredAgent({
-      host: harness,
-      application: "eval-rule-attribution",
-      prompt: promptForRules({
-        attribution,
-        graph: graphStore?.snapshot() ?? null,
-        stats,
-      }),
-      workspace: meta.projectPath || harness.config.projectPath,
-      stage: "rules",
-      validate: validateHarnessRuleOutputs,
-      logger,
-    });
-    return toHarnessRules(
-      result.value,
-      sessionId,
-      timestamp,
-      attribution?.mistakeStep ?? null,
-    );
-  } catch (error) {
-    logger?.warn(
-      "RuleAttribution",
-      `Optional rule attribution failed: ${error instanceof Error ? error.message : String(error)}`,
-    );
-    return [];
-  }
 }

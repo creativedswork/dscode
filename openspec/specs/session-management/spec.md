@@ -108,35 +108,32 @@ The `SessionManager` class SHALL expose a public method `loadSessionFile(session
 - **AND** return the result without modification
 
 ### Requirement: Session load saves current session first
-The `handleSession` → `load` handler in `WebUiBackend` SHALL, before loading the requested session: (1) abort the current agent turn if one is running, (2) save the current session to disk via `harness.saveSessionNow()`, and (3) send an updated session list via `pushSessionList` so the sidebar reflects the saved session. Only after these steps SHALL it call `sessionManager.loadSession()` to replace agent state and send `clear_conversation` + `ready` to the client.
+The unified Application Session-switch command SHALL own target preflight,
+active-turn quiescence, source save, Main Process rebind, target commit, and
+completion notification. Presentation SHALL submit one command and render its
+result.
 
-Additionally, if a tool permission prompt was active (`permissionResolve` is non-null), the save step SHALL: roll back the last partial assistant message from the agent's messages before persisting, and store `pendingPermission` information (`{ toolName, preview, fuzzyPattern, permissionArgs }`) in the session metadata.
+#### Scenario: Load aborts and waits for a running turn
 
-#### Scenario: Load aborts running turn
-- **WHEN** the client sends `{ type: "session", action: "load", id: "B" }` and the agent is currently processing a turn
-- **THEN** the server calls `harness.abort()` to stop the running turn before loading session B
+- **WHEN** a valid switch is requested while Main is running
+- **THEN** Application SHALL abort and await quiescence before saving the source
 
-#### Scenario: Load saves current session
-- **WHEN** the client sends a session load command
-- **THEN** the server calls `harness.saveSessionNow()` to persist the current session to disk before overwriting agent state
+#### Scenario: Source Session is saved
 
-#### Scenario: Load sends updated session list
-- **WHEN** the server has saved the current session after a load command
-- **THEN** it calls `pushSessionList(client)` so the frontend sidebar displays all sessions including the just-saved one
+- **WHEN** target preflight succeeds
+- **THEN** Application SHALL persist Main messages, Agent records, metadata, and pending permission before commit
 
-#### Scenario: Load proceeds after abort and save
+#### Scenario: Pending permission is present
 
-#### Scenario: Load saves current session with pending permission
-- **WHEN** a session load is requested while a tool permission prompt is active for tool "bash"
-- **THEN** the WebUiBackend SHALL save the current session with `pendingPermission: { toolName: "bash", preview: "...", fuzzyPattern: "mcp__*", permissionArgs: {...} }` in its metadata
-- **AND** the last partial assistant message (role===assistant with a tool_use content block requesting "bash") SHALL be removed from the saved messages
+- **WHEN** switching occurs during a permission prompt
+- **THEN** the UserInteraction adapter SHALL supply structured PendingPermission
+- **AND** Application SHALL persist it without reading UI-private state
 
-#### Scenario: Load saves current session without pending permission
-- **WHEN** a session load is requested and no tool permission prompt is active
-- **THEN** the WebUiBackend SHALL save the current session normally without `pendingPermission` in metadata
-- **AND** no messages are rolled back
-- **WHEN** abort and save have both completed
-- **THEN** the server calls `sessionManager.loadSession(id, agent)`, then sends `clear_conversation` and `ready` with the loaded session's conversation history
+#### Scenario: Load completes
+
+- **WHEN** save, Main Process rebind, and target commit succeed
+- **THEN** the command SHALL return the target snapshot once
+- **AND** Presentation SHALL clear and replay from that result
 
 ### Requirement: Zero-message session reuse on create
 When `SessionManager.createSession()` is called, it SHALL scan existing sessions in the current project scope. If any session has `messageCount === 0`, it SHALL reuse that session's `id` and `createdAt` fields (updating only `updatedAt`, `modelProvider`, and `modelId`) instead of generating a new ULID.
@@ -173,26 +170,36 @@ When `SessionManager.persistEmptySession()` is called, it SHALL, before writing 
 
 ### Requirement: handleSession load fallback to current session
 
-The `WebUiBackend.handleSession` `"load"` handler SHALL, when `listSessions()` returns zero matches for the requested session ID, check whether the request ID matches the current active session via `sessionManager.getCurrentMetadata()`. If the current session metadata exists and its `id` starts with the requested ID prefix, the handler SHALL proceed with loading the current session instead of returning a "Session not found" error.
+Session target resolution SHALL be implemented by the Session query and
+Application command, including current empty Session fallback. TUI and Web
+MUST NOT implement private resolution behavior.
 
-This ensures consistency with `pushSessionList()`, which already includes the current session in the client-facing list even when its `messageCount` is 0.
+#### Scenario: Current empty Session is requested
 
-#### Scenario: Load current empty session via sidebar click
+- **WHEN** a prefix uniquely identifies the current Session even if filtered from list results
+- **THEN** the Application resolver SHALL select it
 
-- **WHEN** the client sends `{ type: "session", action: "load", id: "<currentSessionId>" }` and the current session has `messageCount === 0` (thus excluded from `listSessions()` output)
-- **THEN** the handler finds no match in `listSessions()` but detects that `getCurrentMetadata()?.id` starts with the requested ID
-- **AND** proceeds with the normal load flow (abort → save → loadSession → clear_conversation → ready)
-- **AND** does NOT return "Session not found" error
+#### Scenario: Target is ambiguous
 
-#### Scenario: Load non-existent session still returns error
+- **WHEN** a prefix matches multiple distinct Session IDs
+- **THEN** the command SHALL fail before aborting or saving current state
+- **AND** Presentation SHALL render the typed error
 
-- **WHEN** the client sends `{ type: "session", action: "load", id: "NONEXIST" }` and no session with that ID exists (neither in `listSessions()` nor as current session)
-- **THEN** the handler returns `{ type: "error", text: "Session not found: NONEXIST" }`
+### Requirement: Session queries return snapshots rather than managers
 
-#### Scenario: Ambiguous prefix match still returns error
+HarnessAPI SHALL expose immutable Session summaries, metadata, persisted
+snapshots, and switch results without exposing SessionManager or SessionStore.
 
-- **WHEN** the client sends `{ type: "session", action: "load", id: "00" }` and `listSessions()` matches more than one session with that prefix
-- **THEN** the handler returns `{ type: "error", text: "Ambiguous session ID prefix. ..." }` without checking the current session fallback
+#### Scenario: UI lists Sessions
+
+- **WHEN** TUI or Web requests navigation data
+- **THEN** the query SHALL return immutable summaries
+
+#### Scenario: Eval reads a historical Session
+
+- **WHEN** Eval targets a persisted Session
+- **THEN** an Eval/Session query port SHALL return the required domain snapshot
+- **AND** Eval SHALL not access SessionStore internals
 
 ### Requirement: rebuildIndex preserves empty-message sessions
 
@@ -415,4 +422,3 @@ metadata、`agentMessages` 和可选 PendingPermission。
 #### Scenario: 观察加载事件
 - **WHEN** 监听器收到目标 Session B 的 session:loaded
 - **THEN** SessionManager.current、Main messages、agentMessages 和 Main Process parentSessionId 均已指向 B
-

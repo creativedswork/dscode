@@ -1,0 +1,494 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "dscode 当前架构",
+    "subtitle": "基于源码证据的所有权边界与 Agent 主执行链",
+    "output": "docs/architecture/dscode-current-architecture.html",
+    "visual_preset": "blueprint",
+    "animation": "none",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/creativedswork/dscode",
+      "revision": "a3cfce4ba986c3a5f73708591bee4abde89d8d30"
+    },
+    "views": [
+      {
+        "id": "execution_path",
+        "label": "Agent 主执行链",
+        "focus": ["ui_adapters", "harness_api", "application", "agent_processes", "pi_runtime", "model_provider"],
+        "note": "用户请求经稳定 API、应用编排和进程管理进入同构 Pi Runtime，最终调用模型。"
+      },
+      {
+        "id": "capability_path",
+        "label": "能力调用链",
+        "focus": ["pi_runtime", "capability_policy", "tool_io", "mcp_resources"],
+        "note": "Skill 注入指令和工具白名单，权限策略拦截调用，Driver 才负责访问资源。"
+      },
+      {
+        "id": "ownership_path",
+        "label": "配置与状态所有权",
+        "focus": ["config_project", "application", "state_services", "agent_definitions", "agent_processes"],
+        "note": "配置和 Agent 定义是输入，Application 负责编排，状态服务按各自粒度持久化。"
+      }
+    ]
+  },
+  "layout": {
+    "mode": "grid",
+    "origin": [50, 100],
+    "cols": 6,
+    "gapX": 110,
+    "gapY": 95,
+    "cellW": 150,
+    "cellH": 72
+  },
+  "components": [
+    {
+      "id": "ui_adapters",
+      "type": "frontend",
+      "label": "交互入口",
+      "sublabel": "TUI / Web / Slash",
+      "tag": "delivery adapters",
+      "sources": [
+        {
+          "path": "src/bootstrap/cli-main.ts",
+          "line": 170,
+          "end_line": 205,
+          "label": "UI composition"
+        },
+        {
+          "path": "src/ui/tui/backend.ts",
+          "line": 12,
+          "end_line": 69,
+          "label": "TUI adapter"
+        },
+        {
+          "path": "src/slash-commands/manager.ts",
+          "line": 4,
+          "end_line": 40,
+          "label": "Slash commands"
+        }
+      ],
+      "row": 1,
+      "col": 0
+    },
+    {
+      "id": "harness_api",
+      "type": "backend",
+      "label": "HarnessAPI",
+      "sublabel": "Command / Query / Event",
+      "tag": "stable facade",
+      "sources": [
+        {
+          "path": "src/application/harness-api.ts",
+          "line": 285,
+          "end_line": 300,
+          "label": "Public ports"
+        },
+        {
+          "path": "src/application/harness-api.contract.ts",
+          "line": 3,
+          "end_line": 27,
+          "label": "Boundary contract"
+        }
+      ],
+      "row": 1,
+      "col": 1
+    },
+    {
+      "id": "application",
+      "type": "backend",
+      "label": "Application Harness",
+      "sublabel": "coordinators + lifecycle",
+      "tag": "control plane",
+      "sources": [
+        {
+          "path": "src/application/harness.ts",
+          "line": 223,
+          "end_line": 358,
+          "label": "Orchestration"
+        },
+        {
+          "path": "src/bootstrap/create-standard-agent-host.ts",
+          "line": 132,
+          "end_line": 240,
+          "label": "Composition root"
+        }
+      ],
+      "row": 1,
+      "col": 2
+    },
+    {
+      "id": "agent_definitions",
+      "type": "backend",
+      "label": "Agent 定义",
+      "sublabel": "Agent.md → snapshot",
+      "tag": "definitions",
+      "sources": [
+        {
+          "path": "src/agents/definitions/registry.ts",
+          "line": 39,
+          "end_line": 78,
+          "label": "Registry"
+        },
+        {
+          "path": "src/agents/definitions/compiler.ts",
+          "line": 162,
+          "end_line": 215,
+          "label": "Compiler"
+        }
+      ],
+      "row": 0,
+      "col": 3
+    },
+    {
+      "id": "config_project",
+      "type": "database",
+      "label": "配置与项目输入",
+      "sublabel": "settings / MCP / @files",
+      "tag": "configuration",
+      "sources": [
+        {
+          "path": "src/config/loader.ts",
+          "line": 224,
+          "end_line": 240,
+          "label": "Runtime config"
+        },
+        {
+          "path": "src/project-files/resolver.ts",
+          "line": 109,
+          "end_line": 122,
+          "label": "Safe resolution"
+        }
+      ],
+      "row": 0,
+      "col": 2
+    },
+    {
+      "id": "agent_processes",
+      "type": "backend",
+      "label": "Agent 进程管理",
+      "sublabel": "Supervisor + lifecycle",
+      "tag": "process model",
+      "sources": [
+        {
+          "path": "src/agents/process/supervisor.ts",
+          "line": 28,
+          "end_line": 67,
+          "label": "Supervisor"
+        },
+        {
+          "path": "src/agents/process/supervisor.ts",
+          "line": 103,
+          "end_line": 179,
+          "label": "Spawn path"
+        },
+        {
+          "path": "src/agents/process/store.ts",
+          "line": 38,
+          "end_line": 70,
+          "label": "Process store"
+        }
+      ],
+      "row": 1,
+      "col": 3
+    },
+    {
+      "id": "pi_runtime",
+      "type": "backend",
+      "label": "Pi Agent Runtime",
+      "sublabel": "同构 Agent loop",
+      "tag": "execution",
+      "sources": [
+        {
+          "path": "src/application/agent-runtime-coordinator.ts",
+          "line": 75,
+          "end_line": 247,
+          "label": "Runtime factory"
+        },
+        {
+          "path": "src/agents/runtimes/pi-agent-runtime.ts",
+          "line": 45,
+          "end_line": 169,
+          "label": "Runtime adapter"
+        }
+      ],
+      "row": 1,
+      "col": 4
+    },
+    {
+      "id": "capability_policy",
+      "type": "security",
+      "label": "Skill 与权限策略",
+      "sublabel": "instructions / allowlist / ACL",
+      "tag": "capability",
+      "sources": [
+        {
+          "path": "src/skills/manager.ts",
+          "line": 37,
+          "end_line": 98,
+          "label": "Skill manager"
+        },
+        {
+          "path": "src/permissions/manager.ts",
+          "line": 34,
+          "end_line": 149,
+          "label": "Permission gate"
+        },
+        {
+          "path": "src/application/agent-runtime-coordinator.ts",
+          "line": 111,
+          "end_line": 235,
+          "label": "Runtime policy"
+        }
+      ],
+      "row": 0,
+      "col": 4
+    },
+    {
+      "id": "state_services",
+      "type": "database",
+      "label": "状态服务",
+      "sublabel": "Session / Context / Memory",
+      "tag": "host-scoped state",
+      "sources": [
+        {
+          "path": "src/session/store.ts",
+          "line": 69,
+          "end_line": 97,
+          "label": "Session store"
+        },
+        {
+          "path": "src/context/manager.ts",
+          "line": 17,
+          "end_line": 59,
+          "label": "Context manager"
+        },
+        {
+          "path": "src/checkpoint/index.ts",
+          "line": 29,
+          "end_line": 116,
+          "label": "Checkpoint system"
+        }
+      ],
+      "row": 2,
+      "col": 2
+    },
+    {
+      "id": "tool_io",
+      "type": "backend",
+      "label": "Tool / Driver I/O",
+      "sublabel": "syscall table + adapters",
+      "tag": "I/O",
+      "sources": [
+        {
+          "path": "src/drivers/tool-registry.ts",
+          "line": 14,
+          "end_line": 76,
+          "label": "Tool catalog"
+        },
+        {
+          "path": "src/drivers/tool-registry.ts",
+          "line": 111,
+          "end_line": 123,
+          "label": "Request tools"
+        },
+        {
+          "path": "src/drivers/registry.ts",
+          "line": 9,
+          "end_line": 67,
+          "label": "Drivers"
+        }
+      ],
+      "row": 2,
+      "col": 4
+    },
+    {
+      "id": "model_provider",
+      "type": "cloud",
+      "label": "模型提供方",
+      "sublabel": "pi-ai providers",
+      "tag": "external compute",
+      "sources": [
+        {
+          "path": "src/models/registry.ts",
+          "line": 8,
+          "end_line": 30,
+          "label": "Provider registry"
+        },
+        {
+          "path": "src/models/registry.ts",
+          "line": 57,
+          "end_line": 62,
+          "label": "Model resolver"
+        },
+        {
+          "path": "src/models/registry.ts",
+          "line": 87,
+          "end_line": 108,
+          "label": "Inference calls"
+        }
+      ],
+      "row": 1,
+      "col": 5
+    },
+    {
+      "id": "mcp_resources",
+      "type": "external",
+      "label": "MCP 与外部资源",
+      "sublabel": "JSON-RPC / devices / services",
+      "tag": "integration",
+      "sources": [
+        {
+          "path": "src/application/mcp-controller.ts",
+          "line": 56,
+          "end_line": 87,
+          "label": "MCP lifecycle"
+        },
+        {
+          "path": "src/application/mcp-controller.ts",
+          "line": 138,
+          "end_line": 198,
+          "label": "Driver contribution"
+        },
+        {
+          "path": "src/mcp/manager.ts",
+          "line": 243,
+          "end_line": 260,
+          "label": "Protocol manager"
+        }
+      ],
+      "row": 2,
+      "col": 5
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "交付层",
+      "wraps": ["ui_adapters", "harness_api"]
+    },
+    {
+      "kind": "region",
+      "label": "应用控制面",
+      "wraps": ["config_project", "application", "state_services"]
+    },
+    {
+      "kind": "region",
+      "label": "Agent 执行面",
+      "wraps": ["agent_definitions", "agent_processes", "pi_runtime", "capability_policy", "tool_io"]
+    },
+    {
+      "kind": "region",
+      "label": "外部集成",
+      "wraps": ["model_provider", "mcp_resources"]
+    }
+  ],
+  "connections": [
+    {
+      "id": "ui_api",
+      "from": "ui_adapters",
+      "to": "harness_api",
+      "label": "C / Q / E",
+      "variant": "emphasis"
+    },
+    {
+      "id": "api_application",
+      "from": "harness_api",
+      "to": "application"
+    },
+    {
+      "id": "config_application",
+      "from": "config_project",
+      "to": "application",
+      "label": "加载",
+      "labelAt": [630, 174]
+    },
+    {
+      "id": "application_processes",
+      "from": "application",
+      "to": "agent_processes",
+      "label": "编排",
+      "variant": "emphasis"
+    },
+    {
+      "id": "definitions_processes",
+      "from": "agent_definitions",
+      "to": "agent_processes",
+      "label": "编译快照",
+      "labelAt": [890, 174]
+    },
+    {
+      "id": "application_state",
+      "from": "application",
+      "to": "state_services",
+      "label": "持久化",
+      "labelAt": [630, 341]
+    },
+    {
+      "id": "processes_runtime",
+      "from": "agent_processes",
+      "to": "pi_runtime",
+      "label": "控制",
+      "variant": "emphasis"
+    },
+    {
+      "id": "runtime_model",
+      "from": "pi_runtime",
+      "to": "model_provider",
+      "label": "流式推理",
+      "variant": "emphasis"
+    },
+    {
+      "id": "policy_runtime",
+      "from": "capability_policy",
+      "to": "pi_runtime",
+      "label": "注入 / 拦截",
+      "variant": "security",
+      "labelAt": [1150, 174]
+    },
+    {
+      "id": "runtime_tools",
+      "from": "pi_runtime",
+      "to": "tool_io",
+      "label": "Tool Call",
+      "labelAt": [1150, 341]
+    },
+    {
+      "id": "tools_mcp",
+      "from": "tool_io",
+      "to": "mcp_resources",
+      "label": "JSON-RPC",
+      "variant": "dashed"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "主执行链",
+      "items": [
+        "TUI 与 Web 只依赖 HarnessAPI，不接触内部 Manager",
+        "Application 负责编排 Session、Project、MCP 与 Agent 生命周期",
+        "Main Agent 与 SubAgent 都通过 Pi Agent Runtime 执行"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "所有权规则",
+      "items": [
+        "src/application 是跨模块控制面，src/kernel 仅保留基础原语",
+        "Agent Definitions 与 Agent Process 分离：前者描述，后者执行",
+        "Skills 与 MCP 可同属能力视图，但源码所有权和生命周期独立"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "状态与 I/O",
+      "items": [
+        "Session、Process Snapshot 与文件 Checkpoint 具有不同恢复粒度",
+        "Skill 只注入指令并选择 Tool，Driver 才连接具体资源",
+        "MCP Manager 通过动态 Driver 向 ToolRegistry 贡献远程能力"
+      ]
+    }
+  ]
+}

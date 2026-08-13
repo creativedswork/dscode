@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { SessionManager } from "../../src/session/manager.js";
 import type { AgentSessionMessage } from "../../src/session/types.js";
 import {
+  buildDashboardThemeContract,
   buildDashboardSubagentSummary,
   buildSessionDashboardUserPrompt,
   DASHBOARD_AGENT_OUTCOME_SUMMARY_LIMIT,
@@ -177,12 +178,11 @@ describe("Session Dashboard SubAgent summary", () => {
     const summary = JSON.parse(
       (WebUiBackend.prototype as any).buildSessionSummary.call({
         harness: {
-          sessionManager: {
-            getTotalActiveMs: () => 12_000,
-            agentMessages: [agentMessage()],
+          sessions: {
+            totalActiveMs: () => 12_000,
           },
-          agent: {
-            state: {
+          conversation: {
+            snapshot: () => ({
               messages: [
                 { role: "user", content: "private Main message" },
                 {
@@ -190,10 +190,10 @@ describe("Session Dashboard SubAgent summary", () => {
                   content: [{ type: "toolCall", name: "read_file" }],
                 },
               ],
-            },
-          },
-          contextManager: {
-            getCategoryBreakdown: () => ({
+              agentMessages: [agentMessage()],
+              modelName: "model",
+            }),
+            contextUsage: () => ({
               total: 1000,
               used: 600,
               free: 400,
@@ -229,6 +229,17 @@ describe("Session Dashboard SubAgent summary", () => {
     expect(prompt).toContain("Do NOT copy full SubAgent input/output");
     expect(prompt).toContain("must not be duplicated in Dashboard");
     expect(prompt).toContain('{"subagents":{"total":1}}');
+  });
+
+  it("requires generated Dashboard colors to use runtime theme tokens", () => {
+    const source = buildDashboardThemeContract();
+
+    expect(source).toContain("DESIGN SYSTEM THEME CONTRACT");
+    expect(source).toContain("--bg: #f8f7f5");
+    expect(source).toContain("--surface: #f3f2ef");
+    expect(source).toContain("Use these variables for EVERY theme-dependent color");
+    expect(source).toContain("follows light and dark mode");
+    expect(source).not.toContain("DESIGN SYSTEM COLORS");
   });
 
   it("rejects cached dashboards created before the overview-only format", () => {

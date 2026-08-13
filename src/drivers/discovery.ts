@@ -1,7 +1,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 
-import type { Driver } from "../core/types.js";
+import type { Driver } from "./types.js";
 import type { ToolRegistry } from "./tool-registry.js";
 
 const searchParams = Type.Object({

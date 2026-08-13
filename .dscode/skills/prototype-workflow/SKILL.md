@@ -1,6 +1,6 @@
 ---
 name: prototype-workflow
-description: Mandatory HTML prototype generation workflow for frontend UI exploration and proposal preparation. Load this skill (which auto-loads html-output) before generating any HTML prototype. Specifies output directory, naming convention, style alignment, browser validation, and iteration flow.
+description: Generate and lifecycle-manage HTML prototypes for UI exploration and OpenSpec changes. Use when creating, validating, completing, or archiving a UI prototype.
 license: MIT
 compatibility: Requires html-output skill. Designed for dscode web frontend design system.
 metadata:
@@ -57,13 +57,53 @@ UI, 页面, 界面, 组件, 交互, 样式, 视觉, CSS, frontend, landing, dash
 
 ## 生命周期
 
-- 原型**保留不删**，作为后续迭代和未来 changes 的视觉参考
-- change 归档后原型仍保留在 `docs/prototypes/` 中
-- 当文件过时或不再适用时，由开发者手动清理
+`docs/prototypes/` 是 explore/propose 阶段的**暂存区**，不是永久归档目录。
+原型在实现完成后必须逐文件判定，禁止默认永久保留。
+
+### 实现完成后的判定
+
+对当前 change 的每个 HTML 原型执行两道门：
+
+1. **长期价值门**：至少满足一项
+   - 定义可被后续 change 复用的跨功能交互或视觉契约；
+   - 提供代码、测试和文字 Spec 无法等价表达的可执行状态矩阵或方案比较；
+   - 是后续视觉回归、设计评审或架构讨论仍需直接运行的证据。
+2. **有效性门**：必须全部满足
+   - 与最终实现和当前 design tokens 一致；
+   - 已完成浏览器验证；
+   - 没有被更新版本替代；
+   - 能明确归属到当前 OpenSpec change。
+
+两道门都通过时标记 `archive`；否则标记 `delete`。无法确定时默认
+`delete`，不要以“以后可能有用”为理由积累文件。
+
+在当前 change 的 `prototype.md` 中维护：
+
+```markdown
+## Prototype Retention
+
+| File | Decision | Rationale |
+|---|---|---|
+| `docs/prototypes/<file>.html` | `archive` 或 `delete` | 具体依据 |
+```
+
+- `delete`：在实现完成、验证通过后立即删除 HTML，移除
+  `docs/prototypes/README.md` 索引，并更新当前 change 中的引用，禁止留下断链。
+- `archive`：apply 阶段继续留在暂存区；到 OpenSpec archive 阶段移动到
+  `docs/prototypes/archive/YYYY-MM-DD-<change-name>/`，更新仓库内所有引用后提交。
+- 实现未完成或仍在进行视觉反馈时不得提前删除。
+
+## Validation
+
+Verify before reporting completion:
+
+apply 完成时确认每个原型都有最终 decision，且所有 `delete` 文件已不存在。
+archive 完成时确认所有 `archive` 文件位于归档目录、暂存区无当前 change 的残留，
+并使用文本搜索确认仓库中不存在指向旧路径的引用。
 
 ## 参考案例
 
-- **Session 00MRIZMZQJ**: `docs/prototypes/mcp-toolcard-execution-view-prototype.html` — 完整展示了"HTML 原型→视觉迭代→捕获决策→实现"的标准流程
+- **Session 00MRIZMZQJ**: `docs/prototypes/archive/2026-07-14-fix-explore-prototype-html/mcp-toolcard-execution-view-prototype.html` — 完整展示了"HTML 原型→视觉迭代→捕获决策→实现"的标准流程
 
 ## 依赖
 

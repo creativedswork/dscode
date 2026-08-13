@@ -6,13 +6,17 @@ Slim UiBackend interface — lifecycle + permission only; all notifications flow
 
 ### Requirement: UiBackend slim interface
 
-The `UiBackend` interface SHALL be reduced to exactly 4 methods: `start()`, `waitForExit()`, `shutdown()`, and `getPromptPermission()`. All other notification concerns (streaming, tool events, system messages, config changes, MCP state) SHALL be handled via `HarnessEventBus` subscriptions.
+The `UiBackend` interface SHALL contain lifecycle, optional interrupt handling,
+and permission request-response behavior only. All streaming, Tool, Session,
+configuration, MCP, and notification updates SHALL flow through HarnessAPI
+events.
 
 #### Scenario: UiBackend defines only lifecycle and permission methods
 
 - **WHEN** the `UiBackend` interface is inspected
 - **THEN** it SHALL declare `start(): Promise<void>`
 - **AND** `waitForExit(): Promise<void>`
+- **AND** optional `handleInterrupt(): void`
 - **AND** `shutdown(): Promise<void>`
 - **AND** `getPromptPermission(): (toolName: string, preview: string, args: unknown) => Promise<PermissionPromptResult>`
 - **AND** SHALL NOT declare any other methods
@@ -39,7 +43,9 @@ The `UiBackend` interface SHALL be reduced to exactly 4 methods: `start()`, `wai
 
 ### Requirement: Backend constructors accept HarnessEventBus
 
-All `UiBackend` implementations SHALL accept a `HarnessEventBus` instance in their constructor (directly or via `HarnessAPI`). They SHALL subscribe to relevant events during construction before any events are emitted.
+TUI and Web backend constructors SHALL receive narrow HarnessAPI. They SHALL
+subscribe through its event source and use its commands and queries without
+receiving internal Agent, Manager, Registry, or Supervisor objects.
 
 #### Scenario: TuiBackend subscribes during construction
 
@@ -59,9 +65,26 @@ All `UiBackend` implementations SHALL accept a `HarnessEventBus` instance in the
 
 ### Requirement: getPromptPermission remains direct method
 
-The `getPromptPermission()` method SHALL remain a direct interface method (not event-based) because it requires a request-response pattern: Harness calls it, and the method returns a `Promise<PermissionPromptResult>` that blocks until the user decides.
+`getPromptPermission()` SHALL remain a direct UserInteraction request-response
+method because Application must await the user's decision. PermissionManager
+MUST NOT import a concrete backend.
 
 #### Scenario: getPromptPermission returns user decision
 
 - **WHEN** `harness.ui.getPromptPermission()(toolName, preview, args)` is called
 - **THEN** it SHALL return a `Promise<PermissionPromptResult>` resolved when the user makes a decision
+
+### Requirement: UI backend lifecycle is assembled outside Harness
+
+Bootstrap SHALL select and construct the concrete UI backend. Harness runtime
+code SHALL remain independent of TUI and Web implementation packages.
+
+#### Scenario: CLI starts without web flag
+
+- **WHEN** Bootstrap selects TUI mode
+- **THEN** it SHALL construct TuiBackend and connect HarnessAPI
+
+#### Scenario: Headless Application test
+
+- **WHEN** the Agent Host is tested without Presentation
+- **THEN** it SHALL initialize with test interaction ports and no TUI/Web import

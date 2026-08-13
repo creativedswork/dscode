@@ -1,5 +1,18 @@
 import { useState, useCallback, useRef, useEffect } from "react";
-import type { UIMessage, ServerEvent, ConfigData, SessionInfo, McpServerInfo, SkillInfo, ImageAttachment, FileListItem, ContextWindowData, EvalDashboardServerEvent, ViewMode } from "../types";
+import type {
+  UIMessage,
+  ServerEvent,
+  ConfigData,
+  SessionInfo,
+  McpServerInfo,
+  SkillInfo,
+  ImageAttachment,
+  FileListItem,
+  ContextWindowData,
+  EvalDashboardServerEvent,
+  PermissionPrompt,
+  ViewMode,
+} from "../types";
 import { conversationReducer } from "@dscode/shared/reducer";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { ChatView } from "./ChatView";
@@ -95,7 +108,7 @@ export function App() {
   const [processing, setProcessing] = useState(false);
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [model, setModel] = useState("");
-  const [permissionPrompt, setPermissionPrompt] = useState<{ toolName: string; preview: string; fuzzyPattern?: string | null; fuzzyArgDesc?: string | null; llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[] } | null>(null);
+  const [permissionPrompt, setPermissionPrompt] = useState<PermissionPrompt | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<DetailPanel>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -179,6 +192,7 @@ export function App() {
       }
       case "user_message":
       case "agent_activity":
+      case "assistant_start":
       case "thinking_delta":
       case "text_delta":
       case "tool_progress":
@@ -194,8 +208,6 @@ export function App() {
         setMessages((prev) => conversationReducer(prev, event));
         setPermissionPrompt(null);
         break;
-      case "assistant_start":
-        break;
       case "info": {
         const txt = event.text;
         if (txt.includes("\n") || txt.startsWith("Available") || txt.startsWith("Drivers") || txt.startsWith("Skills") || txt.startsWith("Configuration") || txt.startsWith("Memories") || txt.startsWith("Session grants")) {
@@ -207,7 +219,17 @@ export function App() {
       }
       case "warning": addToast({ type: "warning", text: event.text }); break;
       case "error": addToast({ type: "error", text: event.text }); setProcessing(false); turnStartRef.current = 0; break;
-      case "permission_prompt": setPermissionPrompt({ toolName: event.toolName, preview: event.preview, fuzzyPattern: (event as any).fuzzyPattern ?? null, fuzzyArgDesc: (event as any).fuzzyArgDesc ?? null, llmSuggestions: (event as any).llmSuggestions ?? undefined }); break;
+      case "permission_prompt":
+        setPermissionPrompt({
+          toolName: event.toolName,
+          preview: event.preview,
+          agentId: event.agentId,
+          toolCallId: event.toolCallId,
+          fuzzyPattern: event.fuzzyPattern ?? null,
+          fuzzyArgDesc: event.fuzzyArgDesc ?? null,
+          llmSuggestions: event.llmSuggestions,
+        });
+        break;
       case "loader":
         setProcessing(event.state === "show");
         if (event.state === "show") {
@@ -355,8 +377,8 @@ export function App() {
     if (evalObjectUrlRef.current) {
       URL.revokeObjectURL(evalObjectUrlRef.current);
     }
-    evalObjectUrlRef.current = openEvalDashboardHtml(html);
-  }, []);
+    evalObjectUrlRef.current = openEvalDashboardHtml(html, theme);
+  }, [theme]);
 
   const handleRetryEval = useCallback(() => {
     const target = evalStateRef.current?.targetSessionId
@@ -497,10 +519,18 @@ export function App() {
             <TransitionCanvas artifactReady={!sessionArtifactLoading && sessionArtifactHtml !== ""} onComplete={handleTransitionComplete} scrollContainerRef={chatContainerRef} />
           )}
           {viewMode === "session_dashboard" && transitionPhase === "idle" ? (
-            <ArtifactContainer presentation={{ kind: "session_dashboard", html: sessionArtifactHtml, loading: sessionArtifactLoading }} />
+            <ArtifactContainer
+              presentation={{
+                kind: "session_dashboard",
+                html: sessionArtifactHtml,
+                loading: sessionArtifactLoading,
+              }}
+              theme={theme}
+            />
           ) : viewMode === "eval_dashboard" && evalState ? (
             <EvalDashboardView
               state={evalState}
+              theme={theme}
               latestSuccessful={latestSuccessfulEval}
               onBackToChat={() => handleViewModeChange("chat")}
               onRetry={handleRetryEval}

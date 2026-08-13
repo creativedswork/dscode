@@ -37,6 +37,12 @@
       "mediaType": "text/markdown",
       "required": true
     },
+    "agent:general": {
+      "source": "agents/general.md",
+      "path": "agents/general.md",
+      "mediaType": "text/markdown",
+      "required": true
+    },
     "agent:vision": {
       "source": "agents/vision.md",
       "path": "agents/vision.md",

@@ -42,6 +42,9 @@ dscode 被设计为 Agent 的操作系统：Harness 是 Kernel，Main Agent 是 
 
 **Application 由配置定义。Agent 即进程。Session 即 TTY。**
 
+CLI 与内部测试复用同一个 headless Agent Host 组装入口，TUI/Web 和进程 signal
+处理只属于 CLI adapter。这是内部架构边界，不代表已经发布 SDK 或 npm 公共 API。
+
 </td>
 </tr>
 <tr>
@@ -155,7 +158,7 @@ dscode 还会自动发现用户级和项目级 `.claude/agents`。Terminal 与 W
 ## 30 秒上手 MCP
 
 ```jsonc
-// ~/.dscode/settings.json
+// ~/.mcp.json
 {
   "mcpServers": {
     "blender": {
@@ -170,7 +173,11 @@ dscode 还会自动发现用户级和项目级 `.claude/agents`。Terminal 与 W
 }
 ```
 
-dscode 启动时自动连接，工具以 `mcp_blender_*` 和 `mcp_playwright_*` 命名空间出现。MCP Server 还可通过 App Host 提供沙箱化 UI —— 无需样板代码，无需 SDK，无需胶水层。
+dscode 启动时自动连接，工具以 `mcp__blender__*` 和 `mcp__playwright__*`
+命名空间出现。Agent.md Application 可允许某个已连接的 Tool，例如
+`tools: [mcp__github__search_repos]`；MCP Server 定义保留在 `.mcp.json` 中。
+MCP Server 还可通过 App Host 提供沙箱化 UI —— 无需样板代码，无需 SDK，
+无需胶水层。
 
 ### MCP 实战效果
 
@@ -227,19 +234,13 @@ dscode 使用两层 `settings.json`，项目级配置覆盖用户级配置：
 ```jsonc
 // ~/.dscode/settings.json
 {
-  // --- MCP 服务器 ---
-  "mcpServers": {
-    "blender": {
-      "command": "uvx",
-      "args": ["blender-mcp"]
-    },
-    "playwright": {
-      "command": "npx",
-      "args": ["@anthropic/mcp-playwright"]
-    },
-    "my-api": {
-      "url": "https://my-mcp.example.com/mcp",
-      "headers": { "Authorization": "Bearer <token>" }
+  // --- 外部设备集成 ---
+  "integrations": {
+    "openDesign": {
+      "enabled": true,
+      "path": "/path/to/open-design",
+      "port": 7456,
+      "autoStart": true
     }
   },
 
@@ -281,6 +282,25 @@ dscode 使用两层 `settings.json`，项目级配置覆盖用户级配置：
 
 ### MCP 服务器配置
 
+MCP Server 应配置在用户级 `~/.mcp.json` 或项目级 `.mcp.json` 中，而不是
+`settings.json` 的 Open Design Integration 对象中：
+
+```jsonc
+{
+  "mcpServers": {
+    "blender": {
+      "command": "uvx",
+      "args": ["blender-mcp"],
+      "env": { "BLENDER_HOST": "127.0.0.1" }
+    },
+    "my-api": {
+      "url": "https://my-mcp.example.com/mcp",
+      "headers": { "Authorization": "Bearer <token>" }
+    }
+  }
+}
+```
+
 `mcpServers` 下每个服务器支持以下字段：
 
 | 字段 | 类型 | 说明 |
@@ -288,7 +308,7 @@ dscode 使用两层 `settings.json`，项目级配置覆盖用户级配置：
 | `command` | string | 可执行文件（用于 stdio 传输） |
 | `args` | string[] | 传递给命令的参数 |
 | `url` | string | HTTP 端点（用于 streamable-http 传输） |
-| `env` | object | 服务器进程的额外环境变量 |
+| `env` | object | 仅传递给该 MCP Server 子进程的额外环境变量 |
 | `headers` | object | 自定义 HTTP 头 |
 | `transport` | string | `"stdio"` \| `"streamable-http"` \| `"sse"`（省略时自动检测） |
 | `preferredProtocolVersion` | string | `"2025-11-25"` \| `"2025-03-26"` \| `"2024-11-05"` |
@@ -299,7 +319,8 @@ dscode 使用两层 `settings.json`，项目级配置覆盖用户级配置：
 
 ### 环境变量
 
-所有配置均可通过环境变量设置，适用于 CI / 容器场景：
+部分运行时配置提供专用环境变量覆盖，适用于 CI / 容器场景。
+`settings.json` 不存在通用的 `env` 字段：
 
 | 变量 | 对应配置 |
 |----------|---------|
@@ -318,6 +339,8 @@ dscode 使用两层 `settings.json`，项目级配置覆盖用户级配置：
 | `DSCODE_RETRY_MAX_RETRIES` | 重试最大次数 |
 | `DSCODE_RETRY_BASE_DELAY_MS` | 重试基础延迟 |
 | `DSCODE_RETRY_MAX_DELAY_MS` | 重试最大延迟 |
+| `OPEN_DESIGN_DIR` | 旧版 Open Design 仓库路径 fallback |
+| `OD_PORT` | 旧版 Open Design daemon 端口 fallback（默认 `7456`） |
 
 ---
 
@@ -341,23 +364,89 @@ cd open-design
 npm install
 ```
 
-然后在 `~/.dscode/settings.json` 中配置 MCP 服务器：
+### 推荐配置：settings.json
+
+在用户级 `~/.dscode/settings.json` 或项目级 `.dscode/settings.json` 中启用集成：
 
 ```jsonc
 {
-  "mcpServers": {
-    "open-design": {
-      "command": "npx",
-      "args": [
-        "tsx",
-        "/path/to/open-design/apps/daemon/src/cli.ts",
-        "mcp",
-        "--daemon-url",
-        "http://127.0.0.1:7456"
-      ]
+  "integrations": {
+    "openDesign": {
+      "enabled": true,
+      "path": "/path/to/open-design",
+      "port": 7456,
+      "autoStart": true
     }
   }
 }
+```
+
+Open Design 使用上面的 typed `path` 和 `port` 字段。不要在 `settings.json`
+的 `env` 对象中填写 `OPEN_DESIGN_DIR` 或 `OD_PORT`；
+`mcpServers.<name>.env` 属于 `.mcp.json`，只配置对应的 MCP 子进程。
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `enabled` | `false` | 贡献 Open Design MCP Server 并启用集成 |
+| `path` | 无 | 本机 Open Design 仓库路径，支持 `~` |
+| `port` | `7456` | daemon 监听端口和 MCP proxy 目标端口 |
+| `autoStart` | `true` | 是否由 dscode 确保 daemon 正在运行 |
+
+项目级字段覆盖同名用户级字段。如果 daemon 由外部管理，请设置
+`autoStart: false`；此时 dscode 仍会贡献 MCP proxy，但不会启动或终止 daemon。
+
+### 兼容配置：.env
+
+已有的 `.env` 配置方式继续受支持：
+
+```bash
+cp .env.example .env
+```
+
+```dotenv
+OPEN_DESIGN_DIR=~/Workspace/DeepSeekSpace/open-design
+OD_PORT=7456
+```
+
+使用一次性兼容开关启动：
+
+```bash
+dscode --with-od
+# 开发仓库中：
+node ./dist/dscode.mjs --with-od
+```
+
+兼容配置只提供 `path` 和 `port`；`--with-od` 负责在本次运行中启用集成并请求
+自动启动。正式 CLI 只从项目 `.env` 读取 `OPEN_DESIGN_DIR` 和 `OD_PORT`，
+不会把其他变量导入进程，也不会向磁盘回写配置。
+
+配置优先级如下：
+
+1. 用户级/项目级 `settings.json` 中的 `integrations.openDesign`
+2. 进程环境中的 `OPEN_DESIGN_DIR` 和 `OD_PORT`
+3. 项目 `.env` 中的 `OPEN_DESIGN_DIR` 和 `OD_PORT`
+4. 禁用状态和默认端口 `7456`
+
+只要任一层 `settings.json` 存在 `integrations.openDesign` 对象，旧环境变量就不会
+参与配置；typed 配置显式设置 `enabled: false` 时也遵循这一规则。
+
+### 运行时行为
+
+启用自动启动后，dscode 会：
+
+1. 探测 `http://127.0.0.1:<port>/api/projects`。
+2. 如果已有健康 daemon，则将其视为外部进程，不接管生命周期。
+3. 否则由 `ServiceSupervisor` 启动 `od --port <port> --no-open`。
+4. 在内存中派生 `open-design` MCP Server，不修改 `~/.mcp.json` 或项目配置。
+5. 将 daemon 输出写入 `~/.dscode/logs/dscode.log`，执行有限重启保护，并且只
+   终止由 dscode 自己启动的 daemon。
+
+排障时，请确认
+`<integrations.openDesign.path>/apps/daemon/src/cli.ts` 存在，检查
+`~/.dscode/logs/dscode.log`，并通过以下命令检查健康状态：
+
+```bash
+curl http://127.0.0.1:7456/api/projects
 ```
 
 ---

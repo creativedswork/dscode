@@ -1,6 +1,6 @@
 ---
 name: openspec-propose
-description: Propose a new change with all artifacts generated in one step. Use when the user wants to quickly describe what they want to build and get a complete proposal with design, specs, and tasks ready for implementation.
+description: Create a complete OpenSpec proposal with design, specs, prototype, and tasks. Use when the user wants a change ready for implementation.
 license: MIT
 compatibility: Requires openspec CLI.
 metadata:
@@ -8,6 +8,8 @@ metadata:
   version: "1.0"
   generatedBy: "1.3.1"
 ---
+
+# Propose OpenSpec Change
 
 Propose a new change - create the change and generate all artifacts in one step.
 
@@ -40,7 +42,8 @@ When ready to implement, run /opsx:apply
    Before creating the change directory, check `docs/prototypes/` for HTML files
    matching the change name (e.g., `<change-name>-*.html`):
    - **If found**: Read the prototype HTML files — they are the design source-of-truth
-     from explore. These will be referenced in the prototype artifact.
+     from explore. These will be referenced in the prototype artifact with
+     retention decision `pending`; retention is finalized only after implementation.
    - **If not found and the change involves UI**: STOP proposal artifact generation.
      Load `prototype-workflow`, generate and browser-validate a self-contained HTML
      prototype in `docs/prototypes/`, then continue. A text-only visual direction
@@ -128,3 +131,5 @@ After completing all artifacts, summarize:
 - If context is critically unclear, ask the user - but prefer making reasonable decisions to keep momentum
 - If a change with that name already exists, ask if user wants to continue it or create a new one
 - Verify each artifact file exists after writing before proceeding to next
+- For UI changes, initialize one `Prototype Retention` row per HTML file with
+  decision `pending`; do not predict long-term value before implementation

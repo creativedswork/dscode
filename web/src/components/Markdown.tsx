@@ -1,7 +1,6 @@
-import React, { useLayoutEffect, useRef } from "react";
+import React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { annotateVisibleTextLines } from "../animation/markdownColliders";
 
 interface MarkdownProps {
   children: string;
@@ -10,18 +9,20 @@ interface MarkdownProps {
 }
 
 export function Markdown({ children, className = "", isStreaming = false }: MarkdownProps) {
-  const rootRef = useRef<HTMLDivElement>(null);
-
-  useLayoutEffect(() => {
-    if (isStreaming || !rootRef.current) return;
-    annotateVisibleTextLines(rootRef.current);
-  }, [children, isStreaming]);
-
   return (
-    <div ref={rootRef} className={`prose prose-sm max-w-none break-words ${className}`}>
+    <div className={`prose prose-sm max-w-none break-words ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
+          p: ({ children }) => <p data-collider="text-block">{children}</p>,
+          li: ({ children }) => <li data-collider="text-block">{children}</li>,
+          blockquote: ({ children }) => (
+            <blockquote data-collider="text-block">{children}</blockquote>
+          ),
+          h1: ({ children }) => <h1 data-collider="text-block">{children}</h1>,
+          h2: ({ children }) => <h2 data-collider="text-block">{children}</h2>,
+          h3: ({ children }) => <h3 data-collider="text-block">{children}</h3>,
+          h4: ({ children }) => <h4 data-collider="text-block">{children}</h4>,
           pre: ({ children }) => {
             const codeEl = children as React.ReactElement | undefined;
             const codeContent = codeEl?.props?.children;

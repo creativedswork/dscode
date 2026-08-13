@@ -10,51 +10,60 @@ export interface LlmSuggestion {
   argPattern: string | null;
 }
 
+export interface PermissionSuggestionPort {
+  prefetch(
+    model: Model<Api> | null,
+    toolName: string,
+    args: unknown,
+    preview: string,
+  ): void;
+  get(toolName: string, args: unknown): readonly LlmSuggestion[];
+  clear(): void;
+}
+
 /** Cache key: `${toolName}:${argsFingerprint}` */
 function cacheKey(toolName: string, args: unknown): string {
   const argsStr = typeof args === "string" ? args.slice(0, 80) : JSON.stringify(args).slice(0, 80);
   return `${toolName}:${argsStr}`;
 }
 
-const suggestionCache = new Map<string, LlmSuggestion[]>();
+export class PermissionSuggestionStore implements PermissionSuggestionPort {
+  private readonly suggestions = new Map<string, LlmSuggestion[]>();
 
-/**
- * Fire-and-forget: derive fuzzy suggestions via LLM and cache them.
- * Call this after showing the permission prompt — results will be available
- * for future prompts of the same tool/args pattern.
- */
-export function prefetchLlmSuggestions(
-  model: Model<Api> | null,
-  toolName: string,
-  args: unknown,
-  preview: string,
-): void {
-  const key = cacheKey(toolName, args);
-  if (suggestionCache.has(key)) return;
-
-  if (!model) return;
-
-  const prompt = buildPrompt(toolName, args, preview);
-
-  // Fire and forget
-  complete(model, {
-    systemPrompt: "Respond with JSON only. No explanation.",
-    messages: [{ role: "user", content: prompt, timestamp: Date.now() }],
-  })
-    .then((msg: AssistantMessage) => {
-      const suggestions = parseSuggestions(msg);
-      if (suggestions.length > 0) {
-        suggestionCache.set(key, suggestions);
-      }
+  prefetch(
+    model: Model<Api> | null,
+    toolName: string,
+    args: unknown,
+    preview: string,
+  ): void {
+    const key = cacheKey(toolName, args);
+    if (this.suggestions.has(key) || !model) return;
+    complete(model, {
+      systemPrompt: "Respond with JSON only. No explanation.",
+      messages: [{
+        role: "user",
+        content: buildPrompt(toolName, args, preview),
+        timestamp: Date.now(),
+      }],
     })
-    .catch(() => {
-      // Silently ignore — LLM is best-effort
-    });
-}
+      .then((msg: AssistantMessage) => {
+        const suggestions = parseSuggestions(msg);
+        if (suggestions.length > 0) {
+          this.suggestions.set(key, suggestions);
+        }
+      })
+      .catch(() => {
+        // Best-effort suggestions must not block permission interaction.
+      });
+  }
 
-/** Get cached LLM suggestions for a tool/args combo. Returns [] if none. */
-export function getLlmSuggestions(toolName: string, args: unknown): LlmSuggestion[] {
-  return suggestionCache.get(cacheKey(toolName, args)) ?? [];
+  get(toolName: string, args: unknown): readonly LlmSuggestion[] {
+    return this.suggestions.get(cacheKey(toolName, args)) ?? [];
+  }
+
+  clear(): void {
+    this.suggestions.clear();
+  }
 }
 
 function buildPrompt(toolName: string, args: unknown, preview: string): string {

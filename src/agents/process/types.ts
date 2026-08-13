@@ -1,4 +1,4 @@
-import type { AgentApplicationSnapshot } from "../application/types.js";
+import type { AgentApplicationSnapshot } from "../definitions/types.js";
 import type {
   AgentAttachment as AgentInputAttachment,
   AgentProcessRuntime,
@@ -18,6 +18,17 @@ export type AgentProcessState =
 export type AgentAttachment = "foreground" | "background";
 export type AgentContextMode = "minimal" | "selected" | "fork";
 export type AgentRecording = "session" | "process-only";
+
+export interface AgentToolExecutionRecord {
+  toolCallId: string;
+  name: string;
+  status: "running" | "completed" | "failed";
+  args?: unknown;
+  result?: unknown;
+  startedAt: number;
+  endedAt?: number;
+  isError?: boolean;
+}
 
 export type ContextSelectionItem =
   | { type: "message"; messageId: string }
@@ -74,6 +85,7 @@ export interface AgentProcess<T = unknown> {
   agentId: string;
   parentAgentId?: string;
   parentSessionId: string;
+  description?: string;
   application: AgentApplicationSnapshot;
   role: "main" | "subagent";
   state: AgentProcessState;
@@ -95,6 +107,7 @@ export interface SerializedAgentProcess {
   agentId: string;
   parentAgentId?: string;
   parentSessionId: string;
+  description?: string;
   application: AgentApplicationSnapshot;
   role: "main" | "subagent";
   state: AgentProcessState;
@@ -119,6 +132,7 @@ export type AgentRuntimeFactory = (
 export interface SpawnAgentRequest {
   application: string;
   parentAgentId: string;
+  description?: string;
   input: {
     prompt: string;
     displayPrompt?: string;

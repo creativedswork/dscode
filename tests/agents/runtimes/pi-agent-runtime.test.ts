@@ -33,8 +33,19 @@ describe("PiAgentRuntimeAdapter snapshot", () => {
         return () => listeners.delete(listener);
       },
       async prompt() {
-        for (const type of ["tool_execution_start", "tool_execution_end", "turn_end"]) {
-          for (const listener of listeners) await listener({ type });
+        const events = [
+          { type: "tool_execution_start", toolCallId: "call-1", toolName: "read_file" },
+          {
+            type: "tool_execution_end",
+            toolCallId: "call-1",
+            toolName: "read_file",
+            result: { content: [{ type: "text", text: "file contents" }] },
+            isError: false,
+          },
+          { type: "turn_end" },
+        ];
+        for (const event of events) {
+          for (const listener of listeners) await listener(event);
         }
       },
       abort: vi.fn(),
@@ -42,12 +53,18 @@ describe("PiAgentRuntimeAdapter snapshot", () => {
     };
     const runtime = new PiAgentRuntimeAdapter(agent as any);
     const states: string[] = [];
+    const progress: string[] = [];
+    const progressDetails: unknown[] = [];
     const checkpoints: unknown[] = [];
 
     const output = await runtime.start({
       prompt: "inspect",
       onStateChange: (state) => {
         states.push(state);
+      },
+      onProgress: (item) => {
+        progress.push(item.message ?? "");
+        progressDetails.push(item.details);
       },
       onCheckpoint: (snapshot) => {
         checkpoints.push(snapshot);
@@ -56,6 +73,154 @@ describe("PiAgentRuntimeAdapter snapshot", () => {
 
     expect(output.text).toBe("done");
     expect(states).toEqual(["waiting", "running"]);
+    expect(progress).toEqual([
+      "Running read_file",
+      "Finished read_file; preparing result",
+    ]);
+    expect(progressDetails).toEqual([
+      expect.objectContaining({
+        kind: "tool",
+        status: "running",
+        toolCallId: "call-1",
+        toolName: "read_file",
+      }),
+      expect.objectContaining({
+        kind: "tool",
+        status: "completed",
+        toolCallId: "call-1",
+        toolName: "read_file",
+        isError: false,
+        result: {
+          content: [{
+            type: "text",
+            text: "file contents",
+          }],
+        },
+      }),
+    ]);
+    expect(progressDetails[1]).not.toHaveProperty("resultDetail");
+    expect(checkpoints).toHaveLength(1);
+    expect(listeners.size).toBe(0);
+  });
+
+  it("cooperatively suspends before tool execution and resumes through a gate", async () => {
+    const listeners = new Set<(event: any, signal: AbortSignal) => Promise<void> | void>();
+    const runController = new AbortController();
+    let releaseToolEvent = () => {};
+    const toolEventReady = new Promise<void>((resolve) => {
+      releaseToolEvent = resolve;
+    });
+    let promptStarted = () => {};
+    const promptReady = new Promise<void>((resolve) => {
+      promptStarted = resolve;
+    });
+    let toolExecuted = false;
+    const agent = {
+      state: {
+        messages: [{
+          role: "assistant",
+          content: [{ type: "text", text: "done" }],
+        }],
+      },
+      subscribe(listener: (event: any, signal: AbortSignal) => Promise<void> | void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      async prompt() {
+        promptStarted();
+        await toolEventReady;
+        for (const listener of listeners) {
+          await listener({
+            type: "tool_execution_start",
+            toolCallId: "call-1",
+            toolName: "read_file",
+          }, runController.signal);
+        }
+        toolExecuted = true;
+        for (const listener of listeners) {
+          await listener({
+            type: "tool_execution_end",
+            toolCallId: "call-1",
+            toolName: "read_file",
+            isError: false,
+          }, runController.signal);
+          await listener({ type: "turn_end" }, runController.signal);
+        }
+      },
+      abort: () => runController.abort(),
+      waitForIdle: vi.fn(),
+    };
+    const runtime = new PiAgentRuntimeAdapter(agent as any);
+    const execution = runtime.start(
+      { prompt: "inspect" },
+      runController.signal,
+    );
+    await promptReady;
+
+    const suspended = runtime.suspend();
+    releaseToolEvent();
+    await suspended;
+    expect(runtime.capabilities.suspend).toBe(true);
+    expect(toolExecuted).toBe(false);
+
+    await runtime.continue();
+    await execution;
+    expect(toolExecuted).toBe(true);
+  });
+
+  it("serializes parallel tool events when the runtime does not await subscribers", async () => {
+    const listeners = new Set<(event: any) => Promise<void> | void>();
+    const agent = {
+      state: {
+        messages: [{ role: "assistant", content: [{ type: "text", text: "done" }] }],
+      },
+      subscribe(listener: (event: any) => Promise<void> | void) {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+      async prompt() {
+        const events = [
+          { type: "tool_execution_start", toolCallId: "call-1", toolName: "read_file" },
+          { type: "tool_execution_start", toolCallId: "call-2", toolName: "read_file" },
+          { type: "tool_execution_end", toolCallId: "call-1", toolName: "read_file", isError: false },
+          { type: "tool_execution_end", toolCallId: "call-2", toolName: "read_file", isError: true },
+          { type: "turn_end" },
+        ];
+        for (const event of events) {
+          for (const listener of listeners) void listener(event);
+        }
+      },
+      abort: vi.fn(),
+      waitForIdle: vi.fn(),
+    };
+    const runtime = new PiAgentRuntimeAdapter(agent as any);
+    const states: string[] = [];
+    const progress: string[] = [];
+    const checkpoints: unknown[] = [];
+
+    await runtime.start({
+      prompt: "inspect",
+      onStateChange: async (state) => {
+        await Promise.resolve();
+        states.push(state);
+      },
+      onProgress: async (item) => {
+        await Promise.resolve();
+        progress.push(item.message ?? "");
+      },
+      onCheckpoint: async (snapshot) => {
+        await Promise.resolve();
+        checkpoints.push(snapshot);
+      },
+    }, new AbortController().signal);
+
+    expect(states).toEqual(["waiting", "running"]);
+    expect(progress).toEqual([
+      "Running read_file",
+      "Running read_file",
+      "Running read_file",
+      "Finished read_file; preparing result",
+    ]);
     expect(checkpoints).toHaveLength(1);
     expect(listeners.size).toBe(0);
   });

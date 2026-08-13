@@ -111,7 +111,7 @@ Deviation-Aware screening SHALL use effective Recovery Arcs to distinguish trans
 - **THEN** the Arc SHALL record an effective correction
 - **AND** Final Screening SHALL not automatically erase the original responsibility
 
-### Requirement: Step 7 Receives Recovery Arcs as Evidence
+### Requirement: Rules Stage Receives Recovery Arcs as Evidence
 
 The `eval-rule-attribution` worker SHALL receive cross-Agent Recovery Arcs including error/correction Agent IDs, Applications, Step IDs, detection type, effectiveness, recovery distance, misdiagnosis count, and root-cause hypothesis.
 

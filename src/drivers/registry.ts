@@ -1,6 +1,6 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 
-import type { Driver } from "../core/types.js";
+import type { Driver } from "./types.js";
 import { readFileTool, writeFileTool, overwriteFileTool, listFilesTool } from "./fs.js";
 import { bashTool } from "./shell.js";
 import { grepTool, globTool } from "./search.js";

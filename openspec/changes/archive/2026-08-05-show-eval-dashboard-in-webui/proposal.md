@@ -42,4 +42,4 @@
 - **Session switching**：`src/core/harness.ts` 合并项目/全局/current 候选；`tests/core/session-switching.test.ts` 覆盖全局索引淘汰后的项目 Session 解析。
 - **兼容性**：`~/.dscode/eval/<prefix>.html` 与 run 内 `output/dashboard.html` 路径不变；TUI 和旧 Session 行为不变。
 - **安全边界**：不新增对 `~/.dscode/eval` 的通用静态文件服务，不接受客户端提供文件路径；后端只发送本次已验证 run 的 HTML。
-- **UI 依据**：`docs/prototypes/show-eval-dashboard-in-webui-embedded-report.html`。
+- **UI 依据**：`docs/prototypes/archive/2026-08-05-show-eval-dashboard-in-webui/show-eval-dashboard-in-webui-embedded-report.html`。

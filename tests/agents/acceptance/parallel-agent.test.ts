@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import type { AgentApplicationSnapshot } from "../../../src/agents/application/types.js";
+import type { AgentApplicationSnapshot } from "../../../src/agents/definitions/types.js";
 import { createMainAgentContext } from "../../../src/agents/process/context.js";
 import { AgentSupervisor } from "../../../src/agents/process/supervisor.js";
 import type {
   AgentProcessInput,
   AgentProcessRuntime,
 } from "../../../src/agents/runtimes/runtime.js";
-import { HarnessEventBus } from "../../../src/core/events.js";
+import { HarnessEventBus } from "../../../src/application/events.js";
 
 function application(name: string): AgentApplicationSnapshot {
   return {
@@ -22,10 +22,10 @@ function application(name: string): AgentApplicationSnapshot {
 }
 
 describe("parallel Agent process acceptance", () => {
-  it("runs two configured read-only children concurrently under Main Agent", async () => {
+  it("runs two fresh general children concurrently under Main Agent", async () => {
     const main = application("main");
-    const worker = application("worker");
-    const apps = new Map([["main", main], ["worker", worker]]);
+    const general = application("general");
+    const apps = new Map([["main", main], ["general", general]]);
     let active = 0;
     let maximum = 0;
     let release!: () => void;
@@ -61,7 +61,7 @@ describe("parallel Agent process acceptance", () => {
 
     const children = await Promise.all(["src", "tests"].map((prompt) =>
       supervisor.spawn({
-        application: "worker",
+        application: "general",
         input: { prompt },
         parentAgentId: root.agentId,
         attachment: "background",
@@ -70,6 +70,8 @@ describe("parallel Agent process acceptance", () => {
     const results = await Promise.all(children.map((child) => supervisor.wait(child.agentId)));
 
     expect(new Set(children.map((child) => child.agentId)).size).toBe(2);
+    expect(supervisor.require(children[0]!.agentId).runtime)
+      .not.toBe(supervisor.require(children[1]!.agentId).runtime);
     expect(maximum).toBe(2);
     expect(results.map((result) => result.output).sort()).toEqual([
       "processed: src",

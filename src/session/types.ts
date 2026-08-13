@@ -2,15 +2,12 @@
 // Pure data model for session persistence and vision pipeline.
 // Consumed by: harness.ts (inference), store.ts (I/O), display.ts (UI)
 
-import type { AgentActivity } from "../ui/shared/types.js";
+import type { AgentToolExecutionRecord } from "../agents/process/types.js";
+import type { ImageRef } from "../resources/images/types.js";
+
+export type { ImageRef } from "../resources/images/types.js";
 
 // --- Image ---
-
-export interface ImageRef {
-  type: "image_ref";
-  hash: string;
-  mimeType: string;
-}
 
 export interface VisionMessage {
   turnIndex: number;
@@ -35,6 +32,8 @@ export interface AgentSessionMessage {
   agentId: string;
   parentAgentId?: string;
   application: string;
+  description?: string;
+  attachment?: "foreground" | "background";
   state: "completed" | "failed" | "terminated" | "killed";
   input: {
     prompt: string;
@@ -45,6 +44,7 @@ export interface AgentSessionMessage {
     source?: string;
     error?: string;
   };
+  tools?: AgentToolExecutionRecord[];
   messageIndex?: number;
   createdAt: number;
   startedAt?: number;
@@ -105,14 +105,8 @@ export interface SwitchSessionResult {
   agentMessages: AgentSessionMessage[];
 }
 
-// --- Display (forward-declared, implemented in display.ts) ---
-
-export interface DisplayMessage {
-  role: "user" | "assistant" | "system" | "agent";
-  content: string;
-  images?: { data: string; mimeType: string }[];
-  thinking?: string;
-  tools?: { name: string; args: string; result: string; isError: boolean }[];
-  createdAt?: number;
-  agentActivity?: AgentActivity;
-}
+export type SessionEvent =
+  | { type: "session:created"; id: string }
+  | { type: "session:loaded"; id: string }
+  | { type: "session:saved"; id: string }
+  | { type: "session:deleted"; id: string };

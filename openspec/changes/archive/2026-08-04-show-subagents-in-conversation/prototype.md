@@ -1,6 +1,6 @@
 ## Prototype Files
 
-- [`docs/prototypes/show-subagents-in-conversation.html`](../../../docs/prototypes/show-subagents-in-conversation.html)
+- [`docs/prototypes/archive/2026-08-04-show-subagents-in-conversation/show-subagents-in-conversation.html`](../../../../docs/prototypes/archive/2026-08-04-show-subagents-in-conversation/show-subagents-in-conversation.html)
   — 自包含交互原型，覆盖完整 Web 对话上下文、Agent Activity Card 状态切换、
   Details 折叠、亮暗主题与 TUI 同构预览。
 
@@ -34,3 +34,9 @@ EXECUTING
 ## Prototype Status
 
 HTML 原型已创建，可作为实现与手工验收基线。
+
+## Prototype Retention
+
+| File | Decision | Rationale |
+|---|---|---|
+| `docs/prototypes/archive/2026-08-04-show-subagents-in-conversation/show-subagents-in-conversation.html` | `archive` | 保留 Agent Activity Card 的四种状态、Details 折叠、Web/TUI 同构和主题切换契约，供后续 SubAgent UI 演进复用。 |

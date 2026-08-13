@@ -44,23 +44,88 @@ function messageText(message: PiAgentMessage | undefined): string {
 
 export class PiAgentRuntimeAdapter implements AgentProcessRuntime {
   readonly capabilities = {
-    suspend: false,
+    suspend: true,
     messaging: true,
   } as const;
+  private pauseRequested = false;
+  private paused = false;
+  private pauseReached: (() => void) | undefined;
+  private pausePromise: Promise<void> | undefined;
+  private resumePause: (() => void) | undefined;
 
-  constructor(readonly agent: PiAgentRuntime) {}
+  constructor(
+    readonly agent: PiAgentRuntime,
+    private readonly processId?: string,
+  ) {}
 
   async start(input: AgentProcessInput, signal: AbortSignal): Promise<AgentProcessOutput> {
     const onAbort = () => this.agent.abort();
-    let activeTools = 0;
-    const unsubscribe = this.agent.subscribe(async (event) => {
-      if (event.type === "tool_execution_start" && activeTools++ === 0) {
-        await input.onStateChange?.("waiting");
-      } else if (event.type === "tool_execution_end" && --activeTools === 0) {
-        await input.onStateChange?.("running");
+    const activeToolsById = new Map<string, { name: string; startedAt: number }>();
+    const handleEvent = async (event: Parameters<Parameters<PiAgentRuntime["subscribe"]>[0]>[0]) => {
+      if (event.type === "tool_execution_start") {
+        const startedAt = Date.now();
+        const wasIdle = activeToolsById.size === 0;
+        activeToolsById.set(event.toolCallId, {
+          name: event.toolName,
+          startedAt,
+        });
+        if (wasIdle) await input.onStateChange?.("waiting");
+        await input.onProgress?.({
+          phase: "tool",
+          message: `Running ${event.toolName}`,
+          details: {
+            kind: "tool",
+            status: "running",
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            args: summarizeToolArgs(event.args),
+            startedAt,
+          },
+        });
+      } else if (event.type === "tool_execution_end") {
+        const active = activeToolsById.get(event.toolCallId);
+        activeToolsById.delete(event.toolCallId);
+        const remaining = [...activeToolsById.values()].map((tool) => tool.name);
+        const endedAt = Date.now();
+        await input.onProgress?.({
+          phase: remaining.length > 0 ? "tool" : "model",
+          message: remaining.length > 0
+            ? `Running ${remaining.join(", ")}`
+            : `Finished ${event.toolName}; preparing result`,
+          details: {
+            kind: "tool",
+            status: event.isError ? "failed" : "completed",
+            toolCallId: event.toolCallId,
+            toolName: event.toolName,
+            startedAt: active?.startedAt ?? endedAt,
+            endedAt,
+            isError: event.isError,
+            result: sanitize(event.result),
+            resultOwnerId: this.processId,
+          },
+        });
+        if (active && activeToolsById.size === 0) {
+          await input.onStateChange?.("running");
+        }
       } else if (event.type === "turn_end") {
         await input.onCheckpoint?.(this.snapshot());
       }
+    };
+    let eventQueue = Promise.resolve();
+    const unsubscribe = this.agent.subscribe((event, eventSignal) => {
+      const operation = eventQueue.then(async () => {
+        await handleEvent(event);
+        if (
+          event.type === "tool_execution_start"
+          || event.type === "tool_execution_end"
+          || event.type === "turn_end"
+          || event.type === "agent_end"
+        ) {
+          await this.pauseAtBoundary(eventSignal);
+        }
+      });
+      eventQueue = operation.catch(() => {});
+      return operation;
     });
     signal.addEventListener("abort", onAbort, { once: true });
     try {
@@ -74,6 +139,9 @@ export class PiAgentRuntimeAdapter implements AgentProcessRuntime {
           : await ImageCache.get(data as ImageRef);
       }))).filter((image): image is ImageContent => image !== null);
       await this.agent.prompt(input.prompt, images);
+      // Pi's event emitter does not require subscribers to be awaited. Drain our
+      // serialized queue so Process state and checkpoints cannot lag behind prompt().
+      await eventQueue;
       const messages = this.agent.state.messages;
       const lastAssistant = [...messages].reverse().find((message) => message.role === "assistant");
       const assistant = lastAssistant as {
@@ -95,18 +163,41 @@ export class PiAgentRuntimeAdapter implements AgentProcessRuntime {
         details: { messageCount: messages.length },
       };
     } finally {
+      this.cancelPause();
       unsubscribe();
       signal.removeEventListener("abort", onAbort);
     }
   }
 
   async terminate(): Promise<void> {
+    this.cancelPause();
     this.agent.abort();
     await this.agent.waitForIdle();
   }
 
   kill(): void {
+    this.cancelPause();
     this.agent.abort();
+  }
+
+  async suspend(): Promise<void> {
+    if (this.paused) return;
+    if (!this.pauseRequested) {
+      this.pauseRequested = true;
+      this.pausePromise = new Promise<void>((resolve) => {
+        this.pauseReached = resolve;
+      });
+    }
+    await this.pausePromise;
+  }
+
+  async continue(): Promise<void> {
+    this.pauseRequested = false;
+    this.paused = false;
+    this.pausePromise = undefined;
+    this.pauseReached = undefined;
+    this.resumePause?.();
+    this.resumePause = undefined;
   }
 
   sendMessage(message: AgentMessage): void {
@@ -126,5 +217,44 @@ export class PiAgentRuntimeAdapter implements AgentProcessRuntime {
         ? (lastAssistant as { usage?: unknown }).usage
         : undefined,
     };
+  }
+
+  private async pauseAtBoundary(signal: AbortSignal): Promise<void> {
+    if (!this.pauseRequested) return;
+    this.paused = true;
+    this.pauseReached?.();
+    await new Promise<void>((resolve) => {
+      const resume = () => {
+        signal.removeEventListener("abort", resume);
+        if (this.resumePause === resume) this.resumePause = undefined;
+        resolve();
+      };
+      this.resumePause = resume;
+      if (signal.aborted) resume();
+      else signal.addEventListener("abort", resume, { once: true });
+    });
+  }
+
+  private cancelPause(): void {
+    this.pauseRequested = false;
+    this.paused = false;
+    this.pauseReached?.();
+    this.pauseReached = undefined;
+    this.pausePromise = undefined;
+    this.resumePause?.();
+    this.resumePause = undefined;
+  }
+}
+
+function summarizeToolArgs(args: unknown): string | undefined {
+  if (args == null) return undefined;
+  try {
+    const value = typeof args === "string" ? args : JSON.stringify(args);
+    const normalized = value.replace(/\s+/g, " ").trim();
+    return normalized.length > 160
+      ? `${normalized.slice(0, 157).trimEnd()}...`
+      : normalized;
+  } catch {
+    return undefined;
   }
 }

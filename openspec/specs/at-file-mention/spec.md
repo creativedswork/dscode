@@ -9,7 +9,7 @@ The TUI input editor SHALL trigger a fuzzy file path autocomplete when the user 
 
 #### Scenario: Fuzzy matching
 - **WHEN** user types `@core` in the TUI editor
-- **THEN** the autocomplete SHALL show files like `src/core/main.ts`, `src/core/config.ts` matching the fuzzy query
+- **THEN** the autocomplete SHALL show files like `src/bootstrap/cli-main.ts`, `src/config/loader.ts` matching the fuzzy query
 
 #### Scenario: Select file with Enter
 - **WHEN** user navigates to a file in the autocomplete dropdown and presses Enter
@@ -74,8 +74,8 @@ The web UI input textarea SHALL trigger a file path autocomplete dropdown when t
 When a message containing `@path/to/file` references is submitted, the system SHALL resolve those references by reading the file contents. For text files, the content SHALL be injected as markdown code blocks. For image files, the content SHALL be base64-encoded and included in the images array for vision pipeline processing. The `@` SHALL be recognized when preceded by whitespace, start-of-string, or CJK characters (Unicode range `\u2e80-\u9fff\uff00-\uffef`). Captured text after `@` that consists entirely of CJK characters without path separators or file extension patterns SHALL be silently ignored (treated as plain text).
 
 #### Scenario: Single text file reference
-- **WHEN** user submits a message "Explain @src/core/main.ts"
-- **THEN** the system SHALL replace `@src/core/main.ts` with a markdown code block containing the file contents, tagged with the inferred language
+- **WHEN** user submits a message "Explain @src/bootstrap/cli-main.ts"
+- **THEN** the system SHALL replace `@src/bootstrap/cli-main.ts` with a markdown code block containing the file contents, tagged with the inferred language
 
 #### Scenario: File reference after CJK character
 - **WHEN** user submits a message "请参考项目里的@src/utils.ts文件"
@@ -149,7 +149,7 @@ The server SHALL support a `file_list` client command that returns matching file
 
 #### Scenario: Client requests file list
 - **WHEN** client sends `{ "type": "file_list", "prefix": "src/co" }`
-- **THEN** server responds with `{ "type": "file_list_result", "prefix": "src/co", "items": [{ "path": "src/core/main.ts", "isDir": false }, ...] }`
+- **THEN** server responds with `{ "type": "file_list_result", "prefix": "src/co", "items": [{ "path": "src/bootstrap/cli-main.ts", "isDir": false }, ...] }`
 
 #### Scenario: Empty prefix
 - **WHEN** client sends `{ "type": "file_list", "prefix": "" }`
@@ -186,8 +186,8 @@ The at-file resolution behavior SHALL be configurable via project or user settin
 The at-file resolver's `safeResolveWithin` SHALL accept absolute paths that point to existing files, in addition to paths within the project directory.
 
 #### Scenario: Absolute path to file inside project
-- **WHEN** user submits a message containing `@/Users/x/project/src/core/main.ts` (absolute path to a file within the project directory)
-- **THEN** the resolver SHALL resolve and read the file normally, the same as the relative `@src/core/main.ts`
+- **WHEN** user submits a message containing `@/Users/x/project/src/bootstrap/cli-main.ts` (absolute path to a file within the project directory)
+- **THEN** the resolver SHALL resolve and read the file normally, the same as the relative `@src/bootstrap/cli-main.ts`
 
 #### Scenario: Absolute path to file outside project
 - **WHEN** user submits a message containing `@/Users/x/Downloads/report.pdf` (absolute path to a file outside the project directory)

@@ -137,7 +137,7 @@ The design system SHALL use exactly one icon family for the entire interface. Ic
 
 **Replaces**: The `--color-accent` token value in the existing warm design system.
 
-The primary accent color token SHALL change from `#ca8a04` to `#b87503`. All dependent tokens (accent-hover, accent-bg, user-bubble) SHALL be updated to use the new base hue.
+The primary accent color token SHALL change from `#ca8a04` to `#b87503`. Dependent interactive tokens such as accent-hover and accent-bg SHALL use the new base hue. The user-message bubble SHALL remain a neutral surface so long messages do not read as warning or error states.
 
 #### Scenario: CSS custom property values
 - **WHEN** the `:root` styles are applied
@@ -145,12 +145,14 @@ The primary accent color token SHALL change from `#ca8a04` to `#b87503`. All dep
 - **AND** `--color-accent-hover` SHALL be `#946002`
 - **AND** `--color-accent-bg` SHALL be `rgba(184, 117, 3, 0.12)`
 - **AND** `--color-accent-glow` SHALL be `rgba(184, 117, 3, 0.18)`
-- **AND** `--color-user-bubble` SHALL be `#b87503`
+- **AND** `--color-user-bubble` SHALL be the neutral warm-gray `#ebe9e5`
+- **AND** `--color-user-bubble-text` SHALL be `#2d2a26`
 
 #### Scenario: Dark mode accent
 - **WHEN** the `.dark` class is active
 - **THEN** `--color-accent` SHALL shift to a lighter copper tone approximately `#c98605`
-- **AND** `--color-user-bubble-text` SHALL remain `#1e1c19`
+- **AND** `--color-user-bubble` SHALL be the neutral dark surface `#322e2a`
+- **AND** `--color-user-bubble-text` SHALL be `#e8e4dd`
 
 ### Requirement: New spacing scale
 
@@ -175,4 +177,3 @@ The design system SHALL standardize the topbar height to 38px via a `--topbar-h`
 #### Scenario: Topbar height
 - **WHEN** the topbar renders
 - **THEN** it SHALL have `height: var(--topbar-h)` where `--topbar-h` is `38px`
-

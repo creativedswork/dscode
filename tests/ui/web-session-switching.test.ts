@@ -1,7 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { HarnessEventBus } from "../../src/core/events.js";
-import { WebUiBackend } from "../../src/ui/web/web-backend.js";
+import { HarnessEventBus } from "../../src/application/events.js";
+import {
+  projectSessionListEvent,
+  WebUiBackend,
+} from "../../src/ui/web/web-backend.js";
+import { createHarnessApiFixture } from "../helpers/harness-api.js";
 
 function session(id: string) {
   return {
@@ -29,35 +33,27 @@ function setup() {
     messages: [{ role: "user", content: "target" }],
     agentMessages: [],
   }));
-  const harness = {
+  const harness = createHarnessApiFixture({
     events,
-    switchSession,
-    agent: {
-      state: {
+    conversation: {
+      ...createHarnessApiFixture().conversation,
+      snapshot: () => ({
         messages: [{ role: "user", content: "target" }],
-        model: { name: "model" },
-      },
+        agentMessages: [],
+        modelName: "model",
+      }),
     },
-    sessionManager: {
-      getCurrentMetadata: () => null,
-      listSessions: () => [target],
-      agentMessages: [],
+    sessions: {
+      ...createHarnessApiFixture().sessions,
+      switch: switchSession,
+      currentMetadata: () => undefined,
+      list: () => [target],
     },
-    agentSupervisor: { get: vi.fn() },
-    commandManager: { listManifests: () => [] },
-    contextManager: { getContextWindow: () => 0 },
-    logger: { info: vi.fn(), error: vi.fn() },
-  } as any;
-  const config = {
-    projectPath: "/project",
-    provider: "test",
-    modelId: "model",
-  } as any;
+  });
   const backend = new WebUiBackend({
+    webRoot: ".",
     port: 0,
     harness,
-    config,
-    configStore: {} as any,
   });
   const send = vi.fn();
   const client = { send } as any;
@@ -84,7 +80,7 @@ describe("Web session switching adapters", () => {
     });
     expect((backend as any).clearConversationView).toHaveBeenCalledOnce();
     expect((backend as any).replayMessages).toHaveBeenCalledWith(
-      harness.agent.state.messages,
+      [{ role: "user", content: "target" }],
     );
   });
 
@@ -99,5 +95,21 @@ describe("Web session switching adapters", () => {
     });
     expect((backend as any).clearConversationView).toHaveBeenCalledOnce();
     expect((backend as any).replayMessages).toHaveBeenCalledOnce();
+  });
+
+  it("uses one complete Session projection for list and save", async () => {
+    const { harness } = setup();
+    (harness.sessions.currentId as any) = () => "TARGET-SESSION";
+    (harness.sessions.currentMetadata as any) = () => session("TARGET-SESSION");
+
+    expect(projectSessionListEvent(harness)).toEqual(
+      expect.objectContaining({
+        currentSessionId: "TARGET-SESSION",
+        data: [expect.objectContaining({
+          id: "TARGET-SESSION",
+          contentHash: "",
+        })],
+      }),
+    );
   });
 });

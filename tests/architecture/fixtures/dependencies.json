@@ -1,0 +1,90 @@
+[
+  {
+    "name": "Presentation may consume the Application facade",
+    "from": "src/ui/tui/backend.ts",
+    "to": "src/application/harness-api.ts",
+    "rules": []
+  },
+  {
+    "name": "Presentation may implement an owner-defined interaction contract",
+    "from": "src/ui/backend.ts",
+    "to": "src/permissions/types.ts",
+    "typeOnly": true,
+    "rules": []
+  },
+  {
+    "name": "Presentation runtime imports do not receive owner-contract exceptions",
+    "from": "src/ui/backend.ts",
+    "to": "src/permissions/types.ts",
+    "typeOnly": false,
+    "rules": ["presentation-uses-application-ports"]
+  },
+  {
+    "name": "Presentation may consume the Project File feature",
+    "from": "src/ui/tui/app.ts",
+    "to": "src/project-files/attachments.ts",
+    "rules": []
+  },
+  {
+    "name": "Presentation may consume the Slash Command feature",
+    "from": "src/ui/web/web-backend.ts",
+    "to": "src/slash-commands/builtins.ts",
+    "rules": []
+  },
+  {
+    "name": "Runtime must not consume a Presentation projector",
+    "from": "src/agents/runtimes/pi-agent-runtime.ts",
+    "to": "src/ui/shared/tool-result-projection.ts",
+    "rules": ["no-presentation-dependency"]
+  },
+  {
+    "name": "Slash Commands must not consume a concrete TUI adapter",
+    "from": "src/slash-commands/builtins.ts",
+    "to": "src/ui/tui/backend.ts",
+    "rules": ["no-presentation-dependency"]
+  },
+  {
+    "name": "Slash Commands must not consume a concrete Web adapter",
+    "from": "src/slash-commands/builtins.ts",
+    "to": "src/ui/web/web-backend.ts",
+    "rules": ["no-presentation-dependency"]
+  },
+  {
+    "name": "Presentation must not consume a concrete Manager",
+    "from": "src/ui/web/web-backend.ts",
+    "to": "src/session/manager.ts",
+    "rules": ["presentation-uses-application-ports"]
+  },
+  {
+    "name": "Application must use an Integration port",
+    "from": "src/application/harness.ts",
+    "to": "src/integrations/open-design/types.ts",
+    "typeOnly": false,
+    "rules": ["application-uses-owner-ports"]
+  },
+  {
+    "name": "Application may use an Integration type-only owner contract",
+    "from": "src/application/harness.ts",
+    "to": "src/integrations/open-design/types.ts",
+    "typeOnly": true,
+    "rules": []
+  },
+  {
+    "name": "Non-designated bootstrap modules are not composition roots",
+    "from": "src/bootstrap/helpers.ts",
+    "to": "src/ui/tui/backend.ts",
+    "rules": ["composition-root-exact-files", "no-presentation-dependency"]
+  },
+  {
+    "name": "The CLI Composition Root may wire concrete adapters",
+    "from": "src/bootstrap/cli-main.ts",
+    "to": "src/integrations/open-design/index.ts",
+    "rules": []
+  },
+  {
+    "name": "Infrastructure uses Kernel Execution Context",
+    "from": "src/drivers/fs.ts",
+    "to": "src/agents/process/context.ts",
+    "rules": ["infrastructure-uses-kernel-context"]
+  }
+]

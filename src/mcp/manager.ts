@@ -16,9 +16,9 @@ import type {
 import { mcpDriverName, mcpToolName } from "./names.js";
 import type { ToolUiInfo, McpUiResourceCsp, McpUiResourcePermissions } from "./app/types.js";
 import { MCPClient } from "./client.js";
-import type { DriverRegistry } from "../drivers/registry.js";
-import type { Driver } from "../core/types.js";
-import { ImageCache } from "../utils/image-cache.js";
+import type { Driver, DriverRegistryPort } from "../drivers/types.js";
+import { ImageCache } from "../drivers/vision/cache.js";
+import type { ImageStorePort } from "../drivers/vision/types.js";
 import type { ProcessOptions, ProcessResult } from "../drivers/vision/types.js";
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 
@@ -56,7 +56,10 @@ function extractToolResultPreview(result: unknown): string {
   return JSON.stringify(result, null, 2);
 }
 
-async function buildToolResultContent(result: unknown): Promise<(TextContent | ImageContent)[]> {
+async function buildToolResultContent(
+  result: unknown,
+  imageStore: ImageStorePort,
+): Promise<(TextContent | ImageContent)[]> {
   if (typeof result === "string") {
     return [{ type: "text", text: result.slice(0, 50000) }];
   }
@@ -71,8 +74,8 @@ async function buildToolResultContent(result: unknown): Promise<(TextContent | I
         } else if (item.type === "image" && item.data) {
           try {
             const img: ImageContent = { type: "image", data: item.data, mimeType: item.mimeType ?? "image/png" };
-            const cached = await ImageCache.put(img);
-            const compressed = ImageCache.getSync(cached);
+            const cached = await imageStore.put(img);
+            const compressed = imageStore.getSync(cached);
             if (compressed) {
               items.push(compressed);
             } else {
@@ -243,14 +246,18 @@ export class MCPManager {
   private alwaysLoadToolNames = new Set<string>();
   private uiToolMap = new Map<string, ToolUiInfo>();
   private eventListeners = new Set<(event: MCPClientEvent) => void>();
-  private driverRegistry?: DriverRegistry;
+  private driverRegistry?: DriverRegistryPort;
   public processImages?: (
     images: ImageContent[],
     text: string,
     options?: ProcessOptions,
   ) => Promise<ProcessResult>;
 
-  constructor(private configs: MCPServerConfig[]) {
+  constructor(
+    private configs: MCPServerConfig[],
+    private readonly environment: Readonly<Record<string, string | undefined>> = {},
+    private readonly imageStore: ImageStorePort = ImageCache,
+  ) {
     for (const cfg of configs) {
       this.states.set(cfg.name, {
         config: cfg,
@@ -333,7 +340,7 @@ export class MCPManager {
   async initialize(): Promise<void> {
     const results = await Promise.allSettled(
       this.configs.map(async (cfg) => {
-        const client = new MCPClient(cfg);
+        const client = new MCPClient(cfg, this.environment);
         client.onEvent((event) => this.handleClientEvent(event));
         await client.connect();
         this.clients.set(cfg.name, client);
@@ -389,7 +396,7 @@ export class MCPManager {
 
     state.status = "reconnecting";
 
-    const client = new MCPClient(cfg);
+    const client = new MCPClient(cfg, this.environment);
     client.onEvent((event) => this.handleClientEvent(event));
     await client.connect();
     this.clients.set(name, client);
@@ -469,7 +476,7 @@ export class MCPManager {
   }
 
 
-  async registerDrivers(registry: DriverRegistry): Promise<void> {
+  async registerDrivers(registry: DriverRegistryPort): Promise<void> {
     this.driverRegistry = registry;
     for (const [name, client] of this.clients) {
       try {
@@ -544,7 +551,7 @@ export class MCPManager {
     state.status = "connecting";
 
     try {
-      const client = new MCPClient(cfg);
+      const client = new MCPClient(cfg, this.environment);
       client.onEvent((event) => this.handleClientEvent(event));
       await client.connect();
       this.clients.set(name, client);
@@ -667,7 +674,10 @@ export class MCPManager {
             }
           }
 
-          const content = await buildToolResultContent(result);
+          const content = await buildToolResultContent(
+            result,
+            this.imageStore,
+          );
           return { content, details: { server: serverName, tool: def.name, error: isError, structuredContent, mcpResult: result }, terminate: false };
         } catch (err: any) {
           if (err instanceof DOMException && err.name === "AbortError") {

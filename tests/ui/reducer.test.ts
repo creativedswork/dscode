@@ -100,6 +100,48 @@ describe("conversationReducer — Agent Activity", () => {
     expect(second[0].agentActivity).toEqual(completed);
   });
 
+  it("keeps Main Assistant streaming across interleaved Agent activity", () => {
+    let messages = conversationReducer([], {
+      type: "assistant_start",
+      messageId: "assistant-main",
+    });
+    messages = conversationReducer(messages, {
+      type: "tool_start",
+      toolCallId: "spawn-1",
+      name: "spawn_agent",
+      args: { application: "general" },
+    });
+    messages = conversationReducer(messages, {
+      type: "agent_activity",
+      activity: runningActivity,
+    });
+    messages = conversationReducer(messages, {
+      type: "tool_end",
+      toolCallId: "spawn-1",
+      name: "spawn_agent",
+      result: "completed",
+      isError: false,
+    });
+    messages = conversationReducer(messages, {
+      type: "text_delta",
+      delta: "Delegation completed.",
+    });
+    messages = conversationReducer(messages, { type: "assistant_end" });
+
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({
+      id: "assistant-main",
+      role: "assistant",
+      content: "Delegation completed.",
+      isStreaming: false,
+    });
+    expect(messages[0].tools?.[0]).toMatchObject({
+      toolCallId: "spawn-1",
+      result: "completed",
+    });
+    expect(messages[1].role).toBe("agent");
+  });
+
   it("restores agent-role messages from ready", () => {
     const result = conversationReducer([], {
       type: "ready",
@@ -190,6 +232,7 @@ describe("conversationReducer — thinking timer anchors", () => {
     const afterThinking = conversationReducer([], { type: "thinking_delta", delta: "Think" });
     const afterTool = conversationReducer(afterThinking, {
       type: "tool_start",
+      toolCallId: "call-1",
       name: "read_file",
       args: { path: "/foo" },
     });
@@ -238,6 +281,7 @@ describe("conversationReducer — thinking timer anchors", () => {
     // Tool start ends first segment
     const afterTool = conversationReducer(afterFirstThink, {
       type: "tool_start",
+      toolCallId: "call-1",
       name: "read_file",
       args: { path: "/foo" },
     });
@@ -270,5 +314,144 @@ describe("conversationReducer — thinking timer anchors", () => {
     expect(result[0].thinkingStartedAt).toBeUndefined();
     expect(result[0].thinkingUpdatedAt).toBeUndefined();
     expect(result[0].thinking).toBe("some thinking");
+  });
+});
+
+describe("conversationReducer — stable Tool identity", () => {
+  it("ignores a duplicate assistant start while the same turn is streaming", () => {
+    const started = conversationReducer([], {
+      type: "assistant_start",
+      messageId: "assistant-1",
+      createdAt: 1000,
+    });
+    const duplicate = conversationReducer(started, {
+      type: "assistant_start",
+      messageId: "assistant-2",
+      createdAt: 1001,
+    });
+
+    expect(duplicate).toBe(started);
+    expect(duplicate).toHaveLength(1);
+    expect(duplicate[0].id).toBe("assistant-1");
+  });
+
+  it("records completion detail even when a Tool returns empty output", () => {
+    const started = conversationReducer([], {
+      type: "tool_start",
+      toolCallId: "call-empty",
+      name: "bash",
+      args: { command: "true" },
+    });
+    const completed = conversationReducer(started, {
+      type: "tool_end",
+      toolCallId: "call-empty",
+      name: "bash",
+      result: "",
+      resultDetail: {
+        summary: "",
+        text: "",
+        charCount: 0,
+        lineCount: 0,
+      },
+      isError: false,
+    });
+
+    expect(completed[0].tools?.[0]).toMatchObject({
+      toolCallId: "call-empty",
+      result: "",
+      resultDetail: {
+        text: "",
+        charCount: 0,
+        lineCount: 0,
+      },
+    });
+  });
+
+  it("keeps parallel same-name Tools distinct by toolCallId", () => {
+    const started = conversationReducer([], {
+      type: "assistant_start",
+      messageId: "assistant-1",
+      createdAt: 1000,
+    });
+    const first = conversationReducer(started, {
+      type: "tool_start",
+      toolCallId: "call-1",
+      name: "read_file",
+      args: { path: "a.ts" },
+    });
+    const parallel = conversationReducer(first, {
+      type: "tool_start",
+      toolCallId: "call-2",
+      name: "read_file",
+      args: { path: "b.ts" },
+    });
+    const completed = conversationReducer(parallel, {
+      type: "tool_end",
+      toolCallId: "call-2",
+      name: "read_file",
+      result: "b contents",
+      resultDetail: { summary: "b contents", text: "b contents" },
+      isError: false,
+    });
+
+    expect(completed[0].tools).toEqual([
+      expect.objectContaining({ toolCallId: "call-1", result: "" }),
+      expect.objectContaining({ toolCallId: "call-2", result: "b contents" }),
+    ]);
+  });
+
+  it("preserves a large result reference without mutating prior state", () => {
+    const initial = conversationReducer([], {
+      type: "tool_start",
+      toolCallId: "call-large",
+      name: "bash",
+      args: { command: "generate" },
+    });
+    const detail = {
+      summary: "large output",
+      ref: {
+        owner: "session" as const,
+        ownerId: "session-1",
+        toolCallId: "call-large",
+      },
+      charCount: 20_000,
+      lineCount: 400,
+    };
+    const result = conversationReducer(initial, {
+      type: "tool_end",
+      toolCallId: "call-large",
+      name: "bash",
+      result: detail.summary,
+      resultDetail: detail,
+      isError: false,
+    });
+
+    expect(initial[0].tools?.[0].result).toBe("");
+    expect(initial[0].tools?.[0].resultDetail).toBeUndefined();
+    expect(result[0].tools?.[0].resultDetail).toEqual(detail);
+  });
+
+  it("preserves legacy ready records without inventing Tool identity", () => {
+    const legacy = {
+      type: "ready",
+      model: "test",
+      config: {} as any,
+      messages: [{
+        role: "assistant",
+        content: "done",
+        tools: [{
+          name: "read_file",
+          args: "a.ts",
+          result: "contents",
+          isError: false,
+        }],
+      }],
+    } as ServerEvent;
+
+    const result = conversationReducer([], legacy);
+
+    expect(result[0].tools?.[0].toolCallId).toBeUndefined();
+    expect((legacy as any).messages[0].tools[0].toolCallId).toBeUndefined();
+    expect(result[0].tools).not.toBe((legacy as any).messages[0].tools);
   });
 });

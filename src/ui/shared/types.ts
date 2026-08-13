@@ -122,10 +122,26 @@ export interface FileListItem {
 
 // ── Tool calls ──
 
+export interface ToolResultRef {
+  owner: "session" | "agent-process";
+  ownerId: string;
+  toolCallId: string;
+}
+
+export interface ToolResultProjection {
+  summary: string;
+  text?: string;
+  ref?: ToolResultRef;
+  charCount?: number;
+  lineCount?: number;
+}
+
 export interface ToolCallEntry {
+  toolCallId: string;
   name: string;
   args: string;
   result: string;
+  resultDetail?: ToolResultProjection;
   isError: boolean;
   images?: ImageAttachment[];
   mcpApp?: McpAppInfo;
@@ -153,10 +169,36 @@ export interface AgentActivityProgress {
   message?: string;
 }
 
+export type AgentToolActivityState =
+  | "running"
+  | "permission"
+  | "completed"
+  | "failed";
+
+export interface AgentToolActivity {
+  toolCallId: string;
+  name: string;
+  status: AgentToolActivityState;
+  args?: string;
+  summary?: string;
+  resultDetail?: ToolResultProjection;
+  startedAt: number;
+  endedAt?: number;
+  isError?: boolean;
+}
+
+export interface AgentPermissionActivity {
+  toolName: string;
+  preview: string;
+  toolCallId?: string;
+}
+
 export interface AgentActivity {
   agentId: string;
+  executionId?: string;
   parentAgentId?: string;
   parentSessionId: string;
+  label?: string;
   application: string;
   attachment: "foreground" | "background";
   state: AgentActivityState;
@@ -164,12 +206,15 @@ export interface AgentActivity {
   output?: string;
   error?: string;
   progress?: AgentActivityProgress;
+  tools?: AgentToolActivity[];
+  permission?: AgentPermissionActivity;
   createdAt: number;
   startedAt?: number;
   endedAt?: number;
 }
 
 export interface ConversationMessage {
+  id?: string;
   role: "user" | "assistant" | "system" | "agent";
   content: string;
   thinking?: string;
@@ -200,6 +245,8 @@ export type PermissionDecision = "allow" | "deny" | "ask";
 export interface PermissionPrompt {
   toolName: string;
   preview: string;
+  agentId?: string;
+  toolCallId?: string;
   fuzzyPattern?: string | null;
   fuzzyArgDesc?: string | null;
   llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[];
@@ -306,21 +353,34 @@ export type ClientCommand =
 export type ServerEvent =
   | { type: "ready"; model: string; config: ConfigData; messages: ConversationMessage[] }
   | { type: "agent_activity"; activity: AgentActivity }
-  | { type: "user_message"; text: string; images?: ImageAttachment[] }
-  | { type: "assistant_start" }
-  | { type: "thinking_delta"; delta: string }
-  | { type: "text_delta"; delta: string }
-  | { type: "tool_start"; name: string; args: unknown }
-  | { type: "tool_progress"; name: string; progress: number; total?: number; message?: string }
+  | { type: "user_message"; text: string; images?: ImageAttachment[]; createdAt?: number }
+  | { type: "assistant_start"; messageId?: string; createdAt?: number }
+  | { type: "thinking_delta"; delta: string; createdAt?: number }
+  | { type: "text_delta"; delta: string; createdAt?: number }
+  | { type: "tool_start"; toolCallId: string; name: string; args: unknown; createdAt?: number }
+  | { type: "tool_progress"; toolCallId?: string; name: string; progress: number; total?: number; message?: string }
   | { type: "context_window"; total: number; used: number; free: number; categories: { system: number; rules: number; user: number; thinking: number; readwrite: number; edit: number; shell: number; skill: number; mcp: number; other: number } }
 
-  | { type: "tool_end"; name: string; result: string; isError: boolean; images?: ImageAttachment[] }
+  | { type: "tool_end"; toolCallId: string; name: string; result: string; resultDetail?: ToolResultProjection; isError: boolean; images?: ImageAttachment[] }
   | { type: "assistant_end" }
   | { type: "info"; text: string; display: "toast" | "panel" }
   | { type: "warning"; text: string }
   | { type: "error"; text: string }
   | { type: "retry"; info: { attempt: number; maxRetries: number; delayMs: number; error: string; level: "stream" | "turn" } }
-  | { type: "permission_prompt"; toolName: string; preview: string; fuzzyPattern?: string | null; fuzzyArgDesc?: string | null; llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[] }
+  | {
+      type: "permission_prompt";
+      toolName: string;
+      preview: string;
+      agentId?: string;
+      toolCallId?: string;
+      fuzzyPattern?: string | null;
+      fuzzyArgDesc?: string | null;
+      llmSuggestions?: {
+        label: string;
+        toolPattern: string | null;
+        argPattern: string | null;
+      }[];
+    }
   | { type: "loader"; state: "show" | "hide"; text?: string }
   | { type: "config"; data: ConfigData }
   | { type: "sessions"; data: SessionInfo[]; currentSessionId?: string; isProcessing?: boolean }
@@ -329,7 +389,7 @@ export type ServerEvent =
   | { type: "skill_state"; skills: SkillInfo[] }
   | { type: "model"; name: string }
   | { type: "slash_result"; text: string }
-  | { type: "mcp_app"; app: McpAppInfo }
+  | { type: "mcp_app"; app: McpAppInfo; toolCallId?: string }
   | { type: "clear_conversation" }
   | { type: "file_list_result"; prefix: string; items: FileListItem[] }
   | { type: "processing"; processing: boolean }

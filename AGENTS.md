@@ -2,6 +2,32 @@
 
 本文件供 AI Agent 快速理解项目结构。
 
+## ⛔ Pre-Flight Checklist（每次写文件前必答）
+
+在调用 `write_file` / `edit` / `overwrite_file` 之前，回答以下问题：
+
+| # | 问题 | 如果是 → 操作 |
+|---|------|-------------|
+| 1 | 本次变更是否涉及 `.css` / `.html` / `.svg` 的样式或布局？ | → 走视觉设计流程 |
+| 2 | 本次变更是否新增/重排/删除 HTML 元素或组件？ | → 走视觉设计流程 |
+| 3 | 用户是否使用了以下动词：**设计、美化、重设计、改样式、调布局、重新排布、改颜色、改字体、改间距、改卡片**？ | → 走视觉设计流程 |
+| 4 | 用户是否要求「参考某个 skill 的美学」或「按 xx 风格」？ | → 走视觉设计流程 |
+
+**视觉设计流程（三步，不可跳过）：**
+
+```
+Step 1: Open Design 生成/获取视觉参考（mcp__open-design__create_project → start_run → poll get_run → get_artifact）
+Step 2: taste-skill 把关实现质量（加载 design-taste-frontend 或对应 skill）
+Step 3: 写代码实现
+```
+
+**特例豁免（仅以下情况可跳过 Step 1–2）：**
+- 纯逻辑修复（JS/TS bug fix，不涉及 UI）
+- 纯内容替换（改文字不改样式）
+- 已在当前 session 内完成过 Step 1–2 的同主题变更
+
+
+
 
 ## 编码规范
 
@@ -35,9 +61,14 @@ flowchart LR
 
 支持 Vision 模型代理和 OCR 识别图片。**不要以"我是文本模型"为由拒绝处理图片。**
 
+## 视觉设计
+
+**任何涉及可见布局、样式、组件呈现的变更（修改 CSS、新增/重排 HTML 元素、调整视觉层次、设计 card/prototype/page），禁止直接写代码——必须先通过 Open Design（`mcp__open-design__*`）获取或创建视觉参考。** 设计分两层：**视觉方向**由 Open Design 提供，**实现质量**由 taste-skill（`design-taste-frontend`）保证。视觉决策经 explore→propose 流程沉淀为 change 的 design.md + prototype 后方可实施。`docs/prototypes/` 仅是暂存区：apply 完成后按 `prototype-workflow` 逐文件决定 `archive` 或 `delete`，archive 阶段将长期资产移入按日期和 change 分组的归档目录。Session 00MRIZMZQJ 是 HTML 原型→视觉迭代→实现的标准案例。
+
 ## Web 前端
 
-修改 Web UI 前必读 `openspec/specs/web-frontend/spec.md`。设计分两层：**视觉方向**参考 Open Design 项目（`mcp__open-design__*`），**实现质量**由 taste-skill（`design-taste-frontend`）保证——前者回答「长什么样」，后者防止 AI 生成千篇一律的 slop。禁止引入第三方组件库（Material UI、Ant Design 等），必须使用 `web/src/index.css` 的 `--color-*` token。任何涉及可见组件、渲染、布局、CSS、交互或用户状态的变更，都必须先按 `docs/prototypes/README.md` 在 `docs/prototypes/` 生成并浏览器验证自包含 HTML 原型；纯文字视觉说明不能替代。视觉决策经 explore→propose 流程沉淀为 change 的 design.md + prototype 后方可实施。Session 00MRIZMZQJ 是 HTML 原型→视觉迭代→实现的标准案例。
+修改 Web UI 前必读 `openspec/specs/web-frontend/spec.md`。禁止引入第三方组件库（Material UI、Ant Design 等），必须使用 `web/src/index.css` 的 `--color-*` token。视觉流程遵循上方「视觉设计」节。
+
 
 ## 运行
 

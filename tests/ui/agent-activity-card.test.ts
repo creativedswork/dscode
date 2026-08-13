@@ -1,13 +1,18 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { createElement } from "../../web/node_modules/react/index.js";
+import { renderToStaticMarkup } from "../../web/node_modules/react-dom/server.node.js";
+import { describe, expect, it, vi } from "vitest";
 
 import type { AgentActivity } from "../../src/ui/shared/types.js";
+import { formatSubagentLabel } from "../../src/ui/shared/agent-label.js";
 import {
   AGENT_STATUS_LABELS,
+  AgentActivityCard,
   formatAgentDuration,
   summarizeAgentText,
 } from "../../web/src/components/AgentActivityCard.js";
+import { findPermissionOwnerAgent } from "../../web/src/components/ChatView.js";
 import { formatAgentDisplayId } from "../../src/ui/shared/agent-id.js";
 
 function activity(overrides: Partial<AgentActivity> = {}): AgentActivity {
@@ -15,6 +20,7 @@ function activity(overrides: Partial<AgentActivity> = {}): AgentActivity {
     agentId: "agent-abcdef12-3456",
     parentAgentId: "main-1",
     parentSessionId: "session-1",
+    label: "Researcher",
     application: "general",
     attachment: "background",
     state: "running",
@@ -50,6 +56,27 @@ describe("AgentActivityCard", () => {
     expect(summarizeAgentText("one   two\nthree four", 13)).toBe("one two thre…");
   });
 
+  it("shows the delegated role without exposing the Application name", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentActivityCard, {
+        activity: activity(),
+      }),
+    );
+
+    expect(markup).toContain("Researcher");
+    expect(markup).not.toContain(">general<");
+    expect(markup).toContain('aria-label="Researcher SubAgent Activity"');
+  });
+
+  it("derives a concise role label from the delegation description", () => {
+    expect(formatSubagentLabel("Researcher: verify paper claims")).toBe(
+      "Researcher",
+    );
+    expect(formatSubagentLabel("内容策略师：规划六张卡片")).toBe("内容策略师");
+    expect(formatSubagentLabel(undefined, "vision")).toBe("Vision");
+    expect(formatSubagentLabel()).toBe("SubAgent");
+  });
+
   it("shows an accessible collapsed details control only for long output", () => {
     const source = readFileSync(
       resolve("web/src/components/AgentActivityCard.tsx"),
@@ -64,7 +91,26 @@ describe("AgentActivityCard", () => {
     expect(source).toContain('type="button"');
   });
 
-  it("exposes progress semantics and a bounded details scroll container", () => {
+  it("renders Agent output as Markdown in both preview and details", () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    const markup = renderToStaticMarkup(
+      createElement(AgentActivityCard, {
+        activity: activity({
+          state: "completed",
+          output: "**Bold result**\n\n- first item\n- second item",
+          endedAt: 3000,
+        }),
+      }),
+    );
+    consoleError.mockRestore();
+
+    expect(markup).toContain("<strong>Bold result</strong>");
+    expect(markup).toContain('<li data-collider="text-block">first item</li>');
+    expect(markup).toContain('<li data-collider="text-block">second item</li>');
+    expect(markup).not.toContain("**Bold result**");
+  });
+
+  it("exposes progress semantics and a bounded Markdown details container", () => {
     const source = readFileSync(
       resolve("web/src/components/AgentActivityCard.tsx"),
       "utf8",
@@ -74,7 +120,89 @@ describe("AgentActivityCard", () => {
     expect(source).toContain('role="progressbar"');
     expect(source).toContain("aria-valuenow={progressPercent}");
     expect(source).toContain("progress.message");
-    expect(css).toMatch(/\.agent-activity-details\s*\{[^}]*max-height:\s*240px;[^}]*overflow-y:\s*auto;/s);
+    expect(source).toContain("<Markdown");
+    expect(source).not.toContain("<pre id={detailsId}");
+    expect(css).toMatch(/\.agent-activity-result\.expanded\s*\{[^}]*max-height:\s*320px;[^}]*overflow-y:\s*auto;/s);
+  });
+
+  it("places the expanded Tools toggle below the Tool list", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentActivityCard, {
+        activity: activity({
+          tools: [{
+            toolCallId: "call-read",
+            name: "read_file",
+            status: "completed",
+            summary: "src/application/harness.ts",
+            startedAt: 1200,
+            endedAt: 1300,
+          }],
+        }),
+      }),
+    );
+
+    expect(markup).toContain("Hide tools");
+    expect(markup.indexOf("agent-activity-tool-list")).toBeLessThan(
+      markup.indexOf("agent-activity-tools-toggle"),
+    );
+  });
+
+  it("keeps the permission tool status without an inline approval control", () => {
+    const markup = renderToStaticMarkup(
+      createElement(AgentActivityCard, {
+        activity: activity({
+          state: "waiting",
+          tools: [{
+            toolCallId: "call-bash",
+            name: "bash",
+            status: "permission",
+            summary: "{\"command\":\"pwd\"}",
+            startedAt: 1200,
+          }],
+          permission: {
+            toolName: "bash",
+            preview: "$ pwd",
+            toolCallId: "call-bash",
+          },
+        }),
+      }),
+    );
+
+    expect(markup).toContain("agent-activity-tool state-permission");
+    expect(markup).toContain("Permission required");
+    expect(markup).not.toContain("data-permission-control");
+  });
+
+  it("routes only attributable SubAgent permissions into an Agent Card", () => {
+    const messages = [{
+      id: "agent-agent-1",
+      role: "agent" as const,
+      content: "",
+      agentActivity: activity({
+        agentId: "agent-1",
+        permission: {
+          toolName: "bash",
+          preview: "$ pwd",
+          toolCallId: "call-bash",
+        },
+      }),
+    }];
+
+    expect(findPermissionOwnerAgent(messages, {
+      toolName: "bash",
+      preview: "$ pwd",
+      agentId: "agent-1",
+      toolCallId: "call-bash",
+    })?.agentId).toBe("agent-1");
+    expect(findPermissionOwnerAgent(messages, {
+      toolName: "bash",
+      preview: "$ pwd",
+      toolCallId: "call-bash",
+    })?.agentId).toBe("agent-1");
+    expect(findPermissionOwnerAgent(messages, {
+      toolName: "bash",
+      preview: "$ pwd",
+    })).toBeNull();
   });
 
   it("freezes terminal duration at endedAt", () => {

@@ -2,7 +2,7 @@
 
 The ToolCard component renders tool call results in the web UI. The v3 changes (reduced padding, removed `border-top`, scoped `<pre>` CSS override) were applied but built-in tools still show a ~19px gap between header and content, while MCP tools show ~2px.
 
-**True root cause** (documented in `docs/prototypes/builtin-tool-result-rendering-fix-v5.html`):
+**True root cause** (confirmed during the visual debugging iteration):
 
 The scoped CSS rule `.tool-card-body-inner pre { padding: 6px 10px; margin: 0 }` lives inside `@layer components` in `index.css` (lines 102-547). The Markdown component's `<pre>` uses Tailwind classes `p-3` (12px) and `my-1` (4px), which live in `@layer utilities`. **CSS cascade layers dictate that `@layer utilities` always beats `@layer components`, regardless of specificity.** The override never worked — `<pre>` retains 12px padding + 4px margin.
 

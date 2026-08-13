@@ -120,11 +120,12 @@ The brand identifier in the topbar SHALL be an 8px rotated square (diamond) in a
 
 ### Requirement: Accent color discipline
 
-The copper-gold accent (`--accent: #b87503`) SHALL appear on at most 3 elements per screen: brand diamond mark, send button, and user message bubble. All other interactive chrome SHALL use `--text-secondary` or `--text-muted`.
+The copper-gold accent (`--accent: #b87503`) SHALL appear on at most 2 prominent elements per screen: the brand diamond mark and send button. User message bubbles SHALL use a neutral surface, and all other interactive chrome SHALL use `--text-secondary` or `--text-muted`.
 
 #### Scenario: Accent usage constraint
 - **WHEN** the app renders in any state
 - **THEN** nav active states SHALL use `--text` color (not accent)
+- **AND** user message bubbles SHALL use the neutral user-bubble tokens (not accent)
 - **AND** phase dots SHALL use `--text-muted` / `--text-secondary` (not accent)
 - **AND** tool names in cards SHALL use `--text-secondary` (not accent)
 - **AND** settings toggles SHALL use `--text-muted` accent-color (not accent)
@@ -147,4 +148,3 @@ Phase labels (Thinking, Executing, Response) SHALL render at 11px font size, wei
 - **WHEN** a phase label renders above a message group
 - **THEN** the label text SHALL be 11px with color `var(--color-text-muted)`
 - **AND** the phase dot SHALL be 6px diameter as an outline circle
-

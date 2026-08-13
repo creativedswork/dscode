@@ -9,17 +9,25 @@ export interface ImagePipelineConfig {
   visionConfig?: VisionConfig;
   fallbackApiKey?: string;
   onWarning: (message: string) => void;
+  environment?: Readonly<Record<string, string | undefined>>;
 }
 
 export class ImagePipeline {
   private visionConfig?: VisionConfig;
   private fallbackApiKey?: string;
   private onWarning: (message: string) => void;
+  private readonly environment: Readonly<Record<string, string | undefined>>;
 
   constructor(config: ImagePipelineConfig) {
     this.visionConfig = config.visionConfig;
     this.fallbackApiKey = config.fallbackApiKey;
     this.onWarning = config.onWarning;
+    this.environment = config.environment ?? {};
+  }
+
+  updateConfig(config: Pick<ImagePipelineConfig, "visionConfig" | "fallbackApiKey">): void {
+    this.visionConfig = config.visionConfig;
+    this.fallbackApiKey = config.fallbackApiKey;
   }
 
   async shutdown(): Promise<void> {
@@ -69,7 +77,12 @@ export class ImagePipeline {
     // Try vision model
     const selectedVisionConfig = options?.visionConfig ?? this.visionConfig;
     const fallbackApiKey = options?.visionConfig ? undefined : this.fallbackApiKey;
-    const vision = resolveVisionModel(selectedVisionConfig, fallbackApiKey, warn);
+    const vision = resolveVisionModel(
+      selectedVisionConfig,
+      fallbackApiKey,
+      warn,
+      this.environment,
+    );
     if (vision) {
       try {
         onProgress?.({ phase: "describing", cachedRefs });

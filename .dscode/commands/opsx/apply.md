@@ -45,7 +45,8 @@ Implement tasks from an OpenSpec change.
 
    **Handle states:**
    - If `state: "blocked"` (missing artifacts): show message, suggest using `/opsx:continue`
-   - If `state: "all_done"`: congratulate, suggest archive
+   - If `state: "all_done"`: skip implementation tasks, but still run prototype
+     retention finalization before suggesting archive
    - Otherwise: proceed to implementation
 
 4. **Read context files**
@@ -78,7 +79,23 @@ Implement tasks from an OpenSpec change.
    - Error or blocker encountered → report and wait for guidance
    - User interrupts
 
-7. **On completion or pause, show status**
+7. **Finalize prototype retention when implementation completes**
+
+   For `spec-driven-plus`, read `<changeRoot>/prototype.md`.
+
+   - Non-UI stub: report retention as not applicable.
+   - HTML prototypes: load `prototype-workflow`, assess every file, and write a
+     final `archive` or `delete` decision with rationale in the
+     `## Prototype Retention` table.
+   - Delete every `delete` file immediately, remove its
+     `docs/prototypes/README.md` entry, and remove or rewrite references in the
+     current change so no broken link remains.
+   - Keep `archive` files in the staging directory until `/opsx:archive`.
+   - Verify no decision remains `pending` and deleted paths no longer exist.
+
+   This step also runs when all implementation tasks were already complete.
+
+8. **On completion or pause, show status**
 
    Display:
    - Tasks completed this session
@@ -108,6 +125,7 @@ Working on task 4/7: <task description>
 **Change:** <change-name>
 **Schema:** <schema-name>
 **Progress:** 7/7 tasks complete ✓
+**Prototypes:** <N archived later, M deleted, or not applicable>
 
 ### Completed This Session
 - [x] Task 1
@@ -146,6 +164,7 @@ What would you like to do?
 - Update task checkbox immediately after completing each task
 - Pause on errors, blockers, or unclear requirements - don't guess
 - Use contextFiles from CLI output, don't assume specific file names
+- Do not report completion while prototype retention remains pending
 
 **Fluid Workflow Integration**
 

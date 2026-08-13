@@ -38,4 +38,4 @@
 - **Agent Applications**：`resources/agents/` 新增 CHIEF graph、backtrack、attribution、rule attribution 和 semantic merge 等只读 Application 定义。
 - **Session 兼容性**：Session v3 `agentMessages` 仍是成员索引；旧 Session 和 transcript 缺失场景可降级，不修改 Main Agent 推理上下文。
 - **类型与输出**：`HistoryStep`、`Attribution`、`EvalResult` 和统计结构增加进程身份及证据质量字段；旧 Dashboard 文件无需迁移，重新运行 `/eval` 即生成新格式。
-- **UI**：生成式 eval Dashboard 发生可见变化，设计依据为 `docs/prototypes/adapt-eval-to-subagents.html`。
+- **UI**：生成式 eval Dashboard 发生可见变化，设计依据为 `docs/prototypes/archive/2026-08-05-adapt-eval-to-subagents/adapt-eval-to-subagents.html`。

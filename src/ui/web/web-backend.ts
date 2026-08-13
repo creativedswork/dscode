@@ -1,35 +1,34 @@
 import { createServer, request as httpRequest } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { randomBytes } from "node:crypto";
 import { readFileSync, existsSync, mkdirSync, writeFileSync, rmSync, readdirSync, statSync } from "node:fs";
-import { join, extname } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import { streamSimple } from "../../models/index.js";
-import { getAllProviders, getAllModels, getVisionModels, getVisionProviders, resolveModel } from "../../models/index.js";
 import type { UiBackend } from "../backend.js";
+import type { PublicRuntimeConfigSnapshot } from "../../config/types.js";
+import type {
+  PermissionPromptContext,
+  PermissionPromptResult,
+} from "../../permissions/types.js";
 import type {
   AgentSessionMessage,
-  HarnessConfig,
-  PermissionPromptResult,
-} from "../../core/types.js";
-import type { ConfigWatch } from "../../core/config-watch.js";
-import { maskApiKey, PROVIDER_ENV_VARS, saveUserConfig, loadScopedSettings, projectSettingsPath, saveProjectSettings } from "../../core/config.js";
-import { executeSlashCommand, getSlashCommandAutocomplete, resolveCustomCommand } from "../commands.js";
-import { deriveFuzzyPattern, deriveFuzzyArgPattern, describeFuzzyArgPattern } from "../../permissions/fuzzy.js";
-import { prefetchLlmSuggestions, getLlmSuggestions } from "../../permissions/fuzzy-llm.js";
-import type { HarnessAPI } from "../../core/harness-api.js";
-import { setTitleIntent } from "../../session/manager.js";
-import type { MCPManager } from "../../mcp/manager.js";
-import type { AppHostManager } from "../../mcp/app/host.js";
-import type { AppInstance } from "../../mcp/app/types.js";
-import { buildMcpServers } from "../mcp-browser.js";
-import { resolveAtFileRefs, resolveFileRefs, listProjectFiles, isImagePath } from "../../utils/at-file-resolver.js";
-import { rebuildDisplayMessages } from "../../session/display.js";
-import { formatToolResultForUI } from "../shared/tool-result-formatter.js";
+  PendingPermission,
+  SessionMetadata,
+} from "../../session/types.js";
+import { executeSlashCommand, getSlashCommandAutocomplete, resolveCustomCommand } from "../../slash-commands/builtins.js";
+import type { HarnessAPI } from "../../application/harness-api.js";
+import type {
+  McpAppResourceProxy,
+} from "../../mcp/app/types.js";
+import { rebuildDisplayMessages } from "../shared/session-projector.js";
 import { AgentActivityProjector } from "../shared/agent-activity.js";
+import { harnessEventToConversationEvent } from "../shared/harness-conversation-adapter.js";
 import { formatAgentDisplayId } from "../shared/agent-id.js";
-import { resolveBuiltResource } from "../../resources/runtime.js";
+import { serializeArtifactThemeVariables } from "../../application/artifact-theme.js";
+import { stageAttachedFiles } from "../../project-files/attachments.js";
 import { WsServer, type WebSocketClient } from "./ws-server.js";
-import type { EvalDashboardState } from "../../core/events.js";
+import type { EvalDashboardState } from "../../application/events.js";
+import { isCanonicalPathWithin } from "../../kernel/path-safety.js";
 import type {
   ClientCommand,
   ServerEvent,
@@ -37,15 +36,21 @@ import type {
   SessionInfo,
   ConversationMessage,
   McpServerInfo,
-  McpAppInfo,
   ToolCallEntry,
-  SkillInfo,
   EvalDashboardServerEvent,
 } from "./protocol.js";
-import type { ImageAttachment } from "./protocol.js";
 
 export const DASHBOARD_AGENT_TASK_SUMMARY_LIMIT = 100;
 export const DASHBOARD_AGENT_OUTCOME_SUMMARY_LIMIT = 120;
+
+export function buildDashboardThemeContract(): string {
+  return `DESIGN SYSTEM THEME CONTRACT:
+- Define these exact CSS custom properties in :root with the light defaults below:
+${serializeArtifactThemeVariables("light", "  ")}
+- Use these variables for EVERY theme-dependent color declaration, including inline styles
+- Never hard-code a theme color outside the :root declarations
+- The WebUI overrides these variables at runtime so the same Dashboard follows light and dark mode`;
+}
 
 export function projectEvalDashboardState(
   state: EvalDashboardState,
@@ -124,6 +129,42 @@ export function formatDashboardDuration(ms: number): string {
   if (min < 60) return `${min}m ${remainSec}s`;
   const hrs = Math.floor(min / 60);
   return `${hrs}h ${min % 60}m`;
+}
+
+export function projectSessionListEvent(
+  harness: HarnessAPI,
+): Extract<ServerEvent, { type: "sessions" }> {
+  const currentSessionId = harness.sessions.currentId();
+  const sessions = [...harness.sessions.list()];
+  const current = harness.sessions.currentMetadata();
+  if (
+    currentSessionId
+    && current
+    && !sessions.some((session) => session.id === currentSessionId)
+  ) {
+    sessions.unshift(current);
+  }
+  const project = (session: SessionMetadata): SessionInfo => ({
+    id: session.id,
+    title: session.title,
+    updatedAt: session.updatedAt,
+    createdAt: session.createdAt,
+    messageCount: session.messageCount,
+    modelProvider: session.modelProvider,
+    modelId: session.modelId,
+    projectPath: session.projectPath || "",
+    preview: session.preview || "",
+    totalActiveMs: session.id === currentSessionId
+      ? harness.sessions.totalActiveMs()
+      : session.totalActiveMs ?? 0,
+    contentHash: session.contentHash ?? "",
+    pendingPermission: session.pendingPermission,
+  });
+  return {
+    type: "sessions",
+    currentSessionId,
+    data: sessions.slice(0, 50).map(project),
+  };
 }
 
 export function buildDashboardSubagentSummary(
@@ -212,25 +253,12 @@ ${SESSION_DASHBOARD_VISUAL_REQUIREMENTS}
 Make it visually rich with clear hierarchy, progress bars, color-coded metrics, and CSS charts.`;
 }
 
-function extractImagesFromToolResult(result: unknown): ImageAttachment[] | undefined {
-  if (!result || typeof result !== "object") return undefined;
-  const r = result as Record<string, unknown>;
-  const content = r.content;
-  if (!Array.isArray(content)) return undefined;
-  const images: ImageAttachment[] = [];
-  for (const item of content) {
-    if (item && typeof item === "object" && (item as any).type === "image" && (item as any).data) {
-      images.push({ data: (item as any).data, mimeType: (item as any).mimeType ?? "image/png" });
-    }
-  }
-  return images.length > 0 ? images : undefined;
-}
 export interface WebUiOptions {
   port: number;
   harness: HarnessAPI;
-  configStore: ConfigWatch;
-  config: HarnessConfig;
   projectRoot?: string;
+  webRoot: string;
+  token?: string;
 }
 
 /**
@@ -240,15 +268,12 @@ export interface WebUiOptions {
 export class WebUiBackend implements UiBackend {
   private port: number;
   private harness: HarnessAPI;
-  private config: HarnessConfig;
-  private configStore: ConfigWatch;
   private httpServer: ReturnType<typeof createServer>;
   private wsServer: WsServer;
   private currentClient: WebSocketClient | null = null;
   private exitPromise!: Promise<void>;
   private exitResolve!: () => void;
-  private appHostManager?: AppHostManager;
-  private mcpManager?: MCPManager;
+  private appResourceProxy?: McpAppResourceProxy;
   private sessionTimeInterval: ReturnType<typeof setInterval> | null = null;
 
   // Pending permission state
@@ -261,18 +286,19 @@ export class WebUiBackend implements UiBackend {
   private pendingImages: ImageContent[] = [];
 
   // Message accumulation for the current assistant turn
-  private currentAssistant: {
-    thinking: string;
-    text: string;
-    tools: ToolCallEntry[];
-  } | null = null;
+  private currentAssistant: { tools: ToolCallEntry[] } | null = null;
 
   // Context window broadcast throttling
   private contextWindowThrottleTimer: ReturnType<typeof setTimeout> | null = null;
   private contextWindowThrottlePending: boolean = false;
   private lastArtifactHtml: string = "";
-  private isAssistantTurn: boolean = false;
   private readonly agentActivityProjector: AgentActivityProjector;
+  private readonly webRoot: string;
+  private readonly token: string;
+
+  private get config(): PublicRuntimeConfigSnapshot {
+    return this.harness.settings.get();
+  }
 
   private cleanupUploadDir(sessionId: string): void {
     const uploadDir = join(this.config.projectPath, ".dscode", "uploads", sessionId);
@@ -288,10 +314,10 @@ export class WebUiBackend implements UiBackend {
   constructor(options: WebUiOptions) {
     this.port = options.port;
     this.harness = options.harness;
-    this.configStore = options.configStore;
-    this.config = options.config;
+    this.webRoot = options.webRoot;
+    this.token = options.token ?? randomBytes(32).toString("base64url");
 
-    this.wsServer = new WsServer();
+    this.wsServer = new WsServer({ token: this.token });
 
     // Create HTTP server
     this.httpServer = createServer((req, res) => {
@@ -316,42 +342,73 @@ export class WebUiBackend implements UiBackend {
     // ── Event bus subscriptions ──
     const h = this.harness;
     this.agentActivityProjector = new AgentActivityProjector(
-      h.agentSupervisor,
-      () => h.sessionManager.getCurrentSessionId() ?? undefined,
+      h.agents,
+      () => h.sessions.currentId(),
       (activity) => this.broadcast({ type: "agent_activity", activity }),
     );
     const projectAgentActivity = (event: Parameters<AgentActivityProjector["handle"]>[0]) => {
       this.agentActivityProjector.handle(event);
     };
+    const projectConversationEvent = (
+      event: Parameters<typeof harnessEventToConversationEvent>[0],
+    ) => harnessEventToConversationEvent(event, {
+      sessionId: h.sessions.currentId(),
+    });
 
-    h.events.on("llm:thinking:delta", (e) => { this.broadcast({ type: "thinking_delta", delta: e.delta }); });
+    h.events.on("llm:thinking:delta", (e) => {
+      const projected = projectConversationEvent(e);
+      if (projected) this.broadcast(projected);
+    });
     h.events.on("llm:text:delta", (e) => {
-      if (this.currentAssistant && e.delta != null) this.currentAssistant.text += e.delta;
-      this.broadcast({ type: "text_delta", delta: e.delta });
+      const projected = projectConversationEvent(e);
+      if (projected) this.broadcast(projected);
     });
     h.events.on("llm:retry", (e) => { this.broadcast({ type: "retry", info: { attempt: e.attempt, maxRetries: e.maxRetries, delayMs: e.delayMs, error: e.error, level: e.level } }); });
-    h.events.on("tool:start", (e) => { this.broadcast({ type: "tool_start", name: e.name, args: e.args }); });
+    h.events.on("tool:start", (e) => {
+      const projected = projectConversationEvent(e);
+      if (projected?.type !== "tool_start") return;
+      this.currentAssistant?.tools.push({
+        toolCallId: e.toolCallId,
+        name: e.name,
+        args: "",
+        result: "",
+        isError: false,
+      });
+      this.broadcast(projected);
+    });
     h.events.on("tool:end", (e) => {
-      const rawResult = typeof e.result === "string" ? e.result : JSON.stringify(e.result);
-      const rs = formatToolResultForUI(e.name, rawResult);
-      const imgs = extractImagesFromToolResult(e.result);
+      const projected = projectConversationEvent(e);
+      if (projected?.type !== "tool_end") return;
       if (this.currentAssistant) {
-        this.currentAssistant.tools = this.currentAssistant.tools.filter((t) => t.name !== e.name || t.result !== "");
-        this.currentAssistant.tools.push({ name: e.name, args: "", result: rs, isError: e.isError, images: imgs });
+        const index = this.currentAssistant.tools.findIndex(
+          (tool) => tool.toolCallId === e.toolCallId,
+        );
+        const completed: ToolCallEntry = {
+          toolCallId: e.toolCallId,
+          name: e.name,
+          args: index >= 0 ? this.currentAssistant.tools[index].args : "",
+          result: projected.result,
+          resultDetail: projected.resultDetail,
+          isError: e.isError,
+          images: projected.images,
+        };
+        if (index >= 0) this.currentAssistant.tools[index] = completed;
+        else this.currentAssistant.tools.push(completed);
       }
-      this.broadcast({ type: "tool_end", name: e.name, result: rs, isError: e.isError, images: imgs });
+      this.broadcast(projected);
       this.broadcastContextWindow(false);    });
     h.events.on("turn:streaming:start", () => {
-      this.currentAssistant = { thinking: "", text: "", tools: [] };
-      this.broadcast({ type: "assistant_start" });
+      this.currentAssistant = { tools: [] };
+      const projected = projectConversationEvent({ type: "turn:streaming:start" });
+      if (projected) this.broadcast(projected);
       this.startSessionTimeBroadcast();
-      this.isAssistantTurn = true;    });
-    h.events.on("turn:end", () => {
+    });
+    h.events.on("turn:end", (event) => {
       this.broadcastSessionTime();
       const toolsForBroadcast = this.currentAssistant?.tools ?? [];
       this.currentAssistant = null;
-      this.broadcast({ type: "assistant_end" });
-      this.isAssistantTurn = false;
+      const projected = projectConversationEvent(event);
+      if (projected) this.broadcast(projected);
       this.broadcastContextWindow(true, toolsForBroadcast);
       this.pushSessionListToAll();
     });
@@ -367,14 +424,25 @@ export class WebUiBackend implements UiBackend {
     h.events.on("eval:dashboard", (event) => {
       this.broadcast(projectEvalDashboardState(event.state));
     });
-    h.events.on("message:user", (e) => { this.broadcast({ type: "user_message", text: e.text, images: e.images as any }); });
+    h.events.on("message:user", (e) => {
+      const projected = projectConversationEvent(e);
+      if (projected) this.broadcast(projected);
+    });
     h.events.on("ui:info", (e) => { this.broadcast({ type: "info", text: e.text, display: e.display ?? "toast" }); });
     h.events.on("ui:error", (e) => { this.broadcast({ type: "error", text: e.text }); });
     h.events.on("ui:warning", (e) => { this.broadcast({ type: "warning", text: e.text }); });
     h.events.on("ui:image:pending", (e) => { this.pendingImages.push(e.image); });
-    h.events.on("ui:conversation:clear", () => { this.currentAssistant = null; this.pendingImages = []; this.broadcast({ type: "clear_conversation" }); this.broadcastContextWindow(true); });
-    h.events.on("config:change", (e) => { this.broadcast({ type: "config", data: e.data }); });
-    h.events.on("mcp:state", (e) => { this.broadcast({ type: "mcp_state", servers: e.servers }); });
+    h.events.on("ui:conversation:clear", (event) => {
+      this.currentAssistant = null;
+      this.pendingImages = [];
+      const projected = projectConversationEvent(event);
+      if (projected) this.broadcast(projected);
+      this.broadcastContextWindow(true);
+    });
+    h.events.on("config:change", () => {
+      this.broadcast({ type: "config", data: this.buildConfigData() });
+    });
+    h.events.on("mcp:state", () => { this.pushMcpState(); });
     h.events.on("mcp:browser:open", () => { this.pushMcpState(); this.broadcast({ type: "mcp_open_browser" }); });
     h.events.on("mcp:tool:progress", (e) => { this.broadcast({ type: "tool_progress", name: e.toolName, progress: e.progress, total: e.total, message: e.message }); });
     h.events.on("session:saved", () => { this.pushSessionListToAll(); });
@@ -382,8 +450,8 @@ export class WebUiBackend implements UiBackend {
     h.events.on("session:deleted", () => { this.pushSessionListToAll(); });
   }
 
-  setAppHostManager(manager: AppHostManager): void {
-    this.appHostManager = manager;
+  setAppResourceProxy(proxy: McpAppResourceProxy): void {
+    this.appResourceProxy = proxy;
   }
 
   // ── UiBackend Lifecycle ──
@@ -394,7 +462,7 @@ export class WebUiBackend implements UiBackend {
     });
 
     return new Promise((resolve, reject) => {
-      this.httpServer.on("error", (err: NodeJS.ErrnoException) => {
+      this.httpServer.once("error", (err: NodeJS.ErrnoException) => {
         if (err.code === "EADDRINUSE") {
           console.log("");
           console.log(`  \u001b[33m⚠ Port ${this.port} is already in use.\u001b[0m`);
@@ -405,10 +473,11 @@ export class WebUiBackend implements UiBackend {
           resolve();
           return;
         }
+        reject(err);
       });
-      this.httpServer.listen(this.port, () => {
+      this.httpServer.listen(this.port, "127.0.0.1", () => {
         console.log(`
-  DSCode Web UI ready at http://localhost:${this.port}
+  DSCode Web UI ready at http://127.0.0.1:${this.port}/?token=${encodeURIComponent(this.token)}
 `);
         resolve();
       });
@@ -425,79 +494,10 @@ export class WebUiBackend implements UiBackend {
     if (this.exitResolve) this.exitResolve();
   }
 
-  // ── UiBackend Conversation ──
-
-  addUserMessage(text: string): void {
-    // Images are sent separately via the chat command path
-    this.broadcast({ type: "user_message", text });
-  }
-
-  startAssistantMessage(): void {
-    this.currentAssistant = { thinking: "", text: "", tools: [] };
-    this.broadcast({ type: "assistant_start" });
-    this.startSessionTimeBroadcast();
-  }
-
-
-
-  thinkingDelta(delta: string): void {
-    if (this.currentAssistant && delta != null) {
-      this.currentAssistant.thinking += delta;
-    }
-    this.broadcast({ type: "thinking_delta", delta });
-  }
-
-  textDelta(delta: string): void {
-    if (this.currentAssistant && delta != null) {
-      this.currentAssistant.text += delta;
-    }
-    this.broadcast({ type: "text_delta", delta });
-  }
-
-  toolStart(name: string, args: unknown): void {
-    this.broadcast({ type: "tool_start", name, args });
-  }
-
-  finishAssistantMessage(): void {
-    this.broadcastSessionTime();
-    this.stopSessionTimeBroadcast();
-    const toolsForBroadcast2 = this.currentAssistant?.tools ?? [];
-    this.currentAssistant = null;
-    this.broadcast({ type: "assistant_end" });
-    this.broadcastContextWindow(true, toolsForBroadcast2);
-
-    const sm2 = this.harness.sessionManager;
-    if (sm2) {
-      const sessions2 = sm2.listSessions();
-      const currentId2 = sm2.getCurrentSessionId?.();
-      let sessionList2 = sessions2;
-      if (currentId2) {
-        const currentMeta = sm2.getCurrentMetadata();
-        if (currentMeta && !sessionList2.find((s: any) => s.id === currentId2)) {
-          sessionList2 = [currentMeta, ...sessionList2];
-        }
-      }
-      this.wsServer.broadcast({
-        type: "sessions",
-        currentSessionId: currentId2 ?? undefined,
-        data: sessionList2.slice(0, 50).map((s: any) => ({
-          id: s.id, title: s.title, updatedAt: s.updatedAt, createdAt: s.createdAt,
-          messageCount: s.messageCount, modelProvider: s.modelProvider, modelId: s.modelId,
-          projectPath: s.projectPath || "", preview: s.preview || "",
-          totalActiveMs: s.id === currentId2 ? sm2.getTotalActiveMs() : (s.totalActiveMs ?? 0),
-          contentHash: s.contentHash ?? "",
-          pendingPermission: s.pendingPermission || undefined,
-        })),
-
-      });
-    }  }
-
   private startSessionTimeBroadcast(): void {
     if (this.sessionTimeInterval) return;
     this.sessionTimeInterval = setInterval(() => {
-      const sm = this.harness.sessionManager;
-      if (!sm) return;
-      const tickMs = sm.getTotalActiveMs();
+      const tickMs = this.harness.sessions.totalActiveMs();
       this.wsServer.broadcast({
         type: "session_time",
         totalActiveMs: tickMs,
@@ -506,11 +506,9 @@ export class WebUiBackend implements UiBackend {
   }
 
   private broadcastSessionTime(): void {
-    const sm = this.harness.sessionManager;
-    if (!sm) return;
     this.wsServer.broadcast({
       type: "session_time",
-      totalActiveMs: sm.getTotalActiveMs(),
+      totalActiveMs: this.harness.sessions.totalActiveMs(),
     });
   }
 
@@ -521,8 +519,6 @@ export class WebUiBackend implements UiBackend {
     }
   }
 
-  // ── UiBackend System Messages ──
-
   addInfo(text: string, display: "toast" | "panel" = "toast"): void {
     this.broadcast({ type: "info", text, display });
   }
@@ -531,46 +527,41 @@ export class WebUiBackend implements UiBackend {
     this.broadcast({ type: "error", text });
   }
 
-  addWarning(text: string): void {
-    this.broadcast({ type: "warning", text });
-  }
-  addRetry(info: { attempt: number; maxRetries: number; delayMs: number; error: string; level: "stream" | "turn" }): void {
-    this.broadcast({ type: "retry", info });
-  }
-
-  // ── MCP App Notification (called by Harness when app is registered) ──
-
-  addAppNotification(app: AppInstance): void {
-    // Build URL relative to the web server — proxy through the main server
-    const appUrl = `/mcp-app/${app.id}`;
-    const appInfo: McpAppInfo = {
-      toolName: `mcp_${app.serverName}_${app.toolName}`,
-      appUrl,
-      resourceUri: app.resourceUri,
-    };
-    this.broadcast({ type: "mcp_app", app: appInfo });
-  }
-
   // ── UiBackend Permission ──
 
   getPromptPermission(): (
     toolName: string,
     preview: string,
     args: unknown,
+    context?: PermissionPromptContext,
   ) => Promise<PermissionPromptResult> {
-    return (toolName, preview, args) => {
+    return (toolName, preview, args, context) => {
       return new Promise<PermissionPromptResult>((resolve) => {
         this.currentPermissionTool = toolName;
         this.currentPermissionArgs = args;
         this.currentPermissionPreview = preview;
         this.permissionResolve = resolve;
-        const fuzzy = deriveFuzzyPattern(toolName);
-        const fuzzyArgDesc = describeFuzzyArgPattern(toolName, args);
-        const llmSuggestions = getLlmSuggestions(toolName, args);
-        this.broadcast({ type: "permission_prompt", toolName, preview, fuzzyPattern: fuzzy, fuzzyArgDesc, llmSuggestions: llmSuggestions.length > 0 ? llmSuggestions : undefined });
+        const fuzzyInfo = this.harness.permissions.fuzzy(toolName, args);
+        const fuzzy = fuzzyInfo.toolPattern;
+        const fuzzyArgDesc = fuzzyInfo.argDescription;
+        const llmSuggestions = this.harness.permissions.suggestions(
+          toolName,
+          args,
+        );
+        this.broadcast({
+          type: "permission_prompt",
+          toolName,
+          preview,
+          agentId: context?.agentId,
+          toolCallId: context?.toolCallId,
+          fuzzyPattern: fuzzy,
+          fuzzyArgDesc,
+          llmSuggestions: llmSuggestions.length > 0
+            ? [...llmSuggestions]
+            : undefined,
+        });
         // Prefetch for next time
-        const model = resolveModel(this.config.provider, this.config.modelId);
-        prefetchLlmSuggestions(model, toolName, args, preview);
+        this.harness.permissions.prefetchSuggestions(toolName, args, preview);
       });
     };
   }
@@ -596,7 +587,7 @@ export class WebUiBackend implements UiBackend {
   }
 
   replayMessages(_messages: unknown[]): void {
-    const model = (this.harness.agent.state.model as any)?.name ?? this.config.modelId;
+    const model = this.harness.conversation.snapshot().modelName;
     this.broadcast({
       type: "ready",
       model,
@@ -606,59 +597,43 @@ export class WebUiBackend implements UiBackend {
     this.broadcastContextWindow(true);
   }
 
-  takePendingPermission(): import("../../core/types.js").PendingPermission | undefined {
+  takePendingPermission(): PendingPermission | undefined {
     if (this.permissionResolve) {
       const pendingPermission = {
         toolName: this.currentPermissionTool,
         preview: this.currentPermissionPreview,
-        fuzzyPattern: deriveFuzzyPattern(this.currentPermissionTool),
+        fuzzyPattern: this.harness.permissions.fuzzy(
+          this.currentPermissionTool,
+        ).toolPattern,
         permissionArgs: this.currentPermissionArgs,
       };
       this.permissionResolve({ decision: "deny" });
       this.permissionResolve = null;
       return pendingPermission;
     }
-    return this.harness.sessionManager.getCurrentMetadata()?.pendingPermission;
-  }
-
-  // ── UiBackend Processing ──
-
-  setProcessing(processing: boolean): void {
-    this.broadcast({
-      type: "loader",
-      state: processing ? "show" : "hide",
-      text: processing ? "Thinking..." : undefined,
-    });
+    return this.harness.sessions.currentMetadata()?.pendingPermission;
   }
 
   // ── UiBackend MCP ──
 
-  setMcpManager(mcpManager?: MCPManager): void {
-    this.mcpManager = mcpManager;
-    if (mcpManager) {
-      this.pushMcpState();
-    }
+  private mutableMcpSnapshot(): McpServerInfo[] {
+    return this.harness.mcp.list().map((server) => ({
+      ...server,
+      tools: server.tools.map((tool) => ({ ...tool })),
+    }));
   }
 
   pushMcpState(): void {
-    if (!this.mcpManager) return;
-    const driverRegistry = this.harness.driverRegistry;
-    const toolRegistry = this.harness.toolRegistry;
-    if (!driverRegistry || !toolRegistry) return;
-    const servers = buildMcpServers(this.mcpManager.getStates(), driverRegistry, toolRegistry);
-    this.broadcast({ type: "mcp_state", servers });
+    this.broadcast({ type: "mcp_state", servers: this.mutableMcpSnapshot() });
   }
 
-  pushSkillState(client?: WebSocketClient): void {
-    const sm = this.harness.skillManager;
-    if (!sm) return;
-    const all = sm.listAll();
-    const skills = all.map(({ skill, active }) => ({
+  pushSkillState(_client?: WebSocketClient): void {
+    const skills = this.harness.skills.list().map((skill) => ({
       name: skill.name,
       description: skill.description,
-      active,
+      active: skill.active,
       source: skill.source,
-      toolsCount: "tools" in skill ? skill.tools?.length ?? 0 : 0,
+      toolsCount: skill.toolNames.length,
     }));
     const event = { type: "skill_state" as const, skills };
     this.wsServer.broadcast(event);
@@ -670,11 +645,6 @@ export class WebUiBackend implements UiBackend {
     this.broadcast({ type: "mcp_open_browser" });
   }
 
-  // ── UiBackend Config Watch ──
-
-  onConfigChange(): void {
-    this.broadcast({ type: "config", data: this.buildConfigData() });
-  }
   // ── Private: WebSocket handling ──
 
   private handleConnect(client: WebSocketClient): void {
@@ -682,7 +652,7 @@ export class WebUiBackend implements UiBackend {
 
     const configData = this.buildConfigData();
     const messages = this.buildConversationHistory();
-    const model = (this.harness.agent.state.model as any)?.name ?? this.config.modelId;
+    const model = this.harness.conversation.snapshot().modelName;
 
       client.send({
       type: "ready",
@@ -691,7 +661,7 @@ export class WebUiBackend implements UiBackend {
       messages,
     });
     this.broadcastContextWindow(true);
-    if (this.mcpManager) {
+    if (this.harness.mcp.list().length > 0) {
       this.pushMcpState();
     }
     this.pushSkillState(client);
@@ -716,14 +686,14 @@ export class WebUiBackend implements UiBackend {
 
         if (text.startsWith("/")) {
           const firstWord = text.slice(1).split(/\s+/)[0];
-          const knownCommands = getSlashCommandAutocomplete(this.harness.commandManager.listManifests()).map(c => c.name);
+          const knownCommands = getSlashCommandAutocomplete(this.harness.commands.list()).map(c => c.name);
           if (knownCommands.includes(firstWord)) {
             this.pendingImages = [];
             await this.handleSlashCommand(client, text);
             break;
           }
         }
-        const resolved = resolveAtFileRefs(this.config.projectPath, text, this.config.atFile ?? {});
+        const resolved = this.harness.project.resolveAtFiles(text);
         if (resolved.reject) {
           client.send({ type: "error", text: resolved.warnings.map(w => `@${w.path ?? ""}: ${w.type}${w.detail ? ` — ${w.detail}` : ""}`).join("\n") });
           return;
@@ -741,15 +711,20 @@ export class WebUiBackend implements UiBackend {
         }
         // Handle uploaded files from web drag-and-drop (browser-read content → temp files)
         if (cmd.uploadedFiles && cmd.uploadedFiles.length > 0) {
-          const sm = this.harness.sessionManager;
-          const sessionId = sm.getCurrentSessionId?.() ?? "default";
+          const sessionId = this.harness.sessions.currentId() ?? "default";
           const ts = Date.now();
           const uploadDir = join(this.config.projectPath, ".dscode", "uploads", sessionId);
           mkdirSync(uploadDir, { recursive: true });
           const tempPaths: string[] = [];
-          for (const uf of cmd.uploadedFiles) {
-            const tempName = `${ts}-${uf.name}`;
+          for (const [index, uf] of cmd.uploadedFiles.entries()) {
+            const originalName = basename(uf.name)
+              .replace(/[\u0000-\u001f\u007f]/g, "_")
+              || "attachment";
+            const tempName = `${ts}-${index + 1}-${originalName}`;
             const tempPath = join(uploadDir, tempName);
+            if (!isCanonicalPathWithin(uploadDir, tempPath)) {
+              throw new Error(`Upload path escapes session directory: ${uf.name}`);
+            }
             writeFileSync(tempPath, Buffer.from(uf.content, "base64"));
             tempPaths.push(tempPath);
           }
@@ -759,47 +734,32 @@ export class WebUiBackend implements UiBackend {
           }
         }
 
-        // Handle fileRefs (TUI drag-and-drop: absolute filesystem paths)
+        // Stage explicit filesystem attachments inside the project sandbox so
+        // Main and SubAgents can read the same paths.
         if (cmd.fileRefs && cmd.fileRefs.length > 0) {
-          const imageRefs = cmd.fileRefs.filter(f => isImagePath(f));
-          const nonImageRefs = cmd.fileRefs.filter(f => !isImagePath(f));
-          // Non-image files from TUI: inject path references only (files exist on filesystem)
-          if (nonImageRefs.length > 0) {
-            const pathLines = nonImageRefs.map(f => `- \`${f}\``).join('\n');
-            text = text ? `${text}\n\n📁 Attached files:\n${pathLines}` : `📁 Attached files:\n${pathLines}`;
+          let stagedFileRefs: string[];
+          try {
+            stagedFileRefs = stageAttachedFiles(
+              this.config.projectPath,
+              this.harness.sessions.currentId() ?? "default",
+              cmd.fileRefs,
+            );
+          } catch (error) {
+            client.send({
+              type: "error",
+              text: error instanceof Error ? error.message : String(error),
+            });
+            return;
           }
-          // Image files from TUI: resolve normally from filesystem
+          const imageRefs = stagedFileRefs.filter((file) =>
+            this.harness.project.isImagePath(file)
+          );
+          const pathLines = stagedFileRefs.map(f => `- \`${f}\``).join('\n');
+          text = text
+            ? `${text}\n\n📁 Attached files:\n${pathLines}`
+            : `📁 Attached files:\n${pathLines}`;
           if (imageRefs.length > 0) {
-            const refsResolved = resolveFileRefs(this.config.projectPath, imageRefs, this.config.atFile ?? {});
-            if (!refsResolved.reject) {
-              if (refsResolved.text) {
-                text = text ? `${text}\n\n${refsResolved.text}` : refsResolved.text;
-              }
-              if (refsResolved.images.length > 0) {
-                const refImages = refsResolved.images.map((img) => ({
-                  data: img.data,
-                  mimeType: img.mimeType,
-                }));
-                images = [...(images ?? []), ...refImages];
-              }
-            }
-            for (const warn of refsResolved.warnings) {
-              client.send({ type: "info", display: "toast", text: `${warn.path ?? ""}: ${warn.type}${warn.detail ? ` — ${warn.detail}` : ""}` });
-            }
-          }
-        }
-        // Split fileRefs by type: images vs non-images
-        if (cmd.fileRefs && cmd.fileRefs.length > 0) {
-          const imageRefs = cmd.fileRefs.filter(f => isImagePath(f));
-          const nonImageRefs = cmd.fileRefs.filter(f => !isImagePath(f));
-          // Non-image files: inject path references only
-          if (nonImageRefs.length > 0) {
-            const pathLines = nonImageRefs.map(f => `- \`${f}\``).join('\n');
-            text = text ? `${text}\n\n📁 Attached files:\n${pathLines}` : `📁 Attached files:\n${pathLines}`;
-          }
-          // Image files: resolve normally
-          if (imageRefs.length > 0) {
-            const refsResolved = resolveFileRefs(this.config.projectPath, imageRefs, this.config.atFile ?? {});
+            const refsResolved = this.harness.project.resolveFiles(imageRefs);
             if (!refsResolved.reject) {
               if (refsResolved.text) {
                 text = text ? `${text}\n\n${refsResolved.text}` : refsResolved.text;
@@ -829,14 +789,17 @@ export class WebUiBackend implements UiBackend {
               mimeType: img.mimeType,
             }) as ImageContent);
             this.pendingImages = [];
-            this.harness.logger.info("WebBackend", `promptWithImages: textLen=${text.length}, images=${imageContents.length}, img[0].dataLen=${imageContents[0]?.data?.length ?? 0}, mime=${imageContents[0]?.mimeType ?? "?"}`);
-            await this.harness.promptWithImages(text, imageContents, displayText);
+            await this.harness.conversation.promptWithImages(
+              text,
+              imageContents,
+              displayText,
+            );
           } else {
             this.pendingImages = [];
-            await this.harness.promptAndSave(text);
+            await this.harness.conversation.prompt(text);
           }
         } catch (err) {
-          this.harness.saveSessionNow();
+          this.harness.conversation.save();
           client.send({
             type: "error",
         text: err instanceof Error ? err.message : String(err),
@@ -848,24 +811,22 @@ export class WebUiBackend implements UiBackend {
       }
 
       case "abort": {
-        this.harness.abort();
+        this.harness.conversation.abort();
         // Save pending permission to session metadata before denying,
         // so the session switch flow can detect and restore it.
         if (this.permissionResolve) {
-          const sm = this.harness.sessionManager;
-          const meta = sm.getCurrentMetadata();
+          const meta = this.harness.sessions.currentMetadata();
           if (meta) {
-            const fuzzy = deriveFuzzyPattern(this.currentPermissionTool);
-            meta.pendingPermission = {
+            const fuzzy = this.harness.permissions.fuzzy(
+              this.currentPermissionTool,
+            ).toolPattern;
+            const pendingPermission = {
               toolName: this.currentPermissionTool,
               preview: this.currentPermissionPreview,
               fuzzyPattern: fuzzy,
               permissionArgs: this.currentPermissionArgs,
             };
-            // Save immediately with truncation so deny/abort messages
-            // that follow won't persist to disk.
-            this.harness.logger.info("WebBackend", "saving pendingPermission to metadata, then denying");
-            sm.saveSession(this.harness.agent, meta.pendingPermission);
+            this.harness.sessions.save(pendingPermission);
           }
           this.permissionResolve({ decision: "deny" });
           this.permissionResolve = null;
@@ -873,15 +834,15 @@ export class WebUiBackend implements UiBackend {
         break;
       }
       case "permission_response": {
-        if (this.permissionResolve && (cmd as any).denyReason) {
+        if (this.permissionResolve && cmd.denyReason) {
           const resolve = this.permissionResolve;
           this.permissionResolve = null;
           resolve({
             decision: "deny",
-            denyReason: `User updated the request during permission review: ${(cmd as any).denyReason}`,
+            denyReason: `User updated the request during permission review: ${cmd.denyReason}`,
           });
-          client.send({ type: "user_message", text: (cmd as any).denyReason } as any);
-          this.harness.promptAndSave((cmd as any).denyReason, undefined).catch((err: any) => {
+          client.send({ type: "user_message", text: cmd.denyReason });
+          this.harness.conversation.prompt(cmd.denyReason).catch((err: unknown) => {
             client.send({
               type: "error",
               text: err instanceof Error ? err.message : String(err),
@@ -898,24 +859,27 @@ export class WebUiBackend implements UiBackend {
           this.permissionResolve = null;
           const isAlways = cmd.decision === "always_allow" || cmd.decision === "always_allow_save";
           const isSave = cmd.decision === "always_allow_save";
-          const isSessionGrant = (cmd.decision === "always_allow" && !isSave) || (cmd.decision === "allow" && !!(cmd as any).sessionGrantPattern);
-          const sessionPattern = (cmd as any).sessionGrantPattern as string | undefined;
+          const isSessionGrant = (cmd.decision === "always_allow" && !isSave) || (cmd.decision === "allow" && !!cmd.sessionGrantPattern);
+          const sessionPattern = cmd.sessionGrantPattern;
           resolve({
             decision: isAlways ? "allow" : cmd.decision as "allow" | "deny",
             rememberForSession: isAlways,
             sessionGrantPattern: isSessionGrant ? sessionPattern : undefined,
             persistRule: isSave
               ? (() => {
-                  const mode = ((cmd as any).fuzzyMode as number | undefined) ?? 0;
+                  const mode = cmd.fuzzyMode ?? 0;
                   if (mode === 2) {
-                    const fuzzyArg = deriveFuzzyArgPattern(this.currentPermissionTool, this.currentPermissionArgs);
+                    const fuzzyArg = this.harness.permissions.fuzzy(
+                      this.currentPermissionTool,
+                      this.currentPermissionArgs,
+                    ).argPattern;
                     return fuzzyArg
                       ? { tool: this.currentPermissionTool, argPattern: fuzzyArg, decision: "allow" as const }
                       : { tool: this.currentPermissionTool, decision: "allow" as const };
                   }
                   if (mode >= 3) {
                     try {
-                      const p = JSON.parse((cmd as any).toolNamePattern || "{}");
+                      const p = JSON.parse(cmd.toolNamePattern || "{}");
                       return {
                         tool: p.toolPattern ?? this.currentPermissionTool,
                         argPattern: p.argPattern ?? undefined,
@@ -924,25 +888,27 @@ export class WebUiBackend implements UiBackend {
                     } catch { /* fall through */ }
                   }
                   if (mode === 1) {
-                    return { tool: (cmd as any).toolNamePattern ?? this.currentPermissionTool, decision: "allow" as const };
+                    return { tool: cmd.toolNamePattern ?? this.currentPermissionTool, decision: "allow" as const };
                   }
                   return { tool: this.currentPermissionTool, decision: "allow" as const };
                 })()
               : undefined,
           });
         } else {
-          const sm = this.harness.sessionManager;
-          const meta = sm.getCurrentMetadata();
+          const meta = this.harness.sessions.currentMetadata();
           if (meta?.pendingPermission && (cmd.decision === "allow" || cmd.decision === "always_allow")) {
             const toolName = meta.pendingPermission.toolName;
-            this.harness.permissionManager.grantForSession(toolName);
-            meta.pendingPermission = undefined;
-            sm.saveSession(this.harness.agent);
-            const messages = this.harness.agent.state.messages as any[];
+            this.harness.permissions.grantForSession(toolName);
+            this.harness.sessions.clearPendingPermission();
+            const messages = this.harness.conversation.snapshot().messages;
             let lastUserText = "";
             for (let i = messages.length - 1; i >= 0; i--) {
-              if (messages[i]?.role === "user") {
-                const c = messages[i].content;
+              const message = messages[i] as {
+                role?: unknown;
+                content?: unknown;
+              };
+              if (message.role === "user") {
+                const c = message.content;
                 if (typeof c === "string") { lastUserText = c; }
                 else if (Array.isArray(c)) {
                   const tb = c.find((b: any) => b.type === "text");
@@ -953,14 +919,13 @@ export class WebUiBackend implements UiBackend {
             }
             if (lastUserText) {
               client.send({ type: "loader", state: "show", text: "Resuming..." });
-              this.harness.promptAndSave(lastUserText).catch((err: any) => {
+              this.harness.conversation.prompt(lastUserText).catch((err: any) => {
                 client.send({ type: "error", text: err instanceof Error ? err.message : String(err) });
                 client.send({ type: "loader", state: "hide" });
               });
             }
           } else if (meta?.pendingPermission && cmd.decision === "deny") {
-            meta.pendingPermission = undefined;
-            sm.saveSession(this.harness.agent);
+            this.harness.sessions.clearPendingPermission();
           }
         }
         break;
@@ -981,8 +946,12 @@ export class WebUiBackend implements UiBackend {
       }
 
       case "file_list": {
-        const items = listProjectFiles(this.config.projectPath, cmd.prefix);
-        client.send({ type: "file_list_result" as any, prefix: cmd.prefix, items });
+        const items = this.harness.project.listFiles(cmd.prefix);
+        client.send({
+          type: "file_list_result" as any,
+          prefix: cmd.prefix,
+          items: [...items],
+        });
         break;
       }
       case "artifact": {
@@ -1063,15 +1032,18 @@ export class WebUiBackend implements UiBackend {
       }
 
       // Check custom commands
-      const expanded = resolveCustomCommand(text, { harness: this.harness, ui: this, commandManager: this.harness.commandManager });
+      const expanded = resolveCustomCommand(text, {
+        harness: this.harness,
+        ui: this,
+      });
       if (expanded !== undefined) {
         this.pendingImages = [];
         // Set title hint with user's actual input so title extraction uses it
         const cmdArgs = text.slice(text.indexOf(" ") + 1).trim();
-        if (cmdArgs) setTitleIntent(cmdArgs);
+        if (cmdArgs) this.harness.sessions.setTitleIntent(cmdArgs);
 
         client.send({ type: 'user_message', text: expanded } as any);
-        await this.harness.promptAndSave(expanded).catch((err: any) => {
+        await this.harness.conversation.prompt(expanded).catch((err: any) => {
           client.send({
             type: 'error',
             text: err instanceof Error ? err.message : String(err),
@@ -1088,7 +1060,7 @@ export class WebUiBackend implements UiBackend {
       // Not a known command — treat as regular chat message
       this.pendingImages = [];
       client.send({ type: 'user_message', text } as any);
-      await this.harness.promptAndSave(text).catch((err: any) => {
+      await this.harness.conversation.prompt(text).catch((err: any) => {
         client.send({
           type: 'error',
           text: err instanceof Error ? err.message : String(err),
@@ -1109,62 +1081,11 @@ export class WebUiBackend implements UiBackend {
   }
 
   private pushSessionList(client: WebSocketClient): void {
-    const sessionManager = this.harness.sessionManager;
-    if (!sessionManager) return;
-    const sessions = sessionManager.listSessions();
-    const currentId = sessionManager.getCurrentSessionId?.() ?? undefined;
-    // Always include the current session even if it has no messages yet
-    let sessionList = sessions;
-    if (currentId) {
-      const currentMeta = sessionManager.getCurrentMetadata();
-      if (currentMeta && !sessionList.find((s: any) => s.id === currentId)) {
-        sessionList = [currentMeta, ...sessionList];
-      }
-    }
-    client.send({
-      type: "sessions",
-      currentSessionId: currentId,
-      data: sessionList.slice(0, 50).map((s: any) => ({
-        id: s.id,
-        title: s.title,
-        updatedAt: s.updatedAt,
-        createdAt: s.createdAt,
-        messageCount: s.messageCount,
-        modelProvider: s.modelProvider,
-        modelId: s.modelId,
-        projectPath: s.projectPath || "",
-        preview: s.preview || "",
-        totalActiveMs: s.id === currentId ? sessionManager.getTotalActiveMs() : (s.totalActiveMs ?? 0),
-        contentHash: s.contentHash ?? "",
-        pendingPermission: s.pendingPermission || undefined,
-      })),
-    });
+    client.send(projectSessionListEvent(this.harness));
   }
 
   private pushSessionListToAll(): void {
-    const sm = this.harness.sessionManager;
-    if (!sm) return;
-    const sessions = sm.listSessions();
-    const currentId = sm.getCurrentSessionId?.() ?? undefined;
-    let sessionList = sessions;
-    if (currentId) {
-      const currentMeta = sm.getCurrentMetadata();
-      if (currentMeta && !sessionList.find((s: any) => s.id === currentId)) {
-        sessionList = [currentMeta, ...sessionList];
-      }
-    }
-    this.wsServer.broadcast({
-      type: "sessions",
-      currentSessionId: currentId,
-      data: sessionList.slice(0, 50).map((s: any) => ({
-        id: s.id, title: s.title, updatedAt: s.updatedAt, createdAt: s.createdAt,
-        messageCount: s.messageCount, modelProvider: s.modelProvider, modelId: s.modelId,
-        projectPath: s.projectPath || "", preview: s.preview || "",
-        totalActiveMs: s.id === currentId ? sm.getTotalActiveMs() : (s.totalActiveMs ?? 0),
-        contentHash: s.contentHash ?? "",
-        pendingPermission: s.pendingPermission || undefined,
-      })),
-    });
+    this.wsServer.broadcast(projectSessionListEvent(this.harness));
   }
 
   private async handleConfig(
@@ -1174,80 +1095,56 @@ export class WebUiBackend implements UiBackend {
     try {
       switch (cmd.action) {
         case "set_model": {
-          this.harness.setModel(cmd.value);
-          const modelName = (this.harness.agent.state.model as any)?.name ?? cmd.value;
+          await this.harness.settings.setModel(cmd.value);
+          const modelName = this.harness.conversation.snapshot().modelName;
           client.send({ type: "config", data: this.buildConfigData() });
           client.send({ type: "model", name: modelName });
           client.send({ type: "info", display: "toast", text: `Model set to ${cmd.value}` });
           break;
         }
         case "set_thinking": {
-          this.harness.setThinking(cmd.value);
+          await this.harness.settings.setThinking(cmd.value);
           client.send({ type: "config", data: this.buildConfigData() });
           client.send({ type: "info", display: "toast", text: `Thinking level set to ${cmd.value}` });
           break;
         }
         case "set_key": {
-          this.configStore.setApiKey(cmd.value);
-          saveUserConfig({ apiKey: cmd.value });
-          const envVar = PROVIDER_ENV_VARS[this.config.provider] ?? "DEEPSEEK_API_KEY";
-          process.env[envVar] = cmd.value;
-          if (envVar !== "DEEPSEEK_API_KEY") {
-            process.env.DEEPSEEK_API_KEY = cmd.value;
-          }
+          await this.harness.settings.setApiKey(cmd.value);
           client.send({ type: "config", data: this.buildConfigData() });
           client.send({ type: "info", display: "toast", text: "API key updated" });
           break;
         }
         case "set_provider": {
-          saveUserConfig({ provider: cmd.value });
-          // Update config via ConfigWatch so onChange propagates
-          this.configStore.setModelConfig(cmd.value, this.config.modelId, this.config.thinkingLevel);
-          // Auto-select the first model for the new provider
-          const cd = this.buildConfigData();
-          if (cd.models.length > 0) {
-            try {
-              this.harness.setModel(cd.models[0].id);
-            } catch {
-              // ignore if model resolution fails
-            }
-          }
+          await this.harness.settings.setProvider(cmd.value);
           client.send({ type: "config", data: this.buildConfigData() });
-          const mn = (this.harness.agent.state.model as any)?.name ?? this.config.modelId;
+          const mn = this.harness.conversation.snapshot().modelName;
           client.send({ type: "model", name: mn });
           client.send({ type: "info", display: "toast", text: `Provider set to: ${cmd.value}. Restart required for full effect.` });
           break;
         }
         case "set_vision_provider": {
           const vp = cmd.value;
-          this.configStore.updateVision({ provider: vp });
-          saveUserConfig({ vision: this.config.vision });
+          await this.harness.settings.setVisionProvider(vp);
           client.send({ type: "config", data: this.buildConfigData() });
           client.send({ type: "info", display: "toast", text: `Vision provider set to: ${vp}` });
           break;
         }
         case "set_vision_model": {
           const vm = cmd.value;
-          const vp = this.config.vision?.provider ?? "";
-          this.configStore.updateVision({ model: vm });
-          saveUserConfig({ vision: this.config.vision });
+          await this.harness.settings.setVisionModel(vm);
           client.send({ type: "config", data: this.buildConfigData() });
           client.send({ type: "info", display: "toast", text: `Vision model set to: ${vm}` });
           break;
         }
         case "set_vision_key": {
           const vk = cmd.value;
-          const vp = this.config.vision?.provider ?? "";
-          const vm = this.config.vision?.model ?? "";
-          this.configStore.updateVision({ key: vk });
-          saveUserConfig({ vision: this.config.vision });
+          await this.harness.settings.setVisionKey(vk);
           client.send({ type: "config", data: this.buildConfigData() });
           client.send({ type: "info", display: "toast", text: "Vision API key updated" });
           break;
         }
         case "set_vision_delete": {
-          this.configStore.setVision(undefined);
-          saveUserConfig({ vision: null });
+          await this.harness.settings.clearVision();
           client.send({ type: "config", data: this.buildConfigData() });
           client.send({ type: "info", display: "toast", text: "Vision model configuration removed" });
           break;
@@ -1258,30 +1155,10 @@ export class WebUiBackend implements UiBackend {
             client.send({ type: "error", text: "Project path is required." });
             break;
           }
-          const result = await this.harness.updateProjectPath(cwd);
+          const result = await this.harness.project.setPath(cwd);
           if (result.success) {
             client.send({ type: "config", data: this.buildConfigData() });
-            // Push updated session list
-            const sessionManager = this.harness.sessionManager;
-            if (sessionManager) {
-              const sessions = sessionManager.listSessions();
-              client.send({
-                type: "sessions",
-                data: sessions.slice(0, 50).map((s: any) => ({
-                  id: s.id,
-                  title: s.title,
-                  updatedAt: s.updatedAt,
-                  createdAt: s.createdAt,
-                  messageCount: s.messageCount,
-                  modelProvider: s.modelProvider,
-                  modelId: s.modelId,
-                  projectPath: s.projectPath || "",
-                  preview: s.preview || "",
-                  totalActiveMs: s.totalActiveMs ?? 0,
-                  contentHash: s.contentHash ?? "",
-                })),
-              });
-            }
+            this.pushSessionList(client);
             client.send({ type: "info", display: "toast", text: `Project path set to: ${cwd}` });
           } else {
             client.send({ type: "error", text: result.error ?? "Failed to change project path" });
@@ -1301,53 +1178,20 @@ export class WebUiBackend implements UiBackend {
     client: WebSocketClient,
     cmd: ClientCommand & { type: "session" },
   ): Promise<void> {
-    const sessionManager = this.harness.sessionManager;
-    const agent = this.harness.agent;
-
     switch (cmd.action) {
       case "list": {
-        const sessions = sessionManager.listSessions();
-        const data: SessionInfo[] = sessions.slice(0, 50).map((s: any) => ({
-          id: s.id,
-          title: s.title,
-          updatedAt: s.updatedAt,
-          createdAt: s.createdAt,
-          messageCount: s.messageCount,
-          modelProvider: s.modelProvider,
-          modelId: s.modelId,
-          projectPath: s.projectPath || "",
-          preview: s.preview || "",
-          totalActiveMs: s.totalActiveMs ?? 0,
-          contentHash: s.contentHash ?? "",
-        }));
-        client.send({ type: "sessions", data });
+        this.pushSessionList(client);
         break;
       }
       case "save": {
         try {
-          sessionManager.saveSession(agent);
+          this.harness.sessions.save();
           client.send({ type: "info", display: "toast", text: "Session saved." });
         } catch (err: any) {
           client.send({ type: "error", text: `Failed to save session: ${err.message}` });
           return;
         }
-        const sessions = sessionManager.listSessions();
-        client.send({
-          type: "sessions",
-          data: sessions.slice(0, 50).map((s: any) => ({
-            id: s.id,
-            title: s.title,
-            updatedAt: s.updatedAt,
-            createdAt: s.createdAt,
-            messageCount: s.messageCount,
-            modelProvider: s.modelProvider,
-            modelId: s.modelId,
-            projectPath: s.projectPath || "",
-            preview: s.preview || "",
-            totalActiveMs: s.totalActiveMs ?? 0,
-            contentHash: s.contentHash ?? "",
-          })),
-        });
+        this.pushSessionList(client);
         break;
       }
       case "load": {
@@ -1355,26 +1199,17 @@ export class WebUiBackend implements UiBackend {
           client.send({ type: "error", text: "Session ID required." });
           return;
         }
-        const result = await this.harness.switchSession({
+        const result = await this.harness.sessions.switch({
           sessionIdOrPrefix: cmd.id,
           pendingPermission: this.takePendingPermission(),
         });
         const match = result.session;
         // If loaded session has pendingPermission, clean up the aborted turn
         // from agent.state.messages so the conversation looks clean.
-        const loadedMeta = sessionManager.getCurrentMetadata();
+        const loadedMeta = this.harness.sessions.currentMetadata();
+        let messages = result.messages;
         if (loadedMeta?.pendingPermission) {
-          const msgs = agent.state.messages as any[];
-          // Remove the last assistant message with toolCall and everything after it
-          for (let i = msgs.length - 1; i >= 0; i--) {
-            if (msgs[i].role === "assistant") {
-              const c = (msgs[i] as any).content;
-              if (Array.isArray(c) && c.some((b: any) => b.type === "toolCall")) {
-                msgs.length = i;
-                break;
-              }
-            }
-          }
+          messages = [...this.harness.conversation.discardPendingToolCall()];
         }
         client.send({
           type: "info",
@@ -1388,7 +1223,7 @@ export class WebUiBackend implements UiBackend {
           ].join("\n"),
         });
         this.clearConversationView();
-        this.replayMessages(agent.state.messages as unknown[]);
+        this.replayMessages(messages);
         this.pushSessionList(client);
         break;
       }
@@ -1397,8 +1232,8 @@ export class WebUiBackend implements UiBackend {
           client.send({ type: "error", text: "Session ID required." });
           return;
         }
-        const wasCurrent = sessionManager.getCurrentSessionId?.() === cmd.id;
-        const result = sessionManager.deleteSession(cmd.id);
+        const wasCurrent = this.harness.sessions.currentId() === cmd.id;
+        const result = this.harness.sessions.delete(cmd.id);
         if (!result.success) {
           client.send({ type: "error", text: `Failed to delete session: ${result.error}` });
           return;
@@ -1408,25 +1243,7 @@ export class WebUiBackend implements UiBackend {
         }
         this.cleanupUploadDir(cmd.id);
         client.send({ type: "info", display: "toast", text: "Session deleted." });
-        const sessions = sessionManager.listSessions();
-        const currentId = sessionManager.getCurrentSessionId?.() ?? undefined;
-        client.send({
-          type: "sessions",
-          currentSessionId: currentId,
-          data: sessions.slice(0, 50).map((s: any) => ({
-            id: s.id,
-            title: s.title,
-            updatedAt: s.updatedAt,
-            createdAt: s.createdAt,
-            messageCount: s.messageCount,
-            modelProvider: s.modelProvider,
-            modelId: s.modelId,
-            projectPath: s.projectPath || "",
-            preview: s.preview || "",
-            totalActiveMs: s.totalActiveMs ?? 0,
-            contentHash: s.contentHash ?? "",
-          })),
-        });
+        this.pushSessionList(client);
         break;
       }
     }
@@ -1436,23 +1253,25 @@ export class WebUiBackend implements UiBackend {
     client: WebSocketClient,
     cmd: ClientCommand & { type: "mcp" },
   ): Promise<void> {
-    const mcpManager = this.mcpManager ?? this.harness.mcpManager as MCPManager | undefined;
-    if (!mcpManager) {
+    if (this.harness.mcp.list().length === 0) {
       client.send({ type: "error", text: "No MCP manager available." });
       return;
     }
 
     switch (cmd.action) {
       case "list": {
-        const servers = buildMcpServers(mcpManager.getStates(), this.harness.driverRegistry, this.harness.toolRegistry);
-        client.send({ type: "mcp_state", servers });
+        client.send({
+          type: "mcp_state",
+          servers: this.mutableMcpSnapshot(),
+        });
         break;
       }
       case "refresh": {
-        const driverRegistry = this.harness.driverRegistry;
-        mcpManager.registerDrivers(driverRegistry).then(() => {
-          const servers = buildMcpServers(mcpManager.getStates(), driverRegistry, this.harness.toolRegistry);
-          client.send({ type: "mcp_state", servers });
+        this.harness.mcp.refresh().then(() => {
+          client.send({
+            type: "mcp_state",
+            servers: this.mutableMcpSnapshot(),
+          });
           client.send({ type: "info", display: "toast", text: "MCP servers refreshed." });
         }).catch((err: Error) => {
           client.send({ type: "error", text: `MCP refresh failed: ${err.message}` });
@@ -1465,7 +1284,7 @@ export class WebUiBackend implements UiBackend {
           return;
         }
         try {
-          await mcpManager.connectServer(cmd.serverName);
+          await this.harness.mcp.connect(cmd.serverName);
           this.pushMcpState();
           client.send({ type: "info", display: "toast", text: `MCP server "${cmd.serverName}" connected.` });
         } catch (err: any) {
@@ -1480,7 +1299,7 @@ export class WebUiBackend implements UiBackend {
           return;
         }
         try {
-          await mcpManager.disconnectServer(cmd.serverName);
+          await this.harness.mcp.disconnect(cmd.serverName);
           this.pushMcpState();
           client.send({ type: "info", display: "toast", text: `MCP server "${cmd.serverName}" disconnected.` });
         } catch (err: any) {
@@ -1496,41 +1315,15 @@ export class WebUiBackend implements UiBackend {
     client: WebSocketClient,
     cmd: ClientCommand & { type: "skill"; action: "toggle"; name: string },
   ): Promise<void> {
-    const sm = this.harness.skillManager;
-    if (!sm) {
-      client.send({ type: "error", text: "No skill manager available." });
-      return;
-    }
     try {
-      const isActive = sm.isActive(cmd.name);
-      if (isActive) {
-        sm.deactivate(cmd.name);
-      } else {
-        sm.activate(cmd.name, this.harness.driverRegistry);
-      }
+      const skill = this.harness.skills.list().find(
+        (candidate) => candidate.name === cmd.name,
+      );
+      if (!skill) throw new Error(`Unknown Skill: ${cmd.name}`);
+      await this.harness.skills.setEnabled(cmd.name, !skill.active);
       this.pushSkillState();
 
-      // Persist to project settings
-      try {
-        const settings = loadScopedSettings(projectSettingsPath(this.config.projectPath));
-        const current: string[] = (settings.disabledSkills as string[]) ?? [];
-        if (isActive) {
-          // Deactivating — add to disabledSkills
-          if (!current.includes(cmd.name)) {
-            saveProjectSettings(this.config.projectPath, { disabledSkills: [...current, cmd.name] });
-          }
-        } else {
-          // Activating — remove from disabledSkills
-          const updated = current.filter((n) => n !== cmd.name);
-          if (updated.length !== current.length) {
-            saveProjectSettings(this.config.projectPath, { disabledSkills: updated });
-          }
-        }
-      } catch {
-        // Non-fatal: toggle still works in-memory even if settings save fails
-      }
-
-      client.send({ type: "info", display: "toast", text: `Skill "${cmd.name}" ${isActive ? "deactivated" : "activated"}.` });
+      client.send({ type: "info", display: "toast", text: `Skill "${cmd.name}" ${skill.active ? "deactivated" : "activated"}.` });
     } catch (err: any) {
       this.pushSkillState();
       client.send({ type: "error", text: `Skill toggle failed: ${err.message}` });
@@ -1541,52 +1334,45 @@ export class WebUiBackend implements UiBackend {
   // ── Private: Helpers ──
 
   private buildConfigData(): ConfigData {
-    const providers = getAllProviders();
-    const models = getAllModels(this.config.provider).map((m) => ({
+    const config = this.harness.settings.get();
+    const providers = this.harness.settings.providers();
+    const models = this.harness.settings.models(config.provider).map((m) => ({
       id: m.id,
       name: m.name,
 
     }));
     return {
-      provider: this.config.provider,
-      modelId: this.config.modelId,
-      apiKey: maskApiKey(this.config.apiKey),
-      thinkingLevel: this.config.thinkingLevel,
-      projectPath: this.config.projectPath,
-      maxTokens: this.config.maxTokens,
-      providers,
+      provider: config.provider,
+      modelId: config.modelId,
+      apiKey: config.apiKey,
+      thinkingLevel: config.thinkingLevel,
+      projectPath: config.projectPath,
+      maxTokens: config.maxTokens,
+      providers: [...providers],
       models,
-      vision: this.config.vision,
-      visionProviders: getVisionProviders(),
-      visionModels: this.config.vision?.provider
-        ? getVisionModels(this.config.vision.provider)
+      vision: config.vision,
+      visionProviders: [...this.harness.settings.visionProviders()],
+      visionModels: config.vision?.provider
+        ? [...this.harness.settings.visionModels(config.vision.provider)]
         : [],
     };
   }
 
   private buildConversationHistory(): ConversationMessage[] {
-    const messages = this.harness.agent.state.messages as any[];
-    const agentMessages = this.harness.sessionManager?.agentMessages ?? [];
-    const sessionId = this.harness.sessionManager.getCurrentSessionId() ?? "unknown";
-    return rebuildDisplayMessages(messages, agentMessages, sessionId) as any;
+    const snapshot = this.harness.conversation.snapshot();
+    const sessionId = this.harness.sessions.currentId() ?? "unknown";
+    return rebuildDisplayMessages(
+      [...snapshot.messages] as any[],
+      [...snapshot.agentMessages],
+      sessionId,
+      { resolveImage: (ref) => this.harness.conversation.resolveImage(ref) },
+    ) as any;
   }
 
-
-  private getSkillToolNames(): Set<string> {
-    const names = new Set<string>();
-    const sm = this.harness.skillManager;
-    if (sm) {
-      for (const name of sm.listAllSkillNames()) {
-        names.add(name);
-      }
-    }
-    return names;
-  }
 
   private broadcastContextWindow(bypassThrottle: boolean, toolsOverride?: { name: string; result: string }[]): void {
-    const cm = this.harness.contextManager;
-    const cw = cm.getContextWindow();
-    if (cw <= 0) return;
+    const current = this.harness.conversation.contextUsage();
+    if (current.total <= 0) return;
 
     if (!bypassThrottle) {
       if (this.contextWindowThrottleTimer) {
@@ -1602,9 +1388,8 @@ export class WebUiBackend implements UiBackend {
       }, 500);
     }
 
-    const messages = this.harness.agent.state.messages as unknown[];
     const tools = toolsOverride ?? this.currentAssistant?.tools ?? [];
-    const breakdown = cm.getCategoryBreakdown(messages, tools, this.getSkillToolNames());
+    const breakdown = this.harness.conversation.contextUsage(tools);
 
     this.broadcast({
       type: "context_window",
@@ -1626,12 +1411,11 @@ export class WebUiBackend implements UiBackend {
     const url = req.url ?? "/";
 
     // MCP App proxy
-    if (url.startsWith("/mcp-app/") && this.appHostManager) {
+    if (url.startsWith("/mcp-app/") && this.appResourceProxy) {
       const appId = url.slice("/mcp-app/".length).split("?")[0].split("/")[0];
-      const app = (this.appHostManager as any).apps?.get?.(appId);
-      if (app) {
-        // Proxy to the MCP app's local server
-        const targetUrl = `http://127.0.0.1:${app.port}${url.slice("/mcp-app/".length + appId.length)}`;
+      const suffix = url.slice("/mcp-app/".length + appId.length);
+      const targetUrl = this.appResourceProxy.resolveAppUrl(appId, suffix);
+      if (targetUrl) {
         this.proxyRequest(req, res, targetUrl);
         return;
       }
@@ -1668,15 +1452,26 @@ export class WebUiBackend implements UiBackend {
   }
 
   private serveSpa(req: IncomingMessage, res: ServerResponse): void {
-    const webDist = resolveBuiltResource("web");
-
-    let filePath = join(webDist, req.url === "/" ? "index.html" : req.url!);
-
-    // Normalize: strip query/hash
-    const qIdx = filePath.indexOf("?");
-    if (qIdx >= 0) filePath = filePath.slice(0, qIdx);
-    const hIdx = filePath.indexOf("#");
-    if (hIdx >= 0) filePath = filePath.slice(0, hIdx);
+    const webDist = this.webRoot;
+    let pathname: string;
+    try {
+      pathname = decodeURIComponent(
+        new URL(req.url ?? "/", "http://localhost").pathname,
+      );
+    } catch {
+      res.writeHead(400);
+      res.end("Bad Request");
+      return;
+    }
+    const relativePath = pathname === "/"
+      ? "index.html"
+      : pathname.replace(/^\/+/, "");
+    const filePath = resolve(webDist, relativePath);
+    if (!isCanonicalPathWithin(webDist, filePath)) {
+      res.writeHead(404);
+      res.end("Not Found");
+      return;
+    }
 
     const ext = extname(filePath);
     const mimeTypes: Record<string, string> = {
@@ -1724,29 +1519,19 @@ export class WebUiBackend implements UiBackend {
         // graceful fallback
       }
 
-      // Build DESIGN SYSTEM COLORS block
-      const designColors = `DESIGN SYSTEM COLORS (MUST use these exact hex values for EVERY color in your HTML):
-- Background:  #f8f7f5
-- Surface:     #f3f2ef
-- Border:      #e6e4e0
-- Text:        #2d2a26
-- Muted Text:  #8a8580
-- Accent:      #ca8a04 (warm amber/gold — use for highlights, progress bars, headings)
-- Success:     #347539 text on #edf4ed background
-- Error:       #9f2f2d text on #fdebec background
-- Warning:     #956400 text on #fbf3db background
-- User Bubble: #ca8a04 background, #ffffff text`;
+      // The WebUI injects current values for these variables into the iframe.
+      const designColors = buildDashboardThemeContract();
 
       // Build default style constraints (used when .dscode/html_output_skill absent)
       const defaultStyleConstraints = `CRITICAL STYLE RULES:
-- Use the exact hex colors from DESIGN SYSTEM COLORS above — do NOT substitute with other greens, reds, or blues
+- Use only the semantic variables from DESIGN SYSTEM THEME CONTRACT for theme colors
 - Flat design: 1px solid var(--border) borders, no box-shadow, no gradients
 - Border-radius: 8px for cards/panels, 6px for buttons, 12px for large containers
 - Typography: system-ui, -apple-system, sans-serif for labels; monospace for data values
 - Emoji for visual markers, CSS conic-gradient or inline SVG for chart-like elements
-- Background MUST be #f8f7f5, never white (#fff) or transparent
-- Text MUST be #2d2a26, never pure black (#000) or cold gray
-- The accent color MUST be #ca8a04 (warm amber), never blue`;
+- Background MUST be var(--bg), never white, black, or transparent
+- Text MUST be var(--text), never a hard-coded color
+- Accent elements MUST use var(--accent), never blue`;
 
       // Build system prompt
       const systemPrompt = `You are an expert HTML dashboard designer. Generate a single, self-contained HTML file.
@@ -1789,30 +1574,22 @@ User instruction: ${cmd.instruction || "update the dashboard"}
 Modify the HTML to fulfill the user's request. Output the complete modified HTML.`;
       }
 
-      // Launch independent LLM call
-      const model = resolveModel(this.config.provider, this.config.modelId);
-
       client.send({ type: "artifact_start" });
 
-      let fullHtml = "";
-      const stream = streamSimple(model as any, {
+      let fullHtml = await this.harness.conversation.streamText({
         systemPrompt,
-        messages: [{ role: "user", content: userPrompt, timestamp: Date.now() }],
-      }, {
-        apiKey: this.config.apiKey,
+        userPrompt,
         maxTokens: this.config.maxTokens,
-        timeoutMs: 120_000,
-        maxRetries: 1,
-      });
-
-      for await (const event of stream) {
-        if (event.type === "text_delta") {
-          fullHtml += event.delta;
-          client.send({ type: "artifact_delta", delta: event.delta });
-        } else if (event.type === "error") {
-          client.send({ type: "error", text: `Artifact generation error: ${(event as any).errorMessage || "Unknown error"}` });
+      }, (event) => {
+        if (event.type === "text") {
+          client.send({ type: "artifact_delta", delta: event.text });
+        } else {
+          client.send({
+            type: "error",
+            text: `Artifact generation error: ${event.text}`,
+          });
         }
-      }
+      });
 
       // Strip markdown code fences that LLMs sometimes emit despite instructions
       fullHtml = this.stripArtifactFences(fullHtml);
@@ -1845,14 +1622,9 @@ Modify the HTML to fulfill the user's request. Output the complete modified HTML
     return result;
   }
   private buildSessionSummary(): string {
-    const sm = this.harness.sessionManager;
-    const agent = this.harness.agent;
-    const cm = this.harness.contextManager;
-
-    // Use ContextManager to get category breakdown
-    const messages = agent.state.messages as unknown[];
+    const messages = this.harness.conversation.snapshot().messages;
     const tools = this.currentAssistant?.tools ?? [];
-    const breakdown = cm.getCategoryBreakdown(messages, tools, this.getSkillToolNames());
+    const breakdown = this.harness.conversation.contextUsage(tools);
 
     const totalTokens = breakdown.total;
     const usedTokens = breakdown.used;
@@ -1900,7 +1672,7 @@ Modify the HTML to fulfill the user's request. Output the complete modified HTML
 
     // Timing
 
-    const sessionActiveMs = sm?.getTotalActiveMs?.() ?? 0;
+    const sessionActiveMs = this.harness.sessions.totalActiveMs();
     const turnCount = (messages as any[]).filter((m: any) => m.role === "user").length;
     const avgTurnMs = turnCount > 0 ? Math.round(sessionActiveMs / turnCount) : 0;
 
@@ -1966,7 +1738,9 @@ Modify the HTML to fulfill the user's request. Output the complete modified HTML
         pressureLabel,
       },
       topTools,
-      subagents: buildDashboardSubagentSummary(sm?.agentMessages ?? []),
+      subagents: buildDashboardSubagentSummary(
+        [...this.harness.conversation.snapshot().agentMessages],
+      ),
     }, null, 2)
   }
 }

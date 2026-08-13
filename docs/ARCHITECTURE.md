@@ -12,12 +12,15 @@ dscode 是一个基于 `@earendil-works/pi-agent-core`、`@earendil-works/pi-ai`
 
 | Agent 概念 | OS 类比 | dscode 职责 |
 |-----------|---------|------------|
-| Harness | Kernel | 组装组件，协调进程、权限、I/O 与生命周期 |
+| Harness | Kernel | 以 Application coordinator 形式协调进程、权限、I/O 与生命周期 |
 | Model | CPU / 计算引擎 | 执行推理计算 |
 | Agent Runtime | 进程执行环境 | 驱动单个 Agent 的 prompt、tool-call 和事件循环 |
 | System Prompt | 进程启动策略 / 只读指令段 | 为 Runtime 装载身份、规则和行为约束 |
 
-System Prompt 影响单个进程如何执行，但不管理其他进程或资源，因此不是 Kernel。
+这里的 Kernel 是运行时职责类比，不是源码目录名。物理上，`Harness` 位于
+`src/application/harness.ts`，concrete wiring 位于 `src/bootstrap/`，
+`src/kernel/` 只保存 Execution Context、日志和路径安全等基础原语。System Prompt
+影响单个进程如何执行，但不管理其他进程或资源，因此不是 Kernel。
 
 ### 应用与进程
 
@@ -70,8 +73,47 @@ Agent Process
 
 ```text
 Agent → read_file(path) → schema / ToolRegistry → fs Driver → 文件系统 / 磁盘
-Agent → mcp_<server>_<tool> → schema / ToolRegistry → MCP Driver → MCP Server → 外部资源
+Agent → mcp__<server>__<tool> → schema / ToolRegistry → MCP Driver → MCP Server → 外部资源
 ```
+
+### 外部设备与服务进程
+
+外部设备可能由独立的用户态服务进程提供能力。dscode 将这种进程与 Agent 进程
+严格分开：
+
+| dscode 概念 | OS 类比 | 职责 |
+|-------------|---------|------|
+| Open Design | 虚拟设备 | 对 Agent 提供设计生成、资源与预览能力 |
+| MCP Client / Proxy | Device Driver / 协议适配器 | 把 Tool Call 转换为 MCP 请求 |
+| Open Design daemon | 用户态设备服务进程 | 执行设备能力并暴露 HTTP 服务 |
+| ServiceSupervisor | init / systemd | 启动、健康检查、重启和关闭受管服务进程 |
+| Open Design integration | 设备配置与适配模块 | 解析配置、声明服务并贡献 MCP Driver |
+
+调用路径与启动路径彼此独立：
+
+```text
+调用: Agent → ToolRegistry → MCP Driver → Open Design MCP Proxy → OD daemon
+启动: Bootstrap → Open Design integration → ServiceSupervisor → OD daemon
+```
+
+这与 FUSE 类似：VFS 请求通过 FUSE Driver 转发给用户态文件系统 daemon。
+Driver 负责协议适配，daemon 实现实际能力，服务管理器负责进程生命周期。因此
+Open Design 整体可视为虚拟设备，但 daemon 本身不是 Driver。
+
+`ServiceSupervisor` 只管理 dscode 自己启动的服务。启动前已健康的 daemon 被标记为
+external，dscode 不会重启或终止它。服务进程不进入 `AgentSupervisor` Process
+Table，也没有 AgentContext、Session、模型循环或 capability set。
+
+配置入口遵循各自的所有权边界：
+
+| 配置入口 | 所有者 | Open Design 用法 |
+|---------|--------|------------------|
+| `settings.json` 的 `integrations.openDesign` | Integration 配置 | 使用 typed `path`、`port`、`enabled`、`autoStart` |
+| `.mcp.json` 的 `mcpServers.<name>.env` | MCP Driver | 仅传递给指定 MCP 子进程，不配置 Integration |
+| 进程环境或项目 `.env` | 兼容输入 | 仅在 typed Integration 配置不存在时读取 `OPEN_DESIGN_DIR`、`OD_PORT` |
+
+`settings.json` 没有通用 `env` 字段。Open Design 的持久单一事实来源是
+`integrations.openDesign`；兼容环境变量只在当前运行中派生配置，不会写回文件。
 
 ### 能力与隔离
 
@@ -83,6 +125,11 @@ Agent → mcp_<server>_<tool> → schema / ToolRegistry → MCP Driver → MCP S
 | Worktree Isolation | Filesystem Namespace / Sandbox | 为后台写进程隔离 cwd、分支和文件修改 |
 
 Skill 编排 Tool，但不实现底层资源访问；真正连接资源的是 Driver。
+
+Skill 与 MCP 在 Presentation 中可以同属 “Capabilities” 分组，但源码所有权保持独立：
+`src/skills/` 负责 SKILL.md 扫描、instructions 激活和 Tool allowlist；
+`src/mcp/` 负责 JSON-RPC、transport、连接、重连、Server state 和动态 Driver 贡献。
+二者没有共享生命周期、基类或 Registry，UI 分组不定义后端 ownership。
 
 ### 通信与恢复
 
@@ -137,9 +184,13 @@ resources/agents/vision.md        # 当前唯一随发行版本提供的 Agent.m
 所有 AgentProcess 通过 `PiAgentRuntimeAdapter` 持有独立 Pi Agent。Application
 只能配置 Prompt、模型和 capability，不能选择内部 Runtime。
 
-进程通过 `spawn_agent`、`list_agents`、`wait_agent`、`terminate_agent`、
-`kill_agent` 和 `send_agent_message` 管理。后台写进程必须使用 Git Worktree，
-相对路径和 Checkpoint 通过 AsyncLocalStorage 中的 AgentContext 隔离。
+Agent.md 可声明用户配置的 foreground/background 默认值，Main Agent 通过
+`spawn_agent` 为单次动态委派显式覆盖，并可使用 `list_agents`、`terminate_agent`、
+`kill_agent` 和 `send_agent_message` 管理后台进程。foreground 结果由工具直接返回，
+background 结果由 `agent:exit` 和父 Session 通知自动传递，并在 Main turn 的安全
+边界事件驱动 continuation；不向模型暴露等待或输出轮询工具。后台写进程必须使用
+Git Worktree，相对路径和 Checkpoint 通过
+AsyncLocalStorage 中的 AgentContext 隔离。
 
 ## 分层架构
 
@@ -329,9 +380,13 @@ Driver 是工具提供者，分为 builtin 和 MCP 两类：
 | `search` | builtin | `grep`, `glob` |
 | `edit` | builtin | `edit`（基于 hash anchor 的文件编辑） |
 | `discovery` | builtin | `search_tools`（延迟工具发现） |
-| `<mcp-server>` | mcp | MCP Server 提供的工具，命名空间: `mcp_<server>_<tool>` |
+| `<mcp-server>` | mcp | MCP Server 提供的工具，命名空间: `mcp__<server>__<tool>` |
 
-`DriverRegistry` 管理所有驱动。builtin 驱动始终激活，MCP 驱动由 `MCPManager` 动态注册。
+`DriverRegistry` 管理所有驱动。builtin 驱动始终激活，MCP 驱动由 `MCPManager`
+动态注册。每个 Harness 实例持有一个 `MCPManager`，统一管理用户级与项目级
+`.mcp.json` 以及 Integration 内存贡献合并后的 MCP Server 连接；Main Agent 和 SubAgent 共享连接，
+再通过各自 capability 决定可见的 MCP Tool。这里的“唯一”是 Harness 实例级，
+不是整个操作系统进程或所有 dscode 实例共享的全局单例。
 
 ### Skill（用户态程序，按需激活）
 
@@ -415,17 +470,23 @@ permission 规则在 `settings.json` 中配置（路径 denyPatterns、自定义
 
 | 后端 | 实现 | 入口 |
 |------|------|------|
-| `TuiBackend` | `@earendil-works/pi-tui` + HarnessEventBus adapter | `dscode` (终端模式) |
-| `WebBackend` | WebSocket + HTTP server | `dscode --web` |
+| `TuiBackend` | `src/ui/tui/` + HarnessEventBus adapter | `dscode` (终端模式) |
+| `WebUiBackend` | `src/ui/web/` + WebSocket/HTTP | `dscode --web` |
 
 两者通过统一的 Harness 事件和 `UiBackend` 生命周期/权限接口消费 Agent 能力。
-TUI 与 Web 分别将事件投影到各自的 conversation model。
+TUI 与 Web 分别将事件投影到各自的 conversation model；双端共用的 reducer、
+projector 和展示数据模型位于 `src/ui/shared/`。Presentation 中的 MCP/Skill 分组
+不意味着两者共享后端生命周期。
 
 ### 前端
 
 Web 模式下的前端是独立 Vite + React 项目（`web/`），通过 WebSocket 与后端通信。
 
 ### Slash Commands
+
+内建 dispatch、自定义 manifest loader/manager、执行上下文和 Presenter port 均由
+`src/slash-commands/` 拥有。TUI 与 Web 结构化实现 `SlashCommandPresenter`，
+Slash Command 不导入 concrete Presentation adapter。
 
 | 命令 | 功能 |
 |------|------|
@@ -441,16 +502,47 @@ Web 模式下的前端是独立 Vite + React 项目（`web/`），通过 WebSock
 
 ## Harness 组装
 
-`Harness` 类（`src/core/harness.ts`）实现 `HarnessAPI` 接口（`src/core/harness-api.ts`），是进程级 host，负责：
+具体组装只发生在 `src/bootstrap/`：
 
-1. 加载配置（config.json + settings.json + env），创建 `ConfigWatch` 统一可观测配置层
-2. 实例化 AgentApplicationRegistry、AgentSupervisor、SessionManager、ContextManager、MemoryManager、DriverRegistry、ToolRegistry、PermissionManager 和兼容 ImagePipeline
-3. 初始化 CheckpointManager（编辑安全网）
-4. 构建 system prompt = base + skills instructions + memories + AGENTS.md + deferred tools hint
-5. 将 Main Agent 注册为 PID 1，并使用统一 PiAgentRuntimeAdapter factory 启动 AgentApplication
-6. 绑定事件（UI 渲染、token 校准、session 自动保存）
-7. 启动 UI（TUI REPL 或 Web server）
-8. 优雅关闭（保存 session, 提取 memory, 关闭 checkpoint 系统）
+```text
+CLI adapter
+  → createStandardAgentHost()
+  → HarnessAPI (Commands / Queries / subscribe-only Events)
+  → Coordinators
+  → Features / owner ports
+  → Drivers / Persistence / Managed Services
+```
+
+`createStandardAgentHost()` 创建标准 headless Host，包括 Agent、Session、Tool、
+Skill、Memory、Permission、MCP、Open Design 和受管服务能力，但不创建 TUI/Web。
+`cli-main.ts` 只追加参数解析、环境快照、UI 选择、signal/fatal handler 和
+`process.exit()`；开发、构建和发布均直接使用该入口，不存在兼容转发模块。
+
+`Harness` 是 Application lifecycle facade，不是 concrete service locator。
+Conversation、Session、Project、MCP 和 Agent Runtime 工作流分别由专用
+Coordinator 负责；Harness 只排序生命周期、构建 system prompt 并委托 facade。
+
+### 所有权矩阵
+
+| 能力 | 所有者 | 对外边界 |
+|------|--------|----------|
+| Host 生命周期与 concrete wiring | Bootstrap | `AgentHost` |
+| Commands、Queries、Events | Application | `HarnessAPI` |
+| Process identity 与 cwd attribution | Kernel | `ExecutionContext` |
+| Agent authoring、compiler、snapshot | `agents/definitions` | `AgentDefinition`、immutable snapshot |
+| Agent runtime、process lifecycle | `agents/process`、`agents/runtimes` | Process contracts 与 events |
+| Settings 文件与运行快照 | Config | Repository、Service、Snapshot |
+| Slash Command | `slash-commands` | `HarnessAPI` + `SlashCommandPresenter` |
+| Project file resolution 与 attachment | `project-files` | resolver 与 staging API |
+| Skill instructions 与 Tool allowlist | `skills` | Skill snapshot |
+| MCP protocol、transport 与连接 | `mcp` | MCP state 与 Driver contribution |
+| Session、Memory、Permission | 各 Feature | owner ports 与 snapshots |
+| 文件、Shell、Vision、MCP transport | Driver / Adapter | Driver ports |
+| TUI、Web、live/replay projection | Presentation | `HarnessAPI` + UI models |
+
+`src/application/` 仅表示用例协调；领域名 `AgentApplication` 的定义位于
+`src/agents/definitions/`。模块类型由功能所有者定义，不存在跨领域类型仓库、
+`core/` 或 `utils/` catch-all。
 
 ### System Prompt 构建
 
@@ -462,78 +554,115 @@ base prompt
   + deferred tools hint（ToolRegistry 生成的延迟工具提示）
 ```
 
-### ConfigWatch 可观测配置层
+### Settings 流
 
-`ConfigWatch`（`src/core/config-watch.ts`）包装 `HarnessConfig`，提供显式 setter 方法和订阅制变更通知：
+```text
+settings.json / config.json / .mcp.json
+  → SettingsRepository（原子读写）
+  → SettingsService（Command）
+  → RuntimeConfigStore（完整不可变 snapshot）
+  → config:change Event
+  → TUI / Web projection
+```
 
-- `get()` — 返回 `Readonly<HarnessConfig>` 不可变快照
-- `onChange(fn)` — 订阅配置变更，返回取消订阅函数
-- `setModelConfig()` / `setApiKey()` / `setProjectPath()` / `setVision()` / `setMcpServers()` — 原子化配置修改
-
-所有配置变更通过 ConfigWatch 方法，禁止直接修改 config 属性。Harness 注册 `onChange` 回调通知 UI 后端同步更新。
+`settings.json` 是声明式配置的单一事实来源。CLI 只捕获只读环境快照并传入解析器；
+Host 不修改 `process.env`，项目切换也不调用 `process.chdir()`。
 
 ### HarnessAPI 接口
 
-`HarnessAPI`（`src/core/harness-api.ts`）定义 Harness 的公共 API 表面，TUI 和 Web 后端通过该接口消费 Agent 能力，不依赖 Harness 的内部实现细节：
+`HarnessAPI` 位于 `src/application/harness-api.ts`。TUI 与 Web 只能消费
+capability facade：
 
-- **readonly 访问器**: agent, agentSupervisor, applicationRegistry, sessionManager, memoryManager, driverRegistry, toolRegistry, skillManager, permissionManager, contextManager, mcpManager, config, configStore, imagePipeline
-- **mutation 方法**: `setModel()`, `setThinking()`, `setProvider()`, `updateProjectPath()`, `abort()`
-- **执行方法**: `promptWithImages()`, `promptAndSave()`
+- Commands：prompt、Session switch、Settings、Project、Skill、MCP、Agent spawn。
+- Queries：不可变 conversation、Session、Config、Driver、Agent、Tool snapshots。
+- Events：仅暴露 `on()`，Presentation 不能 `emit()` 或 `clear()`。
+- Interaction：权限请求通过窄 `UserInteractionPort` 反向注入。
 
-此接口替代了旧的 `TuiDeps` 依赖对象，使 TUI 与 Web 后端共享同一 Harness
-能力边界；局部协议适配仍可能使用运行时类型收窄。
+API 不暴露 Pi Agent、Manager、Registry、Supervisor、mutable store 或未遮罩 secret。
+Runtime 产生 owner-neutral execution record，Presentation 再投影为 Tool detail、
+Agent activity 和 Conversation message；live event 与 Session replay 共用 projector。
+
+### Execution Context ABI
+
+Main 与 SubAgent Runtime 入口均绑定不可变 Kernel context：
+
+```ts
+interface ExecutionContext {
+  hostId: string;
+  processId: string;
+  parentProcessId?: string;
+  sessionId: string;
+  application: string;
+  cwd: string;
+  facilities?: HostFacilities;
+}
+```
+
+Driver 通过 AsyncLocalStorage 获取归属，不读取 Agent 实现。Checkpoint、
+invalidation、undo、image cache、logger 等 mutable facility 由每个 Host 持有。
+即使两个 Host 的 Process/Session ID 相同，`hostId` 仍能隔离归属与存储。
+
+### SDK-ready 边界
+
+`AgentDefinition` 是 source-neutral authoring contract；Markdown 与 trusted
+programmatic definition 走同一 compiler，生成带 source、digest、generation 的
+不可变 `AgentApplicationSnapshot`。内部 `AgentHost` 支持显式 identity、start 和
+幂等 shutdown，因此未来可由 SDK wrapper 包装。
+
+当前版本没有发布 SDK、第三方 SPI 或新的 npm public export；内部源码路径也不构成
+SemVer 承诺。
 
 ## 目录结构
 
+源码顶层目录由架构检查显式分类；未知目录会失败，`src/core/` 和 `src/utils/`
+被明确禁止。
+
+```mermaid
+flowchart LR
+    Bootstrap["Bootstrap"] --> Application["Application"]
+    Bootstrap --> Presentation["Presentation"]
+    Bootstrap --> Features["Feature owners"]
+    Bootstrap --> Adapters["Adapters"]
+    Presentation --> Application
+    Presentation --> Slash["Slash Commands"]
+    Presentation --> ProjectFiles["Project Files"]
+    Application --> Features
+    Application --> Kernel["Kernel primitives"]
+    Features --> Kernel
+    Adapters --> Kernel
+```
+
 ```
 src/
-├── agents/         # Agent Application、进程、Runtime 与进程工具
-│   ├── application/      # YAML loader、compiler、registry、memory
-│   ├── process/          # AgentSupervisor、Context、Fallback、Store、Worktree
-│   ├── runtimes/         # PiAgentRuntimeAdapter、OCR fallback
-│   └── tools/            # spawn/list/wait/signal/IPC
-├── core/           # 入口 + Harness 组装 + 配置 + 共享类型
-│   ├── main.ts
-│   ├── harness.ts
-│   ├── harness-api.ts     # HarnessAPI 公共接口
-│   ├── config.ts
-│   ├── config-watch.ts    # 可观测配置层
-│   └── types.ts
-├── session/        # Layer 1: Session 持久化
-│   ├── manager.ts, store.ts, types.ts, display.ts
-├── context/        # Layer 2: 上下文管理
-│   ├── manager.ts, estimator.ts, compaction.ts
-├── memory/         # Layer 3: 记忆系统
-│   ├── manager.ts, store.ts
-├── drivers/        # Layer 4: 驱动（工具提供者）
-│   ├── registry.ts, fs.ts, shell.ts, search.ts, edit/ (tool.ts, hash.ts, recovery.ts, index.ts)
-│   ├── discovery.ts, tool-registry.ts
-│   └── vision/          # 图像处理管道
-│       ├── cache.ts, client.ts, ocr.ts, pipeline.ts
-│       ├── reader.ts, types.ts
-├── checkpoint/     # Layer 4: 编辑安全网
-│   ├── index.ts, checkpoint-manager.ts, snapshot-store.ts, types.ts
-│   ├── base-commit.ts, write-tracker.ts
-│   └── store/
-├── skills/         # Layer 4: 技能（用户态程序）
-│   ├── manager.ts, loader.ts
-├── mcp/            # MCP 客户端 + App Host
-│   ├── client.ts, manager.ts, types.ts
-│   └── app/host.ts
-├── models/         # 模型注册与解析
-│   ├── registry.ts, index.ts, qwen.ts
-├── permissions/    # Layer 5: 权限
-│   ├── manager.ts, rules.ts
-├── ui/             # Layer 6: UI（双后端 + shared state）
-│   ├── backend.ts, tui-app.ts, tui-backend.ts
-│   ├── web/web-backend.ts, web/ws-server.ts, web/protocol.ts
-│   ├── shared/types.ts, shared/reducer.ts
-│   ├── commands.ts, conversation.ts, theme.ts
-│   ├── image-manager.ts, image-paste-handler.ts
-│   └── mcp-browser.ts
-└── utils/          # 工具集
-    ├── image.ts, image-cache.ts, ocr.ts
-    └── at-file-resolver.ts
+├── bootstrap/          # Bootstrap: concrete composition 与 CLI process adapter
+├── kernel/             # Kernel: ExecutionContext、Logger、path safety、facilities
+├── application/        # Application: Harness/API/events、AgentHost、Coordinators
+├── agents/
+│   ├── definitions/    # Feature: Agent authoring、compiler、registry、snapshot
+│   ├── process/        # Feature/Persistence: process lifecycle 与 store
+│   ├── runtimes/       # Feature: 同构 Runtime adapters
+│   └── tools/          # Feature: process tools
+├── slash-commands/     # Feature: builtins、custom manifests、Presenter port
+├── project-files/      # Feature: @file resolution 与 attachment staging
+├── skills/             # Feature: SKILL.md loader、activation、Tool allowlist
+├── mcp/                # Feature: protocol、transport、connection、App Host
+├── config/             # Feature: loader、Repository、SettingsService、snapshots
+├── session/            # Feature/Persistence: Session lifecycle 与 store
+├── context/            # Feature: token 预算、压缩与 invalidation
+├── memory/             # Feature: 长期记忆
+├── models/             # Feature: immutable provider/model catalog
+├── permissions/        # Feature: policy、prompt queue、suggestions
+├── eval/               # Feature: CHIEF evaluation
+├── resources/          # Feature: owner-neutral resource identity
+├── drivers/            # Adapter: FS、Shell、Search、Edit、Vision
+├── integrations/
+│   └── open-design/    # Adapter: Open Design config、service、MCP contribution
+├── services/           # Adapter: 外部服务进程监管
+├── checkpoint/         # Persistence: Host-owned 文件回滚设施
+└── ui/                 # Presentation lifecycle port
+    ├── shared/         # 双端 projector、reducer、model、formatter
+    ├── tui/            # TUI-only input、rendering、theme、image、browser
+    └── web/            # Web backend、protocol、WebSocket server
 
 web/                # Web 前端（独立 Vite + React 项目）
 ```
@@ -555,9 +684,10 @@ web/                # Web 前端（独立 Vite + React 项目）
     └── memory/global.json + projects/<hash>.json
 
 <project>/.dscode/
-├── settings.json            # 项目级 settings（覆盖用户级）
-└── checkpoints/             # 编辑安全网快照
-    └── <sessionId>/
+└── settings.json            # 项目级 settings（覆盖用户级）
+
+~/.dscode/data/checkpoints/
+└── per-project/<project-hash>/<hostId>/<sessionId>/
         ├── <safeFileName>-<timestamp>/
         │   ├── original     # 修改前文件副本
         │   └── meta.json    # 元数据（filePath, baseCommit, timestamp）

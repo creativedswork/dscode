@@ -10,7 +10,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
-import { resolveAgentPath } from "../../agents/process/context.js";
+import { resolveExecutionPath } from "../../kernel/execution-context.js";
 
 import {
   computeLineHash,
@@ -39,7 +39,7 @@ export const editUndoTool: AgentTool<typeof editUndoParams> = {
     "Returns a diff with new anchor hashes and warns that all previous anchors are stale.",
   parameters: editUndoParams,
   execute: async (_id, { path }) => {
-    const resolved = resolveAgentPath(path);
+    const resolved = resolveExecutionPath(path);
 
     if (!existsSync(resolved)) {
       return {

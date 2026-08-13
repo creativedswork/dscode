@@ -5,15 +5,23 @@ TBD - created by archiving change subagent-design-proposal. Update Purpose after
 ## Requirements
 ### Requirement: spawn_agent 启动进程
 
-系统 SHALL 提供 `spawn_agent` 标准工具。输入 MUST 包含 `application`、`description` 和通用 `input` 信封；`input` MUST 包含 prompt，并 MAY 包含带类型的 attachments。工具 MAY 包含 `attachment`、`context_mode`、类型化 `selected_context` 和 `isolation`，但 MUST NOT 覆盖 Application 的 model、tools、Skills、MCP、Hooks、权限或 fallback。
+系统 SHALL 提供 `spawn_agent` 标准工具。输入 MUST 包含 `application`、`description` 和通用 `input` 信封；`description` SHALL 使用 `<Role>: <purpose>` 表达用户可见角色与本次职责；`input` MUST 包含 prompt，并 MAY 包含带类型的 attachments。工具 MAY 包含 `background`、`context_mode` 和类型化 `selected_context`，但 MUST NOT 覆盖 Application 的 model、tools、Skills、MCP、Hooks、权限或 fallback。`background` 显式值 SHALL 覆盖 AgentApplication 的用户配置；省略时 SHALL 使用 Application 配置，未配置时 SHALL 默认为 foreground。
 
 #### Scenario: Foreground 启动
-- **WHEN** Main Agent 调用 `spawn_agent` 且 attachment 为 foreground
+- **WHEN** Main Agent 以 `background: false` 调用 `spawn_agent`，或省略参数且 Application 未配置 background
 - **THEN** 系统启动指定 Application 的子进程并等待其退出
 
 #### Scenario: Background 启动
-- **WHEN** Main Agent 调用 `spawn_agent` 且 attachment 为 background
+- **WHEN** Main Agent 以 `background: true` 调用 `spawn_agent`，或省略参数且 Application 配置 `background: true`
 - **THEN** 工具在进程进入 running 后返回 agentId，子进程继续运行
+
+#### Scenario: 后续工作依赖委派结果
+- **WHEN** Main Agent 必须取得 SubAgent 结果后才能执行下一步，即使 Application 缺省为 background
+- **THEN** Main Agent 显式传入 `background: false` 并直接消费 `spawn_agent` 返回结果
+
+#### Scenario: 使用 general 执行 Researcher 角色
+- **WHEN** Main Agent 以 application=`general`、description=`Researcher: verify claims` 启动 SubAgent
+- **THEN** Process 保留 general 作为内部 Application，并使用 Researcher 作为用户可见角色
 
 ### Requirement: Selected Context 结构
 
@@ -61,7 +69,13 @@ Supervisor 内部 spawn API SHALL 使用 `AgentProcessInput.attachments` 传递 
 
 ### Requirement: Application 必须显式指定
 
-spawn_agent SHALL 要求显式 application。系统 MUST NOT 假设不存在的 general Application，也不得因省略 application 隐式触发 Fork。
+`spawn_agent` SHALL 要求显式 application。系统 SHALL 提供名为 `general` 的 bundled
+Application，但 MUST NOT 在省略 application 时隐式选择 `general`，也不得因省略 application
+隐式触发 Fork。
+
+#### Scenario: 显式使用 general
+- **WHEN** Main Agent 没有找到职责匹配的专业 Agent.md 并指定 application 为 `general`
+- **THEN** 系统通过标准 Application 创建链启动通用 SubAgent
 
 #### Scenario: 缺少 Application
 - **WHEN** Main Agent 只提供 description 和 input
@@ -83,21 +97,14 @@ spawn_agent SHALL 要求显式 application。系统 MUST NOT 假设不存在的 
 - **WHEN** Main Agent 启动一个后台 Agent 后调用 list_agents
 - **THEN** 返回该 Agent 的 running 状态和 background attachment
 
-### Requirement: wait_agent 等待退出
+### Requirement: 模型工具不轮询 Agent 结果
 
-系统 SHALL 提供 `wait_agent`，按 agentId 等待进程进入终态，并支持有上限的 timeout。
+系统 MUST NOT 向模型暴露 `wait_agent` 或 `get_agent_output`。Supervisor MAY 保留等待和状态查询内部 API，供 Runtime、UI、测试和系统调度使用，但 Main Agent SHALL 通过 foreground 工具返回或 background 完成通知取得结果。
 
-#### Scenario: 等待完成
-- **WHEN** 调用 wait_agent 等待正在运行的 Agent
-- **THEN** Agent 退出后返回 AgentExitResult
-
-### Requirement: get_agent_output 获取输出
-
-系统 SHALL 提供 `get_agent_output`，返回进程当前输出、进度、Usage 和终态结果。非父进程或无权限调用方 MUST 被拒绝。
-
-#### Scenario: 查看后台输出
-- **WHEN** Main Agent 查询自己的后台子进程
-- **THEN** 返回截至当前已持久化的输出和进度
+#### Scenario: 后台 Agent 完成
+- **WHEN** background Agent 进入终态
+- **THEN** 系统通过 `agent:exit` 和父 Session 通知传递结果，并事件驱动 Main Agent continuation
+- **AND** Main Agent 不发起轮询工具调用
 
 ### Requirement: terminate_agent 与 kill_agent
 
@@ -138,3 +145,40 @@ SubAgent 默认 MUST 不可见 `spawn_agent`。只有 Application capability 和
 #### Scenario: 默认禁止嵌套
 - **WHEN** depth 为 1 的普通 SubAgent 尝试调用 spawn_agent
 - **THEN** 工具不可见或调用被权限层拒绝
+
+### Requirement: spawn_agent 展示可选 Application
+
+`spawn_agent` 的模型可见工具描述 SHALL 包含当前 AgentApplicationRegistry 中全部有效
+Application 的 name 和 description，并 SHALL 按 name 稳定排序。该 catalog SHALL 在工具描述
+被读取时从 Registry 获取，MUST NOT 固化为 Harness 初始化时的旧快照。
+
+#### Scenario: Main 选择专业 Agent
+- **WHEN** Registry 包含 `general`、`vision` 和项目级 `reviewer`
+- **THEN** Main Agent 在调用 `spawn_agent` 前能从工具描述看到三个名称及其用途
+
+#### Scenario: Registry reload 后选择新 Agent
+- **WHEN** 项目切换使 Registry 从 `reviewer` 变为 `researcher`
+- **THEN** 后续模型请求中的 `spawn_agent` 描述包含 `researcher` 且不再包含旧项目的 `reviewer`
+
+### Requirement: spawn_agent 解析项目内图片 attachment
+
+模型可调用的 `spawn_agent` SHALL 接受 `file` attachment 引用父 Agent cwd 内已经存在的本地
+图片。工具 MUST 在创建 Process 前解析真实路径、校验 cwd 边界与文件类型、限制单图最大
+20MB，并 SHALL 通过 ImageCache 将其转换为标准 image attachment。调用方提供的
+`image_ref` MUST 是已经存在的单一缓存文件名，MUST NOT 接受本地路径或 `file://` URI。
+
+#### Scenario: 传递刚生成的 PNG
+- **WHEN** Main Agent 使用 file attachment 传入 cwd 内存在的 PNG 路径
+- **THEN** `spawn_agent` 将图片缓存为 ImageRef，并让子 Process 收到 type=image attachment
+
+#### Scenario: file URI 指向 cwd 外部
+- **WHEN** file attachment 的真实路径位于父 Agent cwd 外部或通过软链接逃逸
+- **THEN** `spawn_agent` 在创建 Process 前拒绝调用并返回路径越界诊断
+
+#### Scenario: 路径伪装成 image_ref
+- **WHEN** 调用方把本地路径或 `file://` URI 填入 `image_ref.hash`
+- **THEN** `spawn_agent` 拒绝调用并提示本地图片应使用 file attachment
+
+#### Scenario: 缓存引用不存在
+- **WHEN** 调用方提供格式合法但 ImageCache 中不存在的 image_ref
+- **THEN** `spawn_agent` 拒绝调用且不启动无法获得图片的子 Process

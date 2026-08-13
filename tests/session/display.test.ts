@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { rebuildDisplayMessages } from "../../src/session/display.js";
+import { rebuildDisplayMessages } from "../../src/ui/shared/session-projector.js";
 import type { AgentSessionMessage } from "../../src/session/types.js";
 
 function agentMessage(
@@ -77,6 +77,83 @@ describe("rebuildDisplayMessages — Agent Activity", () => {
     ]);
   });
 
+  it("preserves a background Agent attachment in replay", () => {
+    const result = rebuildDisplayMessages(
+      [{ role: "user", content: "Before", createdAt: 100 }],
+      [agentMessage({
+        attachment: "background",
+        createdAt: 200,
+      })],
+      "session-1",
+    );
+
+    expect(result[1].agentActivity?.attachment).toBe("background");
+  });
+
+  it("recovers a delegated role from legacy spawn_agent messages", () => {
+    const result = rebuildDisplayMessages(
+      [
+        {
+          role: "assistant",
+          createdAt: 100,
+          content: [{
+            type: "toolCall",
+            id: "call-spawn",
+            name: "spawn_agent",
+            arguments: {
+              application: "general",
+              description: "Researcher: verify paper claims",
+              input: { prompt: "verify claims" },
+            },
+          }],
+        },
+        {
+          role: "toolResult",
+          toolCallId: "call-spawn",
+          toolName: "spawn_agent",
+          details: { agentId: "agent-1" },
+          content: [{ type: "text", text: "Started background Agent agent-1" }],
+          createdAt: 110,
+        },
+      ],
+      [agentMessage({ createdAt: 120 })],
+      "session-1",
+    );
+
+    const activity = result.find((message) => message.role === "agent")
+      ?.agentActivity;
+    expect(activity?.label).toBe("Researcher");
+    expect(activity?.application).toBe("general");
+  });
+
+  it("keeps internal Agent notifications out of restored user messages", () => {
+    const result = rebuildDisplayMessages(
+      [
+        {
+          role: "user",
+          content: [{
+            type: "text",
+            text: "<agent_notifications>\nResearch complete\n</agent_notifications>",
+          }],
+          createdAt: 100,
+        },
+        {
+          role: "assistant",
+          content: [{ type: "text", text: "Proceeding to content strategy." }],
+          createdAt: 200,
+        },
+      ],
+      [],
+      "session-1",
+    );
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({
+      role: "assistant",
+      content: "Proceeding to content strategy.",
+    });
+  });
+
   it("does not rewrite a linked Main message for a non-image Agent", () => {
     const result = rebuildDisplayMessages(
       [{ role: "user", content: "Main prompt", createdAt: 100 }],
@@ -138,6 +215,7 @@ describe("rebuildDisplayMessages — Agent Activity", () => {
     expect(result[1]).toMatchObject({
       role: "agent",
       agentActivity: {
+        label: "Vision",
         application: "vision",
         input: "describe image",
         parentSessionId: "session-legacy",
@@ -179,5 +257,67 @@ describe("rebuildDisplayMessages — Agent Activity", () => {
     });
     expect(result[0].tools?.[0].result).toContain("file contents");
     expect(result[1].role).toBe("agent");
+  });
+
+  it("preserves Tool identity and uses a Session ref for large results", () => {
+    const largeResult = Array.from(
+      { length: 1_200 },
+      (_, index) => `result line ${index + 1} with additional detail`,
+    ).join("\n");
+    const messages = [
+      {
+        role: "assistant",
+        content: [{
+          type: "toolCall",
+          id: "call-large",
+          name: "read_file",
+          arguments: { path: "large.txt" },
+        }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-large",
+        content: [{ type: "text", text: largeResult }],
+      },
+    ];
+
+    const result = rebuildDisplayMessages(messages, [], "session-large");
+
+    expect(result[0].tools?.[0]).toMatchObject({
+      toolCallId: "call-large",
+      resultDetail: {
+        ref: {
+          owner: "session",
+          ownerId: "session-large",
+          toolCallId: "call-large",
+        },
+        charCount: largeResult.length,
+        lineCount: 1_200,
+      },
+    });
+    expect(result[0].tools?.[0].resultDetail?.text).toBeUndefined();
+    expect(messages[0]).not.toHaveProperty("__parsedTools");
+  });
+
+  it("keeps legacy Tool summaries without fabricating missing detail", () => {
+    const result = rebuildDisplayMessages([
+      {
+        role: "assistant",
+        content: "done",
+        tools: [{
+          name: "legacy_tool",
+          args: "",
+          result: "summary only",
+          isError: false,
+        }],
+      },
+    ], [], "session-legacy");
+
+    expect(result[0].tools?.[0]).toMatchObject({
+      name: "legacy_tool",
+      result: "summary only",
+    });
+    expect(result[0].tools?.[0].toolCallId).toBeUndefined();
+    expect(result[0].tools?.[0].resultDetail).toBeUndefined();
   });
 });

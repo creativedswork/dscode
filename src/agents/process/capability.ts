@@ -1,5 +1,6 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { resolve } from "node:path";
 
+import { isCanonicalPathWithin } from "../../kernel/path-safety.js";
 import type { AgentContext } from "./types.js";
 
 const PATH_ARGUMENTS: Record<string, string[]> = {
@@ -12,11 +13,6 @@ const PATH_ARGUMENTS: Record<string, string[]> = {
   grep: ["path"],
   glob: ["cwd"],
 };
-
-function isWithin(root: string, candidate: string): boolean {
-  const rel = relative(root, candidate);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
 
 export function checkAgentCapability(
   context: AgentContext,
@@ -33,7 +29,7 @@ export function checkAgentCapability(
     const value = record[key];
     if (typeof value !== "string" || value === "") continue;
     const candidate = resolve(context.cwd, value);
-    if (!isWithin(context.cwd, candidate)) {
+    if (!isCanonicalPathWithin(context.cwd, candidate)) {
       return {
         block: true,
         reason: `Path ${value} is outside Agent cwd ${context.cwd}`,

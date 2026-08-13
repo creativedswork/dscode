@@ -17,6 +17,7 @@ const REQUIRED_AGENT_APPS = [
   "chief-oracle",
   "eval-rule-attribution",
   "eval-rule-merge",
+  "general",
   "vision",
 ];
 
@@ -128,18 +129,22 @@ async function buildResources(packageJson) {
 }
 
 async function main() {
-  // Step 1: typecheck
+  // Step 1: enforce dependency boundaries
+  console.log("Architecture check...");
+  execSync("npm run architecture:check", { stdio: "inherit", cwd: rootDir });
+
+  // Step 2: typecheck
   console.log("Typecheck...");
   execSync("npx tsc --noEmit", { stdio: "inherit", cwd: rootDir });
 
-  // Step 2: esbuild
+  // Step 3: esbuild
   console.log("Building...");
   const distDir = resolve(rootDir, "dist");
   if (existsSync(distDir)) rmSync(distDir, { recursive: true });
   mkdirSync(distDir, { recursive: true });
   const outfile = resolve(rootDir, "dist", "dscode.mjs");
   await esbuild.build({
-    entryPoints: [resolve(rootDir, "src", "core", "main.ts")],
+    entryPoints: [resolve(rootDir, "src", "bootstrap", "cli-main.ts")],
     bundle: true,
     platform: "node",
     target: "node20",
@@ -165,7 +170,7 @@ async function main() {
   });
   chmodSync(outfile, 0o755);
 
-  // Step 3: build web frontend
+  // Step 4: build web frontend
   const webDir = resolve(rootDir, "web");
   if (existsSync(webDir)) {
     console.log("Building web UI...");
@@ -173,12 +178,12 @@ async function main() {
     execSync("npm run build", { stdio: "inherit", cwd: webDir });
   }
 
-  // Step 4: validate and assemble runtime resources
+  // Step 5: validate and assemble runtime resources
   console.log("Building runtime resources...");
   const packageJson = JSON.parse(await readFile(resolve(rootDir, "package.json"), "utf8"));
   await buildResources(packageJson);
 
-  // Step 5: assemble the only publishable package staging directory
+  // Step 6: assemble the only publishable package staging directory
   console.log("Assembling %s/...", buildDir);
   const standalone = resolve(rootDir, buildDir);
   if (existsSync(standalone)) rmSync(standalone, { recursive: true });

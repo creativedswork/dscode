@@ -144,6 +144,9 @@ artifacts:
         generate one with the `prototype-workflow` skill before continuing
       - List each prototype file path with a summary of the visual direction and
         key design decisions confirmed during visual iteration
+      - Add a `Prototype Retention` table with one row per HTML file and set
+        each decision to `pending`; apply finalizes it as `archive` or `delete`
+        only after implementation and validation are complete
       - A text-only visual direction, wireframe, or `prototype.md` without an
         HTML file reference is invalid and MUST NOT unblock tasks
       - Do not use a "No prototype needed" stub for any change that affects
@@ -151,6 +154,7 @@ artifacts:
 
       For non-UI changes (backend-only, config, refactoring):
       - Write a stub: "No prototype needed — <one-line reason>"
+      - State: "Prototype retention: not applicable"
       - Example: "No prototype needed — backend-only change affecting the
         config loader module."
 
