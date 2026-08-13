@@ -12,7 +12,7 @@ import {
   formatAgentDuration,
   summarizeAgentText,
 } from "../../web/src/components/AgentActivityCard.js";
-import { findPermissionOwnerAgentId } from "../../web/src/components/ChatView.js";
+import { findPermissionOwnerAgent } from "../../web/src/components/ChatView.js";
 import { formatAgentDisplayId } from "../../src/ui/shared/agent-id.js";
 
 function activity(overrides: Partial<AgentActivity> = {}): AgentActivity {
@@ -147,7 +147,7 @@ describe("AgentActivityCard", () => {
     );
   });
 
-  it("renders an interactive permission inside its matching Tool", () => {
+  it("keeps the permission tool status without an inline approval control", () => {
     const markup = renderToStaticMarkup(
       createElement(AgentActivityCard, {
         activity: activity({
@@ -165,21 +165,12 @@ describe("AgentActivityCard", () => {
             toolCallId: "call-bash",
           },
         }),
-        permissionToolCallId: "call-bash",
-        permissionControl: createElement(
-          "button",
-          { type: "button", "data-permission-control": true },
-          "Allow",
-        ),
       }),
     );
 
     expect(markup).toContain("agent-activity-tool state-permission");
     expect(markup).toContain("Permission required");
-    expect(markup).toContain('data-permission-control="true"');
-    expect(markup.indexOf("data-permission-control")).toBeGreaterThan(
-      markup.indexOf("agent-activity-tool state-permission"),
-    );
+    expect(markup).not.toContain("data-permission-control");
   });
 
   it("routes only attributable SubAgent permissions into an Agent Card", () => {
@@ -197,21 +188,21 @@ describe("AgentActivityCard", () => {
       }),
     }];
 
-    expect(findPermissionOwnerAgentId(messages, {
+    expect(findPermissionOwnerAgent(messages, {
       toolName: "bash",
       preview: "$ pwd",
       agentId: "agent-1",
       toolCallId: "call-bash",
-    })).toBe("agent-1");
-    expect(findPermissionOwnerAgentId(messages, {
+    })?.agentId).toBe("agent-1");
+    expect(findPermissionOwnerAgent(messages, {
       toolName: "bash",
       preview: "$ pwd",
       toolCallId: "call-bash",
-    })).toBe("agent-1");
-    expect(findPermissionOwnerAgentId(messages, {
+    })?.agentId).toBe("agent-1");
+    expect(findPermissionOwnerAgent(messages, {
       toolName: "bash",
       preview: "$ pwd",
-    })).toBeUndefined();
+    })).toBeNull();
   });
 
   it("freezes terminal duration at endedAt", () => {

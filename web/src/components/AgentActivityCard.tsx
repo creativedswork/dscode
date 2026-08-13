@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   CheckCircle,
   CircleNotch,
@@ -63,12 +63,8 @@ function StatusIcon({ state }: { state: AgentActivityState }) {
 
 export function AgentActivityCard({
   activity,
-  permissionControl,
-  permissionToolCallId,
 }: {
   activity: AgentActivity;
-  permissionControl?: ReactNode;
-  permissionToolCallId?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [toolsExpanded, setToolsExpanded] = useState(
@@ -93,12 +89,6 @@ export function AgentActivityCard({
   const completedToolCount = tools.filter((tool) =>
     tool.status === "completed"
   ).length;
-  const hasPermissionControl = permissionControl != null;
-  const effectivePermissionToolCallId = permissionToolCallId
-    ?? activity.permission?.toolCallId
-    ?? tools.find((tool) => tool.status === "permission")?.toolCallId;
-  const permissionHasMatchingTool = hasPermissionControl
-    && tools.some((tool) => tool.toolCallId === effectivePermissionToolCallId);
 
   useEffect(() => {
     if (!isLive(activity.state)) return;
@@ -111,12 +101,10 @@ export function AgentActivityCard({
   }, [hasDetails]);
 
   useEffect(() => {
-    if (hasPermissionControl) {
-      setToolsExpanded(true);
-    } else if (activity.state === "completed") {
+    if (activity.state === "completed") {
       setToolsExpanded(false);
     }
-  }, [activity.state, hasPermissionControl]);
+  }, [activity.state]);
 
   return (
     <article
@@ -182,9 +170,6 @@ export function AgentActivityCard({
                       {tool.summary}
                     </div>
                   )}
-                  {hasPermissionControl
-                    && tool.toolCallId === effectivePermissionToolCallId
-                    && permissionControl}
                 </div>
               ))}
             </div>
@@ -194,7 +179,6 @@ export function AgentActivityCard({
             className="agent-activity-tools-toggle"
             aria-expanded={toolsExpanded}
             aria-controls={toolsId}
-            disabled={hasPermissionControl}
             onClick={() => setToolsExpanded((value) => !value)}
           >
             <span>{toolsExpanded ? "Hide tools" : "Show tools"}</span>
@@ -205,12 +189,6 @@ export function AgentActivityCard({
             </span>
           </button>
         </section>
-      )}
-
-      {hasPermissionControl && !permissionHasMatchingTool && (
-        <div className="agent-activity-execution-permission">
-          {permissionControl}
-        </div>
       )}
 
       {resultSummary && (

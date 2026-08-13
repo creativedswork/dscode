@@ -46,13 +46,20 @@ Activity。系统 MUST NOT 为同一 Agent 的每次生命周期事件创建重�
 
 ### Requirement: Web Permission 归属 Agent Activity
 
-Web SHALL 将带可识别 `agentId` 或 `toolCallId` 的 SubAgent Permission 显示在对应
-Agent Activity Card 内。无法归属到 SubAgent Activity 的 Permission MUST 回退到
-独立交互控件，不得丢弃审批请求。
+Web SHALL 将带可识别 `agentId` 或 `toolCallId` 的 SubAgent Permission 显示在独立
+统一审批卡片中，并标注来源 Agent。无法归属到 SubAgent Activity 的 Permission MUST
+回退到独立交互控件，不得丢弃审批请求。Agent Activity Card MUST NOT 因待审批请求而
+强制展开 Tool timeline 或锁定「Hide tools / Show tools」开关。
 
-#### Scenario: Permission 匹配 SubAgent Tool
-- **WHEN** SubAgent 的 Tool Activity 与 Permission 具有相同 toolCallId
-- **THEN** Web 在该 Tool 下原位显示 Permission 选项且不显示重复的全局控件
+#### Scenario: Permission 归属 SubAgent
+- **WHEN** SubAgent 的 Tool Activity 与 Permission 具有相同 `toolCallId` 或 `agentId`
+- **THEN** Web 在统一审批卡片中显示该 Permission 并标注来源 Agent
+- **AND** 该 Permission 不在 Agent Activity Card 内原位渲染
+
+#### Scenario: Agent Activity Card 不因审批而锁定
+- **WHEN** 某 Agent Activity 存在待审批 Permission
+- **THEN** 该 Agent Activity Card 的 Tool timeline 保持用户当前的展开/折叠状态
+- **AND** 「Show tools / Hide tools」开关仍可用，不因审批而禁用
 
 ### Requirement: Agent 输出默认摘要折叠
 
@@ -89,7 +96,7 @@ owner-aware Activity Inspector 访问；Card 内的摘要 MUST NOT 成为独立�
 #### Scenario: TUI Agent 等待授权
 - **WHEN** TUI 当前 Session 中的 SubAgent Tool 等待 Permission
 - **THEN** 原 Agent Card 更新为 waiting
-- **AND** Tool timeline 强制展开并原位显示 Permission options
+- **AND** 统一权限面板显示 Permission options，Tool timeline 不强制展开
 - **AND** Permission panel 获得最高输入优先级并显示 Agent/Tool owner path
 
 #### Scenario: TUI Agent 在 Inspector 打开期间更新

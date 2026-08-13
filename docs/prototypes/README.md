@@ -18,8 +18,6 @@
 
 完整的长期价值、有效性和断链检查规则只在 `prototype-workflow` Skill 中维护。
 
-## 暂存原型
-
 ## 已归档原型
 
 - [`2026-07-14-fix-explore-prototype-html`](archive/2026-07-14-fix-explore-prototype-html/) — MCP ToolCard Execution View 标准流程案例
@@ -30,3 +28,5 @@
 - [`2026-08-05-show-eval-dashboard-in-webui`](archive/2026-08-05-show-eval-dashboard-in-webui/) — WebUI Eval 主视图
 - [`2026-08-07-tui-execution-hierarchy-redesign`](archive/2026-08-07-tui-execution-hierarchy-redesign/) — Turn → Execution → Tool 信息架构
 - [`2026-08-08-redesign-tui-conversation-interaction`](archive/2026-08-08-redesign-tui-conversation-interaction/) — TUI 对话焦点、Activity Inspector、长 Tool 输出与 SubAgent Permission 重设计
+
+- [`2026-08-13-unified-tool-approval-card`](archive/2026-08-13-unified-tool-approval-card/) — 统一 SubAgent 工具审批面（Web 吸底卡片 + TUI 底部权限面板）

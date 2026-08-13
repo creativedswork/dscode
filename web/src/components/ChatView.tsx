@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState, useCallback, useLayoutEffect } from "react";
-import type { PermissionPrompt, UIMessage } from "../types";
+import type { AgentActivity, PermissionPrompt, UIMessage } from "../types";
 import { ToolCard } from "./ToolCard";
 import { Markdown } from "./Markdown";
-import { Warning } from "@phosphor-icons/react";
 import { AgentActivityCard } from "./AgentActivityCard";
+import { ToolApprovalCard } from "./ToolApprovalCard";
+import { InlinePermission, type ToolApprovalDecisionHandler } from "./InlinePermission";
 
 interface ChatViewProps {
   messages: UIMessage[];
@@ -11,17 +12,17 @@ interface ChatViewProps {
   hasStreaming: boolean;
   sessionActiveMs: number;
   permissionPrompt: PermissionPrompt | null;
-  onPermission: (decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string, toolNamePattern?: string, fuzzyMode?: number) => void;
+  onPermission: ToolApprovalDecisionHandler;
   containerRef?: React.RefObject<HTMLDivElement>;
   scrollLocked?: boolean;
 }
 
-export function findPermissionOwnerAgentId(
+export function findPermissionOwnerAgent(
   messages: UIMessage[],
   permissionPrompt: PermissionPrompt | null,
-): string | undefined {
-  if (!permissionPrompt) return undefined;
-  return messages.find((message) => {
+): AgentActivity | null {
+  if (!permissionPrompt) return null;
+  const match = messages.find((message) => {
     const activity = message.agentActivity;
     if (message.role !== "agent" || !activity) return false;
     if (permissionPrompt.agentId === activity.agentId) return true;
@@ -29,7 +30,8 @@ export function findPermissionOwnerAgentId(
       permissionPrompt.toolCallId
       && activity.permission?.toolCallId === permissionPrompt.toolCallId,
     );
-  })?.agentActivity?.agentId;
+  });
+  return match?.agentActivity ?? null;
 }
 
 export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, permissionPrompt, onPermission, containerRef, scrollLocked = false }: ChatViewProps) {
@@ -87,7 +89,7 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
     );
   }
 
-  const permissionOwnerAgentId = findPermissionOwnerAgentId(
+  const permissionOwnerAgent = findPermissionOwnerAgent(
     messages,
     permissionPrompt,
   );
@@ -102,21 +104,6 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
               ? (
                   <AgentActivityCard
                     activity={msg.agentActivity}
-                    permissionControl={permissionPrompt
-                      && permissionOwnerAgentId === msg.agentActivity.agentId
-                      ? (
-                          <InlinePermission
-                            {...permissionPrompt}
-                            embedded
-                            onDecision={onPermission}
-                          />
-                        )
-                      : undefined}
-                    permissionToolCallId={permissionPrompt
-                      && permissionOwnerAgentId === msg.agentActivity.agentId
-                      ? permissionPrompt.toolCallId
-                        ?? msg.agentActivity.permission?.toolCallId
-                      : undefined}
                   />
                 )
               : <AssistantMessage message={msg} />}
@@ -127,7 +114,15 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
         <WaitingBubble sessionTime={sessionTime} />
       )}
 
-      {permissionPrompt && !permissionOwnerAgentId && (
+      {permissionPrompt && permissionOwnerAgent && (
+        <ToolApprovalCard
+          permission={permissionPrompt}
+          owner={permissionOwnerAgent}
+          onDecision={onPermission}
+        />
+      )}
+
+      {permissionPrompt && !permissionOwnerAgent && (
         <InlinePermission
           {...permissionPrompt}
           onDecision={onPermission}
@@ -211,161 +206,6 @@ function WaitingBubble({ sessionTime }: { sessionTime: number }) {
   );
 }
 
-function InlinePermission({
-  toolName,
-  preview,
-  fuzzyPattern,
-  fuzzyArgDesc,
-  llmSuggestions,
-  embedded = false,
-  onDecision,
-}: {
-  toolName: string;
-  preview: string;
-  fuzzyPattern?: string | null;
-  fuzzyArgDesc?: string | null;
-  llmSuggestions?: { label: string; toolPattern: string | null; argPattern: string | null }[];
-  embedded?: boolean;
-  onDecision: (decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string, toolNamePattern?: string, fuzzyMode?: number) => void;
-}) {
-  const [explainMode, setExplainMode] = useState(false);
-  const [explainText, setExplainText] = useState("");
-  const [showFuzzyOptions, setShowFuzzyOptions] = useState(false);
-  const [subModeType, setSubModeType] = useState<"save" | "session" | "allow">("save");
-  const handleFuzzySelect = (mode: number) => {
-    setShowFuzzyOptions(false);
-    if (subModeType === "session" || subModeType === "allow") {
-      if (mode === 0) {
-        onDecision("always_allow");
-      } else {
-        onDecision("always_allow", undefined, fuzzyPattern ?? undefined, mode);
-      }
-    } else {
-      onDecision("always_allow_save", undefined, mode === 1 ? fuzzyPattern ?? undefined : undefined, mode);
-    }
-  };
-
-  const handleSubmitExplain = () => {
-    if (explainText.trim()) {
-      onDecision("deny", explainText.trim());
-      setExplainText("");
-      setExplainMode(false);
-    }
-  };
-
-  return (
-    <div className={embedded ? "agent-activity-permission" : "flex justify-start animate-fade-up"}>
-      <div
-        className={embedded
-          ? "agent-activity-permission-panel"
-          : "max-w-[85%] md:max-w-[75%] px-4 py-3"}
-        data-collider={embedded ? undefined : "message-card"}
-        style={{
-          borderRadius: "12px",
-          border: "1px solid var(--color-border)",
-          backgroundColor: "var(--color-warning)",
-        }}
-      >
-        <div className="flex items-center gap-2 mb-2">
-          <Warning size={16} weight="bold" style={{ color: "var(--color-warning-text)" }} />
-          <span className="text-sm font-medium" style={{ color: "var(--color-warning-text)" }}>Permission Required</span>
-        </div>
-        <div className="mb-2 text-xs font-mono" style={{ color: "var(--color-accent)" }}>{toolName}</div>
-        <div
-          className="mb-3 text-xs font-mono break-all max-h-24 overflow-y-auto rounded p-2"
-          style={{ backgroundColor: "var(--color-bg)", color: "var(--color-text-muted)" }}
-        >
-          {preview}
-        </div>
-        {explainMode ? (
-          <div className="space-y-2">
-            <textarea
-              value={explainText}
-              onChange={(e) => setExplainText(e.target.value)}
-              placeholder="Explain what you want the agent to do instead..."
-              className="w-full text-xs p-2 resize-none focus:outline-none"
-              style={{ borderRadius: "8px", backgroundColor: "var(--color-bg)", border: "1px solid var(--color-border)", color: "var(--color-text)" }}
-              rows={3}
-              autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleSubmitExplain(); }
-                if (e.key === "Escape") { setExplainText(""); setExplainMode(false); }
-              }}
-            />
-            <div className="flex gap-2">
-              <button onClick={handleSubmitExplain} disabled={!explainText.trim()} className="btn-primary text-xs">Submit</button>
-              <button onClick={() => { setExplainText(""); setExplainMode(false); }} className="btn-secondary text-xs">Cancel</button>
-            </div>
-          </div>
-        ) : showFuzzyOptions ? (
-          <div className="flex gap-2 flex-wrap">
-            {subModeType === "session" ? (
-              <>
-                <button onClick={() => handleFuzzySelect(0)} className="btn-secondary text-xs">
-                  Exact: {toolName}
-                </button>
-                <button onClick={() => handleFuzzySelect(1)} className="btn-secondary text-xs">
-                  Fuzzy: {fuzzyPattern}
-                </button>
-              </>
-            ) : (
-              <>
-                <button onClick={() => handleFuzzySelect(0)} className="btn-secondary text-xs">
-                  Exact: {toolName}{!toolName.startsWith("mcp__") ? " (this call)" : ""}
-                </button>
-                <button onClick={() => handleFuzzySelect(1)} className="btn-secondary text-xs">
-                  {toolName.startsWith("mcp__") ? fuzzyPattern : "All calls"}
-                </button>
-                {fuzzyArgDesc && (
-                  <button onClick={() => handleFuzzySelect(2)} className="btn-secondary text-xs">
-                    {fuzzyArgDesc}
-                  </button>
-                )}
-                {llmSuggestions && llmSuggestions.map((s, i) => (
-                  <button key={i} onClick={() => handleFuzzySelect(3 + i)} className="btn-secondary text-xs">
-                    [AI] {s.label}
-                  </button>
-                ))}
-              </>
-            )}
-            <button onClick={() => setShowFuzzyOptions(false)} className="btn text-xs" style={{ backgroundColor: "var(--color-surface-hover)" }}>
-              Cancel
-            </button>
-          </div>
-        ) : (
-          <div className="flex gap-2 flex-wrap">
-            {(fuzzyPattern && fuzzyPattern !== toolName) ? (
-              <button onClick={() => { setSubModeType("allow"); setShowFuzzyOptions(true); }} className="btn-primary text-xs">
-                Allow ▸
-              </button>
-            ) : (
-              <button onClick={() => onDecision("allow")} className="btn-primary text-xs">Allow</button>
-            )}
-            {(fuzzyPattern && fuzzyPattern !== toolName) ? (
-              <button onClick={() => { setSubModeType("session"); setShowFuzzyOptions(true); }} className="btn-secondary text-xs">
-                Always Allow ▸
-              </button>
-            ) : (
-              <button onClick={() => onDecision("always_allow")} className="btn-secondary text-xs">Always Allow</button>
-            )}
-            <button onClick={() => { setSubModeType("save"); setShowFuzzyOptions(true); }} className="btn-secondary text-xs">
-              Save to Settings ▸
-            </button>
-            <button
-              onClick={() => setExplainMode(true)}
-              className="btn text-xs"
-              style={{ backgroundColor: "var(--color-warning)", color: "var(--color-warning-text)", borderColor: "var(--color-warning-text)" }}
-            >
-              Explain
-            </button>
-            <button onClick={() => onDecision("deny")} className="btn-danger text-xs">Deny</button>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function UserBubble({ message }: { message: UIMessage }) {
   const safeContent = typeof message.content === "string" ? message.content : "";
 
@@ -420,7 +260,7 @@ function AssistantMessage({ message }: { message: UIMessage }) {
       {hasThinking && (
         <>
           {!isSimpleResponse && (
-<div className="phase-label" data-collider="phase-label">
+            <div className="phase-label" data-collider="phase-label">
               <span className={`phase-dot ${message.isStreaming && message.thinking ? "active" : "done"}`} />
               <span className="phase-text">Thinking</span>
             </div>
@@ -437,7 +277,7 @@ function AssistantMessage({ message }: { message: UIMessage }) {
       {hasTools && (
         <>
           {!isSimpleResponse && (
-<div className="phase-label" data-collider="phase-label">
+            <div className="phase-label" data-collider="phase-label">
               <span className={`phase-dot ${message.isStreaming ? "active" : "done"}`} />
               <span className="phase-text">Executing</span>
             </div>
@@ -472,7 +312,7 @@ function AssistantMessage({ message }: { message: UIMessage }) {
       )}
 
       {(hasResponse || (hasTools && message.isStreaming)) && (
-<div className="phase-label" data-collider="phase-label">
+        <div className="phase-label" data-collider="phase-label">
           <span className={`phase-dot ${message.isStreaming && !message.thinking ? "active" : "done"}`} />
           <span className="phase-text">Response</span>
         </div>

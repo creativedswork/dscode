@@ -1,0 +1,279 @@
+<!doctype html>
+<!--
+  change: unified-tool-approval-card
+  generated: 2026-08-12
+  descriptor: tui
+  Terminal-styled workbench prototype: unified owner-bound permission panel decoupled
+  from the Execution Card. Compare "new" (independent bottom panel) vs "old"
+  (inline in the tool timeline, forced tools expand).
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>unified-tool-approval-card · TUI workbench</title>
+<style>
+  :root {
+    --bg: #f6f4ef;
+    --panel: #ece9e2;
+    --border: #d8d3c8;
+    --text: #2d2a26;
+    --muted: #8a8580;
+    --accent: #b87503;
+    --accent-bright: #ca8a04;
+    --green: #347539;
+    --cyan: #0e7490;
+    --yellow: #8a6500;
+    --red: #9f2f2d;
+    --magenta: #7c3aed;
+    --term-bg: #1e1c19;
+    --term-fg: #e8e4dd;
+    --term-dim: #8a8580;
+  }
+  body.dark {
+    --bg: #14120f;
+    --panel: #1e1c19;
+    --border: #3a3732;
+    --text: #e8e4dd;
+    --muted: #8a8580;
+    --term-bg: #14120f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Geist", -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  .toolbar {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  .toolbar .tag { font-family: monospace; font-size: 11px; color: var(--muted); }
+  .toolbar button {
+    font-family: inherit; font-size: 12px; padding: 5px 10px;
+    border-radius: 6px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); cursor: pointer;
+  }
+  .toolbar button.active { border-color: var(--accent); color: var(--accent); }
+
+  .terminal {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    background: var(--term-bg);
+    color: var(--term-fg);
+    font-family: "Geist Mono", "SFMono-Regular", "JetBrains Mono", monospace;
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 14px;
+  }
+  .term-inner { width: 100%; max-width: 900px; margin: 0 auto; }
+  .term-title {
+    font-family: "Geist", sans-serif;
+    font-size: 11px; color: var(--muted);
+    padding: 6px 10px; border: 1px solid var(--border);
+    border-bottom: 0; border-radius: 6px 6px 0 0; background: var(--panel);
+  }
+  .term-body { border: 1px solid var(--border); border-radius: 0 0 6px 6px; overflow: hidden; }
+  .screen {
+    background: var(--term-bg); color: var(--term-fg);
+    font-family: "Geist Mono", monospace;
+    font-size: 13px; line-height: 1.5;
+    padding: 12px; white-space: pre-wrap; word-break: break-word;
+  }
+
+  .dim { color: var(--term-dim); }
+  .cyan { color: #38bdf8; }
+  .yellow { color: #fbbf24; }
+  .green { color: #34d399; }
+  .red { color: #f87171; }
+  .magenta { color: #c084fc; }
+  body:not(.dark) .cyan { color: #0e7490; }
+  body:not(.dark) .yellow { color: #8a6500; }
+  body:not(.dark) .green { color: #347539; }
+  body:not(.dark) .red { color: #9f2f2d; }
+  body:not(.dark) .magenta { color: #7c3aed; }
+
+  .card {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin: 10px 0;
+    padding: 8px 10px;
+  }
+  .card-title { font-weight: 700; }
+  .dim-line { color: var(--term-dim); }
+  .option { padding-left: 6px; }
+  .option.sel { color: #22d3ee; font-weight: 700; }
+
+  .panel {
+    border: 1px solid var(--yellow);
+    border-left: 3px solid var(--yellow);
+    border-radius: 6px;
+    margin: 12px 0;
+    padding: 10px 12px;
+  }
+  .panel .head { font-weight: 700; color: var(--yellow); }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <span class="tag">prototype · unified-tool-approval-card · TUI</span>
+    <button id="modeBtn" class="active">Mode: New (independent panel)</button>
+    <button id="themeBtn" class="active">Theme: Light</button>
+    <button id="widthBtn">Width: 120 cols</button>
+  </div>
+
+  <div class="terminal">
+    <div class="term-inner">
+      <div class="term-title">dscode · terminal workbench (conversation)</div>
+      <div class="term-body">
+        <pre class="screen" id="screen"></pre>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const screen = document.getElementById('screen');
+  const modeBtn = document.getElementById('modeBtn');
+  const themeBtn = document.getElementById('themeBtn');
+  const widthBtn = document.getElementById('widthBtn');
+
+  let mode = 'new'; // new | old
+  let wide = true;
+
+  const L = (s) => s; // label passthrough
+
+  // Terminal rendering helpers
+  function box(innerLines, width) {
+    const contentWidth = Math.max(1, width - 4);
+    const horizontal = '─'.repeat(width - 2);
+    const out = ['╭' + horizontal + '╮'];
+    for (const line of innerLines) {
+      const pad = ' '.repeat(Math.max(0, contentWidth - line.length));
+      out.push('│ ' + line + pad + ' │');
+    }
+    out.push('╰' + horizontal + '╯');
+    return out;
+  }
+
+  function researcherCard(mode, width) {
+    const lines = [
+      '◆ Researcher  waiting · foreground · 1m 42s',
+      '  verify the paper claims against primary sources…',
+      '  › Tools · 3 total · 2 done · 1 active',
+      '    ↳ read_file  permission',
+    ];
+    if (mode === 'old') {
+      // OLD: forced expand + inline permission inside the card
+      lines.length = 0;
+      lines.push('◆ Researcher  waiting · foreground · 1m 42s');
+      lines.push('  verify the paper claims against primary sources…');
+      lines.push('  ⌄ Tools · 3 total · 2 done · 1 active');
+      lines.push('    ✓ grep  completed');
+      lines.push('    ✓ read_file  completed');
+      lines.push('    ◇ read_file  permission  { path: /workspace/claims.md }');
+      lines.push('    Permission required · read_file');
+      lines.push('      { "path": "/workspace/claims.md", "limit": 400 }');
+      lines.push('     Permissions ────────────────────────────────');
+      lines.push('     Owner: Researcher › read_file');
+      lines.push('       { "path": "/workspace/claims.md", "limit": 400 }');
+      lines.push('     ────────────────────────────────────────────');
+      lines.push('      ▶ 1 Allow once');
+      lines.push('        2 Allow matching calls for this Session');
+      lines.push('        3 Save matching rule to Settings');
+      lines.push('        4 Send guidance instead');
+      lines.push('        d Deny');
+      lines.push('     ────────────────────────────────────────────');
+      lines.push('     1-4 choose · Enter confirm · D deny');
+    }
+    lines.push('  agent id: ab12cd');
+    return box(lines, width);
+  }
+
+  function coderCard(width) {
+    return box([
+      '◆ Coder  running · foreground · 2m 05s',
+      '  audit stale references across src/ and report…',
+      '  ⌄ Tools · 12 total · 8 done · 1 active',
+      '    ◌ grep  running',
+      '  agent id: c9f3a1',
+    ], width);
+  }
+
+  function visionCard(width) {
+    return box([
+      '◆ Vision  running · background · 0m 33s',
+      '  inspect the provided screenshot…',
+      '  › Tools · 1 total · 1 active',
+      '    ↳ read_file  running',
+      '  agent id: 0e77bd',
+    ], width);
+  }
+
+  function permissionPanel(width) {
+    return [
+      '┌ Permissions ────────────────────────────',
+      '│ Owner: Researcher › read_file',
+      '│   { "path": "/workspace/claims.md", "limit": 400 }',
+      '│ ─────────────────────────────────────────',
+      '│  ▶ 1 Allow once',
+      '│    2 Allow matching calls for this Session',
+      '│    3 Save matching rule to Settings',
+      '│    4 Send guidance instead',
+      '│    d Deny',
+      '│ ─────────────────────────────────────────',
+      '│ 1-4 choose · Enter confirm · D deny',
+      '└──────────────────────────────────────────',
+    ].map((l) => l.slice(0, width));
+  }
+
+  function render() {
+    const width = wide ? 120 : 80;
+    const lines = [
+      'you › Run a research pass on the claims, audit the repo for stale references, and rebuild the dashboard.',
+      '',
+    ];
+    lines.push(...researcherCard(mode, width));
+    lines.push('');
+    lines.push(...coderCard(width));
+    lines.push('');
+    lines.push(...visionCard(width));
+
+    if (mode === 'new') {
+      lines.push('');
+      lines.push(...permissionPanel(width));
+    }
+
+    lines.push('');
+    lines.push('↳ message dscode…');
+
+    screen.textContent = lines.join('\n');
+    screen.style.fontSize = wide ? '13px' : '12px';
+  }
+
+  modeBtn.addEventListener('click', () => {
+    mode = mode === 'new' ? 'old' : 'new';
+    modeBtn.textContent = mode === 'new' ? 'Mode: New (independent panel)' : 'Mode: Old (inline in tool timeline)';
+    modeBtn.classList.toggle('active', mode === 'new');
+    render();
+  });
+  themeBtn.addEventListener('click', () => {
+    const dark = document.body.classList.toggle('dark');
+    themeBtn.textContent = dark ? 'Theme: Dark' : 'Theme: Light';
+  });
+  widthBtn.addEventListener('click', () => {
+    wide = !wide;
+    widthBtn.textContent = wide ? 'Width: 120 cols' : 'Width: 80 cols';
+    render();
+  });
+
+  render();
+</script>
+</body>
+</html>

@@ -45,7 +45,6 @@ type ContentBlock =
 interface AgentCardOptions {
   toolsExpanded?: boolean;
   selected?: boolean;
-  permissionLines?: string[];
   contentWidth?: number;
 }
 
@@ -216,8 +215,7 @@ function activitySymbol(activity: AgentActivity): string {
 }
 
 function defaultAgentToolsExpanded(activity: AgentActivity): boolean {
-  return Boolean(activity.permission)
-    || ["created", "running", "waiting", "stopped"].includes(activity.state);
+  return ["created", "running", "waiting", "stopped"].includes(activity.state);
 }
 
 export function formatAgentActivityForTui(
@@ -241,9 +239,7 @@ export function formatAgentActivityForTui(
       failed > 0 ? `${failed} failed` : "",
       active > 0 ? `${active} active` : "",
     ].filter(Boolean).join(" · ");
-    const expanded = activity.permission
-      ? true
-      : options.toolsExpanded ?? defaultAgentToolsExpanded(activity);
+    const expanded = options.toolsExpanded ?? defaultAgentToolsExpanded(activity);
     lines.push(`  ${expanded ? "⌄" : "›"} Tools · ${summary}`);
     if (!expanded) {
       const activeTool = [...activity.tools].reverse().find(
@@ -279,15 +275,6 @@ export function formatAgentActivityForTui(
         lines.push(
           `${prefix}${truncateToWidth(`${tool.name}${detail}`, toolWidth, "…")}${suffix}`,
         );
-      }
-      if (activity.permission) {
-        lines.push(`    Permission required · ${activity.permission.toolName}`);
-        if (activity.permission.preview) {
-          lines.push(`      ${truncateSummary(activity.permission.preview, 100)}`);
-        }
-        for (const line of options.permissionLines ?? []) {
-          lines.push(`    ${line}`);
-        }
       }
     }
   }
@@ -1133,10 +1120,7 @@ export class ConversationView {
       this.liveComponents.push(card);
     }
 
-    const permissionHasAgentCard = this._activePermission
-      ? this.allAgentBlocks().some((block) => this.permissionMatchesAgentBlock(block))
-      : false;
-    if (this._activePermission && !permissionHasAgentCard) {
+    if (this._activePermission) {
       const permText = new Text(this.renderPermPrompt().join("\n"));
       this.box.addChild(permText);
       this.liveComponents.push(permText);
@@ -1146,12 +1130,8 @@ export class ConversationView {
   }
 
   private makeAgentCard(block: AgentActivityBlock): TuiAgentActivityCard {
-    const permissionLines = this.permissionMatchesAgentBlock(block)
-      ? this.renderPermPrompt()
-      : undefined;
     return new TuiAgentActivityCard(block.activity, {
       toolsExpanded: block.toolsExpanded,
-      permissionLines,
     });
   }
 

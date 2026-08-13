@@ -425,7 +425,7 @@ describe("TUI Agent Activity", () => {
     expect(rendered).not.toContain("SubAgent");
   });
 
-  it("keeps Chat summaries compact and locks permission tools open", () => {
+  it("keeps Chat summaries compact without forcing permission tools open", () => {
     const view = new ConversationView({ requestRender: vi.fn() } as any);
     view.startAssistantMessage();
     view.thinkingDelta("Detailed reasoning retained in the turn");
@@ -483,7 +483,7 @@ describe("TUI Agent Activity", () => {
       },
     });
     const permission = stripAnsi(view.component.render(72).join("\n"));
-    expect(permission).toContain("Permission required · bash");
+    expect(permission).toContain("bash  permission");
     expect(permission).toContain("⌄ Tools");
     expect(view.getActiveExecutionStatus()).toBe(
       "Researcher · bash · permission required",
@@ -570,7 +570,7 @@ describe("TUI Agent Activity", () => {
     });
 
     const rendered = stripAnsi(view.component.render(100).join("\n"));
-    expect(rendered).toContain("Permission required · bash");
+    expect(rendered).toContain("bash  permission");
     expect(rendered).toContain("Owner: SubAgent > bash");
     expect(rendered).toContain("▶ Allow once  [1]");
     expect(rendered).toContain("Allow matching calls for this Session  [2]");
