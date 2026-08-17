@@ -28,6 +28,8 @@ export type {
   EvalDashboardEvidenceSummary,
 } from "@dscode/shared/types";
 
+export type { TraceTree } from "@dscode/shared/trace-tree";
+
 
 // ── Web-specific local types ──
 

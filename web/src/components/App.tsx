@@ -12,6 +12,7 @@ import type {
   EvalDashboardServerEvent,
   PermissionPrompt,
   ViewMode,
+  TraceTree,
 } from "../types";
 import { conversationReducer } from "@dscode/shared/reducer";
 import { useWebSocket } from "../hooks/useWebSocket";
@@ -122,6 +123,7 @@ export function App() {
   const [viewMode, setViewMode] = useState<ViewMode>("chat");
   const [sessionArtifactHtml, setSessionArtifactHtml] = useState("");
   const [sessionArtifactLoading, setSessionArtifactLoading] = useState(false);
+  const [traceTree, setTraceTree] = useState<TraceTree | null>(null);
   const [cacheSize, setCacheSize] = useState<{ totalBytes: number; fileCount: number; sessionCount: number } | null>(null);
   const [cacheClearing, setCacheClearing] = useState(false);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
@@ -245,6 +247,7 @@ export function App() {
       case "mcp_state": setMcpServers(event.servers); break;
       case "mcp_open_browser": setSidebarOpen(true); setActivePanel("mcp"); break;
       case "model": setModel(event.name); break;
+      case "trace_tree": setTraceTree(event.tree); break;
       case "context_window": setContextWindow(event); break;
       case "config": setConfig(event.data); break;
       case "file_list_result": setFileListItems(event.items); setFileListPrefix(event.prefix); break;
@@ -526,6 +529,7 @@ export function App() {
                 loading: sessionArtifactLoading,
               }}
               theme={theme}
+              traceTree={traceTree}
             />
           ) : viewMode === "eval_dashboard" && evalState ? (
             <EvalDashboardView

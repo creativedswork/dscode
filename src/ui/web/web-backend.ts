@@ -22,6 +22,7 @@ import type {
 } from "../../mcp/app/types.js";
 import { rebuildDisplayMessages } from "../shared/session-projector.js";
 import { AgentActivityProjector } from "../shared/agent-activity.js";
+import { projectTraceTreeFromSession } from "../shared/trace-tree-projection.js";
 import { harnessEventToConversationEvent } from "../shared/harness-conversation-adapter.js";
 import { formatAgentDisplayId } from "../shared/agent-id.js";
 import { serializeArtifactThemeVariables } from "../../application/artifact-theme.js";
@@ -241,7 +242,8 @@ export const SESSION_DASHBOARD_VISUAL_REQUIREMENTS = `DASHBOARD CONTENT REQUIREM
 - Full SubAgent execution detail belongs exclusively in Chat Agent Activity and must not be duplicated in Dashboard.
 - Failed, terminated, and killed records must use the error semantic colors plus visible status text; never communicate failure by color alone.
 - Label totalDurationFormatted as "Delegated time" and keep it distinct from Session active time because parallel Agents may overlap.
-- When subagents.total is 0, retain the Agent section with an explicit "Main Agent only" empty state.`;
+- When subagents.total is 0, retain the Agent section with an explicit "Main Agent only" empty state.
+- Reserve an empty placeholder block <div id="trace-tree"></div> in the report content flow (after the overview metric cards and before the "Agent Processes" section). Leave it completely empty with no content or styles — the client injects an interactive Trace trajectory tree widget into that exact placeholder.`;
 
 export function buildSessionDashboardUserPrompt(sessionSummary: string): string {
   return `Create a rich visual dashboard for this coding session. Use the data below to build a comprehensive, beautiful dashboard:
@@ -411,6 +413,7 @@ export class WebUiBackend implements UiBackend {
       if (projected) this.broadcast(projected);
       this.broadcastContextWindow(true, toolsForBroadcast);
       this.pushSessionListToAll();
+      void this.broadcastTraceTree();
     });
     h.events.on("turn:abort", () => { this.stopSessionTimeBroadcast(); this.broadcast({ type: "loader", state: "hide" }); });
     h.events.on("turn:error", (e) => { this.broadcast({ type: "error", text: e.error }); });
@@ -595,6 +598,7 @@ export class WebUiBackend implements UiBackend {
       messages: this.buildConversationHistory(),
     });
     this.broadcastContextWindow(true);
+    void this.broadcastTraceTree();
   }
 
   takePendingPermission(): PendingPermission | undefined {
@@ -654,13 +658,14 @@ export class WebUiBackend implements UiBackend {
     const messages = this.buildConversationHistory();
     const model = this.harness.conversation.snapshot().modelName;
 
-      client.send({
+    client.send({
       type: "ready",
       model,
       config: configData,
       messages,
     });
     this.broadcastContextWindow(true);
+    void this.broadcastTraceTree();
     if (this.harness.mcp.list().length > 0) {
       this.pushMcpState();
     }
@@ -1401,6 +1406,22 @@ export class WebUiBackend implements UiBackend {
   }
 
 
+  private async broadcastTraceTree(): Promise<void> {
+    try {
+      const snapshot = this.harness.conversation.snapshot();
+      const sessionId = this.harness.sessions.currentId() ?? "unknown";
+      const tree = await projectTraceTreeFromSession({
+        messages: snapshot.messages,
+        agentMessages: snapshot.agentMessages,
+        sessionId,
+        loadProcesses: (ids) => this.harness.agents.loadPersisted(ids),
+        resolveImage: (ref) => this.harness.conversation.resolveImage(ref),
+      });
+      this.broadcast({ type: "trace_tree", tree });
+    } catch {
+      // Trace projection is read-only best-effort; never break the dashboard.
+    }
+  }
   private broadcast(event: ServerEvent): void {
     this.wsServer.broadcast(event);
   }
@@ -1596,6 +1617,7 @@ Modify the HTML to fulfill the user's request. Output the complete modified HTML
       // DEBUG: write artifact output for inspection
       try { writeFileSync(join(this.config.projectPath, "_artifact_debug.html"), fullHtml, "utf-8"); } catch {}
       this.lastArtifactHtml = fullHtml;
+      if (cmd.context === "session_dashboard") void this.broadcastTraceTree();
       client.send({ type: "artifact_end" });
     } catch (err) {
       client.send({ type: "artifact_end" });

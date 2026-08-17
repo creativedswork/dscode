@@ -2,6 +2,8 @@
 // Canonical types consumed by both TUI and Web UI.
 // MUST remain pure TypeScript — zero Node.js / server dependencies.
 
+import type { TraceTree } from "./trace-tree.js";
+
 // ── Image ──
 
 export interface ImageAttachment {
@@ -211,6 +213,7 @@ export interface AgentActivity {
   createdAt: number;
   startedAt?: number;
   endedAt?: number;
+  transcript?: readonly UIMessage[];
 }
 
 export interface ConversationMessage {
@@ -398,5 +401,6 @@ export type ServerEvent =
   | { type: "artifact_delta"; delta: string }
   | { type: "artifact_end" }
   | EvalDashboardServerEvent
+  | { type: "trace_tree"; tree: TraceTree }
   | { type: "cache_size"; totalBytes: number; fileCount: number; sessionCount: number }
   | { type: "mcp_open_browser" }
