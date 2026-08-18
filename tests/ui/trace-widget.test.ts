@@ -17,15 +17,16 @@ function message(overrides: Partial<UIMessage> = {}): UIMessage {
 }
 
 describe("trace widget injection", () => {
-  it("embeds the projected tree and fullscreen control", () => {
+  it("embeds the projected tree and trajectory controls", () => {
     const tree = projectTraceTree([
       message({ id: "u1", role: "user", content: "hi", createdAt: 1000 }),
     ]);
     const html = buildTraceWidgetHtml(tree);
 
     expect(html).toContain('id="traceWidget"');
-    expect(html).toContain('id="fullscreenBtn"');
-    expect(html).toContain("fullscreen");
+    expect(html).toContain('id="themeBtn"');
+    expect(html).toContain('id="clearBtn"');
+    expect(html).not.toContain('id="fullscreenBtn"');
     expect(html).toContain('"kind":"agent"');
     expect(html).toContain('"id":"u1"');
     // Escape guard: raw "<" is not emitted into the script body.
@@ -41,7 +42,7 @@ describe("trace widget injection", () => {
 
     expect(out).toContain('id="traceWidget"');
     expect(out).not.toContain('id="trace-tree"');
-    expect(out).toContain('id="fullscreenBtn"');
+    expect(out).toContain('id="themeBtn"');
   });
 
   it("strips pre-existing LLM script tags before injection", () => {

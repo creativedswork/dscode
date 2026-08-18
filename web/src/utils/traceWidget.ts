@@ -1,10 +1,15 @@
 // ── Trace widget injection ──
 // Builds a self-contained, script-and-style-carrying Trace tree widget and
 // injects it into the Session Dashboard artifact HTML. The widget runs inside
-// the dashboard iframe and renders a git-branch topology (one vertical lane per
-// Agent, SubAgent forks to the right, merge back with a dashed elbow) with zero
-// third-party dependencies. The tree is projected on the backend; the client
-// only embeds and renders it.
+// the dashboard iframe and renders a trajectory tree (node + parent→child thin
+// edges) with zero third-party dependencies. The tree is projected on the
+// backend; the client only embeds and renders it.
+//
+// The view is a readable fixed-node-size layout (vertical + horizontal scroll)
+// with no minimap, zoom, fullscreen or linear-run folding. Nodes are typed by
+// shape (agent=diamond, user=open circle, assistant=dot, tool=square) and
+// clicking highlights the selected node plus its ancestor/descendant path
+// without dimming any other node.
 
 import { applyArtifactTheme } from "./artifactTheme.js";
 import type { ArtifactTheme } from "../../../src/application/artifact-theme.js";
@@ -33,120 +38,144 @@ const WIDGET_TEMPLATE = `<!-- dscode trace widget -->
   <div class="trace-head">
     <span class="glyph">⎇</span>
     <span class="trace-head-title">Trace · trajectory</span>
-    <span class="muted">Agent lanes · git branches</span>
-    <button class="icon-btn" id="fullscreenBtn" title="Fullscreen" aria-label="Toggle fullscreen" style="margin-left:auto">⤢</button>
+    <span class="muted">轨迹树 · Agent 分叉</span>
   </div>
 
   <div class="trace-toolbar">
-    <div class="group">
-      <label for="fromDate">From</label>
-      <input type="date" id="fromDate" />
-      <label for="toDate">To</label>
-      <input type="date" id="toDate" />
-      <button class="icon-btn" id="clearFilter" title="Clear date filter">✕</button>
-    </div>
-    <div class="group">
-      <span class="toolbar-label">Agent</span>
-      <select id="agentFilter" class="trace-select"></select>
-    </div>
-    <div class="group">
-      <span class="toolbar-label">Density</span>
-      <select id="densityFilter" class="trace-select">
-        <option value="compact" selected>Compact</option>
-        <option value="relaxed">Relaxed</option>
-      </select>
-    </div>
-    <div class="group">
-      <button class="icon-btn" id="zoomOut" title="Zoom out">−</button>
-      <button class="icon-btn" id="zoomIn" title="Zoom in">+</button>
-      <button class="icon-btn" id="fitView" title="Fit view">⛶</button>
-    </div>
-    <div class="legend">
-      <span class="item"><span class="mk diamond"></span>Agent</span>
-      <span class="item"><span class="mk circle"></span>User</span>
-      <span class="item"><span class="mk dot"></span>Assistant</span>
-      <span class="item"><span class="mk square"></span>Tool</span>
-    </div>
+    <button class="icon-btn" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">◐</button>
+    <button class="icon-btn" id="clearBtn" title="Clear selection" aria-label="Clear selection" disabled>✕ 清除选择</button>
+    <span class="hint"><kbd>Esc</kbd> / 点空白清除选择</span>
   </div>
 
   <div class="trace-main">
-    <div class="canvas-wrap" id="canvasWrap">
-      <svg id="tree"></svg>
-      <div class="canvas-hint">scroll to zoom · drag to pan · click node for details · caret to collapse</div>
+    <div class="graph-scroll" id="graphScroll">
+      <div class="graph" id="graph">
+        <svg class="tree" id="tree"></svg>
+        <div class="rows" id="rows"></div>
+      </div>
     </div>
-    <aside class="trace-detail empty" id="detail">
-      <div class="trace-detail-empty">
-        <div class="trace-detail-empty-glyph">⎇</div>
-        <div>Select a node to inspect</div>
-        <div class="trace-detail-empty-sub">Agent · message · tool call</div>
+    <aside class="trace-detail" id="detail">
+      <div class="trace-detail-head"><span>节点详情</span><button class="icon-btn" id="detailX" title="Clear selection" aria-label="Clear selection">✕</button></div>
+      <div class="trace-detail-body" id="detailBody">
+        <div class="trace-detail-empty">
+          <div class="trace-detail-empty-glyph">⎇</div>
+          <div>选择一个节点查看详情</div>
+          <div class="trace-detail-empty-sub">点击节点 · Esc / 点空白清除</div>
+        </div>
       </div>
     </aside>
   </div>
 
   <style>
     .trace-widget {
+      --bg: #f8f7f5;
+      --surface: #f3f2ef;
+      --border: #e6e4e0;
+      --text: #2d2a26;
+      --muted: #8a8580;
+      --accent: #b87503;
+      --success: #347539;
+      --error: #9f2f2d;
+      --warning: #8a6500;
       border: 1px solid var(--border);
       border-radius: 12px;
       background: var(--surface);
-      padding: 8px 10px;
+      padding: 10px 12px;
       font-family: system-ui, -apple-system, sans-serif;
       color: var(--text);
+      font-size: 13px;
+    }
+    .trace-widget.dark {
+      --bg: #1e1c19;
+      --surface: #282622;
+      --border: #3a3732;
+      --text: #e8e4dd;
+      --muted: #8a8580;
+      --accent: #c98605;
+      --success: #5ca860;
+      --error: #e05553;
+      --warning: #d5a72a;
     }
     .trace-widget * { box-sizing: border-box; }
     .trace-widget .trace-head {
       display: flex; align-items: center; gap: 8px;
-      padding: 0 0 6px; font-size: 12px; color: var(--muted);
+      padding: 0 0 8px; font-size: 13px;
     }
     .trace-widget .trace-head .glyph { color: var(--accent); font-weight: 700; }
-    .trace-widget .trace-head-title { color: var(--text); font-weight: 600; }
+    .trace-widget .trace-head-title { font-weight: 600; }
     .trace-widget .muted { color: var(--muted); }
-    .trace-widget .icon-btn {
-      border: 1px solid var(--border); background: var(--surface);
-      color: var(--text); width: 28px; height: 28px; border-radius: 6px;
-      cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
-      font-size: 13px;
-    }
     .trace-widget .trace-toolbar {
-      display: none; align-items: center; gap: 10px; flex-wrap: wrap;
-      padding: 8px 0; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      padding: 7px 0; border-top: 1px solid var(--border); border-bottom: 1px solid var(--border);
     }
-    .trace-widget .trace-toolbar .group { display: flex; align-items: center; gap: 6px; }
-    .trace-widget .trace-toolbar label, .trace-widget .toolbar-label {
-      font-size: 12px; color: var(--muted);
+    .trace-widget .icon-btn {
+      border: 1px solid var(--border); background: var(--bg);
+      color: var(--text); height: 26px; border-radius: 6px;
+      cursor: pointer; display: inline-flex; align-items: center; justify-content: center;
+      font-size: 12px; padding: 0 8px;
     }
-    .trace-widget input[type="date"], .trace-widget .trace-select {
-      font-family: inherit; font-size: 12px; color: var(--text);
-      background: var(--surface); border: 1px solid var(--border);
-      border-radius: 6px; padding: 4px 6px;
+    .trace-widget .icon-btn:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+    .trace-widget .icon-btn:disabled { opacity: 0.4; cursor: default; }
+    .trace-widget .hint { font-size: 11px; color: var(--muted); margin-left: auto; }
+    .trace-widget .hint kbd {
+      font-family: ui-monospace, monospace; background: var(--bg);
+      border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; font-size: 10px;
     }
-    .trace-widget .legend { display: flex; gap: 12px; align-items: center; margin-left: auto; }
-    .trace-widget .legend .item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
-    .trace-widget .mk { width: 9px; height: 9px; display: inline-block; flex: 0 0 auto; }
-    .trace-widget .mk.diamond { background: var(--accent); transform: rotate(45deg); border-radius: 1px; }
-    .trace-widget .mk.circle { border: 1.5px solid var(--text); border-radius: 50%; }
-    .trace-widget .mk.dot { background: var(--text); border-radius: 50%; }
-    .trace-widget .mk.square { background: color-mix(in srgb, var(--accent) 30%, transparent); border: 1px solid var(--accent); }
-    .trace-widget .trace-main { display: flex; min-height: 0; }
-    .trace-widget .canvas-wrap {
-      flex: 1 1 auto; position: relative; overflow: hidden; height: 200px;
-      background: radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0);
-      background-size: 22px 22px; cursor: grab;
+    .trace-widget .trace-main { display: flex; min-height: 0; border-top: 1px solid var(--border); margin-top: 8px; }
+
+    /* ── left: trajectory tree (SVG edges + node markers) over commit rows ── */
+    .trace-widget .graph-scroll { flex: 1 1 auto; overflow: auto; min-width: 0; position: relative; height: 360px; }
+    .trace-widget .graph { position: relative; min-width: 640px; }
+    .trace-widget svg.tree { position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none; }
+    .trace-widget .rows { position: relative; z-index: 1; }
+
+    .trace-widget .row { display: flex; height: 34px; cursor: pointer; user-select: none; }
+    .trace-widget .row:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+    .trace-widget .gutter { flex: 0 0 auto; }
+    .trace-widget .commit {
+      flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 10px;
+      border-bottom: 1px solid var(--border); padding-right: 12px;
     }
-    .trace-widget .canvas-wrap:active { cursor: grabbing; }
-    .trace-widget .canvas-wrap svg { width: 100%; height: 100%; display: block; }
-    .trace-widget .canvas-hint {
-      position: absolute; left: 14px; bottom: 12px; font-size: 11px;
-      color: var(--muted); pointer-events: none;
+    .trace-widget .row:last-child .commit { border-bottom: none; }
+
+    .trace-widget .commit .who { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .trace-widget .commit .label { font-weight: 600; white-space: nowrap; }
+    .trace-widget .commit .label.tool { font-family: ui-monospace, monospace; font-weight: 600; }
+    .trace-widget .chip {
+      flex: 0 0 auto; font-size: 10px; font-weight: 600; padding: 1px 7px; border-radius: 999px;
+      white-space: nowrap; background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent);
     }
+    .trace-widget .commit .msg { flex: 1 1 auto; min-width: 0; color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .trace-widget .commit .ts { flex: 0 0 auto; font-family: ui-monospace, monospace; font-size: 11px; color: var(--muted); }
+    .trace-widget .commit .state { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; }
+    .trace-widget .state.done { background: var(--success); }
+    .trace-widget .state.running { background: var(--warning); }
+    .trace-widget .state.failed { background: var(--error); }
+    .trace-widget .state.waiting { background: transparent; border: 1.5px solid var(--muted); }
+
+    /* selection & path highlight — no opacity dimming anywhere */
+    .trace-widget .row.selected { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+    .trace-widget .row.selected .commit { box-shadow: inset 3px 0 0 var(--accent); }
+    .trace-widget .row.selected .label { color: var(--accent); }
+    .trace-widget .row.path .commit { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+
+    /* ── right: detail panel ── */
     .trace-widget .trace-detail {
-      display: none; flex: 0 0 340px; border-left: 1px solid var(--border);
-      background: var(--surface); overflow-y: auto; flex-direction: column;
+      flex: 0 0 260px; border-left: 1px solid var(--border);
+      background: var(--surface); display: flex; flex-direction: column; min-height: 0;
     }
-    .trace-widget .trace-detail.empty { align-items: center; justify-content: center; color: var(--muted); }
-    .trace-widget .trace-detail-empty { text-align: center; padding: 24px; }
-    .trace-widget .trace-detail-empty-glyph { font-size: 28px; opacity: 0.4; }
-    .trace-widget .trace-detail-empty-sub { margin-top: 4px; font-size: 11px; color: var(--muted); }
-    .trace-widget .trace-detail .pad { padding: 16px; }
+    .trace-widget .trace-detail-head {
+      padding: 7px 10px; font-size: 11px; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.04em; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .trace-widget .trace-detail-body { flex: 1; overflow: auto; padding: 14px; }
+    .trace-widget .trace-detail-empty {
+      height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
+      color: var(--muted); text-align: center; gap: 6px;
+    }
+    .trace-widget .trace-detail-empty-glyph { font-size: 26px; opacity: 0.35; }
+    .trace-widget .trace-detail-empty-sub { font-size: 11px; color: var(--muted); }
     .trace-widget .trace-detail .kind-tag {
       display: inline-flex; align-items: center; gap: 6px; font-size: 11px;
       color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent);
@@ -154,19 +183,20 @@ const WIDGET_TEMPLATE = `<!-- dscode trace widget -->
     }
     .trace-widget .trace-detail h2 { font-size: 15px; margin: 12px 0 4px; font-weight: 600; color: var(--text); }
     .trace-widget .trace-detail .sub { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
-    .trace-widget .trace-detail .row { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
-    .trace-widget .trace-detail .row .k {
-      font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em;
+    .trace-widget .trace-detail .row { display: block; cursor: default; height: auto; margin-bottom: 12px; }
+    .trace-widget .trace-detail .row:hover { background: transparent; }
+    .trace-widget .trace-detail .k {
+      font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 4px;
     }
-    .trace-widget .trace-detail .row .v {
-      font-size: 13px; line-height: 1.5; background: var(--bg);
-      border: 1px solid var(--border); border-radius: 8px;
-      padding: 9px 10px; white-space: pre-wrap; word-break: break-word; color: var(--text);
+    .trace-widget .trace-detail .v {
+      font-size: 12px; line-height: 1.5; background: var(--bg);
+      border: 1px solid var(--border); border-radius: 6px; padding: 8px 9px;
+      white-space: pre-wrap; word-break: break-word; color: var(--text);
     }
-    .trace-widget .trace-detail .row .v.code { font-family: ui-monospace, monospace; font-size: 12px; }
+    .trace-widget .trace-detail .v.code { font-family: ui-monospace, monospace; font-size: 11px; }
     .trace-widget .trace-detail details.fold summary {
-      cursor: pointer; font-size: 13px; line-height: 1.5; color: var(--text);
-      background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px;
+      cursor: pointer; font-size: 12px; line-height: 1.5; color: var(--text);
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 9px;
       white-space: pre-wrap; word-break: break-word;
     }
     .trace-widget .trace-detail details.fold .v { margin-top: 4px; }
@@ -174,52 +204,37 @@ const WIDGET_TEMPLATE = `<!-- dscode trace widget -->
       display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
       border-radius: 999px; padding: 2px 9px; font-weight: 600;
     }
-    .trace-widget .state-running { background: var(--warning-bg, var(--warning)); color: var(--warning); }
-    .trace-widget .state-completed { background: var(--success-bg, var(--success)); color: var(--success); }
-    .trace-widget .state-failed { background: var(--error-bg, var(--error)); color: var(--error); }
-    .trace-widget .state-terminated, .trace-widget .state-killed { background: var(--error-bg, var(--error)); color: var(--error); }
-    .trace-widget .state-waiting, .trace-widget .state-created, .trace-widget .state-stopped { background: var(--surface); color: var(--muted); }
-    .trace-widget.fullscreen {
-      position: fixed; inset: 0; z-index: 100; background: var(--bg);
-      overflow: auto; display: flex; flex-direction: column; padding: 12px 14px;
-    }
-    .trace-widget.fullscreen .trace-main { flex: 1 1 auto; height: auto; }
-    .trace-widget.fullscreen .trace-toolbar { display: flex; }
-    .trace-widget.fullscreen .trace-detail { display: flex; }
-    .trace-widget.fullscreen .canvas-wrap { height: auto; min-height: 320px; }
+    .trace-widget .state-running { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); }
+    .trace-widget .state-completed { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
+    .trace-widget .state-failed { background: color-mix(in srgb, var(--error) 16%, transparent); color: var(--error); }
+    .trace-widget .state-terminated, .trace-widget .state-killed { background: color-mix(in srgb, var(--error) 16%, transparent); color: var(--error); }
+    .trace-widget .state-waiting, .trace-widget .state-created, .trace-widget .state-stopped { background: var(--bg); color: var(--muted); }
   </style>
 
   <script>
 (function () {
   "use strict";
   var BASE_ROOT = __TRACE_ROOT_JSON__;
-  var NS = "http://www.w3.org/2000/svg";
 
   var LANE_COLORS = [
     "#b87503", "#2f8f83", "#3d6fb4", "#7a5fb0",
     "#b45f8f", "#4f8f4f", "#b08a2f", "#8f5f2f"
   ];
-  var STATE_COLOR = {
-    running: "var(--warning)", completed: "var(--success)", failed: "var(--error)",
-    terminated: "var(--error)", killed: "var(--error)"
-  };
   var KIND_ICON = { agent: "◇", user: "◯", assistant: "◆", tool: "▣", system: "ℹ" };
 
-  var svg = document.getElementById("tree");
-  var wrap = document.getElementById("canvasWrap");
-  var detail = document.getElementById("detail");
+  var ROW_H = 34;
+  var LANE_BASE = 20;
+  var LANE_SPACING = 36;
 
-  var collapsed = new Set();
+  var widget = document.getElementById("traceWidget");
+  var treeEl = document.getElementById("tree");
+  var rowsEl = document.getElementById("rows");
+  var graph = document.getElementById("graph");
+  var graphScroll = document.getElementById("graphScroll");
+  var detailBody = document.getElementById("detailBody");
+  var clearBtn = document.getElementById("clearBtn");
+
   var selection = null;
-  var view = { x: 40, y: 40, k: 1 };
-  var selectedAgent = "";
-
-  var DENSITY = { compact: { lane: 132, row: 28, nodeH: 22, fs: 10 }, relaxed: { lane: 168, row: 40, nodeH: 28, fs: 11 } };
-  var density = "compact";
-  var LANE_W = DENSITY.compact.lane;
-  var ROW_H = DENSITY.compact.row;
-  var NODE_H = DENSITY.compact.nodeH;
-  var NODE_W = 128;
 
   function esc(s) {
     return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
@@ -227,310 +242,182 @@ const WIDGET_TEMPLATE = `<!-- dscode trace widget -->
     });
   }
 
-  function agentList(root) {
-    var list = [{ id: "main", label: root.label || "Main" }];
-    var seen = new Set(["main"]);
-    (function walk(n) {
-      if (n.kind === "agent" && !seen.has(n.ownerAgentId)) {
-        seen.add(n.ownerAgentId);
-        list.push({ id: n.ownerAgentId, label: n.label });
-      }
-      n.children.forEach(walk);
-    })(root);
-    return list;
-  }
-
-  function renderAgentFilter() {
-    var el = document.getElementById("agentFilter");
-    var agents = agentList(BASE_ROOT);
-    el.innerHTML = "";
-    agents.forEach(function (a) {
-      var opt = document.createElement("option");
-      opt.value = a.id;
-      opt.textContent = a.label;
-      el.appendChild(opt);
-    });
-    el.value = selectedAgent;
-  }
-
-  function applyFilters(root, from, to, owner) {
-    var min = from ? new Date(from + "T00:00:00").getTime() : -Infinity;
-    var max = to ? new Date(to + "T23:59:59.999").getTime() : Infinity;
-    function inRange(n) {
-      if (n.kind === "agent") return true;
-      if (n.ts == null) return true;
-      return n.ts >= min && n.ts <= max;
-    }
-    function ownerOk(n) {
-      if (n.id === root.id) return true;
-      if (!owner) return true;
-      return n.ownerAgentId === owner;
-    }
-    function matches(n) { return inRange(n) && ownerOk(n); }
-    function hasMatch(n) { return matches(n) || n.children.some(hasMatch); }
-    function clone(n) {
-      return {
-        id: n.id, kind: n.kind, label: n.label, sub: n.sub, ts: n.ts,
-        ownerAgentId: n.ownerAgentId, lane: n.lane, mergeTargetId: n.mergeTargetId,
-        ghost: n.ghost === true || !matches(n),
-        isError: n.isError, state: n.state, detail: n.detail, unattached: n.unattached,
-        children: n.children.filter(hasMatch).map(clone)
-      };
-    }
-    return clone(root);
-  }
-
-  // Depth-first layout: each node gets a row; x = lane * LANE_W.
-  function measure(root) {
-    var pos = new Map();
-    var order = [];
-    var maxLane = 0;
-    (function visit(n, row) {
-      pos.set(n.id, { x: n.lane * LANE_W, y: row * ROW_H, lane: n.lane });
-      order.push(n);
-      maxLane = Math.max(maxLane, n.lane);
-      var next = row + 1;
-      if (collapsed.has(n.id) || n.children.length === 0) return next;
-      // Continuation children (non-agent) first so the spine stays straight;
-      // agent forks render to the right.
-      var cont = n.children.filter(function (c) { return c.kind !== "agent"; });
-      var forks = n.children.filter(function (c) { return c.kind === "agent"; });
-      var all = cont.concat(forks);
-      var r = next;
-      for (var i = 0; i < all.length; i++) r = visit(all[i], r);
-      return r;
-    })(root, 0);
-    return { pos: pos, order: order, maxLane: maxLane };
-  }
-
-  function focusSubtree(root, selectedId) {
-    if (!selectedId) return null;
-    var set = new Set();
-    var found = false;
-    (function walk(n, inSub) {
-      if (inSub || n.id === selectedId) {
-        found = true; set.add(n.id); n.children.forEach(function (c) { walk(c, true); });
-      } else {
-        n.children.forEach(function (c) { walk(c, false); });
-      }
-    })(root, false);
-    return found ? set : null;
-  }
-
   function laneColor(lane) {
-    return LANE_COLORS[lane % LANE_COLORS.length];
+    return LANE_COLORS[((lane % LANE_COLORS.length) + LANE_COLORS.length) % LANE_COLORS.length];
   }
 
-  function shapeFor(kind, ghost, x, y) {
-    var cx = x + 12, cy = y + NODE_H / 2;
-    if (kind === "agent") {
-      var d = "M " + cx + " " + (cy - 7) + " L " + (cx + 7) + " " + cy + " L " + cx + " " + (cy + 7) + " L " + (cx - 7) + " " + cy + " Z";
-      return '<path d="' + d + '" fill="' + (ghost ? "transparent" : "var(--accent)") + '" stroke="var(--accent)" stroke-width="1.5"/>';
-    }
-    if (kind === "user") {
-      return '<circle cx="' + cx + '" cy="' + cy + '" r="5" fill="transparent" stroke="' + (ghost ? "var(--border)" : "var(--text)") + '" stroke-width="1.5"/>';
-    }
-    if (kind === "assistant") {
-      return '<circle cx="' + cx + '" cy="' + cy + '" r="4" fill="' + (ghost ? "var(--border)" : "var(--text)") + '"/>';
-    }
-    if (kind === "tool") {
-      return '<rect x="' + (cx - 5) + '" y="' + (cy - 5) + '" width="10" height="10" fill="' + (ghost ? "transparent" : "color-mix(in srgb, var(--accent) 30%, transparent)") + '" stroke="var(--accent)" stroke-width="1.25"/>';
-    }
-    return '<circle cx="' + cx + '" cy="' + cy + '" r="4" fill="var(--muted)"/>';
-  }
+  function laneX(lane) { return LANE_BASE + lane * LANE_SPACING; }
 
-  function render() {
-    var from = document.getElementById("fromDate").value;
-    var to = document.getElementById("toDate").value;
-    var tree = applyFilters(BASE_ROOT, from, to, selectedAgent);
-    var m = measure(tree);
-    var pos = m.pos, order = m.order, maxLane = m.maxLane;
-    var focusSet = focusSubtree(tree, selection);
+  // Flatten the tree into a fork-first row order (a SubAgent subtree sits right
+  // after its spawn point, before the parent path continues). Also derive the
+  // pure-visual "return" edges: each SubAgent tail returns to its parent path's
+  // continuation node.
+  function flatten(root) {
+    var rows = [];
+    var parentOf = {};
+    var rowIdx = {};
+    var subtreeEnd = {};
+    var returns = [];
+    var maxLane = 0;
 
-    svg.innerHTML = "";
+    (function visit(n, parent) {
+      var start = rows.length;
+      rows.push(n);
+      rowIdx[n.id] = start;
+      if (parent) parentOf[n.id] = parent.id;
+      if (n.lane > maxLane) maxLane = n.lane;
 
-    var g = document.createElementNS(NS, "g");
-    g.setAttribute("transform", "translate(" + view.x + "," + view.y + ") scale(" + view.k + ")");
-    svg.appendChild(g);
+      var forks = n.children.filter(function (c) { return c.kind === "agent"; });
+      var cont = n.children.filter(function (c) { return c.kind !== "agent"; });
 
-    // Lane vertical guides
-    for (var lane = 0; lane <= maxLane; lane++) {
-      var line = document.createElementNS(NS, "line");
-      var lx = lane * LANE_W + 12;
-      line.setAttribute("x1", lx); line.setAttribute("y1", -40);
-      line.setAttribute("x2", lx); line.setAttribute("y2", order.length * ROW_H + 40);
-      line.setAttribute("stroke", laneColor(lane));
-      line.setAttribute("stroke-width", 1);
-      line.setAttribute("opacity", "0.18");
-      g.appendChild(line);
-    }
+      forks.forEach(function (f) { visit(f, n); });
 
-    var byId = new Map();
-    order.forEach(function (n) { byId.set(n.id, n); });
-
-    // Edges: parent -> child (elbow), plus dashed merge edges.
-    function drawEdge(fromId, toId, dashed) {
-      var a = pos.get(fromId), b = pos.get(toId);
-      if (!a || !b) return;
-      var y1 = a.y + NODE_H / 2, y2 = b.y + NODE_H / 2;
-      var x1 = a.x + 12, x2 = b.x + 12;
-      var midY = (y1 + y2) / 2;
-      var path = document.createElementNS(NS, "path");
-      path.setAttribute("d", "M " + x1 + " " + y1 + " L " + x1 + " " + midY + " L " + x2 + " " + midY + " L " + x2 + " " + y2);
-      path.setAttribute("fill", "none");
-      var child = byId.get(toId);
-      var ghost = child && child.ghost;
-      path.setAttribute("stroke", ghost ? "var(--border)" : "var(--muted)");
-      path.setAttribute("stroke-width", 1.25);
-      if (dashed) path.setAttribute("stroke-dasharray", "3 3");
-      if (focusSet && !focusSet.has(toId)) path.setAttribute("opacity", "0.18");
-      g.appendChild(path);
-    }
-
-    order.forEach(function (n) {
-      if (collapsed.has(n.id)) return;
-      n.children.forEach(function (c) { drawEdge(n.id, c.id, false); });
-    });
-
-    // Merge edges (SubAgent tail -> parent continuation), dashed.
-    order.forEach(function (n) {
-      if (n.mergeTargetId && byId.has(n.mergeTargetId)) {
-        var a = pos.get(n.id), b = pos.get(n.mergeTargetId);
-        if (!a || !b) return;
-        var y = Math.max(a.y, b.y) + NODE_H;
-        var x1 = a.x + 12, x2 = b.x + 12;
-        var path = document.createElementNS(NS, "path");
-        path.setAttribute("d", "M " + x1 + " " + y + " L " + x2 + " " + y);
-        path.setAttribute("fill", "none");
-        path.setAttribute("stroke", "var(--muted)");
-        path.setAttribute("stroke-width", 1);
-        path.setAttribute("stroke-dasharray", "3 3");
-        if (focusSet && !focusSet.has(n.id)) path.setAttribute("opacity", "0.18");
-        g.appendChild(path);
-      }
-    });
-
-    // Nodes
-    order.forEach(function (n) {
-      var p = pos.get(n.id);
-      if (!p) return;
-      var x = p.x, y = p.y;
-      var grp = document.createElementNS(NS, "g");
-      grp.setAttribute("transform", "translate(" + x + "," + y + ")");
-      grp.setAttribute("data-id", n.id);
-      grp.style.cursor = n.ghost ? "default" : "pointer";
-      if (focusSet && !focusSet.has(n.id)) grp.setAttribute("opacity", "0.22");
-
-      var rect = document.createElementNS(NS, "rect");
-      rect.setAttribute("width", NODE_W);
-      rect.setAttribute("height", NODE_H);
-      rect.setAttribute("rx", 6); rect.setAttribute("ry", 6);
-      rect.setAttribute("fill", n.ghost ? "transparent" : (n.kind === "agent" ? "color-mix(in srgb, var(--accent) 12%, transparent)" : "var(--surface)"));
-      rect.setAttribute("stroke", n.ghost ? "var(--border)" : (n.kind === "agent" ? "var(--accent)" : "var(--border)"));
-      rect.setAttribute("stroke-width", n.ghost ? 1 : (selection === n.id ? 2 : 1));
-      rect.setAttribute("stroke-dasharray", n.ghost ? "3 3" : "none");
-      grp.appendChild(rect);
-
-      grp.innerHTML += shapeFor(n.kind, n.ghost, 0, 0);
-
-      var label = document.createElementNS(NS, "text");
-      label.setAttribute("x", 26); label.setAttribute("y", NODE_H / 2 + 1);
-      label.setAttribute("dominant-baseline", "middle");
-      label.setAttribute("font-size", DENSITY[density].fs);
-      label.setAttribute("font-weight", n.kind === "agent" ? 700 : 600);
-      label.setAttribute("fill", n.ghost ? "var(--muted)" : "var(--text)");
-      label.setAttribute("font-family", "ui-monospace, monospace");
-      label.textContent = n.ghost ? n.label : n.label;
-      grp.appendChild(label);
-
-      if (n.state && !n.ghost) {
-        var s = document.createElementNS(NS, "circle");
-        s.setAttribute("cx", NODE_W - 12); s.setAttribute("cy", 8); s.setAttribute("r", 3.5);
-        s.setAttribute("fill", STATE_COLOR[n.state] || "var(--muted)");
-        grp.appendChild(s);
-      }
-      if (n.isError && !n.ghost) {
-        var err = document.createElementNS(NS, "circle");
-        err.setAttribute("cx", NODE_W - 12); err.setAttribute("cy", 8); err.setAttribute("r", 3.5);
-        err.setAttribute("fill", "var(--error)");
-        grp.appendChild(err);
-      }
-
-      if (n.children.length > 0 && !n.ghost) {
-        var caret = document.createElementNS(NS, "g");
-        caret.setAttribute("transform", "translate(" + (NODE_W - 24) + "," + (NODE_H / 2) + ")");
-        caret.setAttribute("data-caret", "true");
-        caret.style.cursor = "pointer";
-        var tri = document.createElementNS(NS, "path");
-        var collapsedNow = collapsed.has(n.id);
-        tri.setAttribute("d", collapsedNow ? "M -3 -4 L 4 0 L -3 4 Z" : "M -4 -3 L 4 -3 L 0 4 Z");
-        tri.setAttribute("fill", "var(--muted)");
-        caret.appendChild(tri);
-        grp.appendChild(caret);
-      }
-
-      if (collapsed.has(n.id)) {
-        var count = countDescendants(n);
-        var badge = document.createElementNS(NS, "text");
-        badge.setAttribute("x", NODE_W - 8); badge.setAttribute("y", NODE_H / 2 + 1);
-        badge.setAttribute("text-anchor", "end");
-        badge.setAttribute("dominant-baseline", "middle");
-        badge.setAttribute("font-size", DENSITY[density].fs);
-        badge.setAttribute("fill", "var(--accent)");
-        badge.textContent = "+" + count;
-        grp.appendChild(badge);
-      }
-
-      grp.addEventListener("click", function (ev) {
-        ev.stopPropagation();
-        if (n.ghost) return;
-        var target = ev.target;
-        if (target && target.closest && target.closest("[data-caret]")) {
-          toggleCollapse(n.id);
-          return;
+      forks.forEach(function (f) {
+        var target = cont[0];
+        if (target) {
+          returns.push({ from: rows[subtreeEnd[f.id]].id, to: target.id });
         }
-        selection = n.id;
-        renderDetail(n);
-        render();
       });
 
-      g.appendChild(grp);
-    });
+      cont.forEach(function (c) { visit(c, n); });
 
-    var minX = 0, minY = 0;
-    var maxX = maxLane * LANE_W + NODE_W + 20;
-    var maxY = order.length * ROW_H + 20;
-    wrap.dataset.bounds = JSON.stringify({ minX: minX, minY: minY, maxX: maxX, maxY: maxY });
+      subtreeEnd[n.id] = rows.length - 1;
+    })(root, null);
+
+    return { rows: rows, parentOf: parentOf, rowIdx: rowIdx, returns: returns, maxLane: maxLane };
   }
 
-  function countDescendants(n) {
-    var c = 0;
-    (function walk(x) { x.children.forEach(function (k) { c++; walk(k); }); })(n);
-    return c;
-  }
-
-  function toggleCollapse(id) {
-    if (collapsed.has(id)) collapsed.delete(id); else collapsed.add(id);
-    render();
-  }
-
-  function longValue(v) { return v != null && String(v).length > 600; }
-
-  function valueCell(v, code) {
-    var cls = "v" + (code ? " code" : "");
-    if (longValue(v)) {
-      return '<details class="fold"><summary>' + esc(String(v).slice(0, 400)) + ' …</summary><div class="' + cls + '">' + esc(v) + '</div></details>';
+  function shapeFor(n, x, y, isRoot) {
+    var halo = '<circle cx="' + x + '" cy="' + y + '" r="12" fill="var(--surface)"/>';
+    var m;
+    var c = laneColor(n.lane);
+    if (n.kind === "agent") {
+      m = '<path d="M ' + x + ' ' + (y - 8) + ' L ' + (x + 8) + ' ' + y + ' L ' + x + ' ' + (y + 8) + ' L ' + (x - 8) + ' ' + y + ' Z" fill="' + c + '" stroke="' + c + '" stroke-width="1.5"/>';
+      if (isRoot) {
+        m += '<circle cx="' + x + '" cy="' + y + '" r="13" fill="none" stroke="' + c + '" stroke-width="1.5" opacity="0.55"/>';
+      }
+    } else if (n.kind === "user") {
+      m = '<circle cx="' + x + '" cy="' + y + '" r="6" fill="none" stroke="var(--text)" stroke-width="1.5"/>';
+    } else if (n.kind === "assistant") {
+      m = '<circle cx="' + x + '" cy="' + y + '" r="5" fill="var(--text)"/>';
+    } else if (n.kind === "tool") {
+      m = '<rect x="' + (x - 6) + '" y="' + (y - 6) + '" width="12" height="12" rx="2" fill="none" stroke="var(--accent)" stroke-width="1.5"/>';
+    } else {
+      m = '<circle cx="' + x + '" cy="' + y + '" r="4" fill="var(--text)"/>';
     }
-    return '<div class="' + cls + '">' + esc(v) + '</div>';
+    return halo + m;
   }
 
-  function renderDetail(n) {
-    detail.classList.remove("empty");
+  function edgePath(a, b) {
+    var x1 = laneX(a.lane), y1 = a._row * ROW_H + ROW_H / 2 + 10;
+    var x2 = laneX(b.lane), y2 = b._row * ROW_H + ROW_H / 2 - 10;
+    if (x1 === x2) {
+      return "M " + x1 + " " + y1 + " L " + x2 + " " + y2;
+    }
+    var mid = (y1 + y2) / 2;
+    return "M " + x1 + " " + y1 + " C " + x1 + " " + mid + " " + x2 + " " + mid + " " + x2 + " " + y2;
+  }
+
+  function ancestors(id, out) {
+    var cur = id;
+    while (cur) {
+      out.add(cur);
+      cur = F.parentOf[cur];
+    }
+  }
+
+  function descendants(id, out) {
+    var n = byId[id];
+    if (!n) return;
+    n.children.forEach(function (c) {
+      out.add(c.id);
+      descendants(c.id, out);
+    });
+  }
+
+  function pathSet() {
+    if (!selection) return null;
+    var out = new Set([selection]);
+    ancestors(selection, out);
+    descendants(selection, out);
+    return out;
+  }
+
+  function stateClass(n) {
+    if (n.isError) return "failed";
+    var s = n.state;
+    if (s === "completed" || s === "done") return "done";
+    if (s === "running") return "running";
+    if (s === "failed" || s === "terminated" || s === "killed") return "failed";
+    return "waiting";
+  }
+
+  function timeStr(ts) {
+    try {
+      return new Date(ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    } catch (e) {
+      return "";
+    }
+  }
+
+  function chipHtml(n) {
+    if (n.kind !== "agent") return "";
+    return '<span class="chip">' + esc(n.label) + '</span>';
+  }
+
+  var F = null;
+  var byId = {};
+
+  function renderRows() {
+    rowsEl.innerHTML = "";
+    var path = pathSet();
+    var gutterW = laneX(F.maxLane) + 32;
+    F.rows.forEach(function (n, i) {
+      var row = document.createElement("div");
+      row.className = "row";
+      if (selection === n.id) row.classList.add("selected");
+      else if (path && path.has(n.id)) row.classList.add("path");
+
+      var gutter = document.createElement("div");
+      gutter.className = "gutter";
+      gutter.style.flexBasis = gutterW + "px";
+
+      var commit = document.createElement("div");
+      commit.className = "commit";
+      var st = stateClass(n);
+      commit.innerHTML =
+        '<div class="who">' +
+          '<span class="label' + (n.kind === "tool" ? " tool" : "") + '">' + esc(n.label) + '</span>' +
+          chipHtml(n) +
+        '</div>' +
+        '<span class="msg">' + esc(n.sub || "") + '</span>' +
+        '<span class="ts">' + esc(n.ts != null ? timeStr(n.ts) : "") + '</span>' +
+        '<span class="state ' + st + '"></span>';
+
+      row.appendChild(gutter);
+      row.appendChild(commit);
+      row.addEventListener("click", function (ev) {
+        ev.stopPropagation();
+        selection = (selection === n.id) ? null : n.id;
+        render();
+      });
+      rowsEl.appendChild(row);
+    });
+  }
+
+  function renderDetail() {
+    if (!selection) {
+      detailBody.innerHTML =
+        '<div class="trace-detail-empty"><div class="trace-detail-empty-glyph">⎇</div>' +
+        '<div>选择一个节点查看详情</div>' +
+        '<div class="trace-detail-empty-sub">点击节点 · Esc / 点空白清除</div></div>';
+      return;
+    }
+    var n = byId[selection];
+    if (!n) return;
     var d = n.detail || {};
-    var state = n.state;
-    var stateBadge = state ? '<span class="state-badge state-' + esc(state) + '">' + esc(state) + '</span>' : "";
-    var body = "";
-    body += '<div class="kind-tag">' + (KIND_ICON[n.kind] || "") + ' ' + esc(n.kind) + (n.isError ? ' · error' : '') + '</div>';
+    var stateBadge = n.state ? '<span class="state-badge state-' + esc(n.state) + '">' + esc(n.state) + '</span>' : "";
+    var body = '<div class="kind-tag">' + (KIND_ICON[n.kind] || "") + ' ' + esc(n.kind) + (n.isError ? ' · error' : '') + '</div>';
     body += '<h2>' + esc(d.title || n.label || n.kind) + '</h2>';
     body += '<div class="sub">' + esc(n.sub || "") + ' ' + stateBadge + '</div>';
 
@@ -557,92 +444,81 @@ const WIDGET_TEMPLATE = `<!-- dscode trace widget -->
       body += '<div class="row"><div class="k">' + esc(r[0]) + '</div>' + valueCell(r[1], r[2]) + '</div>';
     });
 
-    detail.innerHTML = '<div class="pad">' + body + '</div>';
+    detailBody.innerHTML = body;
   }
 
-  function fitView() {
-    var b = JSON.parse(wrap.dataset.bounds || '{"minX":0,"minY":0,"maxX":600,"maxY":300}');
-    var w = wrap.clientWidth, h = wrap.clientHeight;
-    var bw = Math.max(b.maxX - b.minX, 1), bh = Math.max(b.maxY - b.minY, 1);
-    var k = Math.min(w / bw, h / bh) * 0.92;
-    view = { k: k, x: (w - bw * k) / 2 - b.minX * k, y: (h - bh * k) / 2 - b.minY * k };
+  function longValue(v) { return v != null && String(v).length > 600; }
+
+  function valueCell(v, code) {
+    var cls = "v" + (code ? " code" : "");
+    if (longValue(v)) {
+      return '<details class="fold"><summary>' + esc(String(v).slice(0, 400)) + ' …</summary><div class="' + cls + '">' + esc(v) + '</div></details>';
+    }
+    return '<div class="' + cls + '">' + esc(v) + '</div>';
+  }
+
+  function render() {
+    F = flatten(BASE_ROOT);
+    byId = {};
+    F.rows.forEach(function (n) { byId[n.id] = n; });
+
+    var gutterW = laneX(F.maxLane) + 32;
+    var H = F.rows.length * ROW_H;
+    graph.style.minWidth = (gutterW + 420) + "px";
+
+    treeEl.setAttribute("width", gutterW);
+    treeEl.setAttribute("height", H);
+    var s = "";
+
+    // tree edges (parent -> child, child lane color) + return edges (muted).
+    F.rows.forEach(function (n) {
+      n._row = F.rowIdx[n.id];
+      if (F.parentOf[n.id]) {
+        var a = byId[F.parentOf[n.id]];
+        var b = n;
+        var col = laneColor(b.lane);
+        s += '<path d="' + edgePath(a, b) + '" fill="none" stroke="' + col + '" stroke-width="1.5" opacity="0.55"/>';
+      }
+    });
+    F.returns.forEach(function (r) {
+      var a = byId[r.from], b = byId[r.to];
+      if (!a || !b) return;
+      s += '<path d="' + edgePath(a, b) + '" fill="none" stroke="var(--muted)" stroke-width="1.25" opacity="0.55"/>';
+    });
+
+    // node markers (typed shapes + halo), drawn on top of edges.
+    F.rows.forEach(function (n, i) {
+      var x = laneX(n.lane), y = i * ROW_H + ROW_H / 2;
+      s += shapeFor(n, x, y, i === 0);
+    });
+
+    treeEl.innerHTML = s;
+    renderRows();
+    renderDetail();
+    clearBtn.disabled = selection == null;
+  }
+
+  function clearSelection() {
+    selection = null;
     render();
   }
 
-  var dragging = false, sx = 0, sy = 0, ox = 0, oy = 0;
-  wrap.addEventListener("wheel", function (e) {
-    e.preventDefault();
-    var rect = wrap.getBoundingClientRect();
-    var mx = e.clientX - rect.left, my = e.clientY - rect.top;
-    var factor = Math.pow(1.0015, -e.deltaY);
-    var k2 = Math.min(2.2, Math.max(0.2, view.k * factor));
-    view.x = mx - ((mx - view.x) / view.k) * k2;
-    view.y = my - ((my - view.y) / view.k) * k2;
-    view.k = k2;
-    render();
-  }, { passive: false });
-
-  wrap.addEventListener("pointerdown", function (e) {
-    if (e.target && e.target.closest && e.target.closest("[data-caret]")) return;
-    var tag = e.target && e.target.tagName;
-    if (tag === "text" || tag === "rect" || tag === "circle" || tag === "path" || tag === "g") return;
-    dragging = true; sx = e.clientX; sy = e.clientY; ox = view.x; oy = view.y;
-    if (wrap.setPointerCapture) wrap.setPointerCapture(e.pointerId);
+  graphScroll.addEventListener("click", function (e) {
+    if (e.target === graphScroll || e.target === graph) clearSelection();
   });
-  wrap.addEventListener("pointermove", function (e) {
-    if (!dragging) return;
-    view.x = ox + (e.clientX - sx);
-    view.y = oy + (e.clientY - sy);
-    render();
-  });
-  wrap.addEventListener("pointerup", function () { dragging = false; });
-
-  document.getElementById("zoomIn").addEventListener("click", function () {
-    var rect = wrap.getBoundingClientRect();
-    var mx = rect.width / 2, my = rect.height / 2;
-    var k2 = Math.min(2.2, view.k * 1.25);
-    view.x = mx - ((mx - view.x) / view.k) * k2;
-    view.y = my - ((my - view.y) / view.k) * k2;
-    view.k = k2; render();
-  });
-  document.getElementById("zoomOut").addEventListener("click", function () {
-    var rect = wrap.getBoundingClientRect();
-    var mx = rect.width / 2, my = rect.height / 2;
-    var k2 = Math.max(0.2, view.k / 1.25);
-    view.x = mx - ((mx - view.x) / view.k) * k2;
-    view.y = my - ((my - view.y) / view.k) * k2;
-    view.k = k2; render();
-  });
-  document.getElementById("fitView").addEventListener("click", fitView);
-  document.getElementById("clearFilter").addEventListener("click", function () {
-    document.getElementById("fromDate").value = "";
-    document.getElementById("toDate").value = "";
-    render();
-  });
-  document.getElementById("fromDate").addEventListener("change", render);
-  document.getElementById("toDate").addEventListener("change", render);
-  document.getElementById("agentFilter").addEventListener("change", function (e) {
-    selectedAgent = e.target.value;
-    render();
-  });
-  document.getElementById("densityFilter").addEventListener("change", function (e) {
-    density = e.target.value;
-    LANE_W = DENSITY[density].lane;
-    ROW_H = DENSITY[density].row;
-    NODE_H = DENSITY[density].nodeH;
-    render();
-  });
-  document.getElementById("fullscreenBtn").addEventListener("click", function () {
-    var widget = document.getElementById("traceWidget");
-    widget.classList.toggle("fullscreen");
-    document.getElementById("fullscreenBtn").textContent =
-      widget.classList.contains("fullscreen") ? "⤡" : "⤢";
-    requestAnimationFrame(fitView);
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") clearSelection();
   });
 
-  renderAgentFilter();
+  document.getElementById("themeBtn").addEventListener("click", function () {
+    var dark = widget.classList.toggle("dark");
+    this.textContent = dark ? "◑" : "◐";
+    render();
+  });
+  document.getElementById("clearBtn").addEventListener("click", clearSelection);
+  document.getElementById("detailX").addEventListener("click", clearSelection);
+
   render();
-  requestAnimationFrame(fitView);
 })();
   </script>
 </div>`;

@@ -2,10 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import type { AgentActivity, UIMessage } from "../../src/ui/shared/types.js";
 import {
-  applyTraceFilters,
-  filterTraceTreeByAgent,
-  filterTraceTreeByDate,
-  listTraceAgents,
   MAIN_AGENT_ID,
   projectTraceTree,
   type TraceNode,
@@ -122,7 +118,7 @@ describe("projectTraceTree", () => {
     expect(lastTool!.children.map((n) => n.id)).toEqual(["u2"]);
   });
 
-  it("forks a SubAgent from its spawn_agent tool and sets a merge target", () => {
+  it("forks a SubAgent from its spawn_agent tool without a merge relation", () => {
     const tree = projectTraceTree([
       message({
         id: "a1",
@@ -159,10 +155,11 @@ describe("projectTraceTree", () => {
     expect(agentChild).toBeDefined();
     expect(agentChild!.label).toBe("Researcher");
     expect(agentChild!.ownerAgentId).toBe("agent-spawned");
-    // Merge target = the parent continuation node after the spawn, set on the
-    // SubAgent path's tail node (the node where the path ends, per D3).
-    const tail = agentChild!.children[agentChild!.children.length - 1];
-    expect(tail.mergeTargetId).toBe("a2");
+    // The parent path continues from the spawn tool's non-agent child — no
+    // mergeTargetId data relation is produced.
+    const continuation = spawnTool!.children.find((n) => n.kind !== "agent");
+    expect(continuation).toBeDefined();
+    expect(continuation!.id).toBe("a2");
   });
 
   it("projects a SubAgent transcript chain when provided", () => {
@@ -233,110 +230,121 @@ describe("projectTraceTree", () => {
     expect(worker!.ownerAgentId).toBe("agent-1");
   });
 
-  it("lists Main plus every projected Agent", () => {
+  it("summarizes message and subagent counts on the root", () => {
     const tree = projectTraceTree([
-      message({
-        id: "a",
-        role: "agent",
-        agentActivity: agentActivity({ agentId: "agent-x", label: "X" }),
-      }),
-    ]);
-    expect(listTraceAgents(tree.root)).toEqual([
-      { id: MAIN_AGENT_ID, label: "Main" },
-      { id: "agent-x", label: "X" },
-    ]);
-  });
-});
-
-describe("trace filters", () => {
-  function chainTree(): ReturnType<typeof projectTraceTree> {
-    return projectTraceTree([
       message({ id: "u1", role: "user", content: "go", createdAt: 1000 }),
-      message({ id: "a1", role: "assistant", content: "mid", createdAt: 3000 }),
-      message({ id: "u2", role: "user", content: "end", createdAt: 5000 }),
-    ]);
-  }
-
-  function buildTree(): ReturnType<typeof projectTraceTree> {
-    return projectTraceTree([
-      message({ id: "u1", role: "user", content: "go", createdAt: 1000 }),
-      message({
-        id: "a1",
-        role: "assistant",
-        content: "",
-        createdAt: 2000,
-        tools: [{ toolCallId: "t1", name: "bash", args: "", result: "x", isError: false }],
-      }),
       message({
         id: "agent-1",
         role: "agent",
+        agentActivity: agentActivity({ agentId: "agent-1", label: "Worker", createdAt: 2000 }),
+      }),
+    ]);
+    expect(tree.root.detail?.summary).toBe("1 messages · 1 subagent");
+  });
+});
+
+describe("assignLanes", () => {
+  function spawnTool(toolCallId: string, result: string) {
+    return { toolCallId, name: "spawn_agent", args: "{}", result, isError: false };
+  }
+
+  it("assigns a fresh, unrecycled lane to each sibling SubAgent", () => {
+    const tree = projectTraceTree([
+      message({
+        id: "a1", role: "assistant", content: "", createdAt: 1000,
+        tools: [spawnTool("s1", "Started agent-1")],
+      }),
+      message({ id: "a2", role: "assistant", content: "after1", createdAt: 2000 }),
+      message({
+        id: "a3", role: "assistant", content: "", createdAt: 3000,
+        tools: [spawnTool("s2", "Started agent-2")],
+      }),
+      message({ id: "a4", role: "assistant", content: "after2", createdAt: 4000 }),
+      message({
+        id: "agent-1", role: "agent",
         agentActivity: agentActivity({
-          agentId: "agent-1",
-          label: "Worker",
-          createdAt: 3000,
+          agentId: "agent-1", label: "W1", createdAt: 1500,
+          transcript: [message({ id: "w1", role: "user", content: "x", createdAt: 1510 })],
+        }),
+      }),
+      message({
+        id: "agent-2", role: "agent",
+        agentActivity: agentActivity({
+          agentId: "agent-2", label: "W2", createdAt: 3500,
+          transcript: [message({ id: "w2", role: "user", content: "y", createdAt: 3510 })],
+        }),
+      }),
+    ]);
+
+    const w1 = findNode(tree.root, "agent", "W1");
+    const w2 = findNode(tree.root, "agent", "W2");
+    expect(w1).toBeDefined();
+    expect(w2).toBeDefined();
+    // Each fork gets its own lane; lanes are never recycled.
+    expect(w1!.lane).toBe(1);
+    expect(w2!.lane).toBe(2);
+    // The Main spine stays on lane 0.
+    expect(tree.root.lane).toBe(0);
+    expect(findNode(tree.root, "assistant", "Assistant")!.lane).toBe(0);
+  });
+
+  it("gives a nested SubAgent a further lane while the outer is active", () => {
+    const tree = projectTraceTree([
+      message({
+        id: "a1", role: "assistant", content: "", createdAt: 1000,
+        tools: [spawnTool("s1", "Started agent-1")],
+      }),
+      message({ id: "a2", role: "assistant", content: "after", createdAt: 2000 }),
+      message({
+        id: "agent-1", role: "agent",
+        agentActivity: agentActivity({
+          agentId: "agent-1", label: "Outer", createdAt: 1500,
           transcript: [
-            message({ id: "w1", role: "user", content: "work", createdAt: 3100 }),
+            message({ id: "w1", role: "user", content: "work", createdAt: 1510 }),
             message({
-              id: "w2",
-              role: "assistant",
-              content: "",
-              createdAt: 3200,
-              tools: [{ toolCallId: "at1", name: "grep", args: "", result: "1 match", isError: false }],
+              id: "w2", role: "assistant", content: "", createdAt: 1520,
+              tools: [spawnTool("s2", "Started agent-inner")],
+            }),
+            message({
+              id: "agent-inner", role: "agent",
+              agentActivity: agentActivity({
+                agentId: "agent-inner", label: "Inner", createdAt: 1530,
+                transcript: [message({ id: "i1", role: "user", content: "deep", createdAt: 1540 })],
+              }),
             }),
           ],
         }),
       }),
     ]);
-  }
 
-  it("never date-filters an Agent root node", () => {
-    const tree = chainTree();
-    const filtered = filterTraceTreeByDate(tree.root, 5000, 6000);
-    expect(filtered.kind).toBe("agent");
-    expect(filtered.ghost).toBe(false);
+    const outer = findNode(tree.root, "agent", "Outer");
+    const inner = findNode(tree.root, "agent", "Inner");
+    expect(outer).toBeDefined();
+    expect(inner).toBeDefined();
+    expect(outer!.lane).toBe(1);
+    // A nested fork must get its own lane, not reuse the outer's.
+    expect(inner!.lane).toBe(2);
   });
 
-  it("keeps a ghost ancestor when a descendant matches the date window", () => {
-    const tree = chainTree();
-    const filtered = filterTraceTreeByDate(tree.root, 2000, 4000);
-    // main → u1(1000, ghost) → a1(3000, kept) ; u2(5000) dropped.
-    expect(filtered.children.map((n) => n.id)).toEqual(["u1"]);
-    expect(filtered.children[0].ghost).toBe(true);
-    expect(filtered.children[0].children.map((n) => n.id)).toEqual(["a1"]);
-    expect(filtered.children[0].children[0].ghost).toBe(false);
-  });
+  it("keeps ownerAgentId intact across lane assignment", () => {
+    const tree = projectTraceTree([
+      message({
+        id: "a1", role: "assistant", content: "", createdAt: 1000,
+        tools: [spawnTool("s1", "Started agent-1")],
+      }),
+      message({ id: "a2", role: "assistant", content: "after", createdAt: 2000 }),
+      message({
+        id: "agent-1", role: "agent",
+        agentActivity: agentActivity({
+          agentId: "agent-1", label: "W1", createdAt: 1500,
+          transcript: [message({ id: "w1", role: "user", content: "x", createdAt: 1510 })],
+        }),
+      }),
+    ]);
 
-  it("shows only the selected Agent's nodes plus ghost ancestors", () => {
-    const tree = buildTree();
-    const filtered = filterTraceTreeByAgent(tree.root, "agent-1");
-    const worker = findNode(filtered, "agent", "Worker");
-    expect(worker).toBeDefined();
-    expect(worker!.ghost).toBe(false);
-    // Main-owned user/assistant ancestors are retained as ghosts for connectivity.
-    expect(countKinds(filtered, "agent")).toBe(2);
-    expect(findNode(filtered, "assistant", "Assistant")!.ghost).toBe(true);
-  });
-
-  it("combines Agent and date filters with AND semantics", () => {
-    const tree = buildTree();
-    const filtered = applyTraceFilters(tree.root, {
-      ownerAgentId: "agent-1",
-      from: 3150,
-      to: 3300,
-    });
-    const worker = findNode(filtered, "agent", "Worker");
-    expect(worker).toBeDefined();
-    expect(worker!.ghost).toBe(false);
-    // w1 (3100) is out of window and becomes a ghost ancestor of w2 (3200).
-    expect(worker!.children[0].ghost).toBe(true);
-  });
-
-  it("restores the full tree when filters are cleared", () => {
-    const tree = buildTree();
-    const filtered = applyTraceFilters(tree.root, {});
-    expect(countKinds(filtered, "user")).toBe(2);
-    expect(countKinds(filtered, "assistant")).toBe(2);
-    expect(countKinds(filtered, "agent")).toBe(2);
-    expect(countKinds(filtered, "tool")).toBe(2);
+    const w1 = findNode(tree.root, "agent", "W1");
+    expect(w1!.ownerAgentId).toBe("agent-1");
+    expect(w1!.children[0].ownerAgentId).toBe("agent-1");
+    expect(findNode(tree.root, "assistant", "Assistant")!.ownerAgentId).toBe(MAIN_AGENT_ID);
   });
 });

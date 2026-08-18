@@ -2,8 +2,9 @@
 // Pure projection of display-ready `UIMessage[]` into an interactive
 // trajectory tree rooted at the Main Agent. Messages are chained in
 // historical order (parent = the node they answer), SubAgents fork from a
-// `spawn_agent` tool node and merge back into the parent path. Read-only:
-// never mutates messages and never spawns Agents.
+// `spawn_agent` tool node and are rendered back onto the parent path as a
+// pure visual return (no merge data relation). Read-only: never mutates
+// messages and never spawns Agents.
 
 import { formatAgentDisplayId } from "./agent-id.js";
 import type {
@@ -58,23 +59,10 @@ export interface TraceNode {
   state?: string;
   payloadRef?: TracePayloadRef;
   detail?: TraceNodeDetail;
-  /** SubAgent tail node merges (dashed) back to this parent-path node. */
-  mergeTargetId?: string;
 }
 
 export interface TraceTree {
   root: TraceNode;
-}
-
-export interface TraceAgentOption {
-  id: string;
-  label: string;
-}
-
-export interface TraceFilters {
-  from?: number;
-  to?: number;
-  ownerAgentId?: string;
 }
 
 export const MAIN_AGENT_ID = "main";
@@ -288,7 +276,6 @@ function synthesizeFallbackMessages(activity: AgentActivity): UIMessage[] {
 interface PathResult {
   root: TraceNode;
   spawnTools: TraceNode[];
-  spine: TraceNode[];
 }
 
 function spawnToolReferencesAgent(toolNode: TraceNode, agentId: string): boolean {
@@ -319,10 +306,6 @@ function findSpawnParent(
   return fallback;
 }
 
-function lastSpineNode(path: PathResult): TraceNode {
-  return path.spine[path.spine.length - 1];
-}
-
 function projectPath(
   agentId: string,
   messages: readonly UIMessage[],
@@ -335,7 +318,6 @@ function projectPath(
     : buildAgentNode(undefined, agentId);
 
   const spawnTools: TraceNode[] = [];
-  const spine: TraceNode[] = [root];
   const pendingAgents: { message: UIMessage; activity: AgentActivity }[] = [];
 
   let tail: TraceNode = root;
@@ -349,7 +331,6 @@ function projectPath(
     const node = buildMessageNode(message, agentId);
     tail.children.push(node);
     node.parentId = tail.id;
-    spine.push(node);
     tail = node;
 
     if (message.role === "assistant" && message.tools && message.tools.length > 0) {
@@ -359,7 +340,6 @@ function projectPath(
       for (const toolNode of toolNodes) {
         node.children.push(toolNode);
         toolNode.parentId = node.id;
-        spine.push(toolNode);
         if (toolNode.label === "spawn_agent") spawnTools.push(toolNode);
       }
       tail = toolNodes[toolNodes.length - 1];
@@ -375,17 +355,9 @@ function projectPath(
     attachPoint.children.push(child.root);
     child.root.parentId = attachPoint.id;
     if (!spawnParent) child.root.unattached = true;
-
-    if (spawnParent) {
-      const spawnIndex = spine.indexOf(spawnParent);
-      const mergeTarget = spawnIndex >= 0 ? spine[spawnIndex + 1] : undefined;
-      if (mergeTarget) {
-        lastSpineNode(child).mergeTargetId = mergeTarget.id;
-      }
-    }
   }
 
-  return { root, spawnTools, spine };
+  return { root, spawnTools };
 }
 
 export function projectTraceTree(messages: readonly UIMessage[]): TraceTree {
@@ -393,7 +365,14 @@ export function projectTraceTree(messages: readonly UIMessage[]): TraceTree {
   const path = projectPath(MAIN_AGENT_ID, messages);
 
   assignLanes(path.root);
-  const subagentCount = listTraceAgents(path.root).length - 1;
+
+  let subagentCount = 0;
+  const countSubAgents = (node: TraceNode): void => {
+    if (node.kind === "agent" && node.ownerAgentId !== MAIN_AGENT_ID) subagentCount += 1;
+    node.children.forEach(countSubAgents);
+  };
+  countSubAgents(path.root);
+
   path.root.detail = {
     ...path.root.detail,
     title: "Main Agent",
@@ -404,86 +383,17 @@ export function projectTraceTree(messages: readonly UIMessage[]): TraceTree {
 }
 
 function assignLanes(root: TraceNode): void {
-  let lane = 0;
-  const walk = (node: TraceNode): void => {
-    if (node.kind === "agent") node.lane = lane++;
-    node.children.forEach(walk);
+  // Main Agent stays on lane 0; each `spawn_agent` fork receives a fresh,
+  // monotonically increasing lane that is never recycled. Continuation
+  // children inherit their parent's lane. Fork-first traversal keeps lane
+  // numbers aligned with the renderer's fork-first row order.
+  let nextLane = 0;
+  const visit = (node: TraceNode, lane: number): void => {
+    node.lane = lane;
+    const forks = node.children.filter((c) => c.kind === "agent");
+    const continuation = node.children.filter((c) => c.kind !== "agent");
+    for (const child of forks) visit(child, ++nextLane);
+    for (const child of continuation) visit(child, lane);
   };
-  walk(root);
-}
-
-// ── Agent listing ──
-
-export function listTraceAgents(root: TraceNode): TraceAgentOption[] {
-  const options: TraceAgentOption[] = [{ id: MAIN_AGENT_ID, label: root.label || "Main" }];
-  const seen = new Set<string>([MAIN_AGENT_ID]);
-  const walk = (node: TraceNode): void => {
-    if (node.kind === "agent" && !seen.has(node.ownerAgentId)) {
-      seen.add(node.ownerAgentId);
-      options.push({ id: node.ownerAgentId, label: node.label });
-    }
-    node.children.forEach(walk);
-  };
-  walk(root);
-  return options;
-}
-
-// ── Filtering ──
-
-function filterTree(
-  root: TraceNode,
-  matches: (node: TraceNode) => boolean,
-): TraceNode {
-  const hasMatch = (node: TraceNode): boolean =>
-    matches(node) || node.children.some(hasMatch);
-  const clone = (node: TraceNode): TraceNode => ({
-    ...node,
-    ghost: node.ghost === true || !matches(node),
-    children: node.children.filter(hasMatch).map(clone),
-  });
-  return clone(root);
-}
-
-export function filterTraceTreeByDate(
-  root: TraceNode,
-  from?: number,
-  to?: number,
-): TraceNode {
-  const min = from ?? Number.NEGATIVE_INFINITY;
-  const max = to ?? Number.POSITIVE_INFINITY;
-  return filterTree(root, (node) => {
-    // Agent path roots are timeless structural nodes — never date-filtered.
-    if (node.kind === "agent") return true;
-    if (node.ts === undefined) return true;
-    return node.ts >= min && node.ts <= max;
-  });
-}
-
-export function filterTraceTreeByAgent(
-  root: TraceNode,
-  ownerAgentId?: string,
-): TraceNode {
-  if (!ownerAgentId) return filterTree(root, () => true);
-  return filterTree(root, (node) => {
-    if (node.id === root.id) return true;
-    return node.ownerAgentId === ownerAgentId;
-  });
-}
-
-export function applyTraceFilters(
-  root: TraceNode,
-  filters: TraceFilters,
-): TraceNode {
-  const { from, to, ownerAgentId } = filters;
-  const min = from ?? Number.NEGATIVE_INFINITY;
-  const max = to ?? Number.POSITIVE_INFINITY;
-  return filterTree(root, (node) => {
-    const inRange = node.kind === "agent"
-      || node.ts === undefined
-      || (node.ts >= min && node.ts <= max);
-    const ownerOk = node.id === root.id
-      || !ownerAgentId
-      || node.ownerAgentId === ownerAgentId;
-    return inRange && ownerOk;
-  });
+  visit(root, 0);
 }
