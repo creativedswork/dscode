@@ -1,0 +1,5 @@
+schema: spec-driven-plus
+created: 2026-08-18
+goal: "Fix incomplete cascade strike in chat→dashboard transition: strike all
+  rows across full scroll height, land on actual text content, and make the
+  impact livelier"
