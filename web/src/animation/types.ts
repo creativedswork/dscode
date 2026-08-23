@@ -5,9 +5,10 @@ export interface Particle {
   vy: number;
   size: number;
   color: string;
-  phase: "fall" | "gather" | "formed";
+  phase: "fall" | "attract" | "gather" | "formed";
   tx?: number;
   ty?: number;
+  orbit?: number;
   gatherDelay?: number;
   flash?: number;
   life?: number;
@@ -41,4 +42,12 @@ export interface TimestampEntry {
   width: number;
   height: number;
   dissolved: boolean;
+}
+
+// Tight text-content bounds in client coordinates, derived from Range.getClientRects().
+export interface ContentBounds {
+  top: number;
+  bottom: number;
+  left: number;
+  right: number;
 }
