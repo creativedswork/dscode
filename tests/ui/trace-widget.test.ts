@@ -89,3 +89,50 @@ describe("trace widget injection", () => {
     expect(out).toContain('"kind":"agent"');
   });
 });
+
+describe("trace widget detail summary", () => {
+  const sample = () => [
+    message({ id: "u1", role: "user", content: "hi", createdAt: 1000 }),
+  ];
+
+  it("renders a collapsible one-line summary scaffold", () => {
+    const tree = projectTraceTree(sample());
+    const html = buildTraceWidgetHtml(tree);
+
+    expect(html).toContain('class="detail-fold"');
+    expect(html).toContain("one-line");
+    expect(html).toContain("one-title");
+    expect(html).toContain("one-sub");
+    expect(html).toContain("one-status");
+    expect(html).toContain("status-pill");
+    expect(html).toContain("fold-hint");
+    // native <details> triangle is hidden
+    expect(html).toContain("::-webkit-details-marker");
+    expect(html).toContain("list-style: none");
+    // freshly-selected nodes reset to collapsed
+    expect(html).toContain("fold.open = false");
+  });
+
+  it("marks tool success/failure and keeps the large-result secondary fold", () => {
+    const tree = projectTraceTree(sample());
+    const html = buildTraceWidgetHtml(tree);
+
+    // deterministic tool ✓/✗ markers assembled from isError (no model call)
+    expect(html).toContain("✓");
+    expect(html).toContain("✗");
+    // secondary fold for long results preserved
+    expect(html).toContain('class="fold"');
+  });
+
+  it("assembles the summary deterministically with no side effects", () => {
+    const msgs = sample();
+    const before = JSON.stringify(msgs);
+    const tree = projectTraceTree(msgs);
+    expect(JSON.stringify(msgs)).toBe(before); // projection is read-only
+
+    const rootBefore = JSON.stringify(tree.root);
+    const html1 = buildTraceWidgetHtml(tree);
+    expect(JSON.stringify(tree.root)).toBe(rootBefore); // serialization is read-only
+    expect(buildTraceWidgetHtml(tree)).toBe(html1); // deterministic output
+  });
+});

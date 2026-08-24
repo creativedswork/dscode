@@ -209,6 +209,38 @@ const WIDGET_TEMPLATE = `<!-- dscode trace widget -->
     .trace-widget .state-failed { background: color-mix(in srgb, var(--error) 16%, transparent); color: var(--error); }
     .trace-widget .state-terminated, .trace-widget .state-killed { background: color-mix(in srgb, var(--error) 16%, transparent); color: var(--error); }
     .trace-widget .state-waiting, .trace-widget .state-created, .trace-widget .state-stopped { background: var(--bg); color: var(--muted); }
+    /* ── collapsed one-sentence summary ── */
+    .trace-widget details.detail-fold { margin: 0; }
+    .trace-widget details.detail-fold > summary {
+      list-style: none; cursor: pointer; display: flex; align-items: center; gap: 8px;
+      padding: 6px 2px; border-radius: 8px; user-select: none;
+    }
+    .trace-widget details.detail-fold > summary::-webkit-details-marker { display: none; }
+    .trace-widget details.detail-fold > summary:hover { background: color-mix(in srgb, var(--accent) 5%, transparent); }
+    .trace-widget details.detail-fold .one-line { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 1 1 auto; }
+    .trace-widget details.detail-fold .kind-ico { color: var(--muted); font-size: 13px; flex: 0 0 auto; }
+    .trace-widget details.detail-fold .one-title { font-weight: 600; white-space: nowrap; flex: 0 0 auto; }
+    .trace-widget details.detail-fold .one-title.tool { font-family: ui-monospace, monospace; }
+    .trace-widget details.detail-fold .one-sub {
+      color: var(--muted); font-size: 12px; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; min-width: 0;
+    }
+    .trace-widget details.detail-fold .one-status { flex: 0 0 auto; margin-left: auto; }
+    .trace-widget details.detail-fold .fold-hint {
+      flex: 0 0 auto; font-size: 11px; color: var(--accent); font-weight: 600; margin-left: auto;
+    }
+    .trace-widget .status-pill {
+      display: inline-flex; align-items: center; gap: 4px; font-size: 11px;
+      border-radius: 999px; padding: 1px 8px; font-weight: 600; white-space: nowrap;
+    }
+    .trace-widget .status-pill.done { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
+    .trace-widget .status-pill.running { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); }
+    .trace-widget .status-pill.failed { background: color-mix(in srgb, var(--error) 16%, transparent); color: var(--error); }
+    .trace-widget .status-pill.waiting { background: var(--bg); color: var(--muted); }
+
+    /* expanded per-kind fields */
+    .trace-widget .detail-fields { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 10px; }
+
   </style>
 
   <script>
@@ -405,22 +437,24 @@ const WIDGET_TEMPLATE = `<!-- dscode trace widget -->
     });
   }
 
-  function renderDetail() {
-    if (!selection) {
-      detailBody.innerHTML =
-        '<div class="trace-detail-empty"><div class="trace-detail-empty-glyph">⎇</div>' +
-        '<div>选择一个节点查看详情</div>' +
-        '<div class="trace-detail-empty-sub">点击节点 · Esc / 点空白清除</div></div>';
-      return;
+  // ── one-sentence summary (collapsed) ──
+  function oneLine(n) {
+    var ico = KIND_ICON[n.kind] || "•";
+    var title = n.label;
+    var sub = n.sub || "";
+    if (n.kind === "agent") {
+      var d = n.detail || {};
+      if (d.summary) sub = d.summary;
+      var cls = stateClass(n);
+      return { ico: ico, title: title, sub: sub, status: '<span class="status-pill ' + cls + '">' + esc(n.state || cls) + '</span>' };
     }
-    var n = byId[selection];
-    if (!n) return;
-    var d = n.detail || {};
-    var stateBadge = n.state ? '<span class="state-badge state-' + esc(n.state) + '">' + esc(n.state) + '</span>' : "";
-    var body = '<div class="kind-tag">' + (KIND_ICON[n.kind] || "") + ' ' + esc(n.kind) + (n.isError ? ' · error' : '') + '</div>';
-    body += '<h2>' + esc(d.title || n.label || n.kind) + '</h2>';
-    body += '<div class="sub">' + esc(n.sub || "") + ' ' + stateBadge + '</div>';
+    if (n.kind === "tool") {
+      sub = (n.sub || (n.detail && n.detail.toolName) || "") + (n.isError ? " · ✗" : " · ✓");
+    }
+    return { ico: ico, title: title, sub: sub, status: "" };
+  }
 
+  function fieldsHtml(n, d) {
     var rows = [];
     if (n.kind === "agent") {
       if (d.role) rows.push(["Role", d.role, false]);
@@ -440,11 +474,47 @@ const WIDGET_TEMPLATE = `<!-- dscode trace widget -->
     }
     if (n.ts != null) rows.push(["Timestamp", new Date(n.ts).toLocaleString(), false]);
 
+    var html = "";
     rows.forEach(function (r) {
-      body += '<div class="row"><div class="k">' + esc(r[0]) + '</div>' + valueCell(r[1], r[2]) + '</div>';
+      html += '<div class="row"><div class="k">' + esc(r[0]) + '</div>' + valueCell(r[1], r[2]) + '</div>';
     });
+    return html;
+  }
+
+  function renderDetail() {
+    if (!selection) {
+      detailBody.innerHTML =
+        '<div class="trace-detail-empty"><div class="trace-detail-empty-glyph">⎇</div>' +
+        '<div>选择一个节点查看详情</div>' +
+        '<div class="trace-detail-empty-sub">点击节点 · Esc / 点空白清除</div></div>';
+      return;
+    }
+    var n = byId[selection];
+    if (!n) return;
+    var line = oneLine(n);
+    var body =
+      '<details class="detail-fold">' +
+        '<summary>' +
+          '<span class="one-line">' +
+            '<span class="kind-ico">' + line.ico + '</span>' +
+            '<span class="one-title' + (n.kind === "tool" ? " tool" : "") + '">' + esc(line.title) + '</span>' +
+            (line.sub ? '<span class="one-sub">· ' + esc(line.sub) + '</span>' : '') +
+            (line.status ? '<span class="one-status">' + line.status + '</span>' : '') +
+          '</span>' +
+          '<span class="fold-hint" data-hint>展开详情 ▾</span>' +
+        '</summary>' +
+        '<div class="detail-fields">' + fieldsHtml(n, n.detail || {}) + '</div>' +
+      '</details>';
 
     detailBody.innerHTML = body;
+
+    // Reset to collapsed for every freshly-selected node (default glance).
+    var fold = detailBody.querySelector("details.detail-fold");
+    fold.open = false;
+    var hint = fold.querySelector("[data-hint]");
+    fold.addEventListener("toggle", function () {
+      hint.textContent = fold.open ? "收起详情 ▴" : "展开详情 ▾";
+    });
   }
 
   function longValue(v) { return v != null && String(v).length > 600; }
