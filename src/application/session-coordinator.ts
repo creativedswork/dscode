@@ -21,6 +21,7 @@ export interface SessionCoordinatorOptions {
   agent(): Agent;
   projectPath(): string;
   abort(): void;
+  settleForeground?(): Promise<void>;
   conversation: ConversationCoordinator;
   logger: Logger;
   isShuttingDown?(): boolean;
@@ -47,6 +48,7 @@ export class SessionCoordinator {
       const prepared = await sessionManager.prepareLoad(targetId);
 
       await conversation.quiesce(this.options.abort);
+      await this.options.settleForeground?.();
       sessionManager.saveSession(this.options.agent(), request.pendingPermission);
       await this.options.agentSupervisor().updateParentSession(
         this.options.mainAgentId(),

@@ -13,7 +13,7 @@ export interface ProjectCoordinatorOptions {
   reloadMcp(servers: readonly MCPServerConfig[]): Promise<void>;
   updateSessionProject(dataDir: string, projectPath: string): void;
   updateMemoryProject(dataDir: string, projectPath: string): void;
-  updateProcessProject(projectPath: string): void;
+  updateProcessProject(dataDir: string, projectPath: string): Promise<void> | void;
   updateApplications(projectPath: string): Promise<void>;
   rebindMainSession(projectPath: string): Promise<void>;
   replaceRuntime(config: RuntimeConfig): Promise<void>;
@@ -56,6 +56,10 @@ export class ProjectCoordinator {
       rollback.push(() => this.options.reloadMcp(previous.mcp));
       await this.options.reloadMcp(mcpServers);
       rollback.push(() =>
+        this.options.updateProcessProject(previous.dataDir, previous.projectPath)
+      );
+      await this.options.updateProcessProject(targetConfig.dataDir, projectPath);
+      rollback.push(() =>
         this.options.updateSessionProject(
           previous.dataDir,
           previous.projectPath,
@@ -69,10 +73,6 @@ export class ProjectCoordinator {
         )
       );
       this.options.updateMemoryProject(targetConfig.dataDir, projectPath);
-      rollback.push(() =>
-        this.options.updateProcessProject(previous.projectPath)
-      );
-      this.options.updateProcessProject(projectPath);
       rollback.push(() =>
         this.options.updateApplications(previous.projectPath)
       );

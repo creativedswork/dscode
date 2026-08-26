@@ -1,5 +1,7 @@
 import { Type } from "@earendil-works/pi-ai";
 
+import { MAX_PLAN_CANDIDATES } from "./planner-types.js";
+
 export const Identifier = Type.String({ minLength: 1, maxLength: 200 });
 export const Text = Type.String();
 export const Timestamp = Type.Number({ minimum: 0 });
@@ -50,7 +52,7 @@ export const EvidenceReference = Type.Union([
   }, STRICT_OBJECT_OPTIONS),
 ]);
 
-const Candidate = Type.Object({
+export const Candidate = Type.Object({
   optionId: Identifier,
   summary: Text,
   affectedScopes: Type.Array(Text),
@@ -83,7 +85,10 @@ export const DecisionNode = Type.Object({
     Type.Literal("selected"),
     Type.Literal("invalidated"),
   ]),
-  candidates: Type.Array(Candidate),
+  candidates: Type.Array(Candidate, {
+    minItems: 1,
+    maxItems: MAX_PLAN_CANDIDATES,
+  }),
   selectedOptionId: Type.Optional(Identifier),
 }, STRICT_OBJECT_OPTIONS);
 

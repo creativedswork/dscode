@@ -181,7 +181,9 @@ describe("AgentSupervisor", () => {
     expect(child.context.depth).toBe(1);
     expect(events).toContain("agent:spawned");
     expect(events).toContain("agent:output");
-    expect(events.at(-1)).toBe("agent:exit");
+    expect(events.slice(-2)).toEqual(["agent:exit", "agent:state"]);
+    expect(supervisor.require(mainAgentId).state).toBe("running");
+    expect(supervisor.foreground("session-1")?.agentId).toBe(mainAgentId);
     expect(saves.length).toBeGreaterThanOrEqual(3);
   });
 
@@ -228,7 +230,7 @@ describe("AgentSupervisor", () => {
       state: "completed",
     }));
     expect(events).toContain("agent:spawned");
-    expect(events.at(-1)).toBe("agent:exit");
+    expect(events.slice(-2)).toEqual(["agent:exit", "agent:state"]);
   });
 
   it("separates the display prompt from the runtime prompt", async () => {

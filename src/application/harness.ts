@@ -119,6 +119,10 @@ import {
   PlanExecutionGuard,
 } from "./plan/route-guard.js";
 import { PLAN_ROUTE_ASSESSMENT_TOOL_NAME } from "./plan/route.js";
+import { PLANNER_APPLICATION } from "./plan/planner-application.js";
+import { PlannerProcessCoordinator } from "./plan/planner-process.js";
+import { PlannerService } from "./plan/planner-service.js";
+import { PlanStore } from "./plan/store.js";
 import type {
   PlanSubmissionMode,
   PlanSubmissionResult,
@@ -241,6 +245,8 @@ export class Harness {
   private readonly sessionCoordinator: SessionCoordinator;
   private readonly permissionPromptQueue = new PermissionPromptQueue();
   private readonly planExecutionGuard = new PlanExecutionGuard();
+  private planStore: PlanStore;
+  private plannerCoordinator!: PlannerProcessCoordinator;
   private readonly terminalRouteBlocks = new Map<string, string>();
   private pendingRoutedImages: PendingRoutedImages | undefined;
 
@@ -263,6 +269,10 @@ export class Harness {
     debug?: boolean,
   ) {
     this.hostId = dependencies.hostId;
+    this.planStore = new PlanStore({
+      dataDir: _config.dataDir,
+      projectPath: _config.projectPath,
+    });
     this.facilities = dependencies.facilities;
     this.checkpointSystem = dependencies.checkpointSystem;
     this.permissionSuggestions = dependencies.permissionSuggestions;
@@ -286,6 +296,9 @@ export class Harness {
       agent: () => this.agent,
       projectPath: () => this.config.projectPath,
       abort: () => this.abort(),
+      settleForeground: () => this.plannerCoordinator
+        ? this.plannerCoordinator.shutdown()
+        : Promise.resolve(),
       conversation: this.conversationCoordinator,
       logger,
       isShuttingDown: () => this.shuttingDown,
@@ -318,6 +331,7 @@ export class Harness {
       environment: dependencies.environment,
       drivers: this.driverRegistry,
       supervisor: () => this.agentSupervisor,
+      planner: () => this.plannerCoordinator,
       skillTool: () => this.makeSkillTool(),
       skillManifest: (name) => this.skillManager.getManifest(name),
       requestPermission: (toolName, preview, args, context) =>
@@ -369,8 +383,14 @@ export class Harness {
         this.sessionManager.updateProjectPath(dataDir, projectPath),
       updateMemoryProject: (dataDir, projectPath) =>
         this.memoryManager.updateProjectPath(dataDir, projectPath),
-      updateProcessProject: (projectPath) =>
-        this.processStore.updateProjectPath(projectPath),
+      updateProcessProject: async (dataDir, projectPath) => {
+        const planStore = new PlanStore({ dataDir, projectPath });
+        await this.plannerCoordinator.rebindProject(
+          new PlannerService(planStore),
+        );
+        this.planStore = planStore;
+        this.processStore.updateProjectPath(projectPath);
+      },
       updateApplications: (projectPath) =>
         this.applicationRegistry.updateProjectPath(projectPath),
       rebindMainSession: async (projectPath) => {
@@ -821,6 +841,7 @@ export class Harness {
   }
 
   async initialize(): Promise<void> {
+    this.applicationRegistry.registerDefinition(PLANNER_APPLICATION);
     await this.applicationRegistry.load();
     for (const diagnostic of this.applicationRegistry.getDiagnostics()) {
       this.logger.warn("AgentApplication", `${diagnostic.source.path}: ${diagnostic.message}`);
@@ -1011,6 +1032,10 @@ export class Harness {
       this.hostId,
       this.facilities,
     );
+    this.plannerCoordinator = new PlannerProcessCoordinator(
+      this.agentSupervisor,
+      new PlannerService(this.planStore),
+    );
     this.events.on("agent:exit", (event) => {
       this.recordSubagentExit(event.result.agentId);
       this.sessionCoordinator.scheduleBackgroundProcess(
@@ -1083,13 +1108,19 @@ export class Harness {
     this.syncMainRequestContext();
     try {
       if (initial.kind === "planner_requested") {
-        return this.planExecutionGuard.endRequest(requestId);
+        const result = this.planExecutionGuard.endRequest(requestId);
+        await this.plannerCoordinator.start(this.mainAgentId, initial.request);
+        return result;
       }
       await submit(requestId);
       if (this.planExecutionGuard.activeRequestId !== requestId) {
         return { kind: "main", requestId };
       }
-      return this.planExecutionGuard.endRequest(requestId);
+      const result = this.planExecutionGuard.endRequest(requestId);
+      if (result.kind === "planner_requested") {
+        await this.plannerCoordinator.start(this.mainAgentId, result.request);
+      }
+      return result;
     } finally {
       this.planExecutionGuard.cancelRequest(requestId);
       this.terminalRouteBlocks.clear();
@@ -1730,6 +1761,11 @@ export class Harness {
 
   private abortRuntime(): void {
     this.activeVisionAbortController?.abort();
+    if (this.plannerCoordinator) {
+      void this.plannerCoordinator.shutdown().catch((error) => {
+        this.logger.error("PlannerAbort", String(error));
+      });
+    }
     if (this.activeVisionAgentId) {
       void this.agentSupervisor.terminate(this.activeVisionAgentId).catch((error) => {
         this.logger.error("VisionAgent", `Failed to terminate: ${String(error)}`);
@@ -1741,6 +1777,7 @@ export class Harness {
         || process.recording !== "process-only"
         || !["created", "running", "waiting", "stopped"].includes(process.state)
         || process.agentId === this.activeVisionAgentId
+        || process.application.name === PLANNER_APPLICATION.name
       ) continue;
       void this.agentSupervisor.terminate(process.agentId).catch((error) => {
         this.logger.error("AgentProcess", `Failed to terminate ${process.agentId}: ${String(error)}`);
@@ -1957,6 +1994,13 @@ export class Harness {
       await this.mcpController.shutdown();
     } catch (err) {
       this.logger.error("McpShutdown", String(err));
+    }
+    if (this.plannerCoordinator) {
+      try {
+        await this.plannerCoordinator.shutdown();
+      } catch (err) {
+        this.logger.error("PlannerShutdown", String(err));
+      }
     }
     if (this.agentSupervisor) {
       try {

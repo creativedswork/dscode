@@ -21,12 +21,12 @@
 
 ## 3. M2 — Planner Agent Process 与 RAP-lite
 
-- [ ] 3.1 添加内部 Planner AgentApplication 资源，固定 `permissionMode: plan` 和只读/计划工具集合。
-- [ ] 3.2 通过 AgentSupervisor 实现 Planner 创建、Main waiting、TTY 前台交接、Planner waiting 和批准后 Main 恢复。
-- [ ] 3.3 实现 Planner 计划工具和 `select | investigate | update_constraints | backtrack` action union，用于创建目标/约束、追加候选、记录公开评估和驱动决策。
-- [ ] 3.4 实现每节点最多 3 个候选、每 revision 最多 6 个 decision nodes 的预算门禁。
-- [ ] 3.5 实现 Human-in-the-loop 判定：非劣候选、高影响取舍、约束缺失和最终审批必须请求用户。
-- [ ] 3.6 添加 Planner 隔离与生命周期测试，证明 mutating tool 和嵌套 spawn 被拒绝，Main/Planner 状态与 parent identity 正确。
+- [x] 3.1 添加内部 Planner AgentApplication 资源，固定 `permissionMode: plan` 和只读/计划工具集合。
+- [x] 3.2 通过 AgentSupervisor 实现 Planner 创建、Main waiting、TTY 前台交接、Planner waiting 和批准后 Main 恢复。
+- [x] 3.3 实现 Planner 计划工具和 `select | investigate | update_constraints | backtrack` action union，用于创建目标/约束、追加候选、记录公开评估和驱动决策。
+- [x] 3.4 实现每节点最多 3 个候选、每 revision 最多 6 个 decision nodes 的预算门禁。
+- [x] 3.5 实现 Human-in-the-loop 判定：非劣候选、高影响取舍、约束缺失和最终审批必须请求用户。
+- [x] 3.6 添加 Planner 隔离与生命周期测试，证明 mutating tool 和嵌套 spawn 被拒绝，Main/Planner 状态与 parent identity 正确。
 
 ## 4. M3 — 审批、执行绑定与重新规划
 

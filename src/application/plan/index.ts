@@ -26,6 +26,23 @@ export {
   makePlanRouteDriver,
   PlanExecutionGuard,
 } from "./route-guard.js";
+export {
+  PLANNER_APPLICATION,
+  PLANNER_APPLICATION_NAME,
+} from "./planner-application.js";
+export { PlannerInteractionBroker } from "./planner-interactions.js";
+export {
+  assessHumanInteraction,
+} from "./planner-policy.js";
+export {
+  PlannerProcessCoordinator,
+} from "./planner-process.js";
+export { PlannerService } from "./planner-service.js";
+export {
+  makePlannerTools,
+  PLANNER_TOOL_CAPABILITIES,
+  PLANNER_TOOL_NAMES,
+} from "./planner-tools.js";
 export type {
   NewPlanInteraction,
   NewPlanRecord,
@@ -48,6 +65,26 @@ export type {
   BlockedPlanToolCall,
   PlanToolCallCheck,
 } from "./route-guard.js";
+export type {
+  PlannerProcessHandle,
+  SubmitPlannerDecision,
+} from "./planner-process.js";
+export type {
+  HumanInteractionAssessment,
+  HumanInteractionReason,
+  PlanBudgetBehavior,
+  PlanConstraintPatch,
+  PlanDecisionAction,
+  PlannerCommand,
+  PlannerDecisionInput,
+  PlannerFactInput,
+  PlannerMutationResult,
+} from "./planner-types.js";
+export {
+  MAX_PLAN_CANDIDATES,
+  MAX_PLAN_DECISION_NODES,
+  PlanBudgetError,
+} from "./planner-types.js";
 export type {
   PlanAcceptanceCriterion,
   PlanApproval,

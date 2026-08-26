@@ -15,7 +15,7 @@ export interface ToolCapability {
     readonly domain: "plan";
     readonly sideEffectFree: true;
   };
-  readonly audience?: "all" | "main";
+  readonly audience?: "all" | "main" | "planner";
 }
 
 declare module "@earendil-works/pi-agent-core" {
@@ -25,7 +25,7 @@ declare module "@earendil-works/pi-agent-core" {
       readonly domain: "plan";
       readonly sideEffectFree: true;
     };
-    audience?: "all" | "main";
+    audience?: "all" | "main" | "planner";
   }
 }
 

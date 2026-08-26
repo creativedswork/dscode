@@ -228,4 +228,37 @@ describe("Harness/Pi Plan routing", () => {
       expect(execute).toHaveBeenCalledTimes(expectedExecutions);
     },
   );
+
+  it("turns an explicit Plan request into a supervised foreground Planner", async () => {
+    const streamFn: StreamFn = vi.fn(() =>
+      response(assistant([{ type: "text", text: "unexpected Main call" }], "stop"))
+    );
+    const { harness } = await fixture({ streamFn });
+
+    const result = await harness.api.conversation.prompt(
+      "prepare a migration plan",
+      undefined,
+      "plan",
+    );
+
+    expect(result.kind).toBe("planner_requested");
+    expect(streamFn).not.toHaveBeenCalled();
+    const processes = harness.agentSupervisor.list();
+    const main = processes.find((process) => process.role === "main");
+    const planner = processes.find((process) =>
+      process.application.name === "planner"
+    );
+    expect(main?.state).toBe("waiting");
+    expect(planner).toMatchObject({
+      parentAgentId: main?.agentId,
+      parentSessionId: main?.parentSessionId,
+      attachment: "foreground",
+      application: {
+        permissionMode: "plan",
+        source: { kind: "internal", path: "programmatic:planner" },
+      },
+    });
+    expect(harness.agentSupervisor.foreground(main!.parentSessionId)?.agentId)
+      .toBe(planner?.agentId);
+  });
 });

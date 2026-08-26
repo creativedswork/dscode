@@ -17,6 +17,7 @@ import {
 } from "./schema-parts.js";
 import { assertNever } from "./types.js";
 import type { PlanRecord, PlanTrajectoryEvent } from "./types.js";
+import { MAX_PLAN_DECISION_NODES } from "./planner-types.js";
 
 const STRICT_OBJECT_OPTIONS = { additionalProperties: false } as const;
 
@@ -88,6 +89,7 @@ const TrajectoryEvent = Type.Union([
     recordedAt: Timestamp,
     kind: Type.Literal("backtracked"),
     targetDecisionNodeId: Identifier,
+    invalidatedDecisionNodeIds: Type.Array(Identifier),
     summary: Text,
   }, STRICT_OBJECT_OPTIONS),
 ]);
@@ -120,7 +122,7 @@ export const PlanRecordSchema = Type.Object({
       Type.Literal("evidence"),
     ]),
   }, STRICT_OBJECT_OPTIONS)),
-  decisions: Type.Array(DecisionNode),
+  decisions: Type.Array(DecisionNode, { maxItems: MAX_PLAN_DECISION_NODES }),
   items: Type.Array(PlanItem),
   sideEffectSummary: Text,
   approval: Type.Optional(Type.Object({

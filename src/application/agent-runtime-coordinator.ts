@@ -34,12 +34,19 @@ import { getEnvApiKey, resolveModel } from "../models/index.js";
 import { streamSimple } from "../models/index.js";
 import { PermissionManager } from "../permissions/manager.js";
 import type { PermissionPromptResult } from "../permissions/types.js";
+import { PLANNER_APPLICATION_NAME } from "./plan/planner-application.js";
+import type { PlannerProcessCoordinator } from "./plan/planner-process.js";
+import {
+  makePlannerTools,
+  PLANNER_TOOL_CAPABILITIES,
+} from "./plan/planner-tools.js";
 
 export interface AgentRuntimeCoordinatorOptions {
   config(): RuntimeConfig;
   environment: Readonly<Record<string, string | undefined>>;
   drivers: DriverRegistryPort;
   supervisor(): AgentSupervisor;
+  planner(): PlannerProcessCoordinator;
   skillTool(): RegisteredAgentTool;
   skillManifest(name: string): {
     name: string;
@@ -64,6 +71,7 @@ export class AgentRuntimeCoordinator {
     const capabilities = [
       ...this.options.drivers.getAllTools(),
       this.options.skillTool(),
+      ...PLANNER_TOOL_CAPABILITIES,
       ...extraCapabilities,
     ];
     return [...new Map(
@@ -121,11 +129,20 @@ export class AgentRuntimeCoordinator {
       this.options.supervisor(),
       agentId,
     );
+    const plannerTools = application.name === PLANNER_APPLICATION_NAME
+      ? makePlannerTools({
+          plannerAgentId: agentId,
+          planId: () => this.options.planner().planIdForPlanner(agentId),
+          service: this.options.planner().service,
+          interactions: this.options.planner().interactions,
+        })
+      : [];
     const toolsByName = new Map<string, AgentTool<any>>();
     for (const tool of [
       ...this.options.drivers.getAllTools(),
       this.options.skillTool(),
       ...processTools,
+      ...plannerTools,
     ]) {
       toolsByName.set(tool.name, tool);
     }

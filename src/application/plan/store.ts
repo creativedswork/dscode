@@ -132,6 +132,7 @@ export class PlanStore {
     planId: string,
     expectedVersion: number,
     interaction: NewPlanInteraction,
+    updater?: PlanRecordUpdater,
   ): Promise<PlanStoreMutationResult> {
     return this.update(planId, expectedVersion, (draft) => {
       if (draft.pendingInteraction) {
@@ -153,6 +154,7 @@ export class PlanStore {
         payloadDigest: digestCanonicalPayload(interaction.payload),
         state: "pending",
       } as PlanRecord["pendingInteraction"];
+      updater?.(draft);
     });
   }
 

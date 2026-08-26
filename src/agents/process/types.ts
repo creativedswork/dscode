@@ -143,7 +143,8 @@ export interface SpawnAgentRequest {
   contextMode?: AgentContextMode;
   contextSelection?: ContextSelection;
   cwd?: string;
-  onSpawn?: (agentId: string) => void;
+  onSpawn?: (agentId: string) => void | Promise<void>;
+  restoreParentOnExit?: boolean;
   signal?: AbortSignal;
 }
 

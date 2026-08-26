@@ -58,6 +58,16 @@ export function deriveAgentContext(options: DeriveAgentContextOptions): AgentCon
   }
   for (const tool of requested) {
     if (availableByName.get(tool)?.audience === "main") denied.add(tool);
+    if (
+      availableByName.get(tool)?.audience === "planner"
+      && (
+        application.name !== "planner"
+        || application.source.kind !== "internal"
+        || application.permissionMode !== "plan"
+      )
+    ) {
+      denied.add(tool);
+    }
   }
   if (attachment === "background" && application.isolation !== "worktree") {
     for (const tool of MUTATING_TOOLS) denied.add(tool);
