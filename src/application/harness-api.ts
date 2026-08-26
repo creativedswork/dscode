@@ -29,6 +29,10 @@ import type {
   SwitchSessionResult,
 } from "../session/types.js";
 import type { ImageRef } from "../resources/images/types.js";
+import type {
+  PlanSubmissionMode,
+  PlanSubmissionResult,
+} from "./plan/route.js";
 
 export interface ApplicationEventSource {
   on<E extends HarnessEventType>(
@@ -60,12 +64,17 @@ export interface ContextUsageSnapshot {
 }
 
 export interface ConversationApplicationPort {
-  prompt(text: string, images?: readonly ImageContent[]): Promise<void>;
+  prompt(
+    text: string,
+    images?: readonly ImageContent[],
+    mode?: PlanSubmissionMode,
+  ): Promise<PlanSubmissionResult>;
   promptWithImages(
     text: string,
     images: readonly ImageContent[],
     displayText?: string,
-  ): Promise<void>;
+    mode?: PlanSubmissionMode,
+  ): Promise<PlanSubmissionResult>;
   abort(): void;
   reset(): void;
   save(): void;

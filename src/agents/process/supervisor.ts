@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import type { HarnessEventBus } from "../../application/events.js";
 import type { Logger } from "../../kernel/logger.js";
+import type { ToolCapability } from "../../kernel/tool-effects.js";
 import type { AgentApplicationRegistry } from "../definitions/registry.js";
 import type {
   AgentApplicationSnapshot,
@@ -39,7 +40,7 @@ export class AgentSupervisor {
     private readonly store: AgentProcessStore,
     private readonly events: HarnessEventBus,
     logger: Logger,
-    private readonly availableTools: () => readonly string[],
+    private readonly availableTools: () => readonly (string | ToolCapability)[],
     private readonly maxDepth = 1,
     fallbackRegistry?: AgentFallbackRegistry,
     hostId = "default",

@@ -20,6 +20,7 @@ import type { Driver, DriverRegistryPort } from "../drivers/types.js";
 import { ImageCache } from "../drivers/vision/cache.js";
 import type { ImageStorePort } from "../drivers/vision/types.js";
 import type { ProcessOptions, ProcessResult } from "../drivers/vision/types.js";
+import { isToolEffect } from "../kernel/tool-effects.js";
 import type { AgentToolUpdateCallback } from "@earendil-works/pi-agent-core";
 
 function extractToolResultPreview(result: unknown): string {
@@ -604,6 +605,8 @@ export class MCPManager {
 
   private buildAgentTool(serverName: string, def: MCPToolDefinition, client: MCPClient): AgentTool<any> {
     const toolName = mcpToolName(serverName, def.name);
+    const declaredEffect = def.effect ?? def.annotations?.effect;
+    const effect = isToolEffect(declaredEffect) ? declaredEffect : "unknown";
     if (def.alwaysLoad) {
       this.alwaysLoadToolNames.add(toolName);
     }
@@ -617,6 +620,7 @@ export class MCPManager {
     return {
       name: toolName,
       label: `${serverName}: ${def.title ?? def.name}`,
+      effect,
       description: def.description ?? "",
       parameters: convertJsonSchema(def.inputSchema),
       execute: async (_id: string, args: any, signal?: AbortSignal, onUpdate?: AgentToolUpdateCallback) => {

@@ -151,6 +151,7 @@ function runSanityChecks(
 export const editTool: AgentTool<typeof editParams> = {
   name: "edit",
   label: "Edit file (preferred over shell commands)",
+  effect: "workspace_write",
   description:
     "【PREFERRED】Use this tool for ALL file editing — do NOT use bash/sed/awk for file modifications. " +
     "Edit a file using content-based hash anchors. " +

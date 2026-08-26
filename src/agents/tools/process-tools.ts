@@ -7,6 +7,7 @@ import { Type } from "@earendil-works/pi-ai";
 
 import { ImageCache } from "../../drivers/vision/cache.js";
 import { readImageFile } from "../../drivers/vision/reader.js";
+import type { ToolCapability } from "../../kernel/tool-effects.js";
 import { isImagePath } from "../../project-files/resolver.js";
 import type { AgentSupervisor } from "../process/supervisor.js";
 import type {
@@ -25,6 +26,18 @@ export const AGENT_PROCESS_TOOL_NAMES = [
   "background_agent",
   "send_agent_message",
 ] as const;
+
+export const AGENT_PROCESS_TOOL_CAPABILITIES: readonly ToolCapability[] =
+  Object.freeze([
+    { name: "spawn_agent", effect: "process" },
+    { name: "list_agents", effect: "read" },
+    { name: "terminate_agent", effect: "process" },
+    { name: "kill_agent", effect: "process" },
+    { name: "suspend_agent", effect: "process" },
+    { name: "continue_agent", effect: "process" },
+    { name: "background_agent", effect: "process" },
+    { name: "send_agent_message", effect: "process" },
+  ]);
 
 const spawnParams = Type.Object({
   application: Type.String({ description: "Configured Agent Application name" }),
@@ -221,6 +234,7 @@ export function makeAgentProcessTools(
   const spawnAgent: AgentTool<typeof spawnParams> = {
     name: "spawn_agent",
     label: "Spawn Agent",
+    effect: "process",
     get description() {
       return spawnAgentDescription(supervisor);
     },
@@ -265,6 +279,7 @@ export function makeAgentProcessTools(
   const listAgents: AgentTool<typeof listParams> = {
     name: "list_agents",
     label: "List Agents",
+    effect: "read",
     description: "List child Agent processes and their lifecycle state.",
     parameters: listParams,
     execute: async () => {
@@ -296,6 +311,7 @@ export function makeAgentProcessTools(
   const suspendAgent: AgentTool<typeof agentIdParams> = {
     name: "suspend_agent",
     label: "Suspend Agent",
+    effect: "process",
     description: "Suspend an Agent process when its Runtime supports it.",
     parameters: agentIdParams,
     execute: async (_id, { agentId }) => {
@@ -307,6 +323,7 @@ export function makeAgentProcessTools(
   const continueAgent: AgentTool<typeof agentIdParams> = {
     name: "continue_agent",
     label: "Continue Agent",
+    effect: "process",
     description: "Continue a suspended Agent process.",
     parameters: agentIdParams,
     execute: async (_id, { agentId }) => {
@@ -318,6 +335,7 @@ export function makeAgentProcessTools(
   const sendMessage: AgentTool<typeof messageParams> = {
     name: "send_agent_message",
     label: "Send Agent Message",
+    effect: "process",
     description: "Send a steering message to a running Agent process.",
     parameters: messageParams,
     execute: async (_id, { agentId, message }) => {
@@ -329,6 +347,7 @@ export function makeAgentProcessTools(
   const backgroundAgent: AgentTool<typeof agentIdParams> = {
     name: "background_agent",
     label: "Background Agent",
+    effect: "process",
     description: "Detach a foreground Agent without restarting its Runtime.",
     parameters: agentIdParams,
     execute: async (_id, { agentId }) => {
@@ -361,6 +380,7 @@ function lifecycleTool(
   return {
     name,
     label,
+    effect: "process",
     description,
     parameters: agentIdParams,
     execute: async (_id, { agentId }) => {

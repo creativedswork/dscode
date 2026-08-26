@@ -15,6 +15,17 @@ export {
   PlanNotFoundError,
   PlanStore,
 } from "./store.js";
+export {
+  decidePlanRoute,
+  PLAN_ROUTE_ASSESSMENT_TOOL_NAME,
+  PlanRouteAssessmentError,
+  PlanRouteAssessmentSchema,
+  validatePlanRouteAssessment,
+} from "./route.js";
+export {
+  makePlanRouteDriver,
+  PlanExecutionGuard,
+} from "./route-guard.js";
 export type {
   NewPlanInteraction,
   NewPlanRecord,
@@ -24,6 +35,19 @@ export type {
   PlanLoadResult,
   PlanStoreMutationResult,
 } from "./store-types.js";
+export type {
+  PlanRoute,
+  PlanRouteAssessment,
+  PlanRouteDecision,
+  PlanRouteScore,
+  PlannerRouteRequest,
+  PlanSubmissionMode,
+  PlanSubmissionResult,
+} from "./route.js";
+export type {
+  BlockedPlanToolCall,
+  PlanToolCallCheck,
+} from "./route-guard.js";
 export type {
   PlanAcceptanceCriterion,
   PlanApproval,

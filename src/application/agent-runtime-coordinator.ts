@@ -25,6 +25,10 @@ import { makeAgentProcessTools } from "../agents/tools/process-tools.js";
 import type { RuntimeConfig } from "../config/types.js";
 import { ContextManager } from "../context/manager.js";
 import type { DriverRegistryPort } from "../drivers/types.js";
+import type {
+  RegisteredAgentTool,
+  ToolCapability,
+} from "../kernel/tool-effects.js";
 import type { HarnessEvent } from "../application/events.js";
 import { getEnvApiKey, resolveModel } from "../models/index.js";
 import { streamSimple } from "../models/index.js";
@@ -36,7 +40,7 @@ export interface AgentRuntimeCoordinatorOptions {
   environment: Readonly<Record<string, string | undefined>>;
   drivers: DriverRegistryPort;
   supervisor(): AgentSupervisor;
-  skillTool(): AgentTool<any>;
+  skillTool(): RegisteredAgentTool;
   skillManifest(name: string): {
     name: string;
     description: string;
@@ -54,21 +58,38 @@ export interface AgentRuntimeCoordinatorOptions {
 export class AgentRuntimeCoordinator {
   constructor(private readonly options: AgentRuntimeCoordinatorOptions) {}
 
-  availableToolNames(extraNames: readonly string[] = []): string[] {
-    return [...new Set([
-      ...this.options.drivers.getAllTools().map((tool) => tool.name),
-      "skill",
-      ...extraNames,
-    ])];
+  availableToolCapabilities(
+    extraCapabilities: readonly ToolCapability[] = [],
+  ): ToolCapability[] {
+    const capabilities = [
+      ...this.options.drivers.getAllTools(),
+      this.options.skillTool(),
+      ...extraCapabilities,
+    ];
+    return [...new Map(
+      capabilities.map((tool) => [tool.name, {
+        name: tool.name,
+        effect: tool.effect,
+        planOperation: tool.planOperation,
+        audience: tool.audience,
+      }]),
+    ).values()];
+  }
+
+  availableToolNames(
+    extraCapabilities: readonly ToolCapability[] = [],
+  ): string[] {
+    return this.availableToolCapabilities(extraCapabilities)
+      .map((tool) => tool.name);
   }
 
   async refreshMain(
     mainAgentId: string,
-    extraNames: readonly string[] = [],
+    extraCapabilities: readonly ToolCapability[] = [],
   ): Promise<void> {
     await this.options.supervisor().updateMainCapabilities(
       mainAgentId,
-      this.availableToolNames(extraNames),
+      this.availableToolNames(extraCapabilities),
     );
   }
 

@@ -74,7 +74,13 @@ describe("Agent capability monotonicity", () => {
     const planContext = deriveAgentContext({
       application: application({ permissionMode: "plan" }),
       parent: { ...mutatingParent, deniedTools: [] },
-      availableTools: [...mutatingParent.allowedTools],
+      availableTools: [
+        { name: "read_file", effect: "read" },
+        { name: "write_file", effect: "workspace_write" },
+        { name: "bash", effect: "process" },
+        { name: "mcp__demo__read", effect: "read" },
+        { name: "edit_undo", effect: "workspace_write" },
+      ],
       attachment: "foreground",
     });
     const backgroundContext = deriveAgentContext({
@@ -87,6 +93,10 @@ describe("Agent capability monotonicity", () => {
     expect(planContext.allowedTools).not.toContain("write_file");
     expect(planContext.allowedTools).not.toContain("bash");
     expect(planContext.allowedTools).not.toContain("edit_undo");
+    expect(planContext.allowedTools).toEqual([
+      "read_file",
+      "mcp__demo__read",
+    ]);
     expect(backgroundContext.allowedTools).not.toContain("write_file");
     expect(backgroundContext.allowedTools).not.toContain("bash");
     expect(backgroundContext.allowedTools).not.toContain("edit_undo");

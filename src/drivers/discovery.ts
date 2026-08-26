@@ -22,6 +22,7 @@ export function makeSearchToolsTool(
   return {
     name: "search_tools",
     label: "Search Tools",
+    effect: "read",
     description:
       "Search and load deferred tools by name or keyword. Loaded tools become available for direct use in subsequent turns. Use this when you need a tool that is listed in the Discoverable Tools section but not yet available.",
     parameters: searchParams,

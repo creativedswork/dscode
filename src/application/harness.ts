@@ -1,8 +1,18 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { Agent as PiAgentRuntime } from "@earendil-works/pi-agent-core";
-import type { AfterToolCallContext, AfterToolCallResult, AgentMessage, AgentTool, BeforeToolCallContext } from "@earendil-works/pi-agent-core";
-import { Type } from "@earendil-works/pi-ai";
+import type {
+  AfterToolCallContext,
+  AfterToolCallResult,
+  AgentContext as PiAgentContext,
+  AgentMessage,
+  AgentTool,
+  BeforeToolCallContext,
+  PrepareNextTurnContext,
+  StreamFn,
+} from "@earendil-works/pi-agent-core";
+import { createAssistantMessageEventStream, Type } from "@earendil-works/pi-ai";
 import type { Api, AssistantMessage, Context, ImageContent, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 
 import {
@@ -74,8 +84,12 @@ import {
   type CheckpointSystem,
 } from "../checkpoint/index.js";
 import { recordInvalidation, consumePendingNotices } from "../context/anchor-invalidation.js";
-import { runWithExecutionContext } from "../kernel/execution-context.js";
+import {
+  getExecutionContext,
+  runWithExecutionContext,
+} from "../kernel/execution-context.js";
 import type { HostFacilities } from "../kernel/host-facilities.js";
+import { isSideEffectFreePlanOperation } from "../kernel/tool-effects.js";
 import { HarnessEventBus } from "./events.js";
 import type { Logger } from "../kernel/logger.js";
 import { AgentApplicationRegistry } from "../agents/definitions/registry.js";
@@ -97,9 +111,18 @@ import { formatSubagentLabel } from "../agents/process/label.js";
 import { extractAgentToolExecutions } from "../agents/process/transcript.js";
 import type { AgentExitResult } from "../agents/process/types.js";
 import {
-  AGENT_PROCESS_TOOL_NAMES,
+  AGENT_PROCESS_TOOL_CAPABILITIES,
   makeAgentProcessTools,
 } from "../agents/tools/process-tools.js";
+import {
+  makePlanRouteDriver,
+  PlanExecutionGuard,
+} from "./plan/route-guard.js";
+import { PLAN_ROUTE_ASSESSMENT_TOOL_NAME } from "./plan/route.js";
+import type {
+  PlanSubmissionMode,
+  PlanSubmissionResult,
+} from "./plan/route.js";
 
 const MAIN_PROCESS_APPLICATION: AgentApplicationSnapshot = Object.freeze({
   name: "main",
@@ -110,6 +133,16 @@ const MAIN_PROCESS_APPLICATION: AgentApplicationSnapshot = Object.freeze({
   digest: "0".repeat(64),
   registryGeneration: 0,
 });
+
+interface PendingRoutedImages {
+  requestId: string;
+  text: string;
+  displayText: string;
+  images: ImageContent[];
+  parentSessionId: string;
+  turnIndex: number;
+  result?: ProcessResult;
+}
 
 export function shouldUseNativeMainImagePath(
   agentsEnabled: boolean,
@@ -207,6 +240,9 @@ export class Harness {
   private readonly conversationCoordinator: ConversationCoordinator;
   private readonly sessionCoordinator: SessionCoordinator;
   private readonly permissionPromptQueue = new PermissionPromptQueue();
+  private readonly planExecutionGuard = new PlanExecutionGuard();
+  private readonly terminalRouteBlocks = new Map<string, string>();
+  private pendingRoutedImages: PendingRoutedImages | undefined;
 
   get agent(): PiAgentRuntime {
     return this.piAgentRuntime;
@@ -301,13 +337,10 @@ export class Harness {
       tools: this.toolRegistry,
       makeSkillTool: () => this.makeSkillTool(),
       processImages: (images, text, options) =>
-        this.processImagesWithVisionAgent(images, text, options),
-      applyTools: (tools, deferredHint) => {
-        this.agent.state.tools = [...tools];
-        this.agent.state.systemPrompt = this.baseSystemPrompt.replace(
-          "__DEFERRED_HINT__",
-          deferredHint,
-        );
+        this.processMcpImages(images, text, options),
+      applyTools: (_tools, deferredHint) => {
+        this.agent.state.tools = this.buildMainToolsForRequest();
+        this.agent.state.systemPrompt = this.activeSystemPrompt(deferredHint);
       },
       refreshCapabilities: () => this.refreshMainAgentCapabilities(),
       publish: (event) => this.events.emit(event),
@@ -388,10 +421,10 @@ export class Harness {
     const api: HarnessAPI = {
       events,
       conversation: Object.freeze<HarnessAPI["conversation"]>({
-        prompt: (text, images) =>
-          this.promptAndSave(text, images ? [...images] : undefined),
-        promptWithImages: (text, images, displayText) =>
-          this.promptWithImages(text, [...images], displayText),
+        prompt: (text, images, mode) =>
+          this.promptAndSave(text, images ? [...images] : undefined, mode),
+        promptWithImages: (text, images, displayText, mode) =>
+          this.promptWithImages(text, [...images], displayText, mode),
         abort: () => this.abort(),
         reset: () => {
           this.sessionManager.trySaveSession(this.agent);
@@ -642,7 +675,7 @@ export class Harness {
           } else {
             this.skillManager.deactivate(name);
           }
-          this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
+          this.agent.state.tools = this.buildMainToolsForRequest();
           return Object.freeze({ toolNames });
         },
       }),
@@ -810,7 +843,7 @@ export class Harness {
       }
     }
 
-    // Register discovery driver so search_tools is available
+    this.driverRegistry.register(makePlanRouteDriver(this.planExecutionGuard));
 
     // 4.2: Initialize checkpoint system for baseline hygiene
     const sessionId = this.sessionManager.getCurrentSessionId?.() ?? `session-${Date.now()}`;
@@ -871,10 +904,10 @@ export class Harness {
             } as AgentMessage);
           }
           // Update tools based on current discovery state
-          self.agent.state.tools = self.toolRegistry.buildToolsForRequest();
+          self.agent.state.tools = self.buildMainToolsForRequest();
           // Update system prompt with current deferred tools hint
           const deferredHint = self.toolRegistry.buildDeferredToolsHint();
-          self.agent.state.systemPrompt = self.baseSystemPrompt.replace("__DEFERRED_HINT__", deferredHint);
+          self.agent.state.systemPrompt = self.activeSystemPrompt(deferredHint);
           await self.dumpDebugPrompt();
           return self.contextManager.transform(msgs, signal) as Promise<AgentMessage[]>;
         } catch (err) {
@@ -883,12 +916,48 @@ export class Harness {
           return msgs as unknown as Promise<AgentMessage[]>;
         }
       },
-      beforeToolCall: (ctx: BeforeToolCallContext, signal?: AbortSignal) =>
-        this.permissionManager.check(ctx, signal),
+      prepareNextTurnWithContext: (turn) =>
+        this.prepareMainNextTurn(turn),
+      beforeToolCall: async (
+        ctx: BeforeToolCallContext,
+        signal?: AbortSignal,
+      ) => {
+        const batchToolNames = ctx.assistantMessage.content.flatMap((block) =>
+          block.type === "toolCall" ? [block.name] : []
+        );
+        this.planExecutionGuard.beginToolBatch(batchToolNames);
+        const tool = ctx.context.tools?.find(
+          (candidate) => candidate.name === ctx.toolCall.name,
+        );
+        const routeBlock = this.planExecutionGuard.checkToolCall({
+          tool,
+          batchToolNames,
+        });
+        if (routeBlock?.terminateBatch && tool) {
+          this.terminalRouteBlocks.set(
+            ctx.toolCall.id,
+            routeBlock.reason,
+          );
+          return undefined;
+        }
+        if (routeBlock) return routeBlock;
+        if (isSideEffectFreePlanOperation(tool)) return undefined;
+        return this.permissionManager.check(ctx, signal);
+      },
       afterToolCall: async (ctx: AfterToolCallContext, _signal?: AbortSignal) => {
+        const batchToolNames = ctx.assistantMessage.content.flatMap((block) =>
+          block.type === "toolCall" ? [block.name] : []
+        );
+        const routeBatchSibling = ctx.toolCall.name
+          !== PLAN_ROUTE_ASSESSMENT_TOOL_NAME
+          && batchToolNames.includes(PLAN_ROUTE_ASSESSMENT_TOOL_NAME);
+        const routeBlocked = Boolean(
+          (ctx.result.details as { routeBlocked?: unknown } | undefined)
+            ?.routeBlocked,
+        );
         try {
           if (ctx.toolCall.name === "search_tools" && ctx.context.tools) {
-            ctx.context.tools = self.toolRegistry.buildToolsForRequest();
+            ctx.context.tools = self.buildMainToolsForRequest();
           }
             // S2b: Record anchor invalidation on write_file/overwrite_file success
             const toolName = ctx.toolCall.name;
@@ -911,8 +980,17 @@ export class Harness {
         if (_signal?.aborted) {
           return { terminate: true };
         }
+        if (routeBatchSibling) {
+          return {
+            isError: routeBlocked || ctx.isError,
+            terminate: true,
+          };
+        }
         return undefined;
       },    });
+    const streamMain = this.piAgentRuntime.streamFn;
+    this.piAgentRuntime.streamFn = (model, context, options) =>
+      this.streamMainModel(streamMain, model, context, options);
 
     this.bindEvents();
     const session = this.sessionManager.createSession(this.config.provider, this.config.modelId);
@@ -925,8 +1003,8 @@ export class Harness {
       this.processStore,
       this.events,
       this.logger,
-      () => this.agentRuntimeCoordinator.availableToolNames(
-        AGENT_PROCESS_TOOL_NAMES,
+      () => this.agentRuntimeCoordinator.availableToolCapabilities(
+        AGENT_PROCESS_TOOL_CAPABILITIES,
       ),
       1,
       fallbackRegistry,
@@ -942,7 +1020,9 @@ export class Harness {
     const mainContext = createMainAgentContext(
       this.config.projectPath,
       session.id,
-      this.agentRuntimeCoordinator.availableToolNames(AGENT_PROCESS_TOOL_NAMES),
+      this.agentRuntimeCoordinator.availableToolNames(
+        AGENT_PROCESS_TOOL_CAPABILITIES,
+      ),
       this.config.permissions.denyPatterns,
     );
     const mainProcess = this.agentSupervisor.registerMain(
@@ -968,16 +1048,153 @@ export class Harness {
    * On success, saves the session. On failure, retries up to maxRetries
    * with exponential backoff, then saves the failed state.
    */
-  async promptAndSave(text: string, images?: ImageContent[]): Promise<void> {
-    return this.conversationCoordinator.prompt(
-      this.conversationPromptOptions(text, images),
+  async promptAndSave(
+    text: string,
+    images?: ImageContent[],
+    mode: PlanSubmissionMode = "auto",
+  ): Promise<PlanSubmissionResult> {
+    return this.submitRoutedRequest(
+      text,
+      mode,
+      () => this.conversationCoordinator.prompt(
+        this.conversationPromptOptions(text, images),
+      ),
     );
   }
 
   private async promptAndSaveInternal(text: string, images?: ImageContent[]): Promise<void> {
-    return this.conversationCoordinator.executePrompt(
+    const prompt = () => this.conversationCoordinator.executePrompt(
       this.conversationPromptOptions(text, images),
     );
+    if (this.planExecutionGuard.hasActiveRequest) {
+      await prompt();
+      return;
+    }
+    await this.submitRoutedRequest(text, "auto", prompt);
+  }
+
+  private async submitRoutedRequest(
+    text: string,
+    mode: PlanSubmissionMode,
+    submit: (requestId: string) => Promise<void>,
+  ): Promise<PlanSubmissionResult> {
+    const requestId = randomUUID();
+    const initial = this.planExecutionGuard.beginRequest(requestId, text, mode);
+    this.syncMainRequestContext();
+    try {
+      if (initial.kind === "planner_requested") {
+        return this.planExecutionGuard.endRequest(requestId);
+      }
+      await submit(requestId);
+      if (this.planExecutionGuard.activeRequestId !== requestId) {
+        return { kind: "main", requestId };
+      }
+      return this.planExecutionGuard.endRequest(requestId);
+    } finally {
+      this.planExecutionGuard.cancelRequest(requestId);
+      this.terminalRouteBlocks.clear();
+      this.syncMainRequestContext();
+    }
+  }
+
+  private syncMainRequestContext(): void {
+    if (!this.piAgentRuntime) return;
+    this.agent.state.tools = this.buildMainToolsForRequest();
+    this.agent.state.systemPrompt = this.activeSystemPrompt(
+      this.toolRegistry.buildDeferredToolsHint(),
+    );
+  }
+
+  private buildMainToolsForRequest(): AgentTool<any>[] {
+    return this.toolRegistry.buildToolsForRequest().map((tool) => ({
+      ...tool,
+      execute: async (id, args, signal, onUpdate) => {
+        const routeBlock = this.terminalRouteBlocks.get(id);
+        if (routeBlock) {
+          this.terminalRouteBlocks.delete(id);
+          return {
+            content: [{ type: "text", text: routeBlock }],
+            details: { routeBlocked: true },
+            terminate: true,
+          };
+        }
+        return tool.execute(id, args, signal, onUpdate);
+      },
+    }));
+  }
+
+  private streamMainModel(
+    stream: StreamFn,
+    model: Model<Api>,
+    context: Context,
+    options?: SimpleStreamOptions,
+  ) {
+    if (this.planExecutionGuard.activeDecision?.route !== "plan") {
+      return stream(model, context, options);
+    }
+    const stopped = createAssistantMessageEventStream();
+    const message: AssistantMessage = {
+      role: "assistant",
+      content: [],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          total: 0,
+        },
+      },
+      stopReason: "stop",
+      timestamp: Date.now(),
+    };
+    stopped.push({ type: "done", reason: "stop", message });
+    return stopped;
+  }
+
+  private async prepareMainNextTurn(
+    turn: PrepareNextTurnContext,
+  ): Promise<{ context: PiAgentContext }> {
+    const batchToolNames = turn.message.content.flatMap((block) =>
+      block.type === "toolCall" ? [block.name] : []
+    );
+    this.planExecutionGuard.completeToolBatch(batchToolNames);
+    const messages = [...turn.context.messages];
+    const pending = this.pendingRoutedImages;
+    if (
+      pending
+      && pending.requestId === this.planExecutionGuard.activeRequestId
+      && this.planExecutionGuard.canRunSideEffects()
+      && !pending.result
+    ) {
+      pending.result = await this.processPendingRoutedImages(pending);
+      messages.push({
+        role: "user",
+        content: [{
+          type: "text",
+          text: this.imageResultPrompt(pending.text, pending.result),
+        }],
+        timestamp: Date.now(),
+      } as AgentMessage);
+    }
+    return {
+      context: {
+        ...turn.context,
+        systemPrompt: this.activeSystemPrompt(
+          this.toolRegistry.buildDeferredToolsHint(),
+        ),
+        messages,
+        tools: this.buildMainToolsForRequest(),
+      },
+    };
   }
 
   private conversationPromptOptions(text: string, images?: ImageContent[]) {
@@ -1229,8 +1446,29 @@ export class Harness {
   private async refreshMainAgentCapabilities(): Promise<void> {
     await this.agentRuntimeCoordinator.refreshMain(
       this.mainAgentId,
-      AGENT_PROCESS_TOOL_NAMES,
+      AGENT_PROCESS_TOOL_CAPABILITIES,
     );
+  }
+
+  private async processMcpImages(
+    images: ImageContent[],
+    text: string,
+    options?: ProcessOptions,
+  ): Promise<ProcessResult> {
+    const execution = getExecutionContext();
+    const process = execution
+      ? this.agentSupervisor?.get(execution.processId)
+      : undefined;
+    const blocked = !process
+      || process.application.permissionMode === "plan"
+      || (
+        process.role === "main"
+        && !this.planExecutionGuard.canRunSideEffects()
+      );
+    if (blocked) {
+      return { source: "none", enrichedText: text, cachedRefs: [] };
+    }
+    return this.processImagesWithVisionAgent(images, text, options);
   }
 
   private async processImagesWithVisionAgent(
@@ -1343,9 +1581,14 @@ export class Harness {
     text: string,
     images: ImageContent[],
     displayText = text,
-  ): Promise<void> {
-    return this.conversationCoordinator.run(() =>
-      this.promptWithImagesInternal(text, images, displayText)
+    mode: PlanSubmissionMode = "auto",
+  ): Promise<PlanSubmissionResult> {
+    return this.submitRoutedRequest(
+      text,
+      mode,
+      (requestId) => this.conversationCoordinator.run(() =>
+        this.promptWithImagesInternal(text, images, displayText, requestId)
+      ),
     );
   }
 
@@ -1353,9 +1596,8 @@ export class Harness {
     text: string,
     images: ImageContent[],
     displayText: string,
+    requestId: string,
   ): Promise<void> {
-    const turnIdx = this.turnIndex++;
-
     const visionApplication = this.applicationRegistry.require("vision");
     const visionConfig = resolveVisionApplicationConfig(visionApplication, this.config);
     const hasVisionConfig = !!(visionConfig?.provider && visionConfig.model);
@@ -1369,67 +1611,120 @@ export class Harness {
       return;
     }
 
-    this.events.emit({ type: "processing:start" });
-    this.events.emit({ type: "ui:info", text: `Analyzing ${images.length} image(s)...` });
-
     const parentSessionId = this.sessionManager.getCurrentSessionId();
     if (!parentSessionId) throw new Error("Cannot launch Vision Agent without an active session");
+    const pending: PendingRoutedImages = {
+      requestId,
+      text,
+      displayText,
+      images,
+      parentSessionId,
+      turnIndex: this.turnIndex++,
+    };
+    this.pendingRoutedImages = pending;
     try {
-      const result = await this.processImagesWithVisionAgent(
-        images,
-        text,
-        { displayPrompt: displayText },
-        true,
+      await this.promptAndSaveInternal(
+        [
+          text,
+          "",
+          `<attached_images_pending count="${images.length}">`,
+          "Image analysis is pending. Submit the required route assessment before answering or processing these images.",
+          "</attached_images_pending>",
+        ].join("\n"),
       );
-      let mainPrompt = result.enrichedText;
-      if (result.source === "vision") {
-        this.events.emit({ type: "ui:info", text: `Image analysis complete, sending to main model...` });
-      } else if (result.source === "ocr") {
-        this.events.emit({ type: "ui:info", text: `OCR complete, sending to main model...` });
-      } else if (result.source === "none") {
-        mainPrompt = text
-          ? `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`
-          : "(用户附带了一张图片，但图片中没有可识别的文字内容)";
-      }
-      await this.promptAndSaveInternal(mainPrompt);
-
-      const messages = this.agent.state.messages as any[];
-      const messageIndex = this.findLastUserMessageIndex(messages);
-      const linked = this.linkVisionAgentMessage(
-        parentSessionId,
-        result,
-        displayText,
-        messageIndex,
-      );
-      if (!linked && result.source === "vision") {
-        const vMsg: VisionMessage = {
-          turnIndex: turnIdx,
-          messageIndex,
-          images: result.cachedRefs,
-          prompt: displayText,
-          description: result.enrichedText
-            .replace(text ? `${text}\n\n<image_description>\n` : `<image_description>\n`, "")
-            .replace("\n</image_description>", ""),
-          modelProvider: visionConfig?.provider ?? "",
-          modelId: visionConfig?.model ?? "",
-          timestamp: Date.now(),
-        };
-        this.sessionManager.appendVisionMessage(parentSessionId, vMsg);
-      }
-      if (linked || result.source === "vision") {
-        this.restoreUserMessageImages(displayText, result.cachedRefs);
-      }
+      if (pending.result) this.recordProcessedImages(pending, visionConfig);
+      else this.restoreUserMessageImages(displayText, []);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         this.events.emit({ type: "processing:stop" });
         return;
       }
       throw error;
+    } finally {
+      if (this.pendingRoutedImages === pending) {
+        this.pendingRoutedImages = undefined;
+      }
     }
+  }
+
+  private async processPendingRoutedImages(
+    pending: PendingRoutedImages,
+  ): Promise<ProcessResult> {
+    this.events.emit({ type: "processing:start" });
+    this.events.emit({
+      type: "ui:info",
+      text: `Analyzing ${pending.images.length} image(s)...`,
+    });
+    const result = await this.processImagesWithVisionAgent(
+      pending.images,
+      pending.text,
+      { displayPrompt: pending.displayText },
+      true,
+    );
+    if (result.source === "vision") {
+      this.events.emit({
+        type: "ui:info",
+        text: "Image analysis complete, sending to main model...",
+      });
+    } else if (result.source === "ocr") {
+      this.events.emit({
+        type: "ui:info",
+        text: "OCR complete, sending to main model...",
+      });
+    }
+    return result;
+  }
+
+  private imageResultPrompt(text: string, result: ProcessResult): string {
+    if (result.source !== "none") return result.enrichedText;
+    return text
+      ? `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`
+      : "(用户附带了一张图片，但图片中没有可识别的文字内容)";
+  }
+
+  private recordProcessedImages(
+    pending: PendingRoutedImages,
+    visionConfig: ReturnType<typeof resolveVisionApplicationConfig>,
+  ): void {
+    const result = pending.result;
+    if (!result) return;
+    const messageIndex = this.findLastUserMessageIndex(
+      this.agent.state.messages as any[],
+    );
+    const linked = this.linkVisionAgentMessage(
+      pending.parentSessionId,
+      result,
+      pending.displayText,
+      messageIndex,
+    );
+    if (!linked && result.source === "vision") {
+      const message: VisionMessage = {
+        turnIndex: pending.turnIndex,
+        messageIndex,
+        images: result.cachedRefs,
+        prompt: pending.displayText,
+        description: result.enrichedText
+          .replace(
+            pending.text
+              ? `${pending.text}\n\n<image_description>\n`
+              : "<image_description>\n",
+            "",
+          )
+          .replace("\n</image_description>", ""),
+        modelProvider: visionConfig?.provider ?? "",
+        modelId: visionConfig?.model ?? "",
+        timestamp: Date.now(),
+      };
+      this.sessionManager.appendVisionMessage(pending.parentSessionId, message);
+    }
+    this.restoreUserMessageImages(pending.displayText, result.cachedRefs);
   }
 
   /** Abort any in-progress vision/OCR processing AND the current agent run. */
   abort(): void {
+    this.planExecutionGuard.cancelActiveRequest();
+    this.terminalRouteBlocks.clear();
+    this.syncMainRequestContext();
     this.conversationCoordinator.abort(() => this.abortRuntime());
   }
 
@@ -1692,7 +1987,18 @@ export class Harness {
     const memories = this.memoryManager.getRelevantMemories();
     const skillSection = this.skillManager.getSystemPromptSection();
     this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection, this.commandManager.getSystemPromptSection());
-    this.agent.state.systemPrompt = this.baseSystemPrompt.replace("__DEFERRED_HINT__", this.toolRegistry.buildDeferredToolsHint());
+    this.agent.state.systemPrompt = this.activeSystemPrompt(
+      this.toolRegistry.buildDeferredToolsHint(),
+    );
+  }
+
+  private activeSystemPrompt(deferredHint: string): string {
+    const prompt = this.baseSystemPrompt.replace(
+      "__DEFERRED_HINT__",
+      deferredHint,
+    );
+    const routeInstructions = this.planExecutionGuard.instructions();
+    return routeInstructions ? `${prompt}\n\n${routeInstructions}` : prompt;
   }
 
   private buildSystemPrompt(memories: string, skillSection: string, commandsSection: string): string {
@@ -1808,6 +2114,7 @@ __DEFERRED_HINT__`;
     return {
       name: "skill",
       label: "Load skill",
+      effect: "read",
       description: "Load and display the full SKILL.md content (frontmatter + instructions) for a given skill. Call this first before using a skill to understand its instructions and allowed tools.",
       parameters: skillParams,
       execute: async (_id, params) => {

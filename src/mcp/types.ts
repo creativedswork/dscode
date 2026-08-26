@@ -1,3 +1,5 @@
+import type { ToolEffect } from "../kernel/tool-effects.js";
+
 // --- MCP JSON-RPC Protocol Types ---
 
 export type MCPProtocolVersion = "2024-11-05" | "2025-03-26" | "2025-11-25";
@@ -82,6 +84,7 @@ export interface MCPToolDefinition {
   name: string;
   title?: string;
   description?: string;
+  effect?: ToolEffect;
   icons?: MCPIcon[];
   inputSchema: MCPJsonSchema;
   outputSchema?: MCPJsonSchema;

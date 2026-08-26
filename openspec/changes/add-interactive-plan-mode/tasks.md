@@ -11,13 +11,13 @@
 
 ## 2. M1 — 复杂度路由与副作用门禁
 
-- [ ] 2.1 定义 `auto | plan` submission mode、五维 `PlanRouteAssessment` 和集中式阈值策略。
-- [ ] 2.2 增加 Main Agent 的结构化 route assessment 入口，并允许 assessment 前的只读调查。
-- [ ] 2.3 在 mutating tool 调度边界实现 `PlanExecutionGuard`，阻止缺失评估或 route 为 Plan 的副作用。
-- [ ] 2.4 实现显式 Plan 提交绕过 Auto 评估并直接请求 Planner 的路径。
-- [ ] 2.5 添加路由接受测试，覆盖低复杂度 Direct、高影响/风险/协调强制 Plan、总分阈值、无评估 mutation、assessment/mutation 同批门禁和畸形评估。
-- [ ] 2.6 为内置、MCP 和动态工具增加 effect metadata，Plan capability 仅允许 read/无副作用 Plan operations，并默认拒绝缺失或 unknown effect。
-- [ ] 2.7 添加 effect filtering 测试，覆盖名称伪装、MCP read、network/external_write 和 unknown 默认拒绝。
+- [x] 2.1 定义 `auto | plan` submission mode、五维 `PlanRouteAssessment` 和集中式阈值策略。
+- [x] 2.2 增加 Main Agent 的结构化 route assessment 入口，并允许 assessment 前的只读调查。
+- [x] 2.3 在 mutating tool 调度边界实现 `PlanExecutionGuard`，阻止缺失评估或 route 为 Plan 的副作用。
+- [x] 2.4 实现显式 Plan 提交绕过 Auto 评估并直接请求 Planner 的路径。
+- [x] 2.5 添加路由接受测试，覆盖低复杂度 Direct、高影响/风险/协调强制 Plan、总分阈值、无评估 mutation、assessment/mutation 同批门禁和畸形评估。
+- [x] 2.6 为内置、MCP 和动态工具增加 effect metadata，Plan capability 仅允许 read/无副作用 Plan operations，并默认拒绝缺失或 unknown effect。
+- [x] 2.7 添加 effect filtering 测试，覆盖名称伪装、MCP read、network/external_write 和 unknown 默认拒绝。
 
 ## 3. M2 — Planner Agent Process 与 RAP-lite
 

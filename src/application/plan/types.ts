@@ -1,3 +1,5 @@
+import type { ToolEffect } from "../../kernel/tool-effects.js";
+
 export type PlanStatus =
   | "drafting"
   | "awaiting_decision"
@@ -51,13 +53,7 @@ export interface PlanDecisionNode {
   selectedOptionId?: string;
 }
 
-export type PlanEffectCategory =
-  | "read"
-  | "workspace_write"
-  | "process"
-  | "network"
-  | "external_write"
-  | "unknown";
+export type PlanEffectCategory = ToolEffect;
 
 export type PlanResourceScope =
   | { kind: "workspace_path"; pattern: string }

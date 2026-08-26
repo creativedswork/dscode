@@ -13,6 +13,7 @@ const bashParams = Type.Object({
 export const bashTool: AgentTool<typeof bashParams> = {
   name: "bash",
   label: "Shell",
+  effect: "process",
   description: "Execute a shell command and return stdout/stderr.",
   parameters: bashParams,
   executionMode: "sequential",
