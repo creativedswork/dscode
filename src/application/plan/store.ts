@@ -1,6 +1,5 @@
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-
 import { findCommandOutcome } from "./command.js";
 import { computePlanDigest, digestCanonicalPayload } from "./digest.js";
 import { acquirePlanLock } from "./lock.js";
@@ -16,48 +15,46 @@ import type {
   PlanLoadResult,
   PlanStoreMutationResult,
 } from "./store-types.js";
-import type { PlanCommandReceipt, PlanRecord } from "./types.js";
-
+import type { PlanCancellationRequest, PlanCommandReceipt, PlanRecord } from "./types.js";
 export interface PlanStoreOptions extends PlanLockOptions {
   dataDir: string;
   projectPath: string;
 }
-
 export type PlanRecordUpdater = (draft: PlanRecord) => void;
-
+export interface PlanUpdateOptions {
+  semanticChange?: boolean;
+  cancellation?: PlanCancellationRequest;
+}
 export class PlanNotFoundError extends Error {
   constructor(planId: string) {
     super(`Plan not found: ${planId}`);
     this.name = "PlanNotFoundError";
   }
 }
-
 function isErrno(error: unknown, code: string): boolean {
   return error instanceof Error
     && "code" in error
     && (error as NodeJS.ErrnoException).code === code;
 }
-
 export class PlanStore {
   readonly directoryPath: string;
   readonly projectKey: string;
+  readonly projectPath: string;
   private readonly queues = new Map<string, Promise<void>>();
   private readonly lockOptions: PlanLockOptions;
   private readonly now: () => number;
-
   constructor(options: PlanStoreOptions) {
     const location = resolvePlanProjectLocation(options.dataDir, options.projectPath);
     this.directoryPath = location.directory;
     this.projectKey = location.projectKey;
+    this.projectPath = options.projectPath;
     this.now = options.now ?? Date.now;
     this.lockOptions = options;
   }
-
   planPath(planId: string): string {
     assertPlanId(planId);
     return join(this.directoryPath, `${planId}.json`);
   }
-
   async create(input: NewPlanRecord): Promise<PlanStoreMutationResult> {
     assertPlanId(input.planId);
     return this.enqueue(input.planId, async () => this.withLock(input.planId, async () => {
@@ -81,7 +78,6 @@ export class PlanStore {
       return { ok: true, plan };
     }));
   }
-
   async load(planId: string): Promise<PlanLoadResult> {
     assertPlanId(planId);
     try {
@@ -108,26 +104,27 @@ export class PlanStore {
       }));
     }
   }
-
   async update(
     planId: string,
     expectedVersion: number,
     updater: PlanRecordUpdater,
+    options: PlanUpdateOptions = {},
   ): Promise<PlanStoreMutationResult> {
     assertPlanId(planId);
     return this.enqueue(planId, async () => this.withLock(planId, async () => {
       const current = await this.requireCurrent(planId);
-      if (current.version !== expectedVersion) {
+      const accepted = options.cancellation;
+      if (current.version !== expectedVersion
+        && (!accepted || !this.sameCancellation(current.cancellation, accepted))) {
         return this.conflict(expectedVersion, current);
       }
       const draft = structuredClone(current);
       updater(draft);
-      const next = this.prepareMutation(current, draft);
+      const next = this.prepareMutation(current, draft, options);
       await writeJsonAtomically(this.planPath(planId), next);
       return { ok: true, plan: next };
     }));
   }
-
   async persistInteraction(
     planId: string,
     expectedVersion: number,
@@ -157,7 +154,6 @@ export class PlanStore {
       updater?.(draft);
     });
   }
-
   async applyCommand(
     command: PlanCommand,
     updater: PlanRecordUpdater,
@@ -183,6 +179,7 @@ export class PlanStore {
         const next = this.prepareMutation(current, draft);
         const receipt: PlanCommandReceipt = {
           commandId: command.commandId,
+          operation: command.operation,
           interactionId: command.interactionId,
           payloadDigest,
           result: command.interactionId
@@ -198,15 +195,19 @@ export class PlanStore {
       })
     );
   }
-
-  private prepareMutation(current: PlanRecord, draft: PlanRecord): PlanRecord {
+  private prepareMutation(
+    current: PlanRecord,
+    draft: PlanRecord,
+    options: PlanUpdateOptions = {},
+  ): PlanRecord {
     draft.schemaVersion = 1;
     draft.planId = current.planId;
     draft.projectKey = current.projectKey;
     draft.createdAt = current.createdAt;
     draft.commandReceipts = structuredClone(current.commandReceipts);
     const digest = computePlanDigest(draft);
-    const isSemanticChange = digest !== current.digest;
+    const isSemanticChange = options.semanticChange === true
+      || digest !== current.digest;
     draft.version = current.version + 1;
     draft.revision = current.revision + Number(isSemanticChange);
     draft.digest = digest;
@@ -214,6 +215,15 @@ export class PlanStore {
     if (isSemanticChange) {
       draft.approval = undefined;
       draft.pendingInteraction = undefined;
+      if (current.status === "approved" && draft.status === "approved") {
+        draft.status = "awaiting_approval";
+      } else if (current.status === "executing" && draft.status === "executing") {
+        draft.status = "needs_replan";
+      }
+      for (const item of draft.items) {
+        item.executionBinding = undefined;
+        item.executionBindings = [];
+      }
     }
     return validatePlanRecord(draft);
   }
@@ -234,6 +244,12 @@ export class PlanStore {
     };
   }
 
+  private sameCancellation(current: PlanCancellationRequest | undefined,
+    accepted: PlanCancellationRequest): boolean {
+    return current?.commandId === accepted.commandId
+      && current.expectedVersion === accepted.expectedVersion
+      && current.acceptedVersion === accepted.acceptedVersion;
+  }
   private async readCurrent(planId: string): Promise<PlanRecord | undefined> {
     let text: string;
     try {
@@ -257,13 +273,11 @@ export class PlanStore {
     }
     return plan;
   }
-
   private async requireCurrent(planId: string): Promise<PlanRecord> {
     const current = await this.readCurrent(planId);
     if (!current) throw new PlanNotFoundError(planId);
     return current;
   }
-
   private async withLock<T>(planId: string, operation: () => Promise<T>): Promise<T> {
     await mkdir(this.directoryPath, { recursive: true });
     const release = await acquirePlanLock(this.directoryPath, planId, this.lockOptions);
@@ -273,7 +287,6 @@ export class PlanStore {
       await release();
     }
   }
-
   private enqueue<T>(planId: string, operation: () => Promise<T>): Promise<T> {
     const previous = this.queues.get(planId) ?? Promise.resolve();
     const result = previous.catch(() => {}).then(operation);

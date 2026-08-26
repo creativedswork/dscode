@@ -30,14 +30,14 @@
 
 ## 4. M3 — 审批、执行绑定与重新规划
 
-- [ ] 4.1 将已选决策轨迹编译为有序 PlanItems、验收条件、effect categories、canonical resource scopes 和副作用摘要。
-- [ ] 4.2 实现 revision + digest 审批校验、side-effect acknowledgement 记录和语义修改后的审批失效。
-- [ ] 4.3 实现 Main/SubAgent execution binding；每个副作用工具调用先校验 planId、revision、digest、itemId、effect 和规范化资源范围，再进入现有 tool permission。
-- [ ] 4.4 实现 Agent/Tool/SubAgent 结果到 PlanItem evidence 的关联，禁止 Agent exit 自动完成 PlanItem。
-- [ ] 4.5 实现仅允许绑定 Main 调用的 `verify_item`、command/observable/human criteria 校验、human receipt 引用和 PlanItem 完成判定。
-- [ ] 4.6 实现 material conflict 检测、停止新 item 调度、`needs_replan`、baseRevision 派生和重新审批。
-- [ ] 4.7 添加 stale approval、权限独立性、evidence/acceptance 分离、in-flight tool settle 和 replanning 测试。
-- [ ] 4.8 实现 drafting/waiting/approved/needs_replan/executing 的取消语义、终态保护及 blocked/skipped 合法迁移，并添加状态机测试。
+- [x] 4.1 将已选决策轨迹编译为有序 PlanItems、验收条件、effect categories、canonical resource scopes 和副作用摘要。
+- [x] 4.2 实现 revision + digest 审批校验、side-effect acknowledgement 记录和语义修改后的审批失效。
+- [x] 4.3 实现 Main/SubAgent execution binding；每个副作用工具调用先校验 planId、revision、digest、itemId、effect 和规范化资源范围，再进入现有 tool permission。
+- [x] 4.4 实现 Agent/Tool/SubAgent 结果到 PlanItem evidence 的关联，禁止 Agent exit 自动完成 PlanItem。
+- [x] 4.5 实现仅允许绑定 Main 调用的 `verify_item`、command/observable/human criteria 校验、human receipt 引用和 PlanItem 完成判定。
+- [x] 4.6 实现 material conflict 检测、停止新 item 调度、`needs_replan`、baseRevision 派生和重新审批。
+- [x] 4.7 添加 stale approval、权限独立性、evidence/acceptance 分离、in-flight tool settle 和 replanning 测试。
+- [x] 4.8 实现 drafting/waiting/approved/needs_replan/executing 的取消语义、终态保护及 blocked/skipped 合法迁移，并添加状态机测试。
 
 ## 5. M4 — Harness API、交互端口与领域事件
 

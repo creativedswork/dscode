@@ -25,6 +25,7 @@ export interface PlanSemanticPayload {
     | "dependsOn"
     | "acceptanceCriteria"
     | "effectGrants"
+    | "skipReason"
   >>;
   sideEffectSummary: string;
 }
@@ -85,6 +86,7 @@ export function planSemanticPayload(record: PlanRecord): PlanSemanticPayload {
     dependsOn: item.dependsOn,
     acceptanceCriteria: item.acceptanceCriteria,
     effectGrants: item.effectGrants,
+    ...(item.skipReason === undefined ? {} : { skipReason: item.skipReason }),
   }));
   return {
     goal: record.goal,

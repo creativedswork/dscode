@@ -2,7 +2,13 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Type } from "@earendil-works/pi-ai";
 
 import type { ToolCapability } from "../../kernel/tool-effects.js";
-import { Candidate, EvidenceReference } from "./schema-parts.js";
+import { PlanExecutionService } from "./execution-service.js";
+import {
+  AcceptanceCriterion,
+  Candidate,
+  EffectGrant,
+  EvidenceReference,
+} from "./schema-parts.js";
 import { PlannerInteractionBroker } from "./planner-interactions.js";
 import { PlannerService } from "./planner-service.js";
 
@@ -10,6 +16,7 @@ export const PLANNER_TOOL_NAMES = [
   "plan_initialize",
   "plan_append_decision",
   "plan_record_fact",
+  "plan_compile",
   "plan_request_decision",
   "plan_request_approval",
 ] as const;
@@ -63,10 +70,24 @@ const requestApprovalParams = Type.Object({
   interactionId: Type.String({ minLength: 1 }),
 }, { additionalProperties: false });
 
+const compileParams = Type.Object({
+  expectedVersion: Type.Integer({ minimum: 1 }),
+  items: Type.Array(Type.Object({
+    itemId: Type.String({ minLength: 1 }),
+    title: Type.String({ minLength: 1 }),
+    description: Type.String({ minLength: 1 }),
+    dependsOn: Type.Array(Type.String({ minLength: 1 })),
+    acceptanceCriteria: Type.Array(AcceptanceCriterion, { minItems: 1 }),
+    effectGrants: Type.Array(EffectGrant),
+  }, { additionalProperties: false }), { minItems: 1 }),
+  sideEffectSummary: Type.String({ minLength: 1 }),
+}, { additionalProperties: false });
+
 interface PlannerToolOptions {
   plannerAgentId: string;
   planId(): string;
   service: PlannerService;
+  execution?: PlanExecutionService;
   interactions: PlannerInteractionBroker;
 }
 
@@ -138,9 +159,26 @@ export function makePlannerTools(options: PlannerToolOptions): AgentTool<any>[] 
       return textResult("Fact recorded", result.plan);
     },
   };
-  const requestDecision: AgentTool<typeof requestDecisionParams> = {
+  const compile: AgentTool<typeof compileParams> = {
     ...PLANNER_TOOL_CAPABILITIES[3],
     name: PLANNER_TOOL_NAMES[3],
+    label: "Compile Execution Plan",
+    description: "Compile selected public decisions into ordered executable Plan items.",
+    parameters: compileParams,
+    execute: async (_id, params) => {
+      const execution = options.execution ?? new PlanExecutionService(options.service.store);
+      const result = requireSuccess(await execution.compile(
+        options.planId(),
+        options.plannerAgentId,
+        params.expectedVersion,
+        params,
+      ), "Plan compilation");
+      return textResult("Execution Plan compiled", result.plan);
+    },
+  };
+  const requestDecision: AgentTool<typeof requestDecisionParams> = {
+    ...PLANNER_TOOL_CAPABILITIES[4],
+    name: PLANNER_TOOL_NAMES[4],
     label: "Request Plan Decision",
     description: "Persist a required human decision and wait for its durable resolution.",
     parameters: requestDecisionParams,
@@ -175,8 +213,8 @@ export function makePlannerTools(options: PlannerToolOptions): AgentTool<any>[] 
     },
   };
   const requestApproval: AgentTool<typeof requestApprovalParams> = {
-    ...PLANNER_TOOL_CAPABILITIES[4],
-    name: PLANNER_TOOL_NAMES[4],
+    ...PLANNER_TOOL_CAPABILITIES[5],
+    name: PLANNER_TOOL_NAMES[5],
     label: "Request Plan Approval",
     description: "Persist final approval as required and wait for the approved revision.",
     parameters: requestApprovalParams,
@@ -202,5 +240,12 @@ export function makePlannerTools(options: PlannerToolOptions): AgentTool<any>[] 
       }
     },
   };
-  return [initialize, appendDecision, recordFact, requestDecision, requestApproval];
+  return [
+    initialize,
+    appendDecision,
+    recordFact,
+    compile,
+    requestDecision,
+    requestApproval,
+  ];
 }

@@ -82,6 +82,15 @@ export function deriveAgentContext(options: DeriveAgentContextOptions): AgentCon
     attachment,
     allowedTools: Object.freeze(allowedTools),
     deniedTools: Object.freeze([...denied]),
+    activePlan: parent.activePlan,
+    planBinding: parent.planBinding
+      ? Object.freeze({
+          ...parent.planBinding,
+          agentId: "",
+          role: "subagent" as const,
+          boundAt: Date.now(),
+        })
+      : undefined,
   });
 }
 

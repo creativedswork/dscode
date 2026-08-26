@@ -153,12 +153,56 @@ describe("Planner tools", () => {
 
   it("always persists final approval and waits for resolution", async () => {
     const fixture = await setup();
-    const tool = fixture.tools.find((item) => item.name === "plan_request_approval");
-    if (!tool) throw new Error("approval tool missing");
-    const waiting = tool.execute("tool-2", {
-      expectedVersion: fixture.appended.version,
+    const decision = await fixture.service.requestDecision(
+      "plan-1",
+      "planner-1",
+      fixture.appended.version,
+      "decision-before-approval",
+      "decision-1",
+    );
+    if (!decision.pendingInteraction) throw new Error("decision interaction missing");
+    const selected = await fixture.service.applyDecision({
+      planId: "plan-1",
+      plannerAgentId: "planner-1",
+      expectedVersion: decision.version,
+      commandId: "select-before-approval",
+      interactionId: decision.pendingInteraction.interactionId,
+      interactionPayloadDigest: decision.pendingInteraction.payloadDigest,
+      action: {
+        kind: "select",
+        decisionNodeId: "decision-1",
+        optionId: "a",
+      },
+    });
+    if (!selected.ok) throw new Error("selection failed");
+    const compile = fixture.tools.find((item) => item.name === "plan_compile");
+    const approval = fixture.tools.find((item) =>
+      item.name === "plan_request_approval"
+    );
+    if (!compile || !approval) throw new Error("approval tools missing");
+    await compile.execute("tool-compile", {
+      expectedVersion: selected.plan.version,
+      items: [{
+        itemId: "item-1",
+        title: "Implement A",
+        description: "Implement the selected option",
+        dependsOn: [],
+        acceptanceCriteria: [{
+          kind: "observable",
+          criterionId: "done",
+          description: "Implementation is complete",
+        }],
+        effectGrants: [],
+      }],
+      sideEffectSummary: "No side effects.",
+    }, new AbortController().signal);
+    const compiled = await fixture.service.load("plan-1");
+    if (!compiled.ok || !compiled.plan) throw new Error("compiled plan missing");
+    const waiting = approval.execute("tool-2", {
+      expectedVersion: compiled.plan.version,
       interactionId: "approval-1",
     }, new AbortController().signal);
+    void waiting.catch(() => {});
     await vi.waitFor(async () => {
       const loaded = await fixture.service.load("plan-1");
       expect(loaded.ok && loaded.plan).toMatchObject({

@@ -1,5 +1,4 @@
 import type { ToolEffect } from "../../kernel/tool-effects.js";
-
 export type PlanStatus =
   | "drafting"
   | "awaiting_decision"
@@ -10,26 +9,21 @@ export type PlanStatus =
   | "completed"
   | "cancelled"
   | "failed";
-
 export type PlanConstraintKind = "hard" | "preference";
 export type PlanConstraintSource = "user" | "system" | "evidence";
-
 export interface PlanConstraint {
   constraintId: string;
   kind: PlanConstraintKind;
   description: string;
   source: PlanConstraintSource;
 }
-
 export type PlanEvidenceReference =
   | { kind: "file"; referenceId: string; path: string; description: string }
   | { kind: "command"; referenceId: string; command: string; description: string }
   | { kind: "external"; referenceId: string; uri: string; description: string };
-
 export type PlanCandidateCost = "low" | "medium" | "high";
 export type PlanCandidateReversibility = "reversible" | "partial" | "irreversible";
 export type PlanConstraintFit = "satisfies" | "uncertain" | "violates";
-
 export interface PlanCandidate {
   optionId: string;
   summary: string;
@@ -42,9 +36,7 @@ export interface PlanCandidate {
   recommended: boolean;
   rationale: string;
 }
-
 export type PlanDecisionStatus = "open" | "selected" | "invalidated";
-
 export interface PlanDecisionNode {
   decisionNodeId: string;
   question: string;
@@ -52,26 +44,23 @@ export interface PlanDecisionNode {
   candidates: PlanCandidate[];
   selectedOptionId?: string;
 }
-
 export type PlanEffectCategory = ToolEffect;
-
 export type PlanResourceScope =
   | { kind: "workspace_path"; pattern: string }
   | { kind: "process_command"; commandClass: string }
   | { kind: "network_origin"; origin: string }
   | { kind: "external_resource"; resourceType: string; resourceId: string };
-
 export interface PlanEffectGrant {
   effect: PlanEffectCategory;
   resourceScopes: PlanResourceScope[];
 }
-
 export type PlanAcceptanceCriterion =
   | {
       kind: "command";
       criterionId: string;
       command: string;
       expectedExitCode: number;
+      expectedOutput: string;
     }
   | {
       kind: "observable";
@@ -83,9 +72,14 @@ export type PlanAcceptanceCriterion =
       criterionId: string;
       prompt: string;
     };
+interface PlanEvidenceIdentity {
+  planId: string;
+  revision: number;
+  itemId: string;
+}
 
-export type PlanEvidence =
-  | {
+export type PlanEvidence = PlanEvidenceIdentity & (
+  {
       kind: "agent_progress";
       evidenceId: string;
       agentId: string;
@@ -97,6 +91,13 @@ export type PlanEvidence =
       kind: "tool_result";
       evidenceId: string;
       toolCallId: string;
+      toolName: string;
+      isError: boolean;
+      exitCode?: number;
+      command?: string;
+      output: string;
+      structuredOutcome: "success" | "business_error" | "unknown";
+      acceptanceEligible: boolean;
       summary: string;
       recordedAt: number;
     }
@@ -105,6 +106,7 @@ export type PlanEvidence =
       evidenceId: string;
       agentId: string;
       outcome: "completed" | "failed" | "terminated" | "killed";
+      acceptanceEligible: boolean;
       summary: string;
       recordedAt: number;
     }
@@ -112,9 +114,11 @@ export type PlanEvidence =
       kind: "human_receipt";
       evidenceId: string;
       receiptCommandId: string;
+      criterionId: string;
       summary: string;
       recordedAt: number;
-    };
+    }
+);
 
 export interface PlanExecutionBinding {
   agentId: string;
@@ -144,6 +148,8 @@ export interface PlanItem {
   effectGrants: PlanEffectGrant[];
   evidence: PlanEvidence[];
   executionBinding?: PlanExecutionBinding;
+  executionBindings?: PlanExecutionBinding[];
+  skipReason?: string;
 }
 
 export interface PlanApproval {
@@ -151,8 +157,16 @@ export interface PlanApproval {
   digest: string;
   approvedEffects: PlanEffectCategory[];
   acknowledgedSideEffects: string[];
+  acknowledgementReceiptCommandId?: string;
   interactionId: string;
   approvedAt: number;
+}
+
+export interface PlanCancellationRequest {
+  commandId: string;
+  expectedVersion: number;
+  acceptedVersion: number;
+  acceptedAt: number;
 }
 
 interface PlanInteractionBase {
@@ -180,6 +194,14 @@ export type PlanInteraction =
         effectCategories: PlanEffectCategory[];
         sideEffectSummary: string;
       };
+    }
+  | PlanInteractionBase & {
+      kind: "acceptance";
+      payload: {
+        itemId: string;
+        criterionId: string;
+        prompt: string;
+      };
     };
 
 export type PlanCommandReceiptResult =
@@ -188,6 +210,7 @@ export type PlanCommandReceiptResult =
 
 export interface PlanCommandReceipt {
   commandId: string;
+  operation: string;
   interactionId?: string;
   payloadDigest: string;
   result: PlanCommandReceiptResult;
@@ -231,6 +254,7 @@ export type PlanTrajectoryEvent =
   | PlanTrajectoryEventBase & {
       kind: "backtracked";
       targetDecisionNodeId: string;
+      invalidatedDecisionNodeIds: string[];
       summary: string;
     };
 
@@ -262,6 +286,7 @@ export interface PlanRecord {
   items: PlanItem[];
   sideEffectSummary: string;
   approval?: PlanApproval;
+  cancellation?: PlanCancellationRequest;
   pendingInteraction?: PlanInteraction;
   commandReceipts: PlanCommandReceipt[];
   trajectoryEvents: PlanTrajectoryEvent[];

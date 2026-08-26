@@ -1,6 +1,5 @@
 import { Type } from "@earendil-works/pi-ai";
 import { Value } from "typebox/value";
-
 import { digestCanonicalPayload } from "./digest.js";
 import {
   DecisionNode,
@@ -18,9 +17,7 @@ import {
 import { assertNever } from "./types.js";
 import type { PlanRecord, PlanTrajectoryEvent } from "./types.js";
 import { MAX_PLAN_DECISION_NODES } from "./planner-types.js";
-
 const STRICT_OBJECT_OPTIONS = { additionalProperties: false } as const;
-
 const ReceiptResult = Type.Union([
   Type.Object({
     kind: Type.Literal("interaction_consumed"),
@@ -31,16 +28,15 @@ const ReceiptResult = Type.Union([
     operation: Identifier,
   }, STRICT_OBJECT_OPTIONS),
 ]);
-
 const Receipt = Type.Object({
   commandId: Identifier,
+  operation: Identifier,
   interactionId: Type.Optional(Identifier),
   payloadDigest: Digest,
   result: ReceiptResult,
   resultingVersion: PositiveInteger,
   completedAt: Timestamp,
 }, STRICT_OBJECT_OPTIONS);
-
 const TrajectoryEvent = Type.Union([
   Type.Object({
     eventId: Identifier,
@@ -93,7 +89,6 @@ const TrajectoryEvent = Type.Union([
     summary: Text,
   }, STRICT_OBJECT_OPTIONS),
 ]);
-
 export const PlanRecordSchema = Type.Object({
   schemaVersion: Type.Literal(1),
   planId: Identifier,
@@ -130,8 +125,13 @@ export const PlanRecordSchema = Type.Object({
     digest: Digest,
     approvedEffects: Type.Array(EffectCategory),
     acknowledgedSideEffects: Type.Array(Text),
+    acknowledgementReceiptCommandId: Type.Optional(Identifier),
     interactionId: Identifier,
     approvedAt: Timestamp,
+  }, STRICT_OBJECT_OPTIONS)),
+  cancellation: Type.Optional(Type.Object({
+    commandId: Identifier, expectedVersion: PositiveInteger,
+    acceptedVersion: PositiveInteger, acceptedAt: Timestamp,
   }, STRICT_OBJECT_OPTIONS)),
   pendingInteraction: Type.Optional(Interaction),
   commandReceipts: Type.Array(Receipt),
@@ -143,20 +143,12 @@ export const PlanRecordSchema = Type.Object({
   createdAt: Timestamp,
   updatedAt: Timestamp,
 }, STRICT_OBJECT_OPTIONS);
-
-export class PlanValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "PlanValidationError";
-  }
-}
-
+export class PlanValidationError extends Error { constructor(message: string) { super(message); this.name = "PlanValidationError"; }}
 function requireUnique(values: string[], label: string): void {
   if (new Set(values).size !== values.length) {
     throw new PlanValidationError(`Plan record contains duplicate ${label}`);
   }
 }
-
 function assertTrajectoryEventHandled(event: PlanTrajectoryEvent): void {
   switch (event.kind) {
     case "status_changed":
@@ -170,7 +162,6 @@ function assertTrajectoryEventHandled(event: PlanTrajectoryEvent): void {
       assertNever(event);
   }
 }
-
 export function validatePlanRecord(value: unknown): PlanRecord {
   if (!Value.Check(PlanRecordSchema, value)) {
     throw new PlanValidationError("Plan record does not match schema version 1");
@@ -181,6 +172,16 @@ export function validatePlanRecord(value: unknown): PlanRecord {
   requireUnique(plan.items.map((item) => item.itemId), "item IDs");
   requireUnique(plan.commandReceipts.map((item) => item.commandId), "command IDs");
   requireUnique(plan.trajectoryEvents.map((item) => item.eventId), "trajectory event IDs");
+  requireUnique(
+    plan.items.flatMap((item) => item.evidence.map((evidence) => evidence.evidenceId)),
+    "evidence IDs",
+  );
+  requireUnique(
+    plan.items.flatMap((item) => item.evidence.flatMap((evidence) =>
+      evidence.kind === "human_receipt" ? [evidence.receiptCommandId] : []
+    )),
+    "human acceptance receipts",
+  );
   const consumedInteractionIds: string[] = [];
   for (const receipt of plan.commandReceipts) {
     switch (receipt.result.kind) {
@@ -227,6 +228,31 @@ export function validatePlanRecord(value: unknown): PlanRecord {
       );
     }
   }
+  for (const item of plan.items) {
+    if (item.evidence.some((evidence) =>
+      evidence.planId !== plan.planId
+      || evidence.itemId !== item.itemId
+    )) {
+      throw new PlanValidationError(`Plan item ${item.itemId} has stale evidence`);
+    }
+    const bindings = item.executionBindings
+      ?? (item.executionBinding ? [item.executionBinding] : []);
+    requireUnique(
+      bindings.map((binding) => binding.agentId),
+      `execution Agent IDs in ${item.itemId}`,
+    );
+    if (bindings.some((binding) =>
+      binding.planId !== plan.planId
+      || binding.itemId !== item.itemId
+      || binding.revision !== plan.revision
+      || binding.digest !== plan.digest
+    )) {
+      throw new PlanValidationError(`Plan item ${item.itemId} has a stale execution binding`);
+    }
+    if ((item.status === "skipped") !== (item.skipReason !== undefined)) {
+      throw new PlanValidationError(`Plan item ${item.itemId} has an invalid skip reason`);
+    }
+  }
   if (
     plan.approval
     && (plan.approval.revision !== plan.revision || plan.approval.digest !== plan.digest)
@@ -250,6 +276,21 @@ export function validatePlanRecord(value: unknown): PlanRecord {
     }
     if (consumedInteractionIds.includes(plan.pendingInteraction.interactionId)) {
       throw new PlanValidationError("Pending interaction was already consumed");
+    }
+    if (plan.pendingInteraction.kind === "acceptance") {
+      const interaction = plan.pendingInteraction;
+      const item = plan.items.find((candidate) =>
+        candidate.itemId === interaction.payload.itemId
+      );
+      if (
+        !item
+        || !item.acceptanceCriteria.some((criterion) =>
+          criterion.kind === "human"
+          && criterion.criterionId === interaction.payload.criterionId
+        )
+      ) {
+        throw new PlanValidationError("Pending acceptance does not match a human criterion");
+      }
     }
   }
   if (plan.commandReceipts.some((receipt) => receipt.resultingVersion > plan.version)) {

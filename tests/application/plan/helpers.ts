@@ -57,6 +57,7 @@ export function makePlanInput(planId = "plan-1"): NewPlanRecord {
         criterionId: "criterion-1",
         command: "npm test",
         expectedExitCode: 0,
+        expectedOutput: "passed",
       }],
       effectGrants: [{
         effect: "workspace_write",

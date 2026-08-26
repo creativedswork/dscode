@@ -92,7 +92,7 @@ export const DecisionNode = Type.Object({
   selectedOptionId: Type.Optional(Identifier),
 }, STRICT_OBJECT_OPTIONS);
 
-const ResourceScope = Type.Union([
+export const ResourceScope = Type.Union([
   Type.Object(
     { kind: Type.Literal("workspace_path"), pattern: Text },
     STRICT_OBJECT_OPTIONS,
@@ -112,12 +112,13 @@ const ResourceScope = Type.Union([
   }, STRICT_OBJECT_OPTIONS),
 ]);
 
-const AcceptanceCriterion = Type.Union([
+export const AcceptanceCriterion = Type.Union([
   Type.Object({
     kind: Type.Literal("command"),
     criterionId: Identifier,
     command: Text,
     expectedExitCode: Type.Integer(),
+    expectedOutput: Text,
   }, STRICT_OBJECT_OPTIONS),
   Type.Object({
     kind: Type.Literal("observable"),
@@ -133,6 +134,9 @@ const AcceptanceCriterion = Type.Union([
 
 const Evidence = Type.Union([
   Type.Object({
+    planId: Identifier,
+    revision: PositiveInteger,
+    itemId: Identifier,
     kind: Type.Literal("agent_progress"),
     evidenceId: Identifier,
     agentId: Identifier,
@@ -141,13 +145,30 @@ const Evidence = Type.Union([
     recordedAt: Timestamp,
   }, STRICT_OBJECT_OPTIONS),
   Type.Object({
+    planId: Identifier,
+    revision: PositiveInteger,
+    itemId: Identifier,
     kind: Type.Literal("tool_result"),
     evidenceId: Identifier,
     toolCallId: Identifier,
+    toolName: Identifier,
+    isError: Type.Boolean(),
+    exitCode: Type.Optional(Type.Integer()),
+    command: Type.Optional(Text),
+    output: Type.String(),
+    structuredOutcome: Type.Union([
+      Type.Literal("success"),
+      Type.Literal("business_error"),
+      Type.Literal("unknown"),
+    ]),
+    acceptanceEligible: Type.Boolean(),
     summary: Text,
     recordedAt: Timestamp,
   }, STRICT_OBJECT_OPTIONS),
   Type.Object({
+    planId: Identifier,
+    revision: PositiveInteger,
+    itemId: Identifier,
     kind: Type.Literal("agent_exit"),
     evidenceId: Identifier,
     agentId: Identifier,
@@ -157,13 +178,18 @@ const Evidence = Type.Union([
       Type.Literal("terminated"),
       Type.Literal("killed"),
     ]),
+    acceptanceEligible: Type.Boolean(),
     summary: Text,
     recordedAt: Timestamp,
   }, STRICT_OBJECT_OPTIONS),
   Type.Object({
+    planId: Identifier,
+    revision: PositiveInteger,
+    itemId: Identifier,
     kind: Type.Literal("human_receipt"),
     evidenceId: Identifier,
     receiptCommandId: Identifier,
+    criterionId: Identifier,
     summary: Text,
     recordedAt: Timestamp,
   }, STRICT_OBJECT_OPTIONS),
@@ -177,6 +203,11 @@ const ExecutionBinding = Type.Object({
   digest: Digest,
   itemId: Identifier,
   boundAt: Timestamp,
+}, STRICT_OBJECT_OPTIONS);
+
+export const EffectGrant = Type.Object({
+  effect: EffectCategory,
+  resourceScopes: Type.Array(ResourceScope),
 }, STRICT_OBJECT_OPTIONS);
 
 export const PlanItem = Type.Object({
@@ -193,12 +224,11 @@ export const PlanItem = Type.Object({
     Type.Literal("skipped"),
   ]),
   acceptanceCriteria: Type.Array(AcceptanceCriterion),
-  effectGrants: Type.Array(Type.Object({
-    effect: EffectCategory,
-    resourceScopes: Type.Array(ResourceScope),
-  }, STRICT_OBJECT_OPTIONS)),
+  effectGrants: Type.Array(EffectGrant),
   evidence: Type.Array(Evidence),
   executionBinding: Type.Optional(ExecutionBinding),
+  executionBindings: Type.Optional(Type.Array(ExecutionBinding)),
+  skipReason: Type.Optional(Text),
 }, STRICT_OBJECT_OPTIONS);
 
 const InteractionBase = {
@@ -227,6 +257,15 @@ export const Interaction = Type.Union([
       itemIds: Type.Array(Identifier),
       effectCategories: Type.Array(EffectCategory),
       sideEffectSummary: Text,
+    }, STRICT_OBJECT_OPTIONS),
+  }, STRICT_OBJECT_OPTIONS),
+  Type.Object({
+    ...InteractionBase,
+    kind: Type.Literal("acceptance"),
+    payload: Type.Object({
+      itemId: Identifier,
+      criterionId: Identifier,
+      prompt: Text,
     }, STRICT_OBJECT_OPTIONS),
   }, STRICT_OBJECT_OPTIONS),
 ]);

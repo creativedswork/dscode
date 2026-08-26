@@ -4,6 +4,7 @@ import type {
   AgentProcessRuntime,
   AgentRuntimeSnapshot,
 } from "../runtimes/runtime.js";
+import type { PlanExecutionBinding } from "../../application/plan/types.js";
 
 export type AgentProcessState =
   | "created"
@@ -63,6 +64,8 @@ export interface AgentContext {
   attachment: AgentAttachment;
   allowedTools: readonly string[];
   deniedTools: readonly string[];
+  activePlan?: Pick<PlanExecutionBinding, "planId" | "revision" | "digest">;
+  planBinding?: PlanExecutionBinding;
   worktree?: {
     repositoryRoot: string;
     path: string;

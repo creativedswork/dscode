@@ -120,6 +120,7 @@ import {
 } from "./plan/route-guard.js";
 import { PLAN_ROUTE_ASSESSMENT_TOOL_NAME } from "./plan/route.js";
 import { PLANNER_APPLICATION } from "./plan/planner-application.js";
+import { makePlanExecutionDriver } from "./plan/execution-tools.js";
 import { PlannerProcessCoordinator } from "./plan/planner-process.js";
 import { PlannerService } from "./plan/planner-service.js";
 import { PlanStore } from "./plan/store.js";
@@ -865,6 +866,10 @@ export class Harness {
     }
 
     this.driverRegistry.register(makePlanRouteDriver(this.planExecutionGuard));
+    this.driverRegistry.register(makePlanExecutionDriver({
+      service: () => this.plannerCoordinator.execution,
+      supervisor: () => this.agentSupervisor,
+    }));
 
     // 4.2: Initialize checkpoint system for baseline hygiene
     const sessionId = this.sessionManager.getCurrentSessionId?.() ?? `session-${Date.now()}`;
@@ -950,6 +955,35 @@ export class Harness {
         const tool = ctx.context.tools?.find(
           (candidate) => candidate.name === ctx.toolCall.name,
         );
+        const mainHasPlan = Boolean(
+          this.agentSupervisor.get(this.mainAgentId)?.context.activePlan,
+        );
+        if (mainHasPlan) {
+          const planBlock = await this.agentRuntimeCoordinator.beforePlanToolCall(
+            this.mainAgentId,
+            tool,
+            ctx.toolCall,
+            ctx.args,
+          );
+          if (planBlock) return planBlock;
+          if (isSideEffectFreePlanOperation(tool)) return undefined;
+          try {
+            const permissionBlock = await this.permissionManager.check(ctx, signal);
+            if (permissionBlock || signal?.aborted) {
+              await this.agentRuntimeCoordinator.releasePlanToolCall(
+                this.mainAgentId,
+                ctx.toolCall,
+              );
+            }
+            return permissionBlock;
+          } catch (error) {
+            await this.agentRuntimeCoordinator.releasePlanToolCall(
+              this.mainAgentId,
+              ctx.toolCall,
+            );
+            throw error;
+          }
+        }
         const routeBlock = this.planExecutionGuard.checkToolCall({
           tool,
           batchToolNames,
@@ -977,6 +1011,12 @@ export class Harness {
             ?.routeBlocked,
         );
         try {
+          await this.agentRuntimeCoordinator.afterPlanToolCall(
+            this.mainAgentId,
+            ctx.toolCall,
+            ctx.result,
+            ctx.isError,
+          );
           if (ctx.toolCall.name === "search_tools" && ctx.context.tools) {
             ctx.context.tools = self.buildMainToolsForRequest();
           }
@@ -1037,10 +1077,26 @@ export class Harness {
       new PlannerService(this.planStore),
     );
     this.events.on("agent:exit", (event) => {
+      const process = this.agentSupervisor.get(event.result.agentId);
+      if (process?.context.planBinding) {
+        void this.plannerCoordinator.execution.recordExit(
+          process.context.planBinding,
+          event.result,
+        ).catch((error) => this.logger.error("PlanEvidence", String(error)));
+      }
       this.recordSubagentExit(event.result.agentId);
       this.sessionCoordinator.scheduleBackgroundProcess(
         this.agentSupervisor.get(event.result.agentId),
       );
+    });
+    this.events.on("agent:progress", (event) => {
+      const binding = this.agentSupervisor.get(event.agentId)?.context.planBinding;
+      if (!binding) return;
+      void this.plannerCoordinator.execution.recordProgress(
+        binding,
+        event.phase,
+        event.message ?? event.phase,
+      ).catch((error) => this.logger.error("PlanEvidence", String(error)));
     });
     const mainContext = createMainAgentContext(
       this.config.projectPath,

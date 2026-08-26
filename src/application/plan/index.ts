@@ -26,6 +26,19 @@ export {
   makePlanRouteDriver,
   PlanExecutionGuard,
 } from "./route-guard.js";
+export { compileSelectedTrajectory } from "./compiler.js";
+export { ApprovedPlanExecutionGuard } from "./execution-guard.js";
+export { PlanExecutionService } from "./execution-service.js";
+export {
+  attachPlanToAgent,
+  bindPlanItemToAgent,
+  clearAgentPlan,
+} from "./execution-binding.js";
+export {
+  canonicalizeResourceScope,
+  resolveToolResourceScopes,
+  resourceScopeCovers,
+} from "./resource-scope.js";
 export {
   PLANNER_APPLICATION,
   PLANNER_APPLICATION_NAME,
@@ -43,6 +56,22 @@ export {
   PLANNER_TOOL_CAPABILITIES,
   PLANNER_TOOL_NAMES,
 } from "./planner-tools.js";
+export type {
+  PlanCompilation,
+  PlanItemDraft,
+} from "./compiler.js";
+export type {
+  PlanApprovalCommand,
+  PlanCancelCommand,
+  PlanCriterionResult,
+  PlanExecutionMutationResult,
+  PlanHumanAcceptanceCommand,
+  PlanItemBindingCommand,
+  PlanItemVerificationCommand,
+  PlanMaterialConflictCommand,
+  PlanToolAuthorization,
+  PlanToolAuthorizationResult,
+} from "./execution-types.js";
 export type {
   NewPlanInteraction,
   NewPlanRecord,

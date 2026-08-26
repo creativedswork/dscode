@@ -79,6 +79,9 @@ export class AgentProcessSpawner {
       const context = Object.freeze({
         ...baseContext,
         agentId,
+        planBinding: baseContext.planBinding
+          ? Object.freeze({ ...baseContext.planBinding, agentId })
+          : undefined,
         cwd: worktree?.path ?? baseContext.cwd,
         worktree,
       });

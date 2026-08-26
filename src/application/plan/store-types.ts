@@ -35,7 +35,8 @@ type InteractionRuntimeFields =
 
 export type NewPlanInteraction =
   | Omit<Extract<PlanInteraction, { kind: "decision" }>, InteractionRuntimeFields>
-  | Omit<Extract<PlanInteraction, { kind: "approval" }>, InteractionRuntimeFields>;
+  | Omit<Extract<PlanInteraction, { kind: "approval" }>, InteractionRuntimeFields>
+  | Omit<Extract<PlanInteraction, { kind: "acceptance" }>, InteractionRuntimeFields>;
 
 export interface PlanCommand {
   planId: string;

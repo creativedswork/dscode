@@ -6,6 +6,7 @@ import {
   assertPlannerActionInteraction,
 } from "./planner-policy.js";
 import type { AgentExitResult } from "../../agents/process/types.js";
+import { assertCompiledPlan } from "./compiler.js";
 import type {
   NewPlanInteraction,
   NewPlanRecord,
@@ -28,7 +29,7 @@ import {
 
 export class PlannerService {
   constructor(
-    private readonly store: PlanStore,
+    readonly store: PlanStore,
     private readonly now: () => number = Date.now,
   ) {}
 
@@ -166,6 +167,7 @@ export class PlannerService {
     if (plan.version !== expectedVersion) {
       throw new Error(`Plan version conflict: expected ${expectedVersion}, current ${plan.version}`);
     }
+    assertCompiledPlan(plan, this.store.projectPath);
     return this.persistInteraction(plan, plannerAgentId, {
       interactionId,
       createdAt: this.now(),
@@ -174,7 +176,7 @@ export class PlannerService {
         itemIds: plan.items.map((item) => item.itemId),
         effectCategories: [...new Set(
           plan.items.flatMap((item) => item.effectGrants.map((grant) => grant.effect)),
-        )],
+        )].filter((effect) => effect !== "read"),
         sideEffectSummary: plan.sideEffectSummary,
       },
     }, "awaiting_approval");

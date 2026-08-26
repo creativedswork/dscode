@@ -23,6 +23,7 @@ import {
   PlannerProcessCoordinator,
   PlannerService,
 } from "../../../src/application/plan/index.js";
+import { makePlanInput } from "./helpers.js";
 
 const roots: string[] = [];
 
@@ -202,5 +203,34 @@ describe("Planner process lifecycle", () => {
     expect(fixture.main.state).toBe("running");
     expect(fixture.supervisor.foreground("session-1")?.agentId)
       .toBe(fixture.main.agentId);
+  });
+
+  it("spawns a replacement Planner for a settled needs_replan Plan", async () => {
+    const fixture = await setup();
+    const input = makePlanInput("plan-replan");
+    input.mainAgentId = fixture.main.agentId;
+    input.status = "needs_replan";
+    const created = await fixture.planStore.create(input);
+    if (!created.ok) throw new Error("Plan fixture failed");
+
+    const handle = await fixture.coordinator.replan(
+      created.plan.planId,
+      created.plan.version,
+    );
+    await vi.waitFor(() => {
+      expect(fixture.supervisor.require(handle.plannerAgentId).state).toBe("waiting");
+    });
+    const loaded = await fixture.planStore.load(created.plan.planId);
+
+    expect(loaded.ok && loaded.plan).toMatchObject({
+      status: "drafting",
+      baseRevision: created.plan.revision,
+      revision: created.plan.revision + 1,
+      plannerAgentId: handle.plannerAgentId,
+    });
+    expect(loaded.ok && loaded.plan?.approval).toBeUndefined();
+    expect(fixture.supervisor.foreground("session-1")?.agentId)
+      .toBe(handle.plannerAgentId);
+    await fixture.coordinator.shutdown();
   });
 });

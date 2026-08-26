@@ -1,23 +1,26 @@
 import { randomUUID } from "node:crypto";
-
 import type { AgentSupervisor } from "../../agents/process/supervisor.js";
 import type { AgentExitResult } from "../../agents/process/types.js";
-import type { PlannerRouteRequest } from "./route.js";
+import { attachPlanToAgent, clearAgentPlan } from "./execution-binding.js";
+import { PlanExecutionService } from "./execution-service.js";
+import type {
+  PlanApprovalCommand,
+  PlanCancelCommand,
+} from "./execution-types.js";
 import { PlannerInteractionBroker } from "./planner-interactions.js";
-import { PLANNER_APPLICATION_NAME } from "./planner-application.js";
+import { spawnPlanner } from "./planner-spawn.js";
 import { PlannerService } from "./planner-service.js";
+import type { PlannerRouteRequest } from "./route.js";
 import type {
   PlanDecisionAction,
   PlannerMutationResult,
 } from "./planner-types.js";
 import type { PlanRecord } from "./types.js";
-
 export interface PlannerProcessHandle {
   planId: string;
   plannerAgentId: string;
   mainAgentId: string;
 }
-
 export interface SubmitPlannerDecision {
   planId: string;
   expectedVersion: number;
@@ -34,17 +37,22 @@ export class PlannerProcessCoordinator {
   }>();
   private readonly startByMain = new Map<string, Promise<PlannerProcessHandle>>();
   private readonly exits = new Map<string, Promise<void>>();
+  private currentExecution: PlanExecutionService;
 
   constructor(
     private readonly supervisor: AgentSupervisor,
     private currentService: PlannerService,
     readonly interactions = new PlannerInteractionBroker(),
-  ) {}
+  ) {
+    this.currentExecution = this.makeExecution(currentService);
+  }
 
   get service(): PlannerService {
     return this.currentService;
   }
-
+  get execution(): PlanExecutionService {
+    return this.currentExecution;
+  }
   planIdForPlanner(plannerAgentId: string): string {
     const binding = this.planByPlanner.get(plannerAgentId);
     if (!binding) throw new Error(`Planner process is not bound to a Plan: ${plannerAgentId}`);
@@ -66,10 +74,41 @@ export class PlannerProcessCoordinator {
     });
     return starting;
   }
+  async replan(
+    planId: string,
+    expectedVersion: number,
+  ): Promise<PlannerProcessHandle> {
+    const loaded = await this.currentExecution.load(planId);
+    if (!loaded.ok || !loaded.plan) throw new Error(`Plan not found: ${planId}`);
+    const plan = loaded.plan;
+    if (plan.status !== "needs_replan" || plan.version !== expectedVersion) {
+      throw new Error(`Plan ${planId} is not ready for replanning`);
+    }
+    const active = this.startByMain.get(plan.mainAgentId);
+    if (active) return active;
+    await this.stopPlanExecution(planId, plan.mainAgentId);
+    const starting = this.startNew(plan.mainAgentId, {
+      requestId: plan.request.requestId,
+      requestText: plan.request.text,
+      decision: {
+        requestId: plan.request.requestId,
+        route: "plan",
+        source: "explicit",
+      },
+    }, planId, expectedVersion);
+    this.startByMain.set(plan.mainAgentId, starting);
+    void starting.catch(() => {
+      if (this.startByMain.get(plan.mainAgentId) === starting) {
+        this.startByMain.delete(plan.mainAgentId);
+      }
+    });
+    return starting;
+  }
 
   async rebindProject(service: PlannerService): Promise<void> {
     await this.stopActive();
     this.currentService = service;
+    this.currentExecution = this.makeExecution(service);
   }
 
   async shutdown(): Promise<void> {
@@ -92,66 +131,24 @@ export class PlannerProcessCoordinator {
   private async startNew(
     mainAgentId: string,
     request: Readonly<PlannerRouteRequest>,
+    existingPlanId?: string,
+    expectedVersion?: number,
   ): Promise<PlannerProcessHandle> {
-    const main = this.supervisor.require(mainAgentId);
     const service = this.currentService;
-    const planId = `plan-${randomUUID()}`;
-    let resolveStarted!: (handle: PlannerProcessHandle) => void;
-    let rejectStarted!: (error: Error) => void;
-    const started = new Promise<PlannerProcessHandle>((resolve, reject) => {
-      resolveStarted = resolve;
-      rejectStarted = reject;
-    });
-    const execution = this.supervisor.spawn({
-      application: PLANNER_APPLICATION_NAME,
-      parentAgentId: mainAgentId,
-      description: "Planner: prepare an auditable execution plan",
-      input: {
-        prompt: [
-          `Plan ID: ${planId}`,
-          `Request ID: ${request.requestId}`,
-          "Create the goal and constraints, investigate read-only evidence,",
-          "compare bounded candidates, request required decisions, then request approval.",
-          "",
-          request.requestText,
-        ].join("\n"),
-      },
-      attachment: "foreground",
-      recording: "process-only",
-      restoreParentOnExit: false,
-      onSpawn: async (plannerAgentId) => {
-        const created = await service.create({
-          planId,
-          sessionId: main.parentSessionId,
-          mainAgentId,
-          plannerAgentId,
-          request: {
-            requestId: request.requestId,
-            text: request.requestText,
-            submittedAt: Date.now(),
-          },
-          status: "drafting",
-          goal: request.requestText,
-          constraints: [],
-          decisions: [],
-          items: [],
-          sideEffectSummary: "",
-          trajectoryEvents: [],
-        });
-        if (!created.ok) throw new Error(`Plan ID collision: ${planId}`);
+    const planId = existingPlanId ?? `plan-${randomUUID()}`;
+    return spawnPlanner({
+      supervisor: this.supervisor,
+      service,
+      execution: this.currentExecution,
+      mainAgentId,
+      planId,
+      request,
+      expectedVersion,
+      onBound: (plannerAgentId) => {
         this.planByPlanner.set(plannerAgentId, { planId, service });
-        resolveStarted({ planId, plannerAgentId, mainAgentId });
       },
+      onExit: (exit) => this.handleExit(exit.agentId, exit),
     });
-    void execution.then(
-      ({ result }) => {
-        if (result) void this.handleExit(result.agentId, result).catch(() => {});
-      },
-      (error) => {
-        rejectStarted(error instanceof Error ? error : new Error(String(error)));
-      },
-    );
-    return started;
   }
 
   async submitDecision(
@@ -173,6 +170,25 @@ export class PlannerProcessCoordinator {
       this.interactions.resolve(command.interactionId, result.plan);
     }
     return result;
+  }
+
+  async submitApproval(
+    command: PlanApprovalCommand,
+  ): Promise<ReturnType<PlanExecutionService["approve"]> extends Promise<infer T> ? T : never> {
+    const result = await this.currentExecution.approve(command);
+    if (!result.ok) return result;
+    this.interactions.resolve(command.interactionId, result.plan);
+    await this.completeApproved(command.planId);
+    attachPlanToAgent(this.supervisor.require(result.plan.mainAgentId), {
+      planId: result.plan.planId,
+      revision: result.plan.revision,
+      digest: result.plan.digest,
+    });
+    return result;
+  }
+
+  async cancel(command: PlanCancelCommand) {
+    return this.currentExecution.cancel(command);
   }
 
   async completeApproved(planId: string): Promise<Readonly<PlanRecord>> {
@@ -247,5 +263,38 @@ export class PlannerProcessCoordinator {
         this.startByMain.delete(planner.parentAgentId);
       }
     }
+  }
+
+  private makeExecution(service: PlannerService): PlanExecutionService {
+    return new PlanExecutionService(service.store, Date.now, {
+      onReplanReady: (plan) => this.replan(plan.planId, plan.version).then(() => undefined),
+      onTerminal: (plan) => this.cleanupTerminalPlan(plan),
+    });
+  }
+
+  private async stopPlanExecution(planId: string, mainAgentId: string): Promise<void> {
+    for (const process of this.supervisor.list()) {
+      if (
+        process.context.activePlan?.planId !== planId
+        && process.context.planBinding?.planId !== planId
+      ) continue;
+      clearAgentPlan(process);
+      if (process.role === "subagent" && !process.exit) {
+        await this.supervisor.terminate(process.agentId);
+      }
+    }
+    const main = this.supervisor.get(mainAgentId);
+    if (main && !main.exit) void main.runtime.terminate().catch(() => {});
+  }
+
+  private async cleanupTerminalPlan(plan: Readonly<PlanRecord>): Promise<void> {
+    await this.stopPlanExecution(plan.planId, plan.mainAgentId);
+    const active = [...this.planByPlanner.entries()].find(
+      ([, binding]) => binding.planId === plan.planId,
+    );
+    if (!active) return;
+    const planner = this.supervisor.get(active[0]);
+    if (planner && !planner.exit) await this.supervisor.terminate(planner.agentId);
+    if (planner?.exit) await this.handleExit(planner.agentId, planner.exit);
   }
 }

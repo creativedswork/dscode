@@ -36,6 +36,8 @@ import { Logger } from "../../src/kernel/logger.js";
 import { MCPManager } from "../../src/mcp/manager.js";
 import { MemoryManager } from "../../src/memory/manager.js";
 import { PermissionManager } from "../../src/permissions/manager.js";
+import type { PermissionsConfig } from "../../src/permissions/types.js";
+import type { PromptUserFn } from "../../src/permissions/types.js";
 import { PermissionSuggestionStore } from "../../src/permissions/fuzzy-llm.js";
 import type { ImageRef } from "../../src/resources/images/types.js";
 import { SessionManager } from "../../src/session/manager.js";
@@ -61,6 +63,8 @@ interface FixtureOptions {
   agentsEnabled?: boolean;
   vision?: RuntimeConfig["vision"];
   definitions?: readonly AgentDefinition[];
+  permissions?: PermissionsConfig;
+  requestPermission?: PromptUserFn;
   configureDrivers?(drivers: DriverRegistry): void;
   configureDeferredDrivers?(drivers: DriverRegistry): void;
 }
@@ -94,7 +98,7 @@ function makeConfig(
       maxGlobalEntries: 10,
       maxProjectEntries: 10,
     },
-    permissions: {
+    permissions: options.permissions ?? {
       defaultDecision: "allow",
       rules: [],
       denyPatterns: [],
@@ -243,6 +247,11 @@ export async function createRoutedHarnessFixture(
     prepareProjectRuntime: async () => config,
   };
   const harness = new Harness(config, logger, dependencies);
+  if (options.requestPermission) {
+    harness.bindUserInteraction({
+      requestPermission: options.requestPermission,
+    });
+  }
   await harness.initialize();
   await harness.start();
   if (options.configureDeferredDrivers) {

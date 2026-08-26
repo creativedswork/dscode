@@ -35,6 +35,7 @@ import { streamSimple } from "../models/index.js";
 import { PermissionManager } from "../permissions/manager.js";
 import type { PermissionPromptResult } from "../permissions/types.js";
 import { PLANNER_APPLICATION_NAME } from "./plan/planner-application.js";
+import { ApprovedPlanExecutionGuard } from "./plan/execution-guard.js";
 import type { PlannerProcessCoordinator } from "./plan/planner-process.js";
 import {
   makePlannerTools,
@@ -63,7 +64,39 @@ export interface AgentRuntimeCoordinatorOptions {
 }
 
 export class AgentRuntimeCoordinator {
-  constructor(private readonly options: AgentRuntimeCoordinatorOptions) {}
+  private readonly planGuard: ApprovedPlanExecutionGuard;
+
+  constructor(private readonly options: AgentRuntimeCoordinatorOptions) {
+    this.planGuard = new ApprovedPlanExecutionGuard({
+      service: () => this.options.planner().execution,
+      supervisor: () => this.options.supervisor(),
+    });
+  }
+
+  beforePlanToolCall(
+    agentId: string,
+    tool: ToolCapability | undefined,
+    toolCall: { id?: string; name: string },
+    args: unknown,
+  ) {
+    return this.planGuard.beforeToolCall(agentId, tool, toolCall, args);
+  }
+
+  afterPlanToolCall(
+    agentId: string,
+    toolCall: { id?: string; name: string },
+    result: unknown,
+    isError: boolean,
+  ) {
+    return this.planGuard.afterToolCall(agentId, toolCall, result, isError);
+  }
+
+  releasePlanToolCall(
+    agentId: string,
+    toolCall: { id?: string; name: string },
+  ) {
+    return this.planGuard.releaseToolCall(agentId, toolCall);
+  }
 
   availableToolCapabilities(
     extraCapabilities: readonly ToolCapability[] = [],
@@ -134,6 +167,7 @@ export class AgentRuntimeCoordinator {
           plannerAgentId: agentId,
           planId: () => this.options.planner().planIdForPlanner(agentId),
           service: this.options.planner().service,
+          execution: this.options.planner().execution,
           interactions: this.options.planner().interactions,
         })
       : [];
@@ -269,10 +303,35 @@ export class AgentRuntimeCoordinator {
         const permissions = currentContext.attachment === "background"
           ? backgroundPermissions
           : childPermissions;
-        return capability ?? await permissions.check(toolContext, signal);
+        if (capability) return capability;
+        const tool = toolsByName.get(toolContext.toolCall.name);
+        const planBlock = await this.beforePlanToolCall(
+          agentId,
+          tool,
+          toolContext.toolCall,
+          toolContext.args,
+        );
+        if (planBlock) return planBlock;
+        try {
+          const permissionBlock = await permissions.check(toolContext, signal);
+          if (permissionBlock || signal?.aborted) {
+            await this.releasePlanToolCall(agentId, toolContext.toolCall);
+          }
+          return permissionBlock;
+        } catch (error) {
+          await this.releasePlanToolCall(agentId, toolContext.toolCall);
+          throw error;
+        }
       },
-      afterToolCall: async (_toolContext, signal) =>
-        signal?.aborted ? { terminate: true } : undefined,
+      afterToolCall: async (toolContext, signal) => {
+        await this.afterPlanToolCall(
+          agentId,
+          toolContext.toolCall,
+          toolContext.result,
+          toolContext.isError,
+        );
+        return signal?.aborted ? { terminate: true } : undefined;
+      },
     });
     if (application.maxTurns) {
       let turns = 0;
