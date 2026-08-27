@@ -20,8 +20,8 @@ import {
   PLANNER_TOOL_CAPABILITIES,
   PlanStore,
   PlannerProcessCoordinator,
-  PlannerService,
 } from "../../../src/application/plan/index.js";
+import { createTestPlanService } from "./plan-service-fixture.js";
 
 const roots: string[] = [];
 
@@ -111,7 +111,7 @@ async function setup(mode: "waiting" | "normal" | "failure" = "waiting") {
     createMainAgentContext("/project-a", "session-1", ["read_file"]),
   );
   const store = new PlanStore({ dataDir: root, projectPath: "/project-a" });
-  const service = new PlannerService(store, () => 100);
+  const service = createTestPlanService(store, { now: () => 100 });
   const coordinator = new PlannerProcessCoordinator(supervisor, service);
   const request = {
     requestId: "request-1",
@@ -282,7 +282,7 @@ describe("Planner process races and exits", () => {
       dataDir: fixture.root,
       projectPath: "/project-b",
     });
-    await fixture.coordinator.rebindProject(new PlannerService(nextStore));
+    await fixture.coordinator.rebindProject(createTestPlanService(nextStore));
     const oldPlan = await fixture.store.load(old.planId);
     expect(oldPlan.ok && oldPlan.plan?.status).toBe("cancelled");
     expect(fixture.supervisor.foreground("session-1")?.agentId)

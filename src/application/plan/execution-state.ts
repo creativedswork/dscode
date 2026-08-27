@@ -68,7 +68,7 @@ export class PlanExecutionState {
           ok: false,
           reason: outcome.reason === "conflict" ? "conflict" : "invalid_command",
           message: "Verification command was rejected",
-          ...("plan" in outcome ? { plan: outcome.plan } : {}),
+          plan: outcome.reason === "conflict" ? outcome.conflict.current : outcome.plan,
         };
       }
       return { ok: true, plan: outcome.plan, duplicate: outcome.duplicate };
@@ -219,7 +219,7 @@ export class PlanExecutionState {
           ok: false,
           reason: outcome.reason === "conflict" ? "conflict" : "invalid_command",
           message: "Material conflict was rejected",
-          ...("plan" in outcome ? { plan: outcome.plan } : {}),
+          plan: outcome.reason === "conflict" ? outcome.conflict.current : outcome.plan,
         };
       }
       if (outcome.duplicate && outcome.plan.status !== "needs_replan") {

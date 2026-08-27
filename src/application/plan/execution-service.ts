@@ -16,6 +16,7 @@ import type {
   PlanToolAuthorization,
 } from "./execution-types.js";
 import { PlanStore } from "./store.js";
+import type { PlanCoordinationFailure } from "./plan-coordination.js";
 import type {
   PlanExecutionBinding,
   PlanItemStatus,
@@ -25,6 +26,7 @@ import type {
 export interface PlanExecutionCallbacks {
   onReplanReady?(plan: Readonly<PlanRecord>): Promise<void> | void;
   onTerminal?(plan: Readonly<PlanRecord>): Promise<void> | void;
+  onCoordinationFailure?(failure: PlanCoordinationFailure): void;
 }
 
 export class PlanExecutionService {

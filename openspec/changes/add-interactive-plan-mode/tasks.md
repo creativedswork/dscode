@@ -41,12 +41,12 @@
 
 ## 5. M4 — Harness API、交互端口与领域事件
 
-- [ ] 5.1 实现 PlanService，集中承载状态机、CAS、digest、interaction 持久化和事件提交顺序，并在每个已提交 version 后发 `plan:updated`。
-- [ ] 5.2 在 HarnessAPI 增加只读 Plan snapshot 与 decision、approve、replan、cancel typed operations，所有 mutation 返回 `PlanMutationResult` union。
-- [ ] 5.3 在 HarnessAPI 增加携带 Main caller identity、acceptance results 和 evidence references 的 `verify_item` operation。
-- [ ] 5.4 扩展 UserInteractionPort 的 Plan decision/approval 请求，并确保 pending interaction 先持久化再通知 adapter。
-- [ ] 5.5 扩展 HarnessEvent discriminated union，加入 route、updated、interaction、approval、execution 和 conflict 事件。
-- [ ] 5.6 添加 API 和 EventBus 测试，覆盖无 `as any`、commit 后发事件、失败不发成功事件及 payload 不含 presentation/private reasoning。
+- [x] 5.1 实现 PlanService，集中承载状态机、CAS、digest、interaction 持久化和事件提交顺序，并在每个已提交 version 后发 `plan:updated`。
+- [x] 5.2 在 HarnessAPI 增加只读 Plan snapshot 与 decision、approve、replan、cancel typed operations，所有 mutation 返回 `PlanMutationResult` union。
+- [x] 5.3 在 HarnessAPI 增加携带 Main caller identity、acceptance results 和 evidence references 的 `verify_item` operation。
+- [x] 5.4 扩展 UserInteractionPort 的 Plan decision/approval 请求，并确保 pending interaction 先持久化再通知 adapter。
+- [x] 5.5 扩展 HarnessEvent discriminated union，加入 route、updated、interaction、approval、execution 和 conflict 事件。
+- [x] 5.6 添加 API 和 EventBus 测试，覆盖无 `as any`、commit 后发事件、失败不发成功事件及 payload 不含 presentation/private reasoning。
 
 ## 6. M5 — WebSocket 与共享 Plan projection
 

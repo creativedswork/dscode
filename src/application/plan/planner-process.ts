@@ -8,13 +8,12 @@ import type {
   PlanCancelCommand,
 } from "./execution-types.js";
 import { PlannerInteractionBroker } from "./planner-interactions.js";
+import { coordinateAfterCommit } from "./plan-coordination.js";
 import { spawnPlanner } from "./planner-spawn.js";
-import { PlannerService } from "./planner-service.js";
+import { PlanService } from "./plan-service.js";
+import type { PlanMutationResult } from "./plan-port.js";
 import type { PlannerRouteRequest } from "./route.js";
-import type {
-  PlanDecisionAction,
-  PlannerMutationResult,
-} from "./planner-types.js";
+import type { PlanDecisionAction } from "./planner-types.js";
 import type { PlanRecord } from "./types.js";
 export interface PlannerProcessHandle {
   planId: string;
@@ -29,29 +28,26 @@ export interface SubmitPlannerDecision {
   interactionPayloadDigest?: string;
   action: PlanDecisionAction;
 }
-
 export class PlannerProcessCoordinator {
   private readonly planByPlanner = new Map<string, {
     planId: string;
-    service: PlannerService;
+    service: PlanService;
   }>();
   private readonly startByMain = new Map<string, Promise<PlannerProcessHandle>>();
   private readonly exits = new Map<string, Promise<void>>();
-  private currentExecution: PlanExecutionService;
 
   constructor(
     private readonly supervisor: AgentSupervisor,
-    private currentService: PlannerService,
+    private currentService: PlanService,
     readonly interactions = new PlannerInteractionBroker(),
   ) {
-    this.currentExecution = this.makeExecution(currentService);
+    this.bindExecutionCallbacks(currentService);
   }
-
-  get service(): PlannerService {
+  get service(): PlanService {
     return this.currentService;
   }
   get execution(): PlanExecutionService {
-    return this.currentExecution;
+    return this.currentService.execution;
   }
   planIdForPlanner(plannerAgentId: string): string {
     const binding = this.planByPlanner.get(plannerAgentId);
@@ -78,7 +74,7 @@ export class PlannerProcessCoordinator {
     planId: string,
     expectedVersion: number,
   ): Promise<PlannerProcessHandle> {
-    const loaded = await this.currentExecution.load(planId);
+    const loaded = await this.currentService.execution.load(planId);
     if (!loaded.ok || !loaded.plan) throw new Error(`Plan not found: ${planId}`);
     const plan = loaded.plan;
     if (plan.status !== "needs_replan" || plan.version !== expectedVersion) {
@@ -105,10 +101,10 @@ export class PlannerProcessCoordinator {
     return starting;
   }
 
-  async rebindProject(service: PlannerService): Promise<void> {
+  async rebindProject(service: PlanService): Promise<void> {
     await this.stopActive();
     this.currentService = service;
-    this.currentExecution = this.makeExecution(service);
+    this.bindExecutionCallbacks(service);
   }
 
   async shutdown(): Promise<void> {
@@ -139,7 +135,7 @@ export class PlannerProcessCoordinator {
     return spawnPlanner({
       supervisor: this.supervisor,
       service,
-      execution: this.currentExecution,
+      execution: service.execution,
       mainAgentId,
       planId,
       request,
@@ -153,7 +149,7 @@ export class PlannerProcessCoordinator {
 
   async submitDecision(
     command: SubmitPlannerDecision,
-  ): Promise<PlannerMutationResult> {
+  ): Promise<PlanMutationResult> {
     const active = [...this.planByPlanner.entries()].find(
       ([, item]) => item.planId === command.planId,
     );
@@ -162,33 +158,37 @@ export class PlannerProcessCoordinator {
       throw new Error(`Active Planner not found for Plan ${command.planId}`);
     }
     const [plannerAgentId, binding] = active;
-    const result = await binding.service.applyDecision({
-      ...command,
-      plannerAgentId,
-    });
+    const result = await binding.service.mutateDecision(command, plannerAgentId);
     if (result.ok && command.interactionId) {
-      this.interactions.resolve(command.interactionId, result.plan);
+      await coordinateAfterCommit(command.planId, [{
+        operation: "resolve_decision",
+        run: () => { this.interactions.resolve(command.interactionId!, result.plan); },
+      }], (failure) => binding.service.reportCoordinationFailure(failure));
     }
     return result;
   }
 
   async submitApproval(
     command: PlanApprovalCommand,
-  ): Promise<ReturnType<PlanExecutionService["approve"]> extends Promise<infer T> ? T : never> {
-    const result = await this.currentExecution.approve(command);
+  ): Promise<PlanMutationResult> {
+    const result = await this.currentService.approve(command);
     if (!result.ok) return result;
-    this.interactions.resolve(command.interactionId, result.plan);
-    await this.completeApproved(command.planId);
-    attachPlanToAgent(this.supervisor.require(result.plan.mainAgentId), {
-      planId: result.plan.planId,
-      revision: result.plan.revision,
-      digest: result.plan.digest,
-    });
+    await coordinateAfterCommit(command.planId, [{
+      operation: "resolve_approval",
+      run: () => { this.interactions.resolve(command.interactionId, result.plan); },
+    }, {
+      operation: "complete_approved",
+      run: () => this.completeApproved(command.planId).then(() => undefined),
+    }, {
+      operation: "attach_main",
+      run: () => attachPlanToAgent(
+        this.supervisor.require(result.plan.mainAgentId), result.plan),
+    }], (failure) => this.currentService.reportCoordinationFailure(failure));
     return result;
   }
 
   async cancel(command: PlanCancelCommand) {
-    return this.currentExecution.cancel(command);
+    return this.currentService.cancel(command);
   }
 
   async completeApproved(planId: string): Promise<Readonly<PlanRecord>> {
@@ -265,8 +265,8 @@ export class PlannerProcessCoordinator {
     }
   }
 
-  private makeExecution(service: PlannerService): PlanExecutionService {
-    return new PlanExecutionService(service.store, Date.now, {
+  private bindExecutionCallbacks(service: PlanService): void {
+    service.bindExecutionCallbacks({
       onReplanReady: (plan) => this.replan(plan.planId, plan.version).then(() => undefined),
       onTerminal: (plan) => this.cleanupTerminalPlan(plan),
     });

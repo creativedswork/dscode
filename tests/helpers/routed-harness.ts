@@ -16,6 +16,7 @@ import {
   Harness,
   type HarnessDependencies,
 } from "../../src/application/harness.js";
+import type { UserInteractionPort } from "../../src/application/harness-api.js";
 import { HarnessEventBus } from "../../src/application/events.js";
 import { CheckpointSystem } from "../../src/checkpoint/index.js";
 import { RuntimeConfigStore } from "../../src/config/runtime-config-store.js";
@@ -65,6 +66,7 @@ interface FixtureOptions {
   definitions?: readonly AgentDefinition[];
   permissions?: PermissionsConfig;
   requestPermission?: PromptUserFn;
+  userInteraction?: UserInteractionPort;
   configureDrivers?(drivers: DriverRegistry): void;
   configureDeferredDrivers?(drivers: DriverRegistry): void;
 }
@@ -247,9 +249,13 @@ export async function createRoutedHarnessFixture(
     prepareProjectRuntime: async () => config,
   };
   const harness = new Harness(config, logger, dependencies);
-  if (options.requestPermission) {
+  if (options.userInteraction) {
+    harness.bindUserInteraction(options.userInteraction);
+  } else if (options.requestPermission) {
     harness.bindUserInteraction({
       requestPermission: options.requestPermission,
+      requestPlanDecision: async () => {},
+      requestPlanApproval: async () => {},
     });
   }
   await harness.initialize();

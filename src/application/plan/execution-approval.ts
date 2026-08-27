@@ -23,25 +23,6 @@ export class PlanExecutionApproval {
 
   async approve(command: PlanApprovalCommand): Promise<PlanExecutionMutationResult> {
     try {
-      const loaded = await this.store.load(command.planId);
-      if (
-        loaded.ok
-        && loaded.plan
-        && (
-          loaded.plan.revision !== command.revision
-          || loaded.plan.digest !== command.digest
-        )
-      ) {
-        return {
-          ok: false,
-          reason: "stale_approval",
-          message: "Approval revision or digest is stale",
-          plan: loaded.plan,
-        };
-      }
-      if (loaded.ok && loaded.plan) {
-        this.assertCompiled(loaded.plan);
-      }
       const outcome = await this.store.applyCommand({
         ...command,
         operation: "approve",
@@ -92,12 +73,17 @@ export class PlanExecutionApproval {
           ok: false,
           reason: outcome.reason === "conflict" ? "conflict" : "invalid_command",
           message: "Approval command was rejected",
-          ...("plan" in outcome ? { plan: outcome.plan } : {}),
+          plan: outcome.reason === "conflict" ? outcome.conflict.current : outcome.plan,
         };
       }
       return { ok: true, plan: outcome.plan, duplicate: outcome.duplicate };
     } catch (error) {
-      return mutationFailure(error);
+      const failure = mutationFailure(error);
+      if (failure.reason !== "stale_approval") return failure;
+      const loaded = await this.store.load(command.planId);
+      return loaded.ok && loaded.plan
+        ? { ...failure, plan: loaded.plan }
+        : failure;
     }
   }
 

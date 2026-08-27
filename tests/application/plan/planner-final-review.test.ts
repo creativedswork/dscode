@@ -20,8 +20,8 @@ import {
   PLANNER_TOOL_CAPABILITIES,
   PlanStore,
   PlannerProcessCoordinator,
-  PlannerService,
 } from "../../../src/application/plan/index.js";
+import { createTestPlanService } from "./plan-service-fixture.js";
 import { SessionCoordinator } from "../../../src/application/session-coordinator.js";
 
 const roots: string[] = [];
@@ -94,7 +94,7 @@ async function setup() {
     createMainAgentContext("/project", "SOURCE", ["read_file"]),
   );
   const store = new PlanStore({ dataDir: root, projectPath: "/project" });
-  const service = new PlannerService(store, () => 100);
+  const service = createTestPlanService(store, { now: () => 100 });
   const coordinator = new PlannerProcessCoordinator(supervisor, service);
   const handle = await coordinator.start(main.agentId, {
     requestId: "request-1",

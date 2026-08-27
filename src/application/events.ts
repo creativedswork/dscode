@@ -7,6 +7,19 @@ import type { AgentProcessEvent } from "../agents/process/events.js";
 import type { ToolExecutionEvent } from "../drivers/types.js";
 import type { EvalDashboardEvent } from "../eval/events.js";
 import type { SessionEvent } from "../session/types.js";
+import type { ToolEffect } from "../kernel/tool-effects.js";
+import type {
+  PlanDecisionRequest,
+  PlanApprovalRequest,
+} from "./plan/plan-port.js";
+import type { PlanConflict } from "./plan/store-types.js";
+import type {
+  PlanInteraction,
+  PlanItemStatus,
+  PlanRecord,
+  PlanStatus,
+} from "./plan/types.js";
+import type { PlanRouteDecision } from "./plan/route.js";
 
 export type {
   EvalDashboardEvidenceSummary,
@@ -23,6 +36,56 @@ export type HarnessEvent =
   | SessionEvent
   | ConfigChangeEvent
   | McpStateEvent
+  | {
+      type: "plan:route";
+      requestId: string;
+      decision: Readonly<PlanRouteDecision>;
+    }
+  | {
+      type: "plan:updated";
+      planId: string;
+      version: number;
+      revision: number;
+      plan: Readonly<PlanRecord>;
+    }
+  | {
+      type: "plan:interaction";
+      planId: string;
+      version: number;
+      revision: number;
+      interaction: Readonly<PlanInteraction>;
+      request?: Readonly<PlanDecisionRequest | PlanApprovalRequest>;
+    }
+  | {
+      type: "plan:approval";
+      planId: string;
+      version: number;
+      revision: number;
+      digest: string;
+      approved: boolean;
+      approvedEffects: readonly ToolEffect[];
+    }
+  | {
+      type: "plan:execution";
+      planId: string;
+      version: number;
+      revision: number;
+      status: PlanStatus;
+      items: readonly {
+        itemId: string;
+        status: PlanItemStatus;
+        evidenceCount: number;
+      }[];
+    }
+  | {
+      type: "plan:conflict";
+      planId: string;
+      expectedVersion: number;
+      currentVersion: number;
+      revision: number;
+      conflict: PlanConflict;
+      plan: Readonly<PlanRecord>;
+    }
   // LLM streaming
   | { type: "llm:thinking:delta"; delta: string }
   | { type: "llm:text:delta"; delta: string }
@@ -64,7 +127,7 @@ export type EventHandler<E extends HarnessEventType = HarnessEventType> = (
 
 export class HarnessEventBus {
   private logger: Logger;
-  private handlers = new Map<string, Set<EventHandler<any>>>();
+  private handlers = new Map<HarnessEventType, Set<(event: HarnessEvent) => void>>();
 
   constructor(logger: Logger) {
     this.logger = logger;
@@ -76,9 +139,11 @@ export class HarnessEventBus {
       set = new Set();
       this.handlers.set(type, set);
     }
-    set.add(handler);
+    const wrapped = (event: HarnessEvent) =>
+      handler(event as Extract<HarnessEvent, { type: E }>);
+    set.add(wrapped);
     return () => {
-      set?.delete(handler);
+      set?.delete(wrapped);
     };
   }
 

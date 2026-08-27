@@ -97,6 +97,31 @@ describe("Plan compilation and approval", () => {
     expect(loaded.ok && loaded.plan?.commandReceipts).toEqual([]);
   });
 
+
+  it("checks a new approval command's expected version before current status", async () => {
+    const fixture = await createExecutionFixture();
+    roots.push(fixture.root);
+    const approved = await fixture.approve();
+
+    const stale = await fixture.execution.approve({
+      planId: approved.planId,
+      expectedVersion: fixture.awaiting.version,
+      commandId: "approve-after-v4",
+      interactionId: "approval-1",
+      interactionPayloadDigest: fixture.awaiting.pendingInteraction!.payloadDigest,
+      revision: fixture.awaiting.revision,
+      digest: fixture.awaiting.digest,
+      acknowledgedEffects: ["workspace_write"],
+    });
+
+    expect(approved.version).toBe(4);
+    expect(stale).toMatchObject({
+      ok: false,
+      reason: "conflict",
+      plan: { version: 4, status: "approved" },
+    });
+  });
+
   it("rejects empty compiled plans at request and approval boundaries", async () => {
     const fixture = await createExecutionFixture();
     roots.push(fixture.root);

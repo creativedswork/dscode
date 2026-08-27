@@ -18,8 +18,8 @@ import {
   ApprovedPlanExecutionGuard,
   bindPlanItemToAgent,
   PlannerProcessCoordinator,
-  PlannerService,
 } from "../../../src/application/plan/index.js";
+import { createTestPlanService } from "../../application/plan/plan-service-fixture.js";
 import { createExecutionFixture } from "../../application/plan/execution-helpers.js";
 
 const roots: string[] = [];
@@ -176,7 +176,7 @@ describe("AgentSupervisor Plan bindings", () => {
     const approved = await execution.approve();
     const coordinator = new PlannerProcessCoordinator(
       supervisor,
-      new PlannerService(execution.store),
+      createTestPlanService(execution.store),
     );
     const bound = await coordinator.execution.bindItem({
       planId: "plan-1",

@@ -1,30 +1,37 @@
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { findCommandOutcome } from "./command.js";
+import {
+  findCommandReplay,
+  validateCommandInteraction,
+} from "./command.js";
 import { computePlanDigest, digestCanonicalPayload } from "./digest.js";
 import { acquirePlanLock } from "./lock.js";
 import type { PlanLockOptions } from "./lock.js";
 import { assertPlanId, resolvePlanProjectLocation } from "./path.js";
 import { PlanValidationError, validatePlanRecord } from "./schema.js";
 import { quarantineFile, writeJsonAtomically } from "./storage-io.js";
+import {
+  isSameCancellation,
+  preparePlanMutation,
+  type PlanUpdateOptions,
+} from "./store-mutation.js";
 import type {
   NewPlanInteraction,
   NewPlanRecord,
   PlanCommand,
   PlanCommandMutationResult,
+  PlanConflict,
   PlanLoadResult,
+  PlanMutationObserver,
   PlanStoreMutationResult,
 } from "./store-types.js";
-import type { PlanCancellationRequest, PlanCommandReceipt, PlanRecord } from "./types.js";
+import type { PlanCommandReceipt, PlanRecord } from "./types.js";
 export interface PlanStoreOptions extends PlanLockOptions {
   dataDir: string;
   projectPath: string;
 }
 export type PlanRecordUpdater = (draft: PlanRecord) => void;
-export interface PlanUpdateOptions {
-  semanticChange?: boolean;
-  cancellation?: PlanCancellationRequest;
-}
+export type { PlanUpdateOptions } from "./store-mutation.js";
 export class PlanNotFoundError extends Error {
   constructor(planId: string) {
     super(`Plan not found: ${planId}`);
@@ -43,6 +50,7 @@ export class PlanStore {
   private readonly queues = new Map<string, Promise<void>>();
   private readonly lockOptions: PlanLockOptions;
   private readonly now: () => number;
+  private mutationObserver?: PlanMutationObserver;
   constructor(options: PlanStoreOptions) {
     const location = resolvePlanProjectLocation(options.dataDir, options.projectPath);
     this.directoryPath = location.directory;
@@ -50,6 +58,9 @@ export class PlanStore {
     this.projectPath = options.projectPath;
     this.now = options.now ?? Date.now;
     this.lockOptions = options;
+  }
+  bindMutationObserver(observer: PlanMutationObserver): void {
+    this.mutationObserver = observer;
   }
   planPath(planId: string): string {
     assertPlanId(planId);
@@ -75,6 +86,7 @@ export class PlanStore {
       plan.digest = computePlanDigest(plan);
       validatePlanRecord(plan);
       await writeJsonAtomically(this.planPath(plan.planId), plan);
+      this.mutationObserver?.committed(plan);
       return { ok: true, plan };
     }));
   }
@@ -115,13 +127,14 @@ export class PlanStore {
       const current = await this.requireCurrent(planId);
       const accepted = options.cancellation;
       if (current.version !== expectedVersion
-        && (!accepted || !this.sameCancellation(current.cancellation, accepted))) {
+        && (!accepted || !isSameCancellation(current.cancellation, accepted))) {
         return this.conflict(expectedVersion, current);
       }
       const draft = structuredClone(current);
       updater(draft);
-      const next = this.prepareMutation(current, draft, options);
+      const next = preparePlanMutation(current, draft, this.now(), options);
       await writeJsonAtomically(this.planPath(planId), next);
+      this.mutationObserver?.committed(next, current);
       return { ok: true, plan: next };
     }));
   }
@@ -168,7 +181,7 @@ export class PlanStore {
           interactionPayloadDigest: command.interactionPayloadDigest ?? null,
           payload: command.payload,
         });
-        const priorOutcome = findCommandOutcome(command, current, payloadDigest);
+        const priorOutcome = findCommandReplay(command, current, payloadDigest);
         if (priorOutcome) return priorOutcome;
         if (current.version !== command.expectedVersion) {
           return this.conflict(command.expectedVersion, current);
@@ -176,7 +189,9 @@ export class PlanStore {
         const draft = structuredClone(current);
         updater(draft);
         if (command.interactionId) draft.pendingInteraction = undefined;
-        const next = this.prepareMutation(current, draft);
+        const interactionOutcome = validateCommandInteraction(command, current);
+        if (interactionOutcome) return interactionOutcome;
+        const next = preparePlanMutation(current, draft, this.now());
         const receipt: PlanCommandReceipt = {
           commandId: command.commandId,
           operation: command.operation,
@@ -191,65 +206,29 @@ export class PlanStore {
         next.commandReceipts = [...current.commandReceipts, receipt];
         validatePlanRecord(next);
         await writeJsonAtomically(this.planPath(command.planId), next);
+        this.mutationObserver?.committed(next, current);
         return { ok: true, plan: next, receipt, duplicate: false };
       })
     );
   }
-  private prepareMutation(
-    current: PlanRecord,
-    draft: PlanRecord,
-    options: PlanUpdateOptions = {},
-  ): PlanRecord {
-    draft.schemaVersion = 1;
-    draft.planId = current.planId;
-    draft.projectKey = current.projectKey;
-    draft.createdAt = current.createdAt;
-    draft.commandReceipts = structuredClone(current.commandReceipts);
-    const digest = computePlanDigest(draft);
-    const isSemanticChange = options.semanticChange === true
-      || digest !== current.digest;
-    draft.version = current.version + 1;
-    draft.revision = current.revision + Number(isSemanticChange);
-    draft.digest = digest;
-    draft.updatedAt = this.now();
-    if (isSemanticChange) {
-      draft.approval = undefined;
-      draft.pendingInteraction = undefined;
-      if (current.status === "approved" && draft.status === "approved") {
-        draft.status = "awaiting_approval";
-      } else if (current.status === "executing" && draft.status === "executing") {
-        draft.status = "needs_replan";
-      }
-      for (const item of draft.items) {
-        item.executionBinding = undefined;
-        item.executionBindings = [];
-      }
-    }
-    return validatePlanRecord(draft);
-  }
-
   private conflict(
     expectedVersion: number,
     current: PlanRecord,
   ): Extract<PlanStoreMutationResult, { ok: false }> {
+    const conflict: PlanConflict = {
+      kind: "version",
+      expectedVersion,
+      currentVersion: current.version,
+      current,
+    };
+    this.mutationObserver?.conflicted(conflict);
     return {
       ok: false,
       reason: "conflict",
-      conflict: {
-        kind: "version",
-        expectedVersion,
-        currentVersion: current.version,
-        current,
-      },
+      conflict,
     };
   }
 
-  private sameCancellation(current: PlanCancellationRequest | undefined,
-    accepted: PlanCancellationRequest): boolean {
-    return current?.commandId === accepted.commandId
-      && current.expectedVersion === accepted.expectedVersion
-      && current.acceptedVersion === accepted.acceptedVersion;
-  }
   private async readCurrent(planId: string): Promise<PlanRecord | undefined> {
     let text: string;
     try {

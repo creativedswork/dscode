@@ -3,6 +3,7 @@ import type {
   PlanDecisionNode,
   PlanRecord,
 } from "./types.js";
+import { PlanDomainError } from "./execution-rules.js";
 import {
   decisionById,
   type HumanInteractionAssessment,
@@ -97,5 +98,23 @@ export function assertPlannerActionInteraction(
     || pending.payload.decisionNodeId !== decisionNodeId
   ) {
     throw new Error(`${command.action.kind} requires a matching pending decision`);
+  }
+}
+
+export function assertActivePlanner(
+  plan: Readonly<PlanRecord>,
+  plannerAgentId: string,
+): void {
+  if (plan.plannerAgentId !== plannerAgentId) {
+    throw new PlanDomainError(
+      "invalid_command",
+      `Planner ${plannerAgentId} does not own Plan ${plan.planId}`,
+    );
+  }
+  if (!["drafting", "awaiting_decision", "awaiting_approval"].includes(plan.status)) {
+    throw new PlanDomainError(
+      "invalid_transition",
+      `Planner cannot mutate Plan ${plan.planId} in status ${plan.status}`,
+    );
   }
 }

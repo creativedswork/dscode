@@ -122,7 +122,8 @@ import { PLAN_ROUTE_ASSESSMENT_TOOL_NAME } from "./plan/route.js";
 import { PLANNER_APPLICATION } from "./plan/planner-application.js";
 import { makePlanExecutionDriver } from "./plan/execution-tools.js";
 import { PlannerProcessCoordinator } from "./plan/planner-process.js";
-import { PlannerService } from "./plan/planner-service.js";
+import { PlanService } from "./plan/plan-service.js";
+import type { PlanMutationResult } from "./plan/plan-port.js";
 import { PlanStore } from "./plan/store.js";
 import type {
   PlanSubmissionMode,
@@ -223,6 +224,8 @@ export class Harness {
   private agentProcessDriverRegistered = false;
   private userInteraction: UserInteractionPort = {
     requestPermission: async () => ({ decision: "deny" }),
+    requestPlanDecision: async () => {},
+    requestPlanApproval: async () => {},
   };
   private baseSystemPrompt = "";
   private debug = false;
@@ -246,7 +249,7 @@ export class Harness {
   private readonly sessionCoordinator: SessionCoordinator;
   private readonly permissionPromptQueue = new PermissionPromptQueue();
   private readonly planExecutionGuard = new PlanExecutionGuard();
-  private planStore: PlanStore;
+  private planService: PlanService;
   private plannerCoordinator!: PlannerProcessCoordinator;
   private readonly terminalRouteBlocks = new Map<string, string>();
   private pendingRoutedImages: PendingRoutedImages | undefined;
@@ -270,16 +273,13 @@ export class Harness {
     debug?: boolean,
   ) {
     this.hostId = dependencies.hostId;
-    this.planStore = new PlanStore({
-      dataDir: _config.dataDir,
-      projectPath: _config.projectPath,
-    });
+    this.events = dependencies.events;
+    this.planService = this.createPlanService(_config.dataDir, _config.projectPath);
     this.facilities = dependencies.facilities;
     this.checkpointSystem = dependencies.checkpointSystem;
     this.permissionSuggestions = dependencies.permissionSuggestions;
     this.imageInput = dependencies.imageInput;
     this.logger = logger;
-    this.events = dependencies.events;
     this.configStore = dependencies.configStore;
     this.settings = dependencies.createSettings(
       (previous, next, reason) =>
@@ -385,11 +385,9 @@ export class Harness {
       updateMemoryProject: (dataDir, projectPath) =>
         this.memoryManager.updateProjectPath(dataDir, projectPath),
       updateProcessProject: async (dataDir, projectPath) => {
-        const planStore = new PlanStore({ dataDir, projectPath });
-        await this.plannerCoordinator.rebindProject(
-          new PlannerService(planStore),
-        );
-        this.planStore = planStore;
+        const planService = this.createPlanService(dataDir, projectPath);
+        await this.plannerCoordinator.rebindProject(planService);
+        this.planService = planService;
         this.processStore.updateProjectPath(projectPath);
       },
       updateApplications: (projectPath) =>
@@ -412,8 +410,21 @@ export class Harness {
     this.api = this.createApplicationApi();
   }
 
+  private createPlanService(dataDir: string, projectPath: string): PlanService {
+    const store = new PlanStore({ dataDir, projectPath });
+    return new PlanService(store, {
+      publish: (event) => this.events.emit(event),
+      interactionPort: () => this.userInteraction,
+      onInteractionError: (error) =>
+        this.logger.error("PlanInteraction", String(error)),
+      onCoordinationFailure: ({ operation, error }) =>
+        this.logger.error("PlanCoordination", `${operation}: ${String(error)}`),
+    });
+  }
+
   bindUserInteraction(port: UserInteractionPort): void {
     this.userInteraction = port;
+    this.planService.reissuePendingInteractions();
   }
 
   private createApplicationApi(): HarnessAPI {
@@ -438,9 +449,35 @@ export class Harness {
       },
       spawn: (request) => this.agentSupervisor.spawn(request),
     });
+    const mutatePlan = async (
+      operation: () => Promise<PlanMutationResult>,
+    ): Promise<PlanMutationResult> => {
+      try {
+        return await operation();
+      } catch (error) {
+        return {
+          ok: false,
+          reason: "invalid_command",
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    };
 
     const api: HarnessAPI = {
       events,
+      plans: Object.freeze<HarnessAPI["plans"]>({
+        getActivePlan: (sessionId) => this.planService.getActivePlan(sessionId),
+        submitDecision: (command) =>
+          mutatePlan(() => this.plannerCoordinator.submitDecision(command)),
+        approve: (command) =>
+          mutatePlan(() => this.plannerCoordinator.submitApproval(command)),
+        verifyItem: (command) =>
+          mutatePlan(() => this.planService.verifyItem(command)),
+        requestReplan: (command) =>
+          mutatePlan(() => this.planService.requestReplan(command)),
+        cancel: (command) =>
+          mutatePlan(() => this.plannerCoordinator.cancel(command)),
+      }),
       conversation: Object.freeze<HarnessAPI["conversation"]>({
         prompt: (text, images, mode) =>
           this.promptAndSave(text, images ? [...images] : undefined, mode),
@@ -1074,7 +1111,7 @@ export class Harness {
     );
     this.plannerCoordinator = new PlannerProcessCoordinator(
       this.agentSupervisor,
-      new PlannerService(this.planStore),
+      this.planService,
     );
     this.events.on("agent:exit", (event) => {
       const process = this.agentSupervisor.get(event.result.agentId);
@@ -1165,6 +1202,7 @@ export class Harness {
     try {
       if (initial.kind === "planner_requested") {
         const result = this.planExecutionGuard.endRequest(requestId);
+        this.publishPlanRoute(result);
         await this.plannerCoordinator.start(this.mainAgentId, initial.request);
         return result;
       }
@@ -1173,6 +1211,7 @@ export class Harness {
         return { kind: "main", requestId };
       }
       const result = this.planExecutionGuard.endRequest(requestId);
+      this.publishPlanRoute(result);
       if (result.kind === "planner_requested") {
         await this.plannerCoordinator.start(this.mainAgentId, result.request);
       }
@@ -1182,6 +1221,18 @@ export class Harness {
       this.terminalRouteBlocks.clear();
       this.syncMainRequestContext();
     }
+  }
+
+  private publishPlanRoute(result: PlanSubmissionResult): void {
+    const decision = result.kind === "planner_requested"
+      ? result.request.decision
+      : result.decision;
+    if (!decision) return;
+    this.events.emit({
+      type: "plan:route",
+      requestId: decision.requestId,
+      decision,
+    });
   }
 
   private syncMainRequestContext(): void {

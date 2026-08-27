@@ -21,9 +21,9 @@ import {
   PLANNER_TOOL_CAPABILITIES,
   PlanStore,
   PlannerProcessCoordinator,
-  PlannerService,
 } from "../../../src/application/plan/index.js";
 import { makePlanInput } from "./helpers.js";
+import { createTestPlanService } from "./plan-service-fixture.js";
 
 const roots: string[] = [];
 
@@ -124,7 +124,7 @@ async function setup() {
   const planStore = new PlanStore({ dataDir: root, projectPath: "/project" });
   const coordinator = new PlannerProcessCoordinator(
     supervisor,
-    new PlannerService(planStore),
+    createTestPlanService(planStore),
   );
   return { coordinator, main, planStore, processStore, supervisor };
 }

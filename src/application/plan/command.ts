@@ -4,7 +4,7 @@ import type {
 } from "./store-types.js";
 import type { PlanRecord } from "./types.js";
 
-export function findCommandOutcome(
+export function findCommandReplay(
   command: PlanCommand,
   current: PlanRecord,
   payloadDigest: string,
@@ -24,6 +24,13 @@ export function findCommandOutcome(
     }
     return { ok: true, plan: current, receipt: prior, duplicate: true };
   }
+  return undefined;
+}
+
+export function validateCommandInteraction(
+  command: PlanCommand,
+  current: PlanRecord,
+): PlanCommandMutationResult | undefined {
   if (!command.interactionId && !command.interactionPayloadDigest) return undefined;
   if (!command.interactionId || !command.interactionPayloadDigest) {
     return {

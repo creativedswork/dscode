@@ -23,6 +23,14 @@ export interface PlanConflict {
   current: Readonly<PlanRecord>;
 }
 
+export interface PlanMutationObserver {
+  committed(
+    plan: Readonly<PlanRecord>,
+    previous?: Readonly<PlanRecord>,
+  ): void;
+  conflicted(conflict: PlanConflict): void;
+}
+
 export type PlanStoreMutationResult =
   | { ok: true; plan: Readonly<PlanRecord> }
   | { ok: false; reason: "conflict"; conflict: PlanConflict };

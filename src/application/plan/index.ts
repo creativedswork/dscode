@@ -15,6 +15,7 @@ export {
   PlanNotFoundError,
   PlanStore,
 } from "./store.js";
+export { PlanService } from "./plan-service.js";
 export {
   decidePlanRoute,
   PLAN_ROUTE_ASSESSMENT_TOOL_NAME,
@@ -81,6 +82,15 @@ export type {
   PlanLoadResult,
   PlanStoreMutationResult,
 } from "./store-types.js";
+export type {
+  PlanApplicationPort,
+  PlanApprovalRequest,
+  PlanDecisionCommand,
+  PlanDecisionRequest,
+  PlanInteractionPort,
+  PlanMutationResult,
+  PlanReplanCommand,
+} from "./plan-port.js";
 export type {
   PlanRoute,
   PlanRouteAssessment,

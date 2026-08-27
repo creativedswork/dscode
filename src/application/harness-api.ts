@@ -33,6 +33,10 @@ import type {
   PlanSubmissionMode,
   PlanSubmissionResult,
 } from "./plan/route.js";
+import type {
+  PlanApplicationPort,
+  PlanInteractionPort,
+} from "./plan/plan-port.js";
 
 export interface ApplicationEventSource {
   on<E extends HarnessEventType>(
@@ -41,7 +45,7 @@ export interface ApplicationEventSource {
   ): () => void;
 }
 
-export interface UserInteractionPort {
+export interface UserInteractionPort extends PlanInteractionPort {
   requestPermission(
     toolName: string,
     preview: string,
@@ -293,6 +297,7 @@ export interface ImageInputApplicationPort {
 
 export interface HarnessAPI {
   readonly events: ApplicationEventSource;
+  readonly plans: PlanApplicationPort;
   readonly conversation: ConversationApplicationPort;
   readonly sessions: SessionApplicationPort;
   readonly settings: SettingsApplicationPort;

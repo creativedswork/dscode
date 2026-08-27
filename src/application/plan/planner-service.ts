@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { applyPlannerAction } from "./planner-actions.js";
 import {
   assessHumanInteraction,
+  assertActivePlanner,
   assertPlannerActionInteraction,
 } from "./planner-policy.js";
 import type { AgentExitResult } from "../../agents/process/types.js";
@@ -49,7 +50,7 @@ export class PlannerService {
     constraints: PlanConstraint[],
   ) {
     return this.store.update(planId, expectedVersion, (draft) => {
-      this.assertActivePlanner(draft, plannerAgentId);
+      assertActivePlanner(draft, plannerAgentId);
       draft.goal = goal;
       draft.constraints = structuredClone(constraints);
     });
@@ -73,7 +74,7 @@ export class PlannerService {
       );
     }
     return this.store.update(planId, expectedVersion, (draft) => {
-      this.assertActivePlanner(draft, plannerAgentId);
+      assertActivePlanner(draft, plannerAgentId);
       if (draft.decisions.length >= MAX_PLAN_DECISION_NODES) {
         const behavior = draft.decisions.some((decision) =>
           decision.status === "open"
@@ -114,7 +115,7 @@ export class PlannerService {
     input: PlannerFactInput,
   ) {
     return this.store.update(planId, expectedVersion, (draft) => {
-      this.assertActivePlanner(draft, plannerAgentId);
+      assertActivePlanner(draft, plannerAgentId);
       draft.trajectoryEvents.push({
         eventId: randomUUID(),
         revision: draft.revision,
@@ -134,17 +135,14 @@ export class PlannerService {
     decisionNodeId: string,
   ): Promise<Readonly<PlanRecord>> {
     const plan = await this.requirePlan(planId);
-    this.assertActivePlanner(plan, plannerAgentId);
-    if (plan.version !== expectedVersion) {
-      throw new Error(`Plan version conflict: expected ${expectedVersion}, current ${plan.version}`);
-    }
+    assertActivePlanner(plan, plannerAgentId);
     const decision = decisionById(plan, decisionNodeId);
     if (!decision || decision.status !== "open") {
       throw new Error(`Open decision not found: ${decisionNodeId}`);
     }
     const assessment = assessHumanInteraction(plan, decision);
     if (!assessment.required) return plan;
-    return this.persistInteraction(plan, plannerAgentId, {
+    return this.persistInteraction(plan, plannerAgentId, expectedVersion, {
       interactionId,
       createdAt: this.now(),
       kind: "decision",
@@ -163,12 +161,9 @@ export class PlannerService {
     interactionId: string,
   ): Promise<Readonly<PlanRecord>> {
     const plan = await this.requirePlan(planId);
-    this.assertActivePlanner(plan, plannerAgentId);
-    if (plan.version !== expectedVersion) {
-      throw new Error(`Plan version conflict: expected ${expectedVersion}, current ${plan.version}`);
-    }
+    assertActivePlanner(plan, plannerAgentId);
     assertCompiledPlan(plan, this.store.projectPath);
-    return this.persistInteraction(plan, plannerAgentId, {
+    return this.persistInteraction(plan, plannerAgentId, expectedVersion, {
       interactionId,
       createdAt: this.now(),
       kind: "approval",
@@ -192,7 +187,7 @@ export class PlannerService {
       interactionId: command.interactionId,
       interactionPayloadDigest: command.interactionPayloadDigest,
     }, (draft) => {
-      this.assertActivePlanner(draft, command.plannerAgentId);
+      assertActivePlanner(draft, command.plannerAgentId);
       assertPlannerActionInteraction(draft, command);
       applyPlannerAction(draft, command.action, this.now());
     });
@@ -202,7 +197,9 @@ export class PlannerService {
     return {
       ok: false,
       reason: outcome.reason,
-      ...("plan" in outcome ? { plan: outcome.plan, message: outcome.message } : {}),
+      ...(outcome.reason === "conflict"
+        ? { plan: outcome.conflict.current }
+        : { plan: outcome.plan, message: outcome.message }),
     };
   }
   async finishPlannerExit(
@@ -223,7 +220,7 @@ export class PlannerService {
       planId,
       loaded.plan.version,
       (draft) => {
-        this.assertActivePlanner(draft, plannerAgentId);
+        assertActivePlanner(draft, plannerAgentId);
         const from = draft.status;
         draft.status = status;
         draft.pendingInteraction = undefined;
@@ -253,19 +250,21 @@ export class PlannerService {
   private async persistInteraction(
     plan: Readonly<PlanRecord>,
     plannerAgentId: string,
+    expectedVersion: number,
     interaction: NewPlanInteraction,
     status: "awaiting_decision" | "awaiting_approval",
   ): Promise<Readonly<PlanRecord>> {
-    if (plan.pendingInteraction) {
-      if (plan.pendingInteraction.interactionId === interaction.interactionId) return plan;
+    if (plan.pendingInteraction?.interactionId === interaction.interactionId
+      && plan.version === expectedVersion) return plan;
+    if (plan.pendingInteraction && plan.version === expectedVersion) {
       throw new Error(`Interaction already pending: ${plan.pendingInteraction.interactionId}`);
     }
     const persisted = await this.store.persistInteraction(
       plan.planId,
-      plan.version,
+      expectedVersion,
       interaction,
       (draft) => {
-        this.assertActivePlanner(draft, plannerAgentId);
+        assertActivePlanner(draft, plannerAgentId);
         draft.status = status;
         draft.trajectoryEvents.push({
           eventId: randomUUID(),
@@ -277,23 +276,16 @@ export class PlannerService {
         });
       },
     );
-    if (!persisted.ok) throw new Error("Plan changed while persisting interaction");
+    if (!persisted.ok) {
+      throw new Error(
+        `Plan version conflict: expected ${expectedVersion}, current ${persisted.conflict.currentVersion}`,
+      );
+    }
     return persisted.plan;
   }
   private async requirePlan(planId: string): Promise<Readonly<PlanRecord>> {
     const loaded = await this.store.load(planId);
     if (!loaded.ok || !loaded.plan) throw new Error(`Plan not found: ${planId}`);
     return loaded.plan;
-  }
-  private assertActivePlanner(
-    plan: Readonly<PlanRecord>,
-    plannerAgentId: string,
-  ): void {
-    if (plan.plannerAgentId !== plannerAgentId) {
-      throw new Error(`Planner ${plannerAgentId} does not own Plan ${plan.planId}`);
-    }
-    if (!["drafting", "awaiting_decision", "awaiting_approval"].includes(plan.status)) {
-      throw new Error(`Planner cannot mutate Plan ${plan.planId} in status ${plan.status}`);
-    }
   }
 }

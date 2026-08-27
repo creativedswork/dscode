@@ -6,6 +6,10 @@ import type {
   PlanMaterialConflictCommand,
 } from "./execution-types.js";
 import { PlanDomainError } from "./execution-rules.js";
+import {
+  coordinateAfterCommit,
+  type PlanCoordinationFailure,
+} from "./plan-coordination.js";
 import { PlanStore } from "./store.js";
 import type {
   PlanCancellationRequest,
@@ -27,6 +31,7 @@ interface PendingCancel {
 export interface PlanExecutionLifecycleCallbacks {
   onReplanReady?(plan: Readonly<PlanRecord>): Promise<void> | void;
   onTerminal?(plan: Readonly<PlanRecord>): Promise<void> | void;
+  onCoordinationFailure?(failure: PlanCoordinationFailure): void;
 }
 
 export class PlanExecutionLifecycle {
@@ -131,6 +136,10 @@ export class PlanExecutionLifecycle {
         this.resolveCancellation(command.planId, accepted);
         return;
       }
+      if (accepted.duplicate && accepted.plan.status === "cancelled") {
+        this.resolveCancellation(command.planId, accepted);
+        return;
+      }
       const token = accepted.plan.cancellation;
       if (!token) throw new Error("Accepted cancellation token was not persisted");
       if (pending) pending.token = token;
@@ -153,24 +162,29 @@ export class PlanExecutionLifecycle {
   }
 
   async notifyTerminal(plan: Readonly<PlanRecord>): Promise<void> {
-    await this.callbacks.onTerminal?.(plan);
+    await coordinateAfterCommit(plan.planId, [{
+      operation: "terminal_cleanup",
+      run: () => this.callbacks.onTerminal?.(plan),
+    }], (failure) => this.callbacks.onCoordinationFailure?.(failure));
   }
 
   private async finishCancellation(
     planId: string,
     token: PlanCancellationRequest,
   ): Promise<void> {
+    let result: PlanExecutionMutationResult;
     try {
-      const result = await this.commitCancelled(planId, token);
-      if (result.ok) await this.callbacks.onTerminal?.(result.plan);
-      this.resolveCancellation(planId, result);
+      result = await this.commitCancelled(planId, token);
     } catch (error) {
       this.resolveCancellation(planId, {
         ok: false,
         reason: "invalid_command",
         message: error instanceof Error ? error.message : String(error),
       });
+      return;
     }
+    if (result.ok) await this.notifyTerminal(result.plan);
+    this.resolveCancellation(planId, result);
   }
 
   private resolveCancellation(planId: string, result: PlanExecutionMutationResult): void {
@@ -211,10 +225,11 @@ export class PlanExecutionLifecycle {
   private async acceptCancellation(
     command: PlanCancelCommand,
   ): Promise<PlanExecutionMutationResult> {
-    const result = await this.store.update(
-      command.planId,
-      command.expectedVersion,
-      (draft) => {
+    const result = await this.store.applyCommand({
+      ...command,
+      operation: "cancel",
+      payload: {},
+    }, (draft) => {
         if (TERMINAL.has(draft.status)) {
           throw new PlanDomainError("invalid_transition", "Plan is terminal");
         }
@@ -235,15 +250,18 @@ export class PlanExecutionLifecycle {
           acceptedAt: this.now(),
         };
         draft.pendingInteraction = undefined;
-      },
-    );
+      });
     return result.ok
-      ? { ok: true, plan: result.plan }
+      ? { ok: true, plan: result.plan, duplicate: result.duplicate }
       : {
           ok: false,
-          reason: "conflict",
-          message: "Plan version conflict",
-          plan: result.conflict.current,
+          reason: result.reason === "conflict" ? "conflict" : "invalid_command",
+          message: result.reason === "conflict"
+            ? "Plan version conflict"
+            : result.message,
+          plan: result.reason === "conflict"
+            ? result.conflict.current
+            : result.plan,
         };
   }
 
@@ -252,8 +270,13 @@ export class PlanExecutionLifecycle {
     this.replanning.add(plan.planId);
     try {
       await this.callbacks.onReplanReady(plan);
-    } catch {
+    } catch (error) {
       this.replanning.delete(plan.planId);
+      this.callbacks.onCoordinationFailure?.({
+        planId: plan.planId,
+        operation: "start_replan",
+        error,
+      });
     }
   }
 
