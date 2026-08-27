@@ -37,8 +37,8 @@ export function spawnPlanner(
         `Plan ID: ${options.planId}`,
         `Request ID: ${options.request.requestId}`,
         options.expectedVersion === undefined
-          ? "Create the goal and constraints, compare bounded candidates, then compile and request approval."
-          : "Replan from the recorded public trajectory, then compile and request fresh approval.",
+          ? "Create the goal and constraints, resolve technical choices, then compile and internally authorize."
+          : "Replan autonomously from the public trajectory, then compile and internally authorize.",
         "",
         options.request.requestText,
       ].join("\n"),

@@ -83,7 +83,7 @@ export class PlannerService {
           "decision_nodes",
           behavior,
           `Revision ${draft.revision} reached ${MAX_PLAN_DECISION_NODES} decision nodes; `
-            + `${behavior === "clarify" ? "request a user choice" : "request final approval"}`,
+            + `${behavior === "clarify" ? "request one user-value choice" : "select and authorize"}`,
         );
       }
       if (decisionById(draft, input.decisionNodeId)) {
@@ -149,9 +149,41 @@ export class PlannerService {
       payload: {
         decisionNodeId,
         candidateIds: decision.candidates.map((candidate) => candidate.optionId),
-        prompt: assessment.reasons.join(","),
+        prompt: decision.question,
       },
     }, "awaiting_decision");
+  }
+
+  async authorize(
+    planId: string,
+    plannerAgentId: string,
+    expectedVersion: number,
+  ): Promise<Readonly<PlanRecord>> {
+    const result = await this.store.update(planId, expectedVersion, (draft) => {
+      assertActivePlanner(draft, plannerAgentId);
+      if (draft.status !== "drafting" || draft.pendingInteraction) {
+        throw new Error(`Plan ${planId} is not ready for internal authorization`);
+      }
+      assertCompiledPlan(draft, this.store.projectPath);
+      const approvedEffects = [...new Set(draft.items.flatMap((item) =>
+        item.effectGrants.map((grant) => grant.effect)
+      ))].filter((effect) => effect !== "read").sort();
+      draft.approval = {
+        revision: draft.revision,
+        digest: draft.digest,
+        approvedEffects,
+        acknowledgedSideEffects: [],
+        interactionId: `internal:${plannerAgentId}`,
+        approvedAt: this.now(),
+      };
+      draft.status = "approved";
+    });
+    if (!result.ok) {
+      throw new Error(
+        `Plan version conflict: expected ${expectedVersion}, current ${result.conflict.currentVersion}`,
+      );
+    }
+    return result.plan;
   }
 
   async requestApproval(

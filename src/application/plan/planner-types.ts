@@ -58,11 +58,7 @@ export class PlanBudgetError extends Error {
   }
 }
 
-export type HumanInteractionReason =
-  | "multiple_viable_candidates"
-  | "high_impact_tradeoff"
-  | "constraints_missing"
-  | "final_approval";
+export type HumanInteractionReason = "user_value_missing";
 
 export interface HumanInteractionAssessment {
   required: boolean;

@@ -179,10 +179,6 @@ export class PlannerProcessCoordinator {
     }, {
       operation: "complete_approved",
       run: () => this.completeApproved(command.planId).then(() => undefined),
-    }, {
-      operation: "attach_main",
-      run: () => attachPlanToAgent(
-        this.supervisor.require(result.plan.mainAgentId), result.plan),
     }], (failure) => this.currentService.reportCoordinationFailure(failure));
     return result;
   }
@@ -242,7 +238,25 @@ export class PlannerProcessCoordinator {
         pendingInteractionId = loaded.ok
           ? loaded.plan?.pendingInteraction?.interactionId
           : undefined;
-        await binding.service.finishPlannerExit(binding.planId, plannerAgentId, exit);
+        const settled = await binding.service.finishPlannerExit(
+          binding.planId,
+          plannerAgentId,
+          exit,
+        );
+        if (settled?.status === "approved") {
+          try {
+            attachPlanToAgent(
+              this.supervisor.require(settled.mainAgentId),
+              settled,
+            );
+          } catch (error) {
+            binding.service.reportCoordinationFailure({
+              planId: binding.planId,
+              operation: "attach_main",
+              error,
+            });
+          }
+        }
       } finally {
         if (pendingInteractionId) {
           this.interactions.reject(

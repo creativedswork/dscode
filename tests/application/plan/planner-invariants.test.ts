@@ -89,7 +89,7 @@ async function append(
 }
 
 describe("Planner domain invariants", () => {
-  it("enforces HITL at the mutation boundary and permits only safe auto-select", async () => {
+  it("selects technical paths autonomously and gates unresolved user value", async () => {
     const fixture = await setup();
     const alternatives = await append(
       fixture,
@@ -97,15 +97,15 @@ describe("Planner domain invariants", () => {
       "choice",
       [candidate("a"), candidate("b")],
     );
-    await expect(fixture.service.applyDecision({
+    const selectedAlternative = await fixture.service.applyDecision({
       planId: "plan-1",
       plannerAgentId: "planner-1",
       expectedVersion: alternatives.version,
-      commandId: "bypass",
+      commandId: "technical-choice",
       action: { kind: "select", decisionNodeId: "choice", optionId: "a" },
-    })).rejects.toThrow("requires a matching pending decision");
-    const unchanged = await fixture.service.load("plan-1");
-    expect(unchanged.ok && unchanged.plan?.version).toBe(alternatives.version);
+    });
+    expect(selectedAlternative.ok && selectedAlternative.plan.decisions[0])
+      .toMatchObject({ status: "selected", selectedOptionId: "a" });
 
     const automatic = await setup("plan-auto");
     const single = await append(
@@ -126,19 +126,23 @@ describe("Planner domain invariants", () => {
       selectedOptionId: "only",
     });
 
-    const highImpact = await setup("plan-high-impact");
-    const high = await append(
-      highImpact,
-      highImpact.created.version,
-      "irreversible",
-      [candidate("only", { reversibility: "irreversible" })],
+    const unresolved = await setup("plan-user-value");
+    const uncertain = await append(
+      unresolved,
+      unresolved.created.version,
+      "visual-direction",
+      [candidate("retro", { constraintFit: "uncertain" })],
     );
-    await expect(highImpact.service.applyDecision({
-      planId: "plan-high-impact",
+    await expect(unresolved.service.applyDecision({
+      planId: "plan-user-value",
       plannerAgentId: "planner-1",
-      expectedVersion: high.version,
-      commandId: "unsafe-automatic",
-      action: { kind: "select", decisionNodeId: "irreversible", optionId: "only" },
+      expectedVersion: uncertain.version,
+      commandId: "missing-user-value",
+      action: {
+        kind: "select",
+        decisionNodeId: "visual-direction",
+        optionId: "retro",
+      },
     })).rejects.toThrow("requires a matching pending decision");
   });
 

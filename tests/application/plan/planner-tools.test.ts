@@ -77,7 +77,7 @@ async function setup() {
           risks: [],
           cost: "low",
           reversibility: "reversible",
-          constraintFit: "satisfies",
+          constraintFit: "uncertain",
           recommended: false,
           rationale: "B",
         },
@@ -151,7 +151,7 @@ describe("Planner tools", () => {
     });
   });
 
-  it("always persists final approval and waits for resolution", async () => {
+  it("internally authorizes the compiled revision without an interaction", async () => {
     const fixture = await setup();
     const decision = await fixture.service.requestDecision(
       "plan-1",
@@ -176,10 +176,10 @@ describe("Planner tools", () => {
     });
     if (!selected.ok) throw new Error("selection failed");
     const compile = fixture.tools.find((item) => item.name === "plan_compile");
-    const approval = fixture.tools.find((item) =>
-      item.name === "plan_request_approval"
+    const authorize = fixture.tools.find((item) =>
+      item.name === "plan_authorize"
     );
-    if (!compile || !approval) throw new Error("approval tools missing");
+    if (!compile || !authorize) throw new Error("authorization tools missing");
     await compile.execute("tool-compile", {
       expectedVersion: selected.plan.version,
       items: [{
@@ -198,26 +198,19 @@ describe("Planner tools", () => {
     }, new AbortController().signal);
     const compiled = await fixture.service.load("plan-1");
     if (!compiled.ok || !compiled.plan) throw new Error("compiled plan missing");
-    const waiting = approval.execute("tool-2", {
+    const authorized = await authorize.execute("tool-2", {
       expectedVersion: compiled.plan.version,
-      interactionId: "approval-1",
     }, new AbortController().signal);
-    void waiting.catch(() => {});
-    await vi.waitFor(async () => {
-      const loaded = await fixture.service.load("plan-1");
-      expect(loaded.ok && loaded.plan).toMatchObject({
-        status: "awaiting_approval",
-        pendingInteraction: {
-          interactionId: "approval-1",
-          kind: "approval",
+    expect(authorized).toMatchObject({
+      details: {
+        status: "approved",
+        pendingInteraction: undefined,
+        approval: {
+          revision: compiled.plan.revision,
+          digest: compiled.plan.digest,
+          interactionId: "internal:planner-1",
         },
-      });
-    });
-    const loaded = await fixture.service.load("plan-1");
-    if (!loaded.ok || !loaded.plan) throw new Error("approval interaction missing");
-    fixture.interactions.resolve("approval-1", loaded.plan);
-    await expect(waiting).resolves.toMatchObject({
-      details: { status: "awaiting_approval" },
+      },
     });
   });
 

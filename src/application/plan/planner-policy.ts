@@ -1,5 +1,4 @@
 import type {
-  PlanCandidate,
   PlanDecisionNode,
   PlanRecord,
 } from "./types.js";
@@ -10,63 +9,17 @@ import {
   type PlannerCommand,
 } from "./planner-types.js";
 
-const COST_RANK = { low: 0, medium: 1, high: 2 } as const;
-const REVERSIBILITY_RANK = {
-  reversible: 0,
-  partial: 1,
-  irreversible: 2,
-} as const;
-
-function dominates(left: PlanCandidate, right: PlanCandidate): boolean {
-  const leftRanks = [
-    COST_RANK[left.cost],
-    REVERSIBILITY_RANK[left.reversibility],
-    left.risks.length,
-  ];
-  const rightRanks = [
-    COST_RANK[right.cost],
-    REVERSIBILITY_RANK[right.reversibility],
-    right.risks.length,
-  ];
-  return leftRanks.every((rank, index) => rank <= rightRanks[index])
-    && leftRanks.some((rank, index) => rank < rightRanks[index]);
-}
-
-function hasHighImpactTradeoff(candidates: readonly PlanCandidate[]): boolean {
-  return candidates.some((candidate) =>
-    candidate.cost === "high"
-    || candidate.reversibility !== "reversible"
-    || candidate.risks.length > 0
-  ) || candidates.length > 1 && new Set(candidates.map((candidate) =>
-    [...candidate.affectedScopes].sort().join("\0")
-  )).size > 1;
-}
-
 export function assessHumanInteraction(
-  plan: Readonly<PlanRecord>,
+  _plan: Readonly<PlanRecord>,
   decision?: Readonly<PlanDecisionNode>,
-  finalApproval = false,
 ): HumanInteractionAssessment {
-  const reasons: HumanInteractionAssessment["reasons"] = [];
   const viable = decision?.candidates.filter((candidate) =>
     candidate.constraintFit !== "violates"
   ) ?? [];
-  const nonDominated = viable.filter((candidate) =>
-    !viable.some((other) => other !== candidate && dominates(other, candidate))
-  );
-  if (nonDominated.length >= 2) {
-    reasons.push("multiple_viable_candidates");
-  }
-  if (hasHighImpactTradeoff(viable)) {
-    reasons.push("high_impact_tradeoff");
-  }
-  if (
-    plan.constraints.length === 0
-    || viable.some((candidate) => candidate.constraintFit === "uncertain")
-  ) {
-    reasons.push("constraints_missing");
-  }
-  if (finalApproval) reasons.push("final_approval");
+  const reasons: HumanInteractionAssessment["reasons"] =
+    viable.some((candidate) => candidate.constraintFit === "uncertain")
+      ? ["user_value_missing"]
+      : [];
   return { required: reasons.length > 0, reasons };
 }
 

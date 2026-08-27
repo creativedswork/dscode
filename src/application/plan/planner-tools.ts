@@ -18,7 +18,7 @@ export const PLANNER_TOOL_NAMES = [
   "plan_record_fact",
   "plan_compile",
   "plan_request_decision",
-  "plan_request_approval",
+  "plan_authorize",
 ] as const;
 
 export const PLANNER_TOOL_CAPABILITIES: readonly ToolCapability[] =
@@ -65,9 +65,8 @@ const requestDecisionParams = Type.Object({
   decisionNodeId: Type.String({ minLength: 1 }),
 }, { additionalProperties: false });
 
-const requestApprovalParams = Type.Object({
+const authorizeParams = Type.Object({
   expectedVersion: Type.Integer({ minimum: 1 }),
-  interactionId: Type.String({ minLength: 1 }),
 }, { additionalProperties: false });
 
 const compileParams = Type.Object({
@@ -212,32 +211,19 @@ export function makePlannerTools(options: PlannerToolOptions): AgentTool<any>[] 
       }
     },
   };
-  const requestApproval: AgentTool<typeof requestApprovalParams> = {
+  const authorize: AgentTool<typeof authorizeParams> = {
     ...PLANNER_TOOL_CAPABILITIES[5],
     name: PLANNER_TOOL_NAMES[5],
-    label: "Request Plan Approval",
-    description: "Persist final approval as required and wait for the approved revision.",
-    parameters: requestApprovalParams,
-    execute: async (_id, params, signal) => {
-      const waiting = options.interactions.wait(params.interactionId, signal);
-      void waiting.catch(() => {});
-      try {
-        await options.service.requestApproval(
-          options.planId(),
-          options.plannerAgentId,
-          params.expectedVersion,
-          params.interactionId,
-        );
-        const resolved = await waiting;
-        return textResult("Plan approval recorded", resolved);
-      } catch (error) {
-        options.interactions.reject(
-          params.interactionId,
-          error instanceof Error ? error : new Error(String(error)),
-        );
-        await waiting.catch(() => {});
-        throw error;
-      }
+    label: "Authorize Plan",
+    description: "Validate and internally authorize the current revision and digest.",
+    parameters: authorizeParams,
+    execute: async (_id, params) => {
+      const plan = await options.service.authorize(
+        options.planId(),
+        options.plannerAgentId,
+        params.expectedVersion,
+      );
+      return textResult("Plan internally authorized", plan);
     },
   };
   return [
@@ -246,6 +232,6 @@ export function makePlannerTools(options: PlannerToolOptions): AgentTool<any>[] 
     recordFact,
     compile,
     requestDecision,
-    requestApproval,
+    authorize,
   ];
 }
