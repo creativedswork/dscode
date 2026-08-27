@@ -427,6 +427,15 @@ export class WebUiBackend implements UiBackend {
     h.events.on("turn:abort", () => { this.stopSessionTimeBroadcast(); this.broadcast({ type: "loader", state: "hide" }); });
     h.events.on("turn:error", (e) => { this.broadcast({ type: "error", text: e.error }); });
     h.events.on("processing:start", () => { this.broadcast({ type: "loader", state: "show", text: "Thinking..." }); });
+    h.events.on("plan:route", (event) => {
+      if (event.decision.route === "plan") {
+        this.broadcast({
+          type: "loader",
+          state: "show",
+          text: "Waiting...",
+        });
+      }
+    });
     h.events.on("processing:stop", () => {
       if (activeForegroundPlanner()) return;
       this.stopSessionTimeBroadcast();

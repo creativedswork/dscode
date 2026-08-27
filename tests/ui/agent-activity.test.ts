@@ -150,6 +150,23 @@ describe("Web Agent Activity projection", () => {
     const { events, broadcast } = setup(process);
 
     events.emit({
+      type: "plan:route",
+      requestId: "request-1",
+      decision: {
+        requestId: "request-1",
+        route: "plan",
+        source: "assessment",
+        totalScore: 1,
+      },
+    });
+    expect(broadcast).toHaveBeenCalledWith({
+      type: "loader",
+      state: "show",
+      text: "Waiting...",
+    });
+
+    broadcast.mockClear();
+    events.emit({
       type: "agent:spawned",
       agentId: process.agentId,
       parentAgentId: process.parentAgentId,

@@ -171,4 +171,25 @@ describe("Web Chat intent alignment", () => {
     expect(markup).toContain("正在规划下一步...");
     expect(markup).toContain('role="status"');
   });
+
+  it("shows Waiting between a completed visible response and Planner spawn", () => {
+    const markup = renderToStaticMarkup(createElement(ChatView, {
+      messages: [{
+        id: "assistant-1",
+        role: "assistant",
+        content: "",
+        thinking: "Routing is complete.",
+        isStreaming: true,
+      }],
+      processing: true,
+      processingText: "Waiting...",
+      hasStreaming: true,
+      sessionActiveMs: 40_000,
+      permissionPrompt: null,
+      onPermission: vi.fn(),
+    }));
+
+    expect(markup).toContain("Waiting...");
+    expect(markup).not.toContain('<span class="phase-text">Response</span>');
+  });
 });

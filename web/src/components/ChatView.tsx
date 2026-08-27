@@ -69,6 +69,10 @@ export function ChatView({
   // NOT add local wall time on top (that would double-count).
   // session_time events from agent_start/agent_end keep it synced mid-turn.
   const sessionTime = sessionActiveMs;
+  const showWaiting = processing
+    && !permissionPrompt
+    && !planInteraction
+    && (!hasStreaming || processingText !== "Thinking...");
 
   // ── Auto-scroll to bottom, gated by user scroll position ──
   useLayoutEffect(() => {
@@ -148,7 +152,7 @@ export function ChatView({
         />
       )}
 
-      {processing && !hasStreaming && !permissionPrompt && !planInteraction && (
+      {showWaiting && (
         <WaitingBubble label={processingText} sessionTime={sessionTime} />
       )}
 
@@ -352,7 +356,7 @@ function AssistantMessage({ message }: { message: UIMessage }) {
   const safeContent = typeof message.content === "string" ? message.content : "";
   const hasThinking = !!message.thinking;
   const hasTools = !!(message.tools && message.tools.length > 0);
-  const hasResponse = safeContent.length > 0 || message.isStreaming;
+  const hasResponse = safeContent.length > 0;
   const isSimpleResponse = !hasThinking && !hasTools;
 
   return (
