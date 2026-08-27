@@ -57,24 +57,27 @@
 - [x] 6.5 新增独立 `PlanViewState` reducer，保证 Plan 状态不进入 `UIMessage[]` 或 conversation transcript。
 - [x] 6.6 添加协议和 reducer 测试，覆盖既有 wire variant 兼容、四种 decision action、payload digest 幂等、stale version/revision conflict、Session 清理和重连恢复。
 
-## 7. M6 — Web Plan 工作台
+## 7. M6 — Web Chat 原生意图对齐
 
-- [ ] 7.1 按 HTML 原型在 composer 实现 `Auto / Plan` segmented control，并保持现有输入、停止和快捷命令行为。
-- [ ] 7.2 实现候选决策视图，显示最多三个候选、证据、风险、成本、可逆性和推荐；复杂度路由不形成独立 UI，Direct 请求无额外提示，Plan 请求直接进入首个用户交互状态。
-- [ ] 7.3 实现候选键盘/指针选择、深入调查、修改约束与回溯操作，并发送 typed commands。
-- [ ] 7.4 实现执行清单和审批面，展示 semantic revision、digest 摘要、验收条件、effect categories 与 canonical resource scopes，并在 acknowledgement 前禁用批准。
-- [ ] 7.5 实现 PlanItem 与 Agent evidence 分区、revision conflict、重新规划、完成、取消和失败状态。
-- [ ] 7.6 使用现有 `--color-*` tokens 完成 light/dark 与响应式样式，确保窄屏单一滚动区和 composer 不遮挡操作。
-- [ ] 7.7 添加 Web reducer/component 测试，并在常规桌面、移动宽度和 `1080x322` 视口完成浏览器交互与控制台验收。
+> 原 Web Plan 工作台方案在用户验收中被否决。既有未提交实现不满足以下标准，不得作为 M6 候选提交。
 
-## 8. M7 — TUI Plan 交互
+- [x] 7.1 删除 composer 的 `Auto / Plan` 控件、Plan workbench 挂载点和专用样式；保留单一 Chat 输入、正常 Tool UI、Stop 和 permission interaction。
+- [ ] 7.2 将 Planner policy 改为自主选择技术候选、调查深度、回溯和重新规划；只有缺失且会改变用户可见结果的价值判断才能创建 pending interaction。
+- [ ] 7.3 将整份 Plan 审批转换为内部 revision + digest 执行授权；标准 Web/TUI adapter 不发送 `plan_approve`，受保护副作用继续进入现有 permission policy。
+- [ ] 7.4 将 persisted user-value interaction 投影为 Chat 内联对齐项：一句问题、可选推荐、最多三个用户可理解选项和自定义输入。
+- [ ] 7.5 以 typed、幂等 interaction response 提交选择或自定义内容并写为显式约束；重连和 Session 切换后只恢复一次当前 pending alignment。
+- [ ] 7.6 保持 PlanRecord、routing scores、revision、digest、PlanItem、候选树、Agent evidence 和 hidden reasoning 不进入可见 Chat transcript 或独立 UI。
+- [ ] 7.7 移除独立“正在准备规划”状态；等待期间使用现有 Chat activity 与 Stop，并在 unresolved alignment 存在时阻止副作用工具。
+- [ ] 7.8 添加 Planner autonomy、内部 authorization、interaction persistence、Chat reducer/component、恢复、权限独立性和回归测试。
+- [ ] 7.9 对照 `docs/prototypes/add-interactive-plan-mode-chat-alignment.html` 完成浏览器验收：未指定风格的俄罗斯方块、充分指定请求、自定义方向、技术路径自主选择、现有权限提示、light/dark、桌面、移动和 `1080x322`。
 
-- [ ] 8.1 在 TUI input footer 增加共享 `Auto / Plan` 模式状态和切换操作。
-- [ ] 8.2 实现底部 decision panel，支持方向键选择、Enter 确认、Esc 返回、深入调查、约束修改和回溯。
-- [ ] 8.3 实现底部 approval panel，展示执行项与副作用，并要求显式 acknowledgement。
-- [ ] 8.4 实现独立 Plan summary，把 PlanItem 验收状态与 Turn/Execution/Tool inspector 分离并支持 evidence 跳转。
-- [ ] 8.5 实现 Session 切换、重连和 revision conflict 后的 TUI 状态恢复与清理。
-- [ ] 8.6 添加 TUI reducer、键盘交互、焦点、窄终端和恢复测试，并用交互式 TUI 验收关键路径。
+## 8. M7 — TUI Chat 原生意图对齐
+
+- [ ] 8.1 保持单一 TUI Chat 输入，不增加 `Auto / Plan` 模式或独立 Plan summary。
+- [ ] 8.2 将用户价值判断作为对话内联交互，支持方向键选择、Enter 确认、Esc 返回和自由文本补充。
+- [ ] 8.3 技术规划继续由 Agent 自主完成；受保护副作用沿用现有 permission interaction，不增加整份 Plan 审批。
+- [ ] 8.4 实现 Session 切换、重连后的 pending alignment 恢复与旧 Session 清理。
+- [ ] 8.5 添加 TUI reducer、键盘、焦点、窄终端和恢复测试，并用交互式 TUI 验收关键路径。
 
 ## 9. M8 — 恢复、安全与集成验收
 
@@ -83,5 +86,5 @@
 - [ ] 9.3 添加序列化边界检查，证明 PlanStore、events、WebSocket 和 UI 不含 hidden prompt 或 Chain-of-Thought。
 - [ ] 9.4 实现终态 Plan 的统一 recovery TTL retention，在保留期内不单独淘汰 command receipts。
 - [ ] 9.5 运行 `npm run typecheck`、相关 Vitest suites、`npm test` 和 architecture checks，并修复本 change 引入的失败。
-- [ ] 9.6 对照全部 capability scenarios 完成端到端验收：Direct、forced Plan、四种决策 action、审批、effect scope 扩张阻止、执行、取消、失败、冲突、replanning、重启与 Web/TUI 一致性。
+- [ ] 9.6 对照全部 capability scenarios 完成端到端验收：自主 Direct/内部 Plan 路由、Chat 原生意图对齐、技术路径自主选择、内部执行绑定、effect scope 扩张阻止、现有权限提示、执行、取消、失败、replanning、重启与 Web/TUI 一致性。
 - [ ] 9.7 将 `prototype.md` 中每个 `pending` retention 决策更新为 `archive` 或 `delete`；执行对应移动/删除和断链检查。

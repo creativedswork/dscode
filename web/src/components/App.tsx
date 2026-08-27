@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useReducer } from "react";
 import type {
   UIMessage,
   ServerEvent,
@@ -15,6 +15,10 @@ import type {
   TraceTree,
 } from "../types";
 import { conversationReducer } from "@dscode/shared/reducer";
+import {
+  EMPTY_PLAN_VIEW_STATE,
+  planViewReducer,
+} from "@dscode/shared/plan-reducer";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { ChatView } from "./ChatView";
 import { MessageInput } from "./MessageInput";
@@ -127,6 +131,10 @@ export function App() {
   const [cacheSize, setCacheSize] = useState<{ totalBytes: number; fileCount: number; sessionCount: number } | null>(null);
   const [cacheClearing, setCacheClearing] = useState(false);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [planView, dispatchPlanEvent] = useReducer(
+    planViewReducer,
+    EMPTY_PLAN_VIEW_STATE,
+  );
 
   const [transitionPhase, setTransitionPhase] = useState<"idle" | "animating">("idle");
   const viewModeRef = useRef(viewMode);
@@ -192,6 +200,11 @@ export function App() {
         setMessages((prev) => conversationReducer(prev, event));
         break;
       }
+      case "plan_state":
+      case "plan_interaction":
+      case "plan_conflict":
+        dispatchPlanEvent(event);
+        break;
       case "user_message":
       case "agent_activity":
       case "assistant_start":
@@ -209,6 +222,7 @@ export function App() {
       case "clear_conversation":
         setMessages((prev) => conversationReducer(prev, event));
         setPermissionPrompt(null);
+        dispatchPlanEvent({ type: "plan_state", plan: null });
         break;
       case "info": {
         const txt = event.text;
