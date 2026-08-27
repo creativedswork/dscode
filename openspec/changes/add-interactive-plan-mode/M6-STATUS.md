@@ -1,0 +1,196 @@
+# M6 Status
+
+Status: `AWAITING_ACCEPTANCE`
+
+## Outcome
+
+Revised M6 tasks 7.1-7.9 are implemented and have passed the milestone-focused
+self-test. Planning remains an internal Agent mechanism. The Web product exposes
+only durable user-value alignment in the existing Chat flow, while protected
+side effects continue through the existing permission interaction.
+
+User acceptance has not yet been granted.
+
+## Slice Ledger
+
+### A — Remove rejected surface
+
+Commit: `f1edd05 refactor(plan): remove standalone plan workbench`
+
+Committed files:
+
+- `web/src/components/App.tsx`
+- `openspec/changes/add-interactive-plan-mode/tasks.md`
+
+The rejected untracked `PlanDecisionPanel.tsx`, `PlanProgressPanel.tsx`,
+`PlanWorkbench.tsx`, `planWorkbench.ts`, and `plan-workbench.test.ts` candidates
+were removed. `MessageInput.tsx` and `index.css` were restored to their existing
+single-Chat-input state and therefore had no committed diff. M5 protocol and
+reducer behavior was retained.
+
+Basic check: targeted diff review and `git diff --check`.
+
+### B — Autonomy and internal authorization
+
+Commit: `4939dec feat(plan): make planning autonomous`
+
+Files:
+
+- `src/application/plan/planner-application.ts`
+- `src/application/plan/planner-policy.ts`
+- `src/application/plan/planner-process.ts`
+- `src/application/plan/planner-service.ts`
+- `src/application/plan/planner-spawn.ts`
+- `src/application/plan/planner-tools.ts`
+- `src/application/plan/planner-types.ts`
+- `tests/application/plan/planner-invariants.test.ts`
+- `tests/application/plan/planner-tools.test.ts`
+
+The Planner now owns technical selection, investigation, backtracking, and
+replanning. Only missing user-value judgments can create durable interaction.
+Whole-Plan approval is replaced by internal authorization of the exact revision
+and digest; the existing permission policy remains authoritative.
+
+Basic check: focused Planner tests and diff validation.
+
+### C — Chat-native alignment
+
+Commit: `f1876a2 feat(plan): add chat-native intent alignment`
+
+Files:
+
+- `src/application/plan/planner-actions.ts`
+- `src/ui/shared/plan-reducer.ts`
+- `tests/application/plan/planner-invariants.test.ts`
+- `tests/ui/intent-alignment.test.ts`
+- `tests/ui/plan-reducer.test.ts`
+- `web/src/components/App.tsx`
+- `web/src/components/ChatView.tsx`
+- `web/src/components/IntentAlignment.tsx`
+- `web/src/index.css`
+- `web/src/utils/intentAlignment.ts`
+
+Only the current decision interaction is projected inline. Selected and custom
+answers use typed idempotent commands and become explicit user constraints.
+Internal Plan data does not enter `UIMessage[]` or the visible transcript.
+
+Basic check: focused reducer/component tests and diff validation.
+
+### D — Milestone self-test and fixes
+
+Commits:
+
+- `09659a2 fix(plan): preserve autonomous replanning`
+- `dc356e5 fix(web): restore alignment across session switches`
+
+Files:
+
+- `src/application/plan/planner-policy.ts`
+- `tests/application/plan/plan-service.test.ts`
+- `tests/application/plan/planner-invariants.test.ts`
+- `tests/application/plan/planner-tools.test.ts`
+- `tests/ui/plan-reducer.test.ts`
+- `web/src/components/App.tsx`
+- `web/src/components/Sidebar.tsx`
+
+The fixes keep backtracking and non-user constraint updates autonomous, align
+fixtures with the user-value policy, clear stale reducer interactions, and allow
+Session loading while an alignment is actionable without disabling Stop or
+loosening New Session/delete behavior.
+
+## Self-Test Evidence
+
+Focused Vitest result:
+
+```text
+8 test files passed
+57 tests passed
+Duration 6.11s
+```
+
+Covered Plan service, Planner policy/tools, protocol, reducer, Chat alignment,
+Session switching, and existing conversation reducer behavior.
+
+Real React/Vite app smoke used a deterministic WebSocket fixture and Chrome:
+
+- underspecified `创建一个俄罗斯方块小游戏` produced one inline visual-direction
+  alignment with three understandable options and a recommendation;
+- keyboard selection, pointer selection, and custom text submission completed;
+- a fully specified Tetris request bypassed the style question;
+- protected write behavior used the existing permission prompt without a
+  whole-Plan approval;
+- reconnect restored exactly one pending alignment;
+- Session A/B/A switching produced alignment counts `1 -> 0 -> 1`, cleared stale
+  processing state, and re-enabled the target Session input;
+- light and dark themes were exercised;
+- `1440x900`, `390x844`, and `1080x322` had no document-level horizontal
+  overflow;
+- browser console errors were empty.
+
+Smoke screenshots:
+
+- `/tmp/m6-alignment-1440x900.png`
+- `/tmp/m6-permission-1440x900.png`
+- `/tmp/m6-alignment-390x844.png`
+- `/tmp/m6-alignment-1080x322.png`
+- `/tmp/m6-session-restore-1080x322.png`
+
+Chrome reported sandbox-denied writes to its external Crashpad/Application
+Support files after assertions completed. This did not affect the app, fixture,
+screenshots, or browser assertions.
+
+## Time Magnitude
+
+- Development and slice fixes: tens of minutes.
+- Focused tests and browser self-test: tens of minutes.
+- Full release hardening: deferred by milestone policy.
+
+## Release Hardening
+
+Run as the separate user gate, not as part of this fast M6 loop:
+
+```bash
+npm run typecheck
+npm run build
+npm test
+npm run architecture:check
+```
+
+Also perform final code/security review and repeat browser acceptance against a
+real configured model backend rather than the deterministic fixture.
+
+Deferred risks:
+
+- broad cross-feature TypeScript/build/test regressions have not been excluded;
+- live-model prompt interpretation and provider variability remain untested;
+- restart reconciliation, TUI parity, and serialization hardening belong to
+  M7/M8.
+
+## Exclusions
+
+- No push, PR, amend, or rebase.
+- No M7 TUI implementation.
+- No M8 recovery/security/integration work.
+- No unrelated dirty or untracked files were staged or reverted.
+
+## Prototype Retention
+
+`docs/prototypes/add-interactive-plan-mode-chat-alignment.html` remains
+`pending`. Final archive/delete handling is deferred until M7, M8, and the
+overall change are complete.
+
+## Manual Acceptance
+
+1. Start the Web app with a configured model.
+2. Submit `创建一个俄罗斯方块小游戏` and confirm one inline value question appears.
+3. Exercise one option and one custom answer; confirm execution resumes without
+   showing Plan internals.
+4. Submit a fully specified visual request and confirm no redundant style
+   question appears.
+5. Trigger a protected write and confirm only the existing permission UI is
+   shown.
+6. Reconnect and switch Sessions while alignment is pending; confirm one restore
+   and stale-state cleanup.
+7. Check keyboard, pointer, light/dark, `1440x900`, `390x844`, and `1080x322`.
+
+The next transition requires explicit user acceptance.

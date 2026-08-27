@@ -62,14 +62,14 @@
 > 原 Web Plan 工作台方案在用户验收中被否决。既有未提交实现不满足以下标准，不得作为 M6 候选提交。
 
 - [x] 7.1 删除 composer 的 `Auto / Plan` 控件、Plan workbench 挂载点和专用样式；保留单一 Chat 输入、正常 Tool UI、Stop 和 permission interaction。
-- [ ] 7.2 将 Planner policy 改为自主选择技术候选、调查深度、回溯和重新规划；只有缺失且会改变用户可见结果的价值判断才能创建 pending interaction。
-- [ ] 7.3 将整份 Plan 审批转换为内部 revision + digest 执行授权；标准 Web/TUI adapter 不发送 `plan_approve`，受保护副作用继续进入现有 permission policy。
-- [ ] 7.4 将 persisted user-value interaction 投影为 Chat 内联对齐项：一句问题、可选推荐、最多三个用户可理解选项和自定义输入。
-- [ ] 7.5 以 typed、幂等 interaction response 提交选择或自定义内容并写为显式约束；重连和 Session 切换后只恢复一次当前 pending alignment。
-- [ ] 7.6 保持 PlanRecord、routing scores、revision、digest、PlanItem、候选树、Agent evidence 和 hidden reasoning 不进入可见 Chat transcript 或独立 UI。
-- [ ] 7.7 移除独立“正在准备规划”状态；等待期间使用现有 Chat activity 与 Stop，并在 unresolved alignment 存在时阻止副作用工具。
-- [ ] 7.8 添加 Planner autonomy、内部 authorization、interaction persistence、Chat reducer/component、恢复、权限独立性和回归测试。
-- [ ] 7.9 对照 `docs/prototypes/add-interactive-plan-mode-chat-alignment.html` 完成浏览器验收：未指定风格的俄罗斯方块、充分指定请求、自定义方向、技术路径自主选择、现有权限提示、light/dark、桌面、移动和 `1080x322`。
+- [x] 7.2 将 Planner policy 改为自主选择技术候选、调查深度、回溯和重新规划；只有缺失且会改变用户可见结果的价值判断才能创建 pending interaction。
+- [x] 7.3 将整份 Plan 审批转换为内部 revision + digest 执行授权；标准 Web/TUI adapter 不发送 `plan_approve`，受保护副作用继续进入现有 permission policy。
+- [x] 7.4 将 persisted user-value interaction 投影为 Chat 内联对齐项：一句问题、可选推荐、最多三个用户可理解选项和自定义输入。
+- [x] 7.5 以 typed、幂等 interaction response 提交选择或自定义内容并写为显式约束；重连和 Session 切换后只恢复一次当前 pending alignment。
+- [x] 7.6 保持 PlanRecord、routing scores、revision、digest、PlanItem、候选树、Agent evidence 和 hidden reasoning 不进入可见 Chat transcript 或独立 UI。
+- [x] 7.7 移除独立“正在准备规划”状态；等待期间使用现有 Chat activity 与 Stop，并在 unresolved alignment 存在时阻止副作用工具。
+- [x] 7.8 添加 Planner autonomy、内部 authorization、interaction persistence、Chat reducer/component、恢复、权限独立性和回归测试。
+- [x] 7.9 对照 `docs/prototypes/add-interactive-plan-mode-chat-alignment.html` 完成浏览器验收：未指定风格的俄罗斯方块、充分指定请求、自定义方向、技术路径自主选择、现有权限提示、light/dark、桌面、移动和 `1080x322`。
 
 ## 8. M7 — TUI Chat 原生意图对齐
 
