@@ -50,6 +50,15 @@ short briefs without a creation verb. The rebuilt `dist/dscode.mjs` was started
 against Workbuddy and the exact short request `俄罗斯方块小游戏` produced an inline
 visual-and-interaction question with three options and custom input.
 
+The Workbuddy follow-up `保龄球游戏` exposed a handoff-only UI gap: Main emitted
+`processing:stop` after Planner had started, restoring an idle composer while
+Planner was still generating the question. Web now preserves a generic
+processing state and Stop during foreground Planner ownership, without
+projecting Planner tools. It shows `正在规划下一步...` while Planner runs and
+`等待你选择方向...` while an inline choice is pending, keeping the main composer
+non-submittable throughout. The rebuilt bundle kept the processing state
+visible and then displayed the persisted perspective choice.
+
 Focused verification:
 
 ```text

@@ -41,6 +41,7 @@ function setup(process: AgentProcess) {
     events,
     agents: {
       ...base.agents,
+      list: () => [process as any],
       get: vi.fn((agentId: string) =>
         agentId === process.agentId ? process as any : undefined
       ),
@@ -435,6 +436,65 @@ describe("Web Agent Activity projection", () => {
     events.emit({ type: "agent:exit", result: process.exit });
 
     expect(agentActivities(broadcast)).toHaveLength(0);
+  });
+
+  it("shows generic progress while a foreground Planner owns the turn", () => {
+    const process = processFixture({
+      application: { name: "planner" } as AgentProcess["application"],
+      recording: "process-only",
+      state: "running",
+    });
+    const { events, broadcast } = setup(process);
+
+    events.emit({
+      type: "agent:spawned",
+      agentId: process.agentId,
+      parentAgentId: process.parentAgentId,
+      application: "planner",
+      attachment: "foreground",
+      input: "Internal Planner prompt",
+    });
+
+    expect(agentActivities(broadcast)).toHaveLength(0);
+    expect(broadcast).toHaveBeenCalledWith({
+      type: "loader",
+      state: "show",
+      text: "正在规划下一步...",
+    });
+
+    broadcast.mockClear();
+    events.emit({ type: "processing:stop" });
+    expect(broadcast).not.toHaveBeenCalledWith({
+      type: "loader",
+      state: "hide",
+    });
+
+    process.state = "waiting";
+    events.emit({
+      type: "agent:state",
+      agentId: process.agentId,
+      previous: "waiting",
+      state: "running",
+    });
+    expect(broadcast).toHaveBeenCalledWith({
+      type: "loader",
+      state: "show",
+      text: "正在规划下一步...",
+    });
+
+    broadcast.mockClear();
+    events.emit({
+      type: "plan:interaction",
+      planId: "plan-1",
+      version: 1,
+      revision: 1,
+      interaction: {},
+    } as any);
+    expect(broadcast).toHaveBeenCalledWith({
+      type: "loader",
+      state: "show",
+      text: "等待你选择方向...",
+    });
   });
 
   it("always forwards terminal snapshots", () => {

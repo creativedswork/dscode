@@ -359,6 +359,12 @@ export class WebUiBackend implements UiBackend {
     ) => harnessEventToConversationEvent(event, {
       sessionId: h.sessions.currentId(),
     });
+    const activeForegroundPlanner = () => h.agents.list().some((process) =>
+      process.parentSessionId === h.sessions.currentId()
+      && process.application.name === "planner"
+      && process.attachment === "foreground"
+      && !process.exit
+    );
 
     h.events.on("llm:thinking:delta", (e) => {
       const projected = projectConversationEvent(e);
@@ -421,12 +427,52 @@ export class WebUiBackend implements UiBackend {
     h.events.on("turn:abort", () => { this.stopSessionTimeBroadcast(); this.broadcast({ type: "loader", state: "hide" }); });
     h.events.on("turn:error", (e) => { this.broadcast({ type: "error", text: e.error }); });
     h.events.on("processing:start", () => { this.broadcast({ type: "loader", state: "show", text: "Thinking..." }); });
-    h.events.on("processing:stop", () => { this.stopSessionTimeBroadcast(); this.broadcast({ type: "loader", state: "hide" }); });
-    h.events.on("agent:spawned", projectAgentActivity);
-    h.events.on("agent:state", projectAgentActivity);
+    h.events.on("processing:stop", () => {
+      if (activeForegroundPlanner()) return;
+      this.stopSessionTimeBroadcast();
+      this.broadcast({ type: "loader", state: "hide" });
+    });
+    h.events.on("agent:spawned", (event) => {
+      projectAgentActivity(event);
+      if (
+        event.application === "planner"
+        && event.attachment === "foreground"
+      ) {
+        this.broadcast({
+          type: "loader",
+          state: "show",
+          text: "正在规划下一步...",
+        });
+      }
+    });
+    h.events.on("agent:state", (event) => {
+      projectAgentActivity(event);
+      const process = h.agents.get(event.agentId);
+      if (
+        event.state === "running"
+        && process?.application.name === "planner"
+        && process.parentSessionId === h.sessions.currentId()
+      ) {
+        this.broadcast({
+          type: "loader",
+          state: "show",
+          text: "正在规划下一步...",
+        });
+      }
+    });
     h.events.on("agent:progress", projectAgentActivity);
     h.events.on("agent:output", projectAgentActivity);
-    h.events.on("agent:exit", projectAgentActivity);
+    h.events.on("agent:exit", (event) => {
+      projectAgentActivity(event);
+      const process = h.agents.get(event.result.agentId);
+      if (
+        process?.application.name === "planner"
+        && process.parentSessionId === h.sessions.currentId()
+      ) {
+        this.stopSessionTimeBroadcast();
+        this.broadcast({ type: "loader", state: "hide" });
+      }
+    });
     h.events.on("eval:dashboard", (event) => {
       this.broadcast(projectEvalDashboardState(event.state));
     });
@@ -436,6 +482,11 @@ export class WebUiBackend implements UiBackend {
       }
     });
     h.events.on("plan:interaction", (event) => {
+      this.broadcast({
+        type: "loader",
+        state: "show",
+        text: "等待你选择方向...",
+      });
       void this.broadcastPlanInteraction(event);
     });
     h.events.on("plan:conflict", (event) => {
@@ -1234,6 +1285,11 @@ export class WebUiBackend implements UiBackend {
     if (this.harness.sessions.currentId() !== sessionId) return;
     send({ type: "plan_state", plan: plan ?? null });
     if (!plan?.pendingInteraction) return;
+    send({
+      type: "loader",
+      state: "show",
+      text: "等待你选择方向...",
+    });
     send({
       type: "plan_interaction",
       planId: plan.planId,

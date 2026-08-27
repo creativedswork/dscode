@@ -73,6 +73,7 @@
 - [x] 7.10 修复高用户意图不确定性被低操作复杂度覆盖的路由缺口；保持明确视觉约束请求 Direct，并保持纯技术方案分歧自治。
 - [x] 7.11 隐藏路由、工具发现和 Agent 编排工具的 Chat 实现细节；任何未消除的用户意图不确定性均路由到内联对齐。
 - [x] 7.12 为缺少视觉方向的用户可见产物创建请求增加 Host 意图下限，覆盖短 brief、明确视觉方向和既有产物修复，并在真实 Workbuddy `dist` 进程中复验。
+- [x] 7.13 修复 Main → Planner handoff 的假空闲状态：保留通用 Processing 与 Stop，pending interaction 期间保持主输入禁用并使用内联控件，且不展示 Planner 内部工具。
 
 ## 8. M7 — TUI Chat 原生意图对齐
 

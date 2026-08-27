@@ -291,6 +291,11 @@ describe("Plan WebSocket protocol", () => {
         type: "plan_interaction",
         planId: "plan-1",
       }));
+      expect(fixture.client.send).toHaveBeenCalledWith({
+        type: "loader",
+        state: "show",
+        text: "等待你选择方向...",
+      });
     });
 
     fixture.setActivePlan(undefined);
