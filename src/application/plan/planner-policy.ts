@@ -33,10 +33,10 @@ export function assertPlannerActionInteraction(
     if (!decision) throw new Error(`Decision not found: ${command.action.decisionNodeId}`);
     if (!assessHumanInteraction(plan, decision).required) return;
     decisionNodeId = decision.decisionNodeId;
-  } else if (
-    command.action.kind === "update_constraints"
-    || command.action.kind === "backtrack"
-  ) {
+  } else if (command.action.kind === "update_constraints") {
+    if (command.action.constraints.every((patch) =>
+      patch.kind === "remove" || patch.constraint.source !== "user"
+    )) return;
     decisionNodeId = plan.pendingInteraction?.kind === "decision"
       ? plan.pendingInteraction.payload.decisionNodeId
       : undefined;

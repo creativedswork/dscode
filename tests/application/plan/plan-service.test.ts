@@ -106,7 +106,10 @@ describe("PlanService API and events", () => {
       {
         decisionNodeId: "decision-2",
         question: "Choose a path",
-        candidates: [candidate("a"), candidate("b")],
+        candidates: [
+          candidate("a"),
+          { ...candidate("b"), constraintFit: "uncertain" },
+        ],
       },
     );
     if (!appended.ok) throw new Error("Decision append failed");

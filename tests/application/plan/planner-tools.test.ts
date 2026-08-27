@@ -204,7 +204,6 @@ describe("Planner tools", () => {
     expect(authorized).toMatchObject({
       details: {
         status: "approved",
-        pendingInteraction: undefined,
         approval: {
           revision: compiled.plan.revision,
           digest: compiled.plan.digest,

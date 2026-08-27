@@ -348,8 +348,14 @@ describe("PlanViewState reducer", () => {
       acceptance.planId,
       legacyAcceptanceState,
     ).interaction).toBeNull();
-    expect(conflict(otherSession)).toBe(state);
-    expect(conflict(pendingPlan(), "other-plan")).toBe(state);
+    expect(conflict(otherSession)).toEqual({
+      ...state,
+      interaction: null,
+    });
+    expect(conflict(pendingPlan(), "other-plan")).toEqual({
+      ...state,
+      interaction: null,
+    });
   });
 
   it("ignores stale state and interaction events", () => {

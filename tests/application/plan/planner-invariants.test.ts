@@ -178,7 +178,7 @@ describe("Planner domain invariants", () => {
       fixture,
       fixture.created.version,
       "choice",
-      [candidate("a"), candidate("b")],
+      [candidate("a"), candidate("b", { constraintFit: "uncertain" })],
     );
     const requests = await Promise.allSettled([
       fixture.service.requestDecision(
@@ -251,20 +251,11 @@ describe("Planner domain invariants", () => {
     );
     if (!selectedPrefix.ok) throw new Error("prefix selection failed");
     plan = selectedPrefix.plan;
-    const waiting = await fixture.service.requestDecision(
-      "plan-1",
-      "planner-1",
-      plan.version,
-      "backtrack-interaction",
-      "decision-1",
-    );
     const backtracked = await fixture.service.applyDecision({
       planId: "plan-1",
       plannerAgentId: "planner-1",
-      expectedVersion: waiting.version,
+      expectedVersion: plan.version,
       commandId: "backtrack-command",
-      interactionId: "backtrack-interaction",
-      interactionPayloadDigest: waiting.pendingInteraction?.payloadDigest,
       action: { kind: "backtrack", targetDecisionNodeId: "decision-1" },
     });
     if (!backtracked.ok) throw new Error("backtrack failed");
