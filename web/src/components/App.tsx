@@ -115,6 +115,7 @@ function saveDashCache(cache: Record<string, DashboardCacheEntry>): void {
 export function App() {
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [processing, setProcessing] = useState(false);
+  const [processingText, setProcessingText] = useState("Waiting...");
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [model, setModel] = useState("");
   const [permissionPrompt, setPermissionPrompt] = useState<PermissionPrompt | null>(null);
@@ -256,8 +257,10 @@ export function App() {
       case "loader":
         setProcessing(event.state === "show");
         if (event.state === "show") {
+          setProcessingText(event.text ?? "Waiting...");
           if (!turnStartRef.current) turnStartRef.current = Date.now();
         } else {
+          setProcessingText("Waiting...");
           turnStartRef.current = 0;
         }
         break;
@@ -364,6 +367,7 @@ export function App() {
     if (viewMode === "eval_dashboard") return;
     turnStartRef.current = Date.now();
     setProcessing(true);
+    setProcessingText("Thinking...");
     if (viewMode === "session_dashboard") {
       send({ type: "artifact", action: "update", instruction: text });
     } else {
@@ -576,6 +580,7 @@ export function App() {
             <ChatView
               messages={messages}
               processing={processing}
+              processingText={processingText}
               hasStreaming={hasStreaming}
               sessionActiveMs={sessionActiveMs}
               permissionPrompt={permissionPrompt}

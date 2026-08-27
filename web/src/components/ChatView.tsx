@@ -16,6 +16,7 @@ import { InlinePermission, type ToolApprovalDecisionHandler } from "./InlinePerm
 interface ChatViewProps {
   messages: UIMessage[];
   processing: boolean;
+  processingText?: string;
   hasStreaming: boolean;
   sessionActiveMs: number;
   permissionPrompt: PermissionPrompt | null;
@@ -48,6 +49,7 @@ export function findPermissionOwnerAgent(
 export function ChatView({
   messages,
   processing,
+  processingText = "Waiting...",
   hasStreaming,
   sessionActiveMs,
   permissionPrompt,
@@ -147,7 +149,7 @@ export function ChatView({
       )}
 
       {processing && !hasStreaming && !permissionPrompt && !planInteraction && (
-        <WaitingBubble sessionTime={sessionTime} />
+        <WaitingBubble label={processingText} sessionTime={sessionTime} />
       )}
 
       {permissionPrompt && permissionOwnerAgent && (
@@ -245,7 +247,13 @@ function PlanningModeMarker() {
   );
 }
 
-function WaitingBubble({ sessionTime }: { sessionTime: number }) {
+function WaitingBubble({
+  label,
+  sessionTime,
+}: {
+  label: string;
+  sessionTime: number;
+}) {
   return (
     <div className="flex justify-start animate-fade-up">
       <div
@@ -262,7 +270,7 @@ function WaitingBubble({ sessionTime }: { sessionTime: number }) {
             <span className="w-2 h-2 rounded-full animate-bounce" style={{ backgroundColor: "var(--color-accent)", animationDelay: "150ms" }} />
             <span className="w-2 h-2 rounded-full animate-bounce" style={{ backgroundColor: "var(--color-accent)", animationDelay: "300ms" }} />
           </div>
-          <span className="text-sm" style={{ color: "var(--color-text-muted)" }}>Waiting...</span>
+          <span className="text-sm" style={{ color: "var(--color-text-muted)" }}>{label}</span>
           <span className="text-xs tabular-nums" style={{ color: "var(--color-text-muted)" }}>({formatTime(Math.floor(sessionTime / 1000))})</span>
         </div>
       </div>

@@ -152,6 +152,7 @@ describe("Web Chat intent alignment", () => {
         content: "进入 Planning Mode",
       }],
       processing: true,
+      processingText: "正在规划下一步...",
       hasStreaming: false,
       sessionActiveMs: 0,
       permissionPrompt: null,
@@ -159,6 +160,7 @@ describe("Web Chat intent alignment", () => {
     }));
 
     expect(markup).toContain("进入 Planning Mode");
+    expect(markup).toContain("正在规划下一步...");
     expect(markup).toContain('role="status"');
   });
 });
