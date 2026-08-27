@@ -20,6 +20,7 @@ interface SidebarProps {
   onConfigChange: (action: string, value: string) => void;
   onNewSession: () => void;
   isProcessing: boolean;
+  canSwitchSession?: boolean;
   onCacheAction?: (action: "size" | "clear") => void;
   cacheSize?: { totalBytes: number; fileCount: number; sessionCount: number } | null;
   cacheClearing?: boolean;
@@ -51,6 +52,7 @@ export function Sidebar({
   onConfigChange,
   onNewSession,
   isProcessing,
+  canSwitchSession = false,
   onCacheAction,
   cacheSize,
   cacheClearing,
@@ -236,6 +238,7 @@ export function Sidebar({
                 currentSessionId={currentSessionId}
                 onAction={onSessionAction}
                 isProcessing={isProcessing}
+                canSwitchSession={canSwitchSession}
                 onNewSession={onNewSession}
               />
             )}
@@ -273,12 +276,14 @@ function DetailSessionsPanel({
   onAction,
   onNewSession,
   isProcessing,
+  canSwitchSession,
 }: {
   sessions: SessionInfo[];
   currentSessionId: string | null;
   onAction: (action: "list" | "save" | "load" | "delete", id?: string) => void;
   onNewSession: () => void;
   isProcessing: boolean;
+  canSwitchSession: boolean;
 }) {
   return (
     <div className="space-y-3">
@@ -301,7 +306,7 @@ function DetailSessionsPanel({
         <div className="space-y-0.5">
           {sessions.map((s) => {
             const isActive = s.id === currentSessionId;
-            const isDisabled = isProcessing && !isActive;
+            const isDisabled = isProcessing && !canSwitchSession && !isActive;
             return (
               <div
                 key={s.id}

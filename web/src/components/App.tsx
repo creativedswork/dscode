@@ -226,6 +226,8 @@ export function App() {
       case "clear_conversation":
         setMessages((prev) => conversationReducer(prev, event));
         setPermissionPrompt(null);
+        setProcessing(false);
+        turnStartRef.current = 0;
         dispatchPlanEvent({ type: "plan_state", plan: null });
         break;
       case "info": {
@@ -542,6 +544,7 @@ export function App() {
           sessions={sessions} currentSessionId={currentSessionId} mcpServers={mcpServers} config={config}
           onSessionAction={handleSessionAction} onMcpAction={handleMcpAction}
           onConfigChange={handleConfigChange} isProcessing={processing} onNewSession={handleNewSession}
+          canSwitchSession={planView.interaction !== null}
           onCacheAction={handleCacheAction} cacheSize={cacheSize} cacheClearing={cacheClearing}
           skills={skills} onToggleSkill={handleToggleSkill} />
         <main className="flex-1 flex flex-col min-w-0">
