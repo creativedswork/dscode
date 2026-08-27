@@ -7,7 +7,10 @@ import {
   planViewReducer,
 } from "../../src/ui/shared/plan-reducer.js";
 import type { PlanCandidate } from "../../src/application/plan/index.js";
-import { ChatView } from "../../web/src/components/ChatView.js";
+import {
+  ChatView,
+  waitingElapsedMs,
+} from "../../web/src/components/ChatView.js";
 import { IntentAlignment } from "../../web/src/components/IntentAlignment.js";
 import {
   buildIntentAlignmentCommand,
@@ -51,6 +54,11 @@ function alignmentState() {
 }
 
 describe("Web Chat intent alignment", () => {
+  it("keeps the Planning wait timer advancing after Session time stops", () => {
+    expect(waitingElapsedMs(40_000, 40_000, 1_000, 4_500)).toBe(43_500);
+    expect(waitingElapsedMs(47_000, 40_000, 1_000, 4_500)).toBe(47_000);
+  });
+
   it("renders one concise inline choice with recommendation and custom input", () => {
     const state = alignmentState();
     if (!state.interaction) throw new Error("alignment missing");

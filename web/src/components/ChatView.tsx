@@ -219,6 +219,18 @@ function formatTime(s: number): string {
   return `${Math.floor(s / 60)}m ${s % 60}s`;
 }
 
+export function waitingElapsedMs(
+  sessionActiveMs: number,
+  baselineActiveMs: number,
+  baselineWallMs: number,
+  nowMs: number,
+): number {
+  return Math.max(
+    sessionActiveMs,
+    baselineActiveMs + Math.max(0, nowMs - baselineWallMs),
+  );
+}
+
 function PlanningModeMarker() {
   return (
     <div
@@ -254,6 +266,24 @@ function WaitingBubble({
   label: string;
   sessionTime: number;
 }) {
+  const baselineRef = useRef({
+    activeMs: sessionTime,
+    wallMs: Date.now(),
+  });
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, []);
+
+  const elapsedMs = waitingElapsedMs(
+    sessionTime,
+    baselineRef.current.activeMs,
+    baselineRef.current.wallMs,
+    now,
+  );
+
   return (
     <div className="flex justify-start animate-fade-up">
       <div
@@ -271,7 +301,7 @@ function WaitingBubble({
             <span className="w-2 h-2 rounded-full animate-bounce" style={{ backgroundColor: "var(--color-accent)", animationDelay: "300ms" }} />
           </div>
           <span className="text-sm" style={{ color: "var(--color-text-muted)" }}>{label}</span>
-          <span className="text-xs tabular-nums" style={{ color: "var(--color-text-muted)" }}>({formatTime(Math.floor(sessionTime / 1000))})</span>
+          <span className="text-xs tabular-nums" style={{ color: "var(--color-text-muted)" }}>({formatTime(Math.floor(elapsedMs / 1000))})</span>
         </div>
       </div>
     </div>

@@ -58,7 +58,9 @@ projecting Planner tools. Chat inserts an `进入 Planning Mode` timeline marker
 shows `正在规划下一步...` while Planner runs, and shows `等待你选择方向...`
 while an inline choice is pending, keeping the main composer non-submittable
 throughout. The rebuilt bundle kept the processing state visible and then
-displayed the persisted perspective choice.
+displayed the persisted perspective choice. The Waiting timer uses a local
+one-second clock above the latest Session-time baseline so it continues
+advancing after Main hands foreground ownership to Planner.
 
 Focused verification:
 
