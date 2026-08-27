@@ -22,6 +22,8 @@ export function spawnPlanner(
   options: SpawnPlannerOptions,
 ): Promise<PlannerProcessHandle> {
   const main = options.supervisor.require(options.mainAgentId);
+  const needsAlignment =
+    (options.request.decision.assessment?.intentUncertainty ?? 0) >= 1;
   let resolveStarted!: (handle: PlannerProcessHandle) => void;
   let rejectStarted!: (error: Error) => void;
   const started = new Promise<PlannerProcessHandle>((resolve, reject) => {
@@ -36,9 +38,17 @@ export function spawnPlanner(
       prompt: [
         `Plan ID: ${options.planId}`,
         `Request ID: ${options.request.requestId}`,
-        options.expectedVersion === undefined
+        needsAlignment
+          ? "Request user alignment before investigation or technical planning."
+          : options.expectedVersion === undefined
           ? "Create the goal and constraints, resolve technical choices, then compile and internally authorize."
           : "Replan autonomously from the public trajectory, then compile and internally authorize.",
+        options.request.decision.assessment
+          ? `Public route assessment: ${JSON.stringify(options.request.decision.assessment)}`
+          : "",
+        needsAlignment
+          ? "Do not inspect the repository or infer a default preference. Initialize only explicit constraints, append exactly one concise user-visible decision with two or three viable candidates marked constraintFit \"uncertain\", and immediately call plan_request_decision. Resolve technical choices only after the user responds."
+          : "",
         "",
         options.request.requestText,
       ].join("\n"),

@@ -504,6 +504,7 @@ describe("Web Agent Activity projection", () => {
       "describe this image",
       [expect.objectContaining({ type: "image", mimeType: "image/png" })],
       "describe this image",
+      "auto",
     );
   });
 });

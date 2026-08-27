@@ -23,17 +23,32 @@ Pre-fix deterministic evidence used the exact request with
 created. The live TUI accepted the request but could not reach model inference
 because the local `deepseek` provider is not configured.
 
-The route contract now treats maximum intent uncertainty as an independent
-Planner trigger. Post-fix evidence shows the underspecified request entering
-Planner and persisting a visual-direction interaction, while a request that
-explicitly specifies visual style, board, controls, and HUD remains Direct.
-`solutionDivergence: 2` alone also remains Direct so technical alternatives stay
-autonomous.
+The route contract now treats any remaining user-intent uncertainty as an
+independent Planner trigger. This absorbs provider scoring variance between
+levels `1` and `2` without hard-coding a domain or example request. A request
+that explicitly specifies visual style, board, controls, and HUD remains
+Direct, and `solutionDivergence: 2` alone also remains Direct so technical
+alternatives stay autonomous.
+
+The final live `deepseek-v4-pro` run used the exact request in an empty isolated
+project. Main scored `intentUncertainty: 1`, the Host deterministically selected
+Plan, Planner received the public assessment, and the Web Chat displayed:
+
+```text
+你希望这个俄罗斯方块小游戏采用哪种视觉主题/配色风格？
+```
+
+The inline interaction offered three user-facing visual directions plus custom
+input. No route assessment, `skill`, `list_agents`, or `plan_*` tool card was
+shown, and the project remained empty before the user decision.
 
 Focused verification:
 
 ```text
-tests/application/plan/route.test.ts: 14 passed
+8 test files passed
+81 tests passed
+npm run typecheck: passed
+git diff --check: passed
 ```
 
 Debug instrumentation and `.dbg` evidence remain uncommitted until the user
@@ -185,12 +200,13 @@ npm run architecture:check
 ```
 
 Also perform final code/security review and repeat browser acceptance against a
-real configured model backend rather than the deterministic fixture.
+configured model backend after any routing-policy change.
 
 Deferred risks:
 
 - broad cross-feature TypeScript/build/test regressions have not been excluded;
-- live-model prompt interpretation and provider variability remain untested;
+- provider scoring remains variable, so the Host treats every non-zero
+  user-intent uncertainty score as an alignment trigger;
 - restart reconciliation, TUI parity, and serialization hardening belong to
   M7/M8.
 

@@ -56,6 +56,12 @@ describe("Plan request routing", () => {
     }))).toMatchObject({ route: "direct", totalScore: 2 });
   });
 
+  it("routes any remaining user-intent uncertainty to Plan", () => {
+    expect(decidePlanRoute(assessment({
+      intentUncertainty: 1,
+    }))).toMatchObject({ route: "plan", totalScore: 1 });
+  });
+
   it("routes to Plan when the total score reaches four", () => {
     expect(decidePlanRoute(assessment({
       intentUncertainty: 1,
@@ -79,6 +85,9 @@ describe("Plan request routing", () => {
     const guard = new PlanExecutionGuard();
     guard.beginRequest("request-1", "Change a file", "auto");
 
+    expect(guard.instructions()).toContain(
+      "do not substitute genre conventions or a plausible default",
+    );
     expect(guard.checkToolCall({
       tool: tool("write_file", "workspace_write"),
       batchToolNames: ["write_file"],

@@ -43,10 +43,16 @@ export type PlanSubmissionResult =
     };
 
 const SCORE = Type.Integer({ minimum: 0, maximum: 2 });
+const INTENT_UNCERTAINTY_SCORE = Type.Integer({
+  minimum: 0,
+  maximum: 2,
+  description:
+    "0 only when user-visible intent is explicit or fixed by established project context; 1 when a user-visible preference may remain unresolved; 2 when a missing user-value judgment such as visual style, scope, compatibility, cost, or reversibility clearly requires alignment before side effects. Never treat genre conventions or a plausible default as user intent",
+});
 
 export const PlanRouteAssessmentSchema = Type.Object({
   requestId: Type.String({ minLength: 1, maxLength: 200 }),
-  intentUncertainty: SCORE,
+  intentUncertainty: INTENT_UNCERTAINTY_SCORE,
   solutionDivergence: SCORE,
   impact: SCORE,
   risk: SCORE,
@@ -83,7 +89,7 @@ export function decidePlanRoute(
     + assessment.impact
     + assessment.risk
     + assessment.coordination;
-  const route = assessment.intentUncertainty === 2
+  const route = assessment.intentUncertainty >= 1
     || assessment.impact === 2
     || assessment.risk === 2
     || assessment.coordination === 2

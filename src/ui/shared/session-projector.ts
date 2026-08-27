@@ -2,6 +2,7 @@ import type { AgentSessionMessage } from "../../session/types.js";
 import { formatSubagentLabel } from "./agent-label.js";
 import { formatToolArgsForDisplay } from "./tool-args-formatter.js";
 import { createToolResultProjection } from "./tool-result-projection.js";
+import { isConversationToolVisible } from "./tool-visibility.js";
 import type { ConversationMessage } from "./types.js";
 
 export interface SessionProjectionOptions {
@@ -116,6 +117,7 @@ export function rebuildDisplayMessages(
   const output = new Set<number>(); // message indices to emit
   const pendingResults = new Map<number, Map<string, { rawResult: string; isError: boolean; toolName: string }>>();
   const parsedToolsByAssistant = new Map<number, { id: string; name: string; args: string }[]>();
+  const hiddenToolCallIds = new Set<string>();
   // pendingResults: assistantMsgIndex → (toolCallId → { result, isError, toolName })
 
   let lastAssistantIdx = -1;
@@ -134,7 +136,16 @@ export function rebuildDisplayMessages(
       const contentArr = Array.isArray(m.content) ? m.content : [];
       const toolCalls: { id: string; name: string; args: string }[] = [];
       for (const b of contentArr) {
-        if (b && b.type === "toolCall" && b.name && b.id) {
+        if (
+          b
+          && b.type === "toolCall"
+          && b.name
+          && b.id
+        ) {
+          if (!isConversationToolVisible(b.name)) {
+            hiddenToolCallIds.add(b.id);
+            continue;
+          }
           const args = formatToolArgsForDisplay(b.name, b.arguments);
           toolCalls.push({ id: b.id, name: b.name, args });
         }
@@ -149,6 +160,11 @@ export function rebuildDisplayMessages(
       } else {
         lastAssistantToolIds = null;
       }
+    } else if (
+      m.role === "toolResult"
+      && hiddenToolCallIds.has(m.toolCallId)
+    ) {
+      continue;
     } else if (m.role === "toolResult" && lastAssistantToolIds) {
       // Try to match to the last assistant's tool calls
       const toolCallId: string | undefined = m.toolCallId;
@@ -234,7 +250,11 @@ export function rebuildDisplayMessages(
 
     // Tools: extract from content blocks for assistant messages, merge with results
     let tools: ConversationMessage["tools"] = Array.isArray(m.tools)
-      ? m.tools.map((tool: NonNullable<ConversationMessage["tools"]>[number]) => ({ ...tool }))
+      ? m.tools
+          .filter((tool: NonNullable<ConversationMessage["tools"]>[number]) =>
+            isConversationToolVisible(tool.name)
+          )
+          .map((tool: NonNullable<ConversationMessage["tools"]>[number]) => ({ ...tool }))
       : undefined;
     if (m.role === "assistant" && Array.isArray(m.content)) {
       const parsedTools = parsedToolsByAssistant.get(i);

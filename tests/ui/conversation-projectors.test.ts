@@ -6,6 +6,57 @@ import { harnessEventToConversationEvent } from "../../src/ui/shared/harness-con
 import { rebuildDisplayMessages } from "../../src/ui/shared/session-projector.js";
 
 describe("conversation projectors", () => {
+  it("keeps internal routing and Agent tools out of live and replayed Chat", () => {
+    expect(harnessEventToConversationEvent({
+      type: "tool:start",
+      toolCallId: "call-route",
+      name: "submit_plan_route_assessment",
+      args: {},
+    })).toBeUndefined();
+    expect(harnessEventToConversationEvent({
+      type: "tool:end",
+      toolCallId: "call-agents",
+      name: "list_agents",
+      result: { content: [{ type: "text", text: "[]" }] },
+      isError: false,
+    })).toBeUndefined();
+
+    const replay = rebuildDisplayMessages([
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "toolCall",
+            id: "call-agents",
+            name: "list_agents",
+            arguments: {},
+          },
+          {
+            type: "toolCall",
+            id: "call-read",
+            name: "read_file",
+            arguments: { path: "README.md" },
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-agents",
+        content: [{ type: "text", text: "[]" }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-read",
+        content: [{ type: "text", text: "contents" }],
+      },
+    ], [], "session-1");
+
+    expect(replay).toHaveLength(1);
+    expect(replay[0].tools).toEqual([
+      expect.objectContaining({ name: "read_file" }),
+    ]);
+  });
+
   it("projects live and replayed Tool results with the same stable identity", () => {
     const result = { content: [{ type: "text", text: "file contents" }] };
     const live = harnessEventToConversationEvent({

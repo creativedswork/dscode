@@ -21,11 +21,11 @@ SHALL NOT require the user to select a planning mode.
 For an Auto request, the system MUST obtain a structured complexity assessment before the Main Agent's first mutating tool call. Read-only investigation MAY occur before the assessment.
 
 #### Scenario: Simple request continues directly
-- **WHEN** the assessment has no intent uncertainty, impact, risk, or coordination dimension at level `2` and its total score is less than `4`
+- **WHEN** the assessment has zero intent uncertainty, no impact, risk, or coordination dimension at level `2`, and its total score is less than `4`
 - **THEN** the system records a Direct route decision and allows the Main Agent to continue without starting a Planner
 
 #### Scenario: Complex request enters Plan Mode
-- **WHEN** intent uncertainty, impact, risk, or coordination is level `2`, or the total complexity score is at least `4`
+- **WHEN** intent uncertainty is non-zero, impact, risk, or coordination is level `2`, or the total complexity score is at least `4`
 - **THEN** the system blocks the pending side effect and transfers foreground control to a Planner process
 
 #### Scenario: Mutation is attempted without an assessment

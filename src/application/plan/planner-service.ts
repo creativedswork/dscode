@@ -91,7 +91,9 @@ export class PlannerService {
       }
       const revision = draft.revision + 1;
       draft.decisions.push({
-        ...structuredClone(input),
+        decisionNodeId: input.decisionNodeId,
+        question: input.question,
+        candidates: structuredClone(input.candidates),
         status: "open",
       });
       for (const candidate of input.candidates) {

@@ -41,6 +41,7 @@ class MainRuntime implements AgentProcessRuntime {
 
 class PlannerRuntime implements AgentProcessRuntime {
   readonly capabilities = { suspend: false, messaging: false };
+  lastInput?: AgentProcessInput;
 
   constructor(private readonly mode: "waiting" | "normal" | "failure") {}
 
@@ -48,6 +49,7 @@ class PlannerRuntime implements AgentProcessRuntime {
     input: AgentProcessInput,
     signal: AbortSignal,
   ): Promise<AgentProcessOutput> {
+    this.lastInput = input;
     if (this.mode === "normal") return { text: "ended without approval" };
     if (this.mode === "failure") throw new Error("model unavailable");
     await input.onStateChange?.("waiting");
@@ -85,6 +87,7 @@ async function setup(mode: "waiting" | "normal" | "failure" = "waiting") {
     ["planner", plannerApplication],
   ]);
   const logger = { error: vi.fn() };
+  const plannerRuntime = new PlannerRuntime(mode);
   const supervisor = new AgentSupervisor(
     {
       require(name: string) {
@@ -95,7 +98,7 @@ async function setup(mode: "waiting" | "normal" | "failure" = "waiting") {
       list: () => [...applications.values()],
     } as never,
     (app) => app.name === "planner"
-      ? new PlannerRuntime(mode)
+      ? plannerRuntime
       : new MainRuntime(),
     new AgentProcessStore(root, "/project-a"),
     new HarnessEventBus(logger as never),
@@ -122,7 +125,16 @@ async function setup(mode: "waiting" | "normal" | "failure" = "waiting") {
       source: "explicit" as const,
     },
   };
-  return { coordinator, main, request, root, service, store, supervisor };
+  return {
+    coordinator,
+    main,
+    plannerRuntime,
+    request,
+    root,
+    service,
+    store,
+    supervisor,
+  };
 }
 
 async function expectExit(
@@ -190,6 +202,41 @@ describe("Planner process races and exits", () => {
     expect(fixture.supervisor.list().filter((process) =>
       process.application.name === "planner"
     )).toHaveLength(1);
+    await fixture.coordinator.shutdown();
+  });
+
+  it("passes unresolved user-value evidence to the Planner", async () => {
+    const fixture = await setup();
+    await fixture.coordinator.start(fixture.main.agentId, {
+      ...fixture.request,
+      decision: {
+        requestId: fixture.request.requestId,
+        route: "plan",
+        source: "assessment",
+        totalScore: 2,
+        assessment: {
+          requestId: fixture.request.requestId,
+          intentUncertainty: 2,
+          solutionDivergence: 0,
+          impact: 0,
+          risk: 0,
+          coordination: 0,
+          evidence: ["Visual direction is unspecified"],
+        },
+      },
+    });
+
+    await vi.waitFor(() => {
+      expect(fixture.plannerRuntime.lastInput?.prompt).toContain(
+        "Visual direction is unspecified",
+      );
+      expect(fixture.plannerRuntime.lastInput?.prompt).toContain(
+        "immediately call plan_request_decision",
+      );
+      expect(fixture.plannerRuntime.lastInput?.prompt).toContain(
+        "Resolve technical choices only after the user responds",
+      );
+    });
     await fixture.coordinator.shutdown();
   });
 

@@ -147,6 +147,7 @@ export class PlanExecutionGuard {
       "Read-only investigation is allowed before routing.",
       `Before the first non-read tool call, call \`${PLAN_ROUTE_ASSESSMENT_TOOL_NAME}\``,
       "with this request ID, all five 0..2 scores, and concise public evidence.",
+      "Set intentUncertainty to 1 when a user-visible preference may remain unresolved and to 2 when it clearly changes the user-visible result (for example visual style, scope, compatibility, cost, or reversibility). For creation requests, do not substitute genre conventions or a plausible default for unstated visual direction. Use 0 only when intent is explicit or fixed by established project context.",
       "Do not batch that assessment with a non-read tool call.",
     ].join("\n");
   }

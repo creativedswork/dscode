@@ -107,6 +107,41 @@ describe("Planner tools", () => {
     )).toBe(true);
   });
 
+  it("persists only decision fields when called through the tool", async () => {
+    const fixture = await setup();
+    const tool = fixture.tools.find((item) =>
+      item.name === "plan_append_decision"
+    );
+    if (!tool) throw new Error("append decision tool missing");
+
+    const result = await tool.execute("tool-append", {
+      expectedVersion: fixture.appended.version,
+      decisionNodeId: "decision-2",
+      question: "Choose another direction",
+      candidates: [{
+        optionId: "c",
+        summary: "C",
+        affectedScopes: ["src"],
+        evidence: [],
+        risks: [],
+        cost: "low",
+        reversibility: "reversible",
+        constraintFit: "uncertain",
+        recommended: true,
+        rationale: "C",
+      }],
+    }, new AbortController().signal);
+
+    expect(result.details).toMatchObject({
+      decisions: [
+        { decisionNodeId: "decision-1" },
+        { decisionNodeId: "decision-2", status: "open" },
+      ],
+    });
+    expect((result.details as { decisions: Record<string, unknown>[] })
+      .decisions[1]).not.toHaveProperty("expectedVersion");
+  });
+
   it("persists a decision before waiting and resumes from its receipt", async () => {
     const fixture = await setup();
     const tool = fixture.tools.find((item) => item.name === "plan_request_decision");

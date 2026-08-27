@@ -16,5 +16,7 @@ export const PLANNER_APPLICATION: Readonly<AgentDefinition> = Object.freeze({
     "Internally authorize the compiled revision and digest before finishing.",
   ].join("\n"),
   tools: ["*"],
+  disallowedTools: ["list_agents"],
+  effort: "low",
   permissionMode: "plan",
 });

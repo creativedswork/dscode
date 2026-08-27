@@ -29,6 +29,7 @@ import type {
   RegisteredAgentTool,
   ToolCapability,
 } from "../kernel/tool-effects.js";
+import { isPlanToolAllowed } from "../kernel/tool-effects.js";
 import type { HarnessEvent } from "../application/events.js";
 import { getEnvApiKey, resolveModel } from "../models/index.js";
 import { streamSimple } from "../models/index.js";
@@ -312,6 +313,12 @@ export class AgentRuntimeCoordinator {
           toolContext.args,
         );
         if (planBlock) return planBlock;
+        if (
+          application.permissionMode === "plan"
+          && isPlanToolAllowed(tool)
+        ) {
+          return undefined;
+        }
         try {
           const permissionBlock = await permissions.check(toolContext, signal);
           if (permissionBlock || signal?.aborted) {
