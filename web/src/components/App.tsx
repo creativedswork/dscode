@@ -211,6 +211,7 @@ export function App() {
         break;
       case "user_message":
       case "agent_activity":
+      case "planning_mode":
       case "assistant_start":
       case "thinking_delta":
       case "text_delta":

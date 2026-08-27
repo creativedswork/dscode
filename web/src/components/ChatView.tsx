@@ -124,6 +124,8 @@ export function ChatView({
         <ErrorBoundary key={msg.id} fallback={<FallbackBubble message={msg} />}>
           {msg.role === "user"
             ? <UserBubble message={msg} />
+            : msg.role === "system" && msg.id.startsWith("planning-mode-")
+              ? <PlanningModeMarker />
             : msg.role === "agent" && msg.agentActivity
               ? (
                   <AgentActivityCard
@@ -213,6 +215,34 @@ function FallbackBubble({ message }: { message: UIMessage }) {
 function formatTime(s: number): string {
   if (s < 60) return `${s}s`;
   return `${Math.floor(s / 60)}m ${s % 60}s`;
+}
+
+function PlanningModeMarker() {
+  return (
+    <div
+      className="flex items-center gap-3 py-1 animate-fade-up"
+      role="status"
+      aria-label="进入 Planning Mode"
+    >
+      <span className="h-px flex-1" style={{ backgroundColor: "var(--color-border)" }} />
+      <span
+        className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium"
+        style={{
+          border: "1px solid var(--color-border)",
+          borderRadius: "6px",
+          color: "var(--color-text-muted)",
+          backgroundColor: "var(--color-surface)",
+        }}
+      >
+        <span
+          className="w-2 h-2 rounded-full animate-pulse"
+          style={{ backgroundColor: "var(--color-accent)" }}
+        />
+        进入 Planning Mode
+      </span>
+      <span className="h-px flex-1" style={{ backgroundColor: "var(--color-border)" }} />
+    </div>
+  );
 }
 
 function WaitingBubble({ sessionTime }: { sessionTime: number }) {

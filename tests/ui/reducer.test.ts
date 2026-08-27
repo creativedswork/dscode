@@ -15,6 +15,24 @@ const runningActivity = {
 };
 
 describe("conversationReducer — Agent Activity", () => {
+  it("appends one stable Planning Mode marker", () => {
+    const event: ServerEvent = {
+      type: "planning_mode",
+      id: "planner-1",
+      createdAt: 1700000000000,
+    };
+
+    const once = conversationReducer([], event);
+    const twice = conversationReducer(once, event);
+
+    expect(twice).toEqual([{
+      id: "planning-mode-planner-1",
+      role: "system",
+      content: "进入 Planning Mode",
+      createdAt: 1700000000000,
+    }]);
+  });
+
   it("appends a new activity on spawn", () => {
     const previous: UIMessage[] = [{
       id: "user-1",

@@ -55,7 +55,7 @@ actionable output, and no side-effect tool may run before it is resolved.
 
 #### Scenario: Foreground ownership transfers to Planner
 - **WHEN** Main finishes its routing turn while a foreground Planner is still generating the alignment
-- **THEN** Chat keeps the lightweight processing state visible with a generic user-facing message and does not expose Planner tools or restore an idle composer
+- **THEN** Chat inserts an `进入 Planning Mode` timeline marker, keeps the lightweight processing state visible with a generic user-facing message, and does not expose Planner tools or restore an idle composer
 
 #### Scenario: Alignment is pending
 - **WHEN** the server publishes a persisted alignment interaction

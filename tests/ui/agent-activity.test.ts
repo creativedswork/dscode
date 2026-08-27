@@ -456,6 +456,10 @@ describe("Web Agent Activity projection", () => {
     });
 
     expect(agentActivities(broadcast)).toHaveLength(0);
+    expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({
+      type: "planning_mode",
+      id: process.agentId,
+    }));
     expect(broadcast).toHaveBeenCalledWith({
       type: "loader",
       state: "show",

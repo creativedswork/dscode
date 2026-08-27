@@ -86,6 +86,20 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
         : item);
     }
 
+    case "planning_mode": {
+      const id = `planning-mode-${event.id}`;
+      if (prev.some((message) => message.id === id)) return prev;
+      return [
+        ...prev,
+        {
+          id,
+          role: "system",
+          content: "进入 Planning Mode",
+          createdAt: event.createdAt ?? Date.now(),
+        },
+      ];
+    }
+
     case "user_message":
       return [
         ...prev,

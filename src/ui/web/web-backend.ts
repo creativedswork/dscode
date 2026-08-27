@@ -439,6 +439,11 @@ export class WebUiBackend implements UiBackend {
         && event.attachment === "foreground"
       ) {
         this.broadcast({
+          type: "planning_mode",
+          id: event.agentId,
+          createdAt: Date.now(),
+        });
+        this.broadcast({
           type: "loader",
           state: "show",
           text: "正在规划下一步...",
@@ -1283,6 +1288,12 @@ export class WebUiBackend implements UiBackend {
     }
     const plan = await this.harness.plans.getActivePlan(sessionId);
     if (this.harness.sessions.currentId() !== sessionId) return;
+    if (plan) {
+      send({
+        type: "planning_mode",
+        id: plan.planId,
+      });
+    }
     send({ type: "plan_state", plan: plan ?? null });
     if (!plan?.pendingInteraction) return;
     send({

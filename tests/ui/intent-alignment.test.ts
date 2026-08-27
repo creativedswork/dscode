@@ -143,4 +143,22 @@ describe("Web Chat intent alignment", () => {
     expect(markup).not.toContain("Waiting...");
     expect(markup).not.toContain("规划工作台");
   });
+
+  it("renders the Planning Mode handoff as a timeline marker", () => {
+    const markup = renderToStaticMarkup(createElement(ChatView, {
+      messages: [{
+        id: "planning-mode-planner-1",
+        role: "system",
+        content: "进入 Planning Mode",
+      }],
+      processing: true,
+      hasStreaming: false,
+      sessionActiveMs: 0,
+      permissionPrompt: null,
+      onPermission: vi.fn(),
+    }));
+
+    expect(markup).toContain("进入 Planning Mode");
+    expect(markup).toContain('role="status"');
+  });
 });
