@@ -1,8 +1,15 @@
 import React, { useEffect, useRef, useState, useCallback, useLayoutEffect } from "react";
-import type { AgentActivity, PermissionPrompt, UIMessage } from "../types";
+import type {
+  AgentActivity,
+  PermissionPrompt,
+  PlanViewInteraction,
+  UIMessage,
+} from "../types";
+import type { IntentAlignmentAnswer } from "../utils/intentAlignment";
 import { ToolCard } from "./ToolCard";
 import { Markdown } from "./Markdown";
 import { AgentActivityCard } from "./AgentActivityCard";
+import { IntentAlignment } from "./IntentAlignment";
 import { ToolApprovalCard } from "./ToolApprovalCard";
 import { InlinePermission, type ToolApprovalDecisionHandler } from "./InlinePermission";
 
@@ -13,6 +20,10 @@ interface ChatViewProps {
   sessionActiveMs: number;
   permissionPrompt: PermissionPrompt | null;
   onPermission: ToolApprovalDecisionHandler;
+  planInteraction?: PlanViewInteraction | null;
+  alignmentConnected?: boolean;
+  alignmentConflicted?: boolean;
+  onIntentAlignment?(answer: IntentAlignmentAnswer): boolean;
   containerRef?: React.RefObject<HTMLDivElement>;
   scrollLocked?: boolean;
 }
@@ -34,7 +45,20 @@ export function findPermissionOwnerAgent(
   return match?.agentActivity ?? null;
 }
 
-export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, permissionPrompt, onPermission, containerRef, scrollLocked = false }: ChatViewProps) {
+export function ChatView({
+  messages,
+  processing,
+  hasStreaming,
+  sessionActiveMs,
+  permissionPrompt,
+  onPermission,
+  planInteraction = null,
+  alignmentConnected = true,
+  alignmentConflicted = false,
+  onIntentAlignment = () => false,
+  containerRef,
+  scrollLocked = false,
+}: ChatViewProps) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
@@ -49,7 +73,7 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
     if (isAtBottomRef.current && bottomRef.current) {
       bottomRef.current.scrollIntoView({ behavior: hasStreaming ? "instant" : "smooth" });
     }
-  }, [messages, processing, permissionPrompt]);
+  }, [messages, processing, permissionPrompt, planInteraction]);
 
   const handleChatScroll = useCallback(() => {
     const el = scrollContainerRef.current;
@@ -66,7 +90,7 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
     }
   }, [hasStreaming]);
 
-  if (messages.length === 0 && !permissionPrompt) {
+  if (messages.length === 0 && !permissionPrompt && !planInteraction) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center" style={{ maxWidth: "520px", padding: "0 var(--space-xl)" }}>
@@ -110,7 +134,17 @@ export function ChatView({ messages, processing, hasStreaming, sessionActiveMs, 
         </ErrorBoundary>
       ))}
 
-      {processing && !hasStreaming && !permissionPrompt && (
+      {planInteraction && (
+        <IntentAlignment
+          key={planInteraction.interaction.interactionId}
+          request={planInteraction.request}
+          connected={alignmentConnected}
+          conflicted={alignmentConflicted}
+          onSubmit={onIntentAlignment}
+        />
+      )}
+
+      {processing && !hasStreaming && !permissionPrompt && !planInteraction && (
         <WaitingBubble sessionTime={sessionTime} />
       )}
 

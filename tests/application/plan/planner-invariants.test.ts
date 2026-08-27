@@ -144,6 +144,32 @@ describe("Planner domain invariants", () => {
         optionId: "retro",
       },
     })).rejects.toThrow("requires a matching pending decision");
+    const waiting = await unresolved.service.requestDecision(
+      "plan-user-value",
+      "planner-1",
+      uncertain.version,
+      "visual-alignment",
+      "visual-direction",
+    );
+    const aligned = await unresolved.service.applyDecision({
+      planId: "plan-user-value",
+      plannerAgentId: "planner-1",
+      expectedVersion: waiting.version,
+      commandId: "aligned-user-value",
+      interactionId: "visual-alignment",
+      interactionPayloadDigest: waiting.pendingInteraction?.payloadDigest,
+      action: {
+        kind: "select",
+        decisionNodeId: "visual-direction",
+        optionId: "retro",
+      },
+    });
+    expect(aligned.ok && aligned.plan.constraints).toContainEqual({
+      constraintId: "alignment:visual-alignment",
+      kind: "preference",
+      description: "visual-direction: retro",
+      source: "user",
+    });
   });
 
   it("commits interaction state atomically and leaves no waiter after CAS failure", async () => {

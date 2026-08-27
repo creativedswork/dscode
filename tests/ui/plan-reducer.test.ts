@@ -115,7 +115,7 @@ describe("PlanViewState reducer", () => {
     });
   });
 
-  it("restores typed decision and approval interactions from conflict snapshots", () => {
+  it("restores a decision but keeps approval interactions out of Web state", () => {
     const decision = pendingPlan();
     const approval = makePlan({
       status: "awaiting_approval",
@@ -166,16 +166,7 @@ describe("PlanViewState reducer", () => {
         candidates: [{ optionId: "json" }],
       },
     });
-    expect(restore(approval).interaction).toMatchObject({
-      type: "plan_interaction",
-      interaction: { kind: "approval", interactionId: "approval-1" },
-      request: {
-        interactionId: "approval-1",
-        digest: approval.digest,
-        items: [{ itemId: "item-1" }],
-        effectCategories: ["workspace_write"],
-      },
-    });
+    expect(restore(approval).interaction).toBeNull();
   });
 
   it("does not store direct acceptance or interactions without typed requests", () => {

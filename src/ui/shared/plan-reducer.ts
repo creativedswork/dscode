@@ -1,4 +1,5 @@
 import type {
+  PlanDecisionRequest,
   PlanRecord,
   ServerEvent,
 } from "./types.js";
@@ -15,11 +16,11 @@ export type PlanViewInteraction = Omit<
   PlanInteractionEvent,
   "interaction" | "request"
 > & {
-  interaction: Exclude<
+  interaction: Extract<
     PlanInteractionEvent["interaction"],
-    { kind: "acceptance" }
+    { kind: "decision" }
   >;
-  request: NonNullable<PlanInteractionEvent["request"]>;
+  request: Readonly<PlanDecisionRequest>;
 };
 
 export interface PlanViewConflict {
@@ -45,15 +46,15 @@ function toPlanViewInteraction(
   event: PlanInteractionEvent,
 ): PlanViewInteraction | null {
   const { interaction, request } = event;
-  if (!request || interaction.kind === "acceptance") return null;
+  if (
+    !request
+    || interaction.kind !== "decision"
+    || !("decisionNodeId" in request)
+  ) return null;
   if (request.interactionId !== interaction.interactionId
     || request.planId !== event.planId
     || request.revision !== interaction.revision
     || event.revision !== interaction.revision) return null;
-  if (interaction.kind === "decision" && !("decisionNodeId" in request)) {
-    return null;
-  }
-  if (interaction.kind === "approval" && !("digest" in request)) return null;
   return event as PlanViewInteraction;
 }
 
@@ -113,9 +114,10 @@ export function planViewReducer(
         interaction: state.interaction,
         conflict: null,
       };
+      const current = currentSnapshotInteraction(nextState);
       return {
         ...nextState,
-        interaction: currentSnapshotInteraction(nextState),
+        interaction: current ?? projectPendingInteraction(event.plan),
       };
     }
     case "plan_interaction":

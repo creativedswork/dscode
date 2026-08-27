@@ -61,6 +61,10 @@ import {
   viewModeAfterSessionChange,
   viewModeForMessageCount,
 } from "../utils/viewMode";
+import {
+  buildIntentAlignmentCommand,
+  type IntentAlignmentAnswer,
+} from "../utils/intentAlignment";
 
 const SLASH_COMMANDS = [
   { name: "help", description: "Show available commands" },
@@ -389,6 +393,16 @@ export function App() {
   const handleSessionAction = useCallback((action: "list" | "save" | "load" | "delete", id?: string) => send({ type: "session", action, id }), [send]);
   const handleMcpAction = useCallback((action: "list" | "refresh" | "connect" | "disconnect", serverName?: string) => send({ type: "mcp", action, serverName } as any), [send]);
   const handleNewSession = useCallback(() => send({ type: "slash", command: "/reset" }), [send]);
+  const handleIntentAlignment = useCallback((answer: IntentAlignmentAnswer) => {
+    const command = buildIntentAlignmentCommand(
+      planView,
+      currentSessionId,
+      answer,
+    );
+    if (!command) return false;
+    send(command);
+    return true;
+  }, [currentSessionId, planView, send]);
 
   const handleOpenEvalExternal = useCallback((html: string) => {
     if (evalObjectUrlRef.current) {
@@ -555,7 +569,20 @@ export function App() {
               onOpenExternal={handleOpenEvalExternal}
             />
           ) : (
-            <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} sessionActiveMs={sessionActiveMs} permissionPrompt={permissionPrompt} onPermission={handlePermission} containerRef={chatContainerRef} scrollLocked={transitionPhase === "animating"} />
+            <ChatView
+              messages={messages}
+              processing={processing}
+              hasStreaming={hasStreaming}
+              sessionActiveMs={sessionActiveMs}
+              permissionPrompt={permissionPrompt}
+              onPermission={handlePermission}
+              planInteraction={planView.interaction}
+              alignmentConnected={connected}
+              alignmentConflicted={planView.conflict !== null}
+              onIntentAlignment={handleIntentAlignment}
+              containerRef={chatContainerRef}
+              scrollLocked={transitionPhase === "animating"}
+            />
           )}
           {shouldRenderMessageInput(viewMode) && (
             <MessageInput onSend={handleSend} onAbort={handleAbort} onSlashCommand={handleSlashCommand} onCommand={handleCommand}

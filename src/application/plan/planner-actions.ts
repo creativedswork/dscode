@@ -21,6 +21,21 @@ export function applyPlannerAction(
     if (option.constraintFit === "violates") {
       throw new Error(`Option violates hard constraints: ${action.optionId}`);
     }
+    const interaction = draft.pendingInteraction;
+    if (
+      interaction?.kind === "decision"
+      && interaction.payload.decisionNodeId === decision.decisionNodeId
+    ) {
+      const constraintId = `alignment:${interaction.interactionId}`;
+      if (!draft.constraints.some((item) => item.constraintId === constraintId)) {
+        draft.constraints.push({
+          constraintId,
+          kind: "preference",
+          description: `${decision.question}: ${option.summary}`,
+          source: "user",
+        });
+      }
+    }
     decision.status = "selected";
     decision.selectedOptionId = option.optionId;
     draft.status = "drafting";
