@@ -17,6 +17,9 @@ import type {
 } from "../../session/types.js";
 import { executeSlashCommand, getSlashCommandAutocomplete, resolveCustomCommand } from "../../slash-commands/builtins.js";
 import type { HarnessAPI } from "../../application/harness-api.js";
+import type { HarnessEvent } from "../../application/events.js";
+import { planInteractionRequest } from "../../application/plan/plan-events.js";
+import type { PlanMutationResult } from "../../application/plan/plan-port.js";
 import type {
   McpAppResourceProxy,
 } from "../../mcp/app/types.js";
@@ -427,6 +430,26 @@ export class WebUiBackend implements UiBackend {
     h.events.on("eval:dashboard", (event) => {
       this.broadcast(projectEvalDashboardState(event.state));
     });
+    h.events.on("plan:updated", (event) => {
+      if (event.plan.sessionId === h.sessions.currentId()) {
+        this.broadcast({ type: "plan_state", plan: event.plan });
+      }
+    });
+    h.events.on("plan:interaction", (event) => {
+      void this.broadcastPlanInteraction(event);
+    });
+    h.events.on("plan:conflict", (event) => {
+      if (event.plan.sessionId === h.sessions.currentId()) {
+        this.broadcast({
+          type: "plan_conflict",
+          planId: event.planId,
+          expectedVersion: event.expectedVersion,
+          currentVersion: event.currentVersion,
+          revision: event.revision,
+          plan: event.plan,
+        });
+      }
+    });
     h.events.on("message:user", (e) => {
       const projected = projectConversationEvent(e);
       if (projected) this.broadcast(projected);
@@ -586,6 +609,7 @@ export class WebUiBackend implements UiBackend {
     this.currentAssistant = null;
     this.pendingImages = [];
     this.broadcast({ type: "clear_conversation" });
+    this.broadcast({ type: "plan_state", plan: null });
     this.broadcastContextWindow(true, toolsForBroadcast3);
   }
 
@@ -597,6 +621,7 @@ export class WebUiBackend implements UiBackend {
       config: this.buildConfigData(),
       messages: this.buildConversationHistory(),
     });
+    void this.syncPlanState();
     this.broadcastContextWindow(true);
     void this.broadcastTraceTree();
   }
@@ -664,6 +689,7 @@ export class WebUiBackend implements UiBackend {
       config: configData,
       messages,
     });
+    void this.syncPlanState(client);
     this.broadcastContextWindow(true);
     void this.broadcastTraceTree();
     if (this.harness.mcp.list().length > 0) {
@@ -798,10 +824,15 @@ export class WebUiBackend implements UiBackend {
               text,
               imageContents,
               displayText,
+              cmd.planMode ?? "auto",
             );
           } else {
             this.pendingImages = [];
-            await this.harness.conversation.prompt(text);
+            await this.harness.conversation.prompt(
+              text,
+              undefined,
+              cmd.planMode ?? "auto",
+            );
           }
         } catch (err) {
           this.harness.conversation.save();
@@ -815,6 +846,47 @@ export class WebUiBackend implements UiBackend {
         break;
       }
 
+      case "plan_decision": {
+        await this.handlePlanMutation(client, cmd, () => this.harness.plans.submitDecision({
+          planId: cmd.planId,
+          expectedVersion: cmd.expectedVersion,
+          commandId: cmd.commandId,
+          interactionId: cmd.interactionId,
+          interactionPayloadDigest: cmd.interactionPayloadDigest,
+          action: cmd.action,
+        }));
+        break;
+      }
+      case "plan_approve": {
+        await this.handlePlanMutation(client, cmd, () => this.harness.plans.approve({
+          planId: cmd.planId,
+          expectedVersion: cmd.expectedVersion,
+          commandId: cmd.commandId,
+          interactionId: cmd.interactionId,
+          interactionPayloadDigest: cmd.interactionPayloadDigest,
+          revision: cmd.revision,
+          digest: cmd.digest,
+          acknowledgedEffects: cmd.acknowledgedEffects,
+        }));
+        break;
+      }
+      case "plan_replan": {
+        await this.handlePlanMutation(client, cmd, () => this.harness.plans.requestReplan({
+          planId: cmd.planId,
+          expectedVersion: cmd.expectedVersion,
+          commandId: cmd.commandId,
+          reason: cmd.reason,
+        }));
+        break;
+      }
+      case "plan_cancel": {
+        await this.handlePlanMutation(client, cmd, () => this.harness.plans.cancel({
+          planId: cmd.planId,
+          expectedVersion: cmd.expectedVersion,
+          commandId: cmd.commandId,
+        }));
+        break;
+      }
       case "abort": {
         this.harness.conversation.abort();
         // Save pending permission to session metadata before denying,
@@ -1093,6 +1165,103 @@ export class WebUiBackend implements UiBackend {
     this.wsServer.broadcast(projectSessionListEvent(this.harness));
   }
 
+  private async handlePlanMutation(
+    client: WebSocketClient,
+    command: Extract<ClientCommand, {
+      type: "plan_decision" | "plan_approve" | "plan_replan" | "plan_cancel";
+    }>,
+    operation: () => Promise<PlanMutationResult>,
+  ): Promise<void> {
+    if (this.harness.sessions.currentId() !== command.sessionId) {
+      await this.syncPlanState(client);
+      return;
+    }
+    const activePlan = await this.harness.plans.getActivePlan(command.sessionId);
+    if (this.harness.sessions.currentId() !== command.sessionId
+      || activePlan?.planId !== command.planId) {
+      await this.syncPlanState(client);
+      return;
+    }
+
+    let domainConflictSent = false;
+    const unsubscribe = this.harness.events.on("plan:conflict", (event) => {
+      if (event.planId === command.planId
+        && event.expectedVersion === command.expectedVersion
+        && event.plan.sessionId === this.harness.sessions.currentId()) {
+        domainConflictSent = true;
+      }
+    });
+    let result: PlanMutationResult;
+    try {
+      result = await operation();
+    } finally {
+      unsubscribe();
+    }
+
+    if (this.harness.sessions.currentId() !== command.sessionId) {
+      await this.syncPlanState(client);
+      return;
+    }
+    if (result.ok) {
+      if (result.duplicate) client.send({ type: "plan_state", plan: result.plan });
+      return;
+    }
+    if (result.reason === "conflict") {
+      if (!domainConflictSent) {
+        client.send({
+          type: "plan_conflict",
+          planId: result.conflict.current.planId,
+          expectedVersion: result.conflict.expectedVersion,
+          currentVersion: result.conflict.currentVersion,
+          revision: result.conflict.current.revision,
+          plan: result.conflict.current,
+        });
+      }
+    } else {
+      client.send({ type: "error", text: result.message });
+    }
+  }
+
+  private async syncPlanState(client?: WebSocketClient): Promise<void> {
+    const sessionId = this.harness.sessions.currentId();
+    const send = (event: ServerEvent) =>
+      client ? client.send(event) : this.broadcast(event);
+    if (!sessionId) {
+      send({ type: "plan_state", plan: null });
+      return;
+    }
+    const plan = await this.harness.plans.getActivePlan(sessionId);
+    if (this.harness.sessions.currentId() !== sessionId) return;
+    send({ type: "plan_state", plan: plan ?? null });
+    if (!plan?.pendingInteraction) return;
+    send({
+      type: "plan_interaction",
+      planId: plan.planId,
+      version: plan.version,
+      revision: plan.revision,
+      interaction: plan.pendingInteraction,
+      request: planInteractionRequest(plan, plan.pendingInteraction),
+    });
+  }
+
+  private async broadcastPlanInteraction(
+    event: Extract<HarnessEvent, { type: "plan:interaction" }>,
+  ): Promise<void> {
+    const sessionId = this.harness.sessions.currentId();
+    if (!sessionId) return;
+    const plan = await this.harness.plans.getActivePlan(sessionId);
+    if (this.harness.sessions.currentId() !== sessionId
+      || plan?.planId !== event.planId) return;
+    this.broadcast({
+      type: "plan_interaction",
+      planId: event.planId,
+      version: event.version,
+      revision: event.revision,
+      interaction: event.interaction,
+      request: event.request,
+    });
+  }
+
   private async handleConfig(
     client: WebSocketClient,
     cmd: ClientCommand & { type: "config" },
@@ -1245,6 +1414,7 @@ export class WebUiBackend implements UiBackend {
         }
         if (wasCurrent) {
           client.send({ type: "clear_conversation" });
+          client.send({ type: "plan_state", plan: null });
         }
         this.cleanupUploadDir(cmd.id);
         client.send({ type: "info", display: "toast", text: "Session deleted." });

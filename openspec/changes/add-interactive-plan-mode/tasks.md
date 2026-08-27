@@ -50,12 +50,12 @@
 
 ## 6. M5 — WebSocket 与共享 Plan projection
 
-- [ ] 6.1 为 `chat` 增加可选 `planMode`（缺省为 Auto），并加入四种 action 的 `plan_decision`、`plan_approve`、`plan_replan` 和 `plan_cancel`；所有 mutation 使用 expectedVersion 和 commandId。
-- [ ] 6.2 扩展 `ServerEvent`，加入 `plan_state`、`plan_interaction` 和 `plan_conflict`。
-- [ ] 6.3 在 Web backend 中把 typed commands 映射到 HarnessAPI，并把 Plan domain events 映射到 server events。
-- [ ] 6.4 实现连接、Session 切换和恢复后的 active Plan 与 pending interaction 全量同步。
-- [ ] 6.5 新增独立 `PlanViewState` reducer，保证 Plan 状态不进入 `UIMessage[]` 或 conversation transcript。
-- [ ] 6.6 添加协议和 reducer 测试，覆盖既有 wire variant 兼容、四种 decision action、payload digest 幂等、stale version/revision conflict、Session 清理和重连恢复。
+- [x] 6.1 为 `chat` 增加可选 `planMode`（缺省为 Auto），并加入四种 action 的 `plan_decision`、`plan_approve`、`plan_replan` 和 `plan_cancel`；所有 mutation 使用 expectedVersion 和 commandId。
+- [x] 6.2 扩展 `ServerEvent`，加入 `plan_state`、`plan_interaction` 和 `plan_conflict`。
+- [x] 6.3 在 Web backend 中把 typed commands 映射到 HarnessAPI，并把 Plan domain events 映射为 server events。
+- [x] 6.4 实现连接、Session 切换和恢复后的 active Plan 与 pending interaction 全量同步。
+- [x] 6.5 新增独立 `PlanViewState` reducer，保证 Plan 状态不进入 `UIMessage[]` 或 conversation transcript。
+- [x] 6.6 添加协议和 reducer 测试，覆盖既有 wire variant 兼容、四种 decision action、payload digest 幂等、stale version/revision conflict、Session 清理和重连恢复。
 
 ## 7. M6 — Web Plan 工作台
 

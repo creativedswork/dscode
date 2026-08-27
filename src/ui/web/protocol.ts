@@ -27,4 +27,11 @@ export type {
   EvalDashboardServerEvent,
   EvalDashboardStage,
   EvalDashboardEvidenceSummary,
+  PlanApprovalRequest,
+  PlanDecisionAction,
+  PlanDecisionRequest,
+  PlanEffectCategory,
+  PlanInteraction,
+  PlanRecord,
+  PlanSubmissionMode,
 } from "../../ui/shared/types.js";

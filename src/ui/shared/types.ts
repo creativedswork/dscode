@@ -3,6 +3,37 @@
 // MUST remain pure TypeScript — zero Node.js / server dependencies.
 
 import type { TraceTree } from "./trace-tree.js";
+import type {
+  PlanApprovalRequest,
+  PlanDecisionRequest,
+} from "../../application/plan/plan-port.js";
+import type {
+  PlanDecisionAction,
+} from "../../application/plan/planner-types.js";
+import type {
+  PlanEffectCategory,
+  PlanInteraction,
+  PlanRecord,
+} from "../../application/plan/types.js";
+import type {
+  PlanSubmissionMode,
+} from "../../application/plan/route.js";
+
+export type {
+  PlanApprovalRequest,
+  PlanDecisionRequest,
+} from "../../application/plan/plan-port.js";
+export type {
+  PlanDecisionAction,
+} from "../../application/plan/planner-types.js";
+export type {
+  PlanEffectCategory,
+  PlanInteraction,
+  PlanRecord,
+} from "../../application/plan/types.js";
+export type {
+  PlanSubmissionMode,
+} from "../../application/plan/route.js";
 
 // ── Image ──
 
@@ -329,7 +360,39 @@ export type EvalDashboardServerEvent =
 // ── Wire protocol ──
 
 export type ClientCommand =
-  | { type: "chat"; text: string; images?: ImageAttachment[]; clipboardImages?: ImageAttachment[]; fileRefs?: string[]; uploadedFiles?: { name: string; content: string }[] }
+  | {
+      type: "chat";
+      text: string;
+      images?: ImageAttachment[];
+      clipboardImages?: ImageAttachment[];
+      fileRefs?: string[];
+      uploadedFiles?: { name: string; content: string }[];
+      planMode?: PlanSubmissionMode;
+    }
+  | {
+      type: "plan_decision";
+      sessionId: string;
+      planId: string;
+      expectedVersion: number;
+      commandId: string;
+      interactionId: string;
+      interactionPayloadDigest: string;
+      action: PlanDecisionAction;
+    }
+  | {
+      type: "plan_approve";
+      sessionId: string;
+      planId: string;
+      expectedVersion: number;
+      commandId: string;
+      interactionId: string;
+      interactionPayloadDigest: string;
+      revision: number;
+      digest: string;
+      acknowledgedEffects: PlanEffectCategory[];
+    }
+  | { type: "plan_replan"; sessionId: string; planId: string; expectedVersion: number; commandId: string; reason: string }
+  | { type: "plan_cancel"; sessionId: string; planId: string; expectedVersion: number; commandId: string }
   | { type: "abort" }
   | { type: "permission"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; persistRule?: boolean; toolNamePattern?: string; fuzzyMode?: number; sessionGrantPattern?: string }
   | { type: "permission_response"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; denyReason?: string; toolNamePattern?: string }
@@ -355,6 +418,23 @@ export type ClientCommand =
 
 export type ServerEvent =
   | { type: "ready"; model: string; config: ConfigData; messages: ConversationMessage[] }
+  | { type: "plan_state"; plan: Readonly<PlanRecord> | null }
+  | {
+      type: "plan_interaction";
+      planId: string;
+      version: number;
+      revision: number;
+      interaction: Readonly<PlanInteraction>;
+      request?: Readonly<PlanDecisionRequest | PlanApprovalRequest>;
+    }
+  | {
+      type: "plan_conflict";
+      planId: string;
+      expectedVersion: number;
+      currentVersion: number;
+      revision: number;
+      plan: Readonly<PlanRecord>;
+    }
   | { type: "agent_activity"; activity: AgentActivity }
   | { type: "user_message"; text: string; images?: ImageAttachment[]; createdAt?: number }
   | { type: "assistant_start"; messageId?: string; createdAt?: number }
