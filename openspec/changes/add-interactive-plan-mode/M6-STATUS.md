@@ -42,6 +42,14 @@ The inline interaction offered three user-facing visual directions plus custom
 input. No route assessment, `skill`, `list_agents`, or `plan_*` tool card was
 shown, and the project remained empty before the user decision.
 
+A later Workbuddy run exposed the remaining zero-score case: the provider
+explicitly treated canonical genre visuals as sufficient and returned
+`intentUncertainty: 0`. The Host now applies a minimum score of `1` to
+user-visible creation requests without an explicit visual direction, including
+short briefs without a creation verb. The rebuilt `dist/dscode.mjs` was started
+against Workbuddy and the exact short request `俄罗斯方块小游戏` produced an inline
+visual-and-interaction question with three options and custom input.
+
 Focused verification:
 
 ```text

@@ -62,6 +62,52 @@ describe("Plan request routing", () => {
     }))).toMatchObject({ route: "plan", totalScore: 1 });
   });
 
+  it.each([
+    "创建一个俄罗斯方块小游戏",
+    "俄罗斯方块小游戏",
+  ])("does not infer missing creative direction from genre for %s", (request) => {
+    const guard = new PlanExecutionGuard();
+    guard.beginRequest("request-1", request, "auto");
+
+    expect(guard.submitAssessment(assessment())).toMatchObject({
+      route: "plan",
+      totalScore: 1,
+      assessment: {
+        intentUncertainty: 1,
+        evidence: expect.arrayContaining([
+          expect.stringContaining("Host policy"),
+        ]),
+      },
+    });
+  });
+
+  it("accepts explicit visual direction for a creative request", () => {
+    const guard = new PlanExecutionGuard();
+    guard.beginRequest(
+      "request-1",
+      "创建一个复古像素风格的俄罗斯方块小游戏",
+      "auto",
+    );
+
+    expect(guard.submitAssessment(assessment())).toMatchObject({
+      route: "direct",
+      totalScore: 0,
+    });
+  });
+
+  it.each([
+    "实现一个 JSON parser",
+    "修复现有俄罗斯方块游戏的计分错误",
+  ])("does not apply the creative-direction floor to %s", (request) => {
+    const guard = new PlanExecutionGuard();
+    guard.beginRequest("request-1", request, "auto");
+
+    expect(guard.submitAssessment(assessment())).toMatchObject({
+      route: "direct",
+      totalScore: 0,
+    });
+  });
+
   it("routes to Plan when the total score reaches four", () => {
     expect(decidePlanRoute(assessment({
       intentUncertainty: 1,

@@ -43,6 +43,10 @@ The assessment SHALL score intent uncertainty, alternative divergence, impact ra
 - **WHEN** all five dimensions, supporting evidence, and request identity are present
 - **THEN** the Host computes the route using the deterministic policy
 
+#### Scenario: Genre convention does not replace creative direction
+- **WHEN** a request creates a user-visible artifact without an explicit visual direction and the assessment reports zero intent uncertainty
+- **THEN** the Host treats intent uncertainty as at least `1` before computing the route
+
 #### Scenario: Assessment is malformed
 - **WHEN** a dimension is missing, outside `0..2`, or not associated with the active request
 - **THEN** the system rejects the assessment and keeps mutating tools gated

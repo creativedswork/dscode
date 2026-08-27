@@ -12,6 +12,7 @@ import {
 } from "./route.js";
 import type {
   PlannerRouteRequest,
+  PlanRouteAssessment,
   PlanRouteDecision,
   PlanSubmissionMode,
   PlanSubmissionResult,
@@ -34,6 +35,43 @@ export interface BlockedPlanToolCall {
   block: true;
   reason: string;
   terminateBatch?: true;
+}
+
+const CREATIVE_ARTIFACT =
+  /(?:game|website|web\s?page|app|application|dashboard|interface|ui|logo|poster|illustration|游戏|网站|网页|页面|应用|小程序|看板|仪表盘|界面|徽标|海报|插画)/i;
+const CREATION_VERB =
+  /(?:create|build|make|design|implement|generate|write|创建|制作|实现|设计|生成|开发|写|做(?:一个|个)?)/i;
+const EXISTING_ARTIFACT_CHANGE =
+  /(?:fix|repair|modify|update|adjust|improve|optimi[sz]e|refactor|修复|修改|更新|调整|改进|优化|重构)/i;
+const EXPLICIT_VISUAL_DIRECTION =
+  /(?:visual|style|theme|palette|colou?r|retro|pixel|minimal|neon|brutalist|editorial|match (?:the )?existing|follow (?:the )?(?:existing|current) design|风格|视觉|主题|配色|色彩|复古|像素|极简|霓虹|粗野|编辑感|沿用现有|保持现有|遵循现有|跟随现有|参考图|按照原型)/i;
+
+function isCreativeCreationRequest(requestText: string): boolean {
+  if (!CREATIVE_ARTIFACT.test(requestText)) return false;
+  if (CREATION_VERB.test(requestText)) return true;
+  return requestText.trim().length <= 80
+    && !EXISTING_ARTIFACT_CHANGE.test(requestText);
+}
+
+function enforceCreativeIntentFloor(
+  requestText: string,
+  assessment: PlanRouteAssessment,
+): PlanRouteAssessment {
+  if (
+    assessment.intentUncertainty !== 0
+    || !isCreativeCreationRequest(requestText)
+    || EXPLICIT_VISUAL_DIRECTION.test(requestText)
+  ) {
+    return assessment;
+  }
+  return {
+    ...assessment,
+    intentUncertainty: 1,
+    evidence: [
+      ...assessment.evidence,
+      "Host policy: a user-visible creation request has no explicit visual direction",
+    ],
+  };
 }
 
 function plannerRequest(active: ActivePlanRequest): PlannerRouteRequest {
@@ -88,7 +126,7 @@ export class PlanExecutionGuard {
   }
 
   submitAssessment(value: unknown): Readonly<PlanRouteDecision> {
-    const assessment = validatePlanRouteAssessment(value);
+    let assessment = validatePlanRouteAssessment(value);
     const active = this.activeRequest;
     if (!active || active.mode !== "auto") {
       throw new PlanRouteAssessmentError("No Auto request is awaiting assessment");
@@ -103,6 +141,7 @@ export class PlanExecutionGuard {
         `Request ${active.requestId} already has a route decision`,
       );
     }
+    assessment = enforceCreativeIntentFloor(active.requestText, assessment);
     active.decision = decidePlanRoute(assessment);
     return active.decision;
   }
