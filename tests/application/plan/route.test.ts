@@ -40,7 +40,7 @@ describe("Plan request routing", () => {
     });
   });
 
-  it.each(["impact", "risk", "coordination"] as const)(
+  it.each(["intentUncertainty", "impact", "risk", "coordination"] as const)(
     "forces Plan when %s is 2",
     (dimension) => {
       expect(decidePlanRoute(assessment({ [dimension]: 2 }))).toMatchObject({
@@ -49,6 +49,12 @@ describe("Plan request routing", () => {
       });
     },
   );
+
+  it("keeps technical alternatives autonomous when user intent is clear", () => {
+    expect(decidePlanRoute(assessment({
+      solutionDivergence: 2,
+    }))).toMatchObject({ route: "direct", totalScore: 2 });
+  });
 
   it("routes to Plan when the total score reaches four", () => {
     expect(decidePlanRoute(assessment({

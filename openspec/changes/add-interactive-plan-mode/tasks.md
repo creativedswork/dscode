@@ -70,6 +70,7 @@
 - [x] 7.7 移除独立“正在准备规划”状态；等待期间使用现有 Chat activity 与 Stop，并在 unresolved alignment 存在时阻止副作用工具。
 - [x] 7.8 添加 Planner autonomy、内部 authorization、interaction persistence、Chat reducer/component、恢复、权限独立性和回归测试。
 - [x] 7.9 对照 `docs/prototypes/add-interactive-plan-mode-chat-alignment.html` 完成浏览器验收：未指定风格的俄罗斯方块、充分指定请求、自定义方向、技术路径自主选择、现有权限提示、light/dark、桌面、移动和 `1080x322`。
+- [x] 7.10 修复高用户意图不确定性被低操作复杂度覆盖的路由缺口；保持明确视觉约束请求 Direct，并保持纯技术方案分歧自治。
 
 ## 8. M7 — TUI Chat 原生意图对齐
 

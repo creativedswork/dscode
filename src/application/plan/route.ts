@@ -83,7 +83,8 @@ export function decidePlanRoute(
     + assessment.impact
     + assessment.risk
     + assessment.coordination;
-  const route = assessment.impact === 2
+  const route = assessment.intentUncertainty === 2
+    || assessment.impact === 2
     || assessment.risk === 2
     || assessment.coordination === 2
     || totalScore >= 4

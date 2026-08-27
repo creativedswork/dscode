@@ -1,6 +1,6 @@
 # M6 Status
 
-Status: `AWAITING_ACCEPTANCE`
+Status: `AWAITING_USER_DEBUG_CONFIRMATION`
 
 ## Outcome
 
@@ -10,6 +10,34 @@ only durable user-value alignment in the existing Chat flow, while protected
 side effects continue through the existing permission interaction.
 
 User acceptance has not yet been granted.
+
+## Creative Intent Routing Fix
+
+The accepted M6 UI smoke injected an existing pending interaction and did not
+exercise autonomous routing. A real user report showed that
+`创建一个俄罗斯方块小游戏` executed directly without visual-style alignment.
+
+Pre-fix deterministic evidence used the exact request with
+`intentUncertainty: 2` and all operational dimensions `0`: the route was
+`direct`, the guard returned Main, and no Planner or pending interaction was
+created. The live TUI accepted the request but could not reach model inference
+because the local `deepseek` provider is not configured.
+
+The route contract now treats maximum intent uncertainty as an independent
+Planner trigger. Post-fix evidence shows the underspecified request entering
+Planner and persisting a visual-direction interaction, while a request that
+explicitly specifies visual style, board, controls, and HUD remains Direct.
+`solutionDivergence: 2` alone also remains Direct so technical alternatives stay
+autonomous.
+
+Focused verification:
+
+```text
+tests/application/plan/route.test.ts: 14 passed
+```
+
+Debug instrumentation and `.dbg` evidence remain uncommitted until the user
+confirms Fixed or Abort.
 
 ## Slice Ledger
 
