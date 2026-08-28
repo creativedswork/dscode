@@ -81,6 +81,7 @@
 - [x] 7.18 在 Planning 与 Act TODO 之间投影稳定的“计划已生成 / 执行计划已更新”结果标记，并过滤 Session 标题与预览中的内部 continuation。
 - [x] 7.19 WebSocket 断开时禁止提交并保留草稿；仅在命令成功写入已连接 Socket 后进入 Processing 和清空输入。
 - [x] 7.20 隐藏 `verify_item` 实时与回放记录，并明确验收证据 ID 格式及逐条件唯一约束，避免内部拒绝被误认为用户 Deny。
+- [x] 7.21 在 Main 尝试提前结束但 PlanItem 尚未完成时由 Host 在同一 processing 生命周期内自动续跑；无状态推进时有界停止并保留/阻塞 TODO，且唯一 TODO 清单跟随最新 Chat 内容、完成及 Session 恢复后不消失。
 
 ## 8. M7 — TUI Chat 原生意图对齐
 

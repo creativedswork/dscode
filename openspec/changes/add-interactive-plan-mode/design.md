@@ -52,6 +52,7 @@ Plan Mode 必须是运行时能力，不能依赖只服务于 dscode 开发流�
 - Planner 运行时 Main 进入 `waiting`；Planner 等待用户时也进入 `waiting`，但保留可恢复快照。
 - Planner 不启动 Evaluator SubAgent。技术候选由 Planner 根据证据自主选择；只有缺失的用户价值判断通过 Chat 请求输入。
 - Planner 完成已验证 revision 并取得内部执行绑定后退出；Supervisor 将前台控制权交还 Main，并自动发起隐藏的内部 continuation，让 Main 按依赖顺序绑定、执行和验收 PlanItem，不等待新的用户消息。
+- Main 的无工具响应不是 Plan 完成信号。若持久化 Plan 仍有 `pending` 或 `in_progress` item，Host 通过 Agent 原生 follow-up queue 在同一 processing 生命周期内继续；连续无状态推进时有界停止，将当前执行项标为 `blocked`（若存在）并保留 TODO，而不是输出伪完成。
 
 ```mermaid
 sequenceDiagram
@@ -284,6 +285,7 @@ Web：
 - composer 保持单一 Chat 输入，不提供 `Auto / Plan` segmented control。
 - Agent 需要视觉风格、范围取舍或兼容承诺时，在 Chat 流中展示一句问题、推荐项、最多三个选项和自定义输入。
 - 技术候选、证据比较、revision、digest 和 Agent evidence 不展示；内部 `plan_*` 工具不进入 Chat。Planner 授权后先投影一次“计划已生成 · N 项任务”，再以单个内联 TODO 列表进入执行阶段，并随 `pending | in_progress | blocked | completed | skipped` 持久化状态更新。
+- 结果标记保留在原时间线位置，唯一 TODO 清单始终跟随最新 Chat 内容，并从 PlanStore 的最近 Session Plan 恢复终态快照；该展示恢复不恢复执行 binding，也不自动重放副作用。
 - 首次 Planner handoff 插入一次 `进入 Planning Mode`。派生 revision 不重复插入该标记；规划期间在现有 TODO 上显示“正在调整执行计划”，授权后将原计划结果标记更新为“执行计划已更新 · N 项任务”。
 - 不显示独立“正在准备规划”页面。Agent 可以使用普通 Chat 思考状态，但在意图对齐完成前不得调用副作用工具。
 - 整份计划不要求用户审批；危险副作用继续进入现有 permission prompt。

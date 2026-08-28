@@ -151,6 +151,15 @@ interface PendingRoutedImages {
   result?: ProcessResult;
 }
 
+interface PlanContinuationTracker {
+  planId: string;
+  progress: string;
+  stalledFollowUps: number;
+  totalFollowUps: number;
+}
+
+const MAX_STALLED_PLAN_FOLLOW_UPS = 2;
+
 export function shouldUseNativeMainImagePath(
   agentsEnabled: boolean,
   hasVisionConfig: boolean,
@@ -254,6 +263,7 @@ export class Harness {
   private plannerCoordinator!: PlannerProcessCoordinator;
   private readonly terminalRouteBlocks = new Map<string, string>();
   private pendingRoutedImages: PendingRoutedImages | undefined;
+  private planContinuation: PlanContinuationTracker | undefined;
 
   get agent(): PiAgentRuntime {
     return this.piAgentRuntime;
@@ -468,6 +478,7 @@ export class Harness {
       events,
       plans: Object.freeze<HarnessAPI["plans"]>({
         getActivePlan: (sessionId) => this.planService.getActivePlan(sessionId),
+        getLatestPlan: (sessionId) => this.planService.getLatestPlan(sessionId),
         submitDecision: (command) =>
           mutatePlan(() => this.plannerCoordinator.submitDecision(command)),
         approve: (command) =>
@@ -1216,6 +1227,12 @@ export class Harness {
         effectGrants: item.effectGrants,
       })),
     };
+    this.planContinuation = {
+      planId: plan.planId,
+      progress: this.planProgress(plan),
+      stalledFollowUps: 0,
+      totalFollowUps: 0,
+    };
     this.events.emit({ type: "processing:start" });
     try {
       await this.conversationCoordinator.prompt(this.conversationPromptOptions([
@@ -1227,10 +1244,14 @@ export class Harness {
         "For verify_item, use the current Plan version returned by plan_start_item and exact persisted evidence IDs: a successful bound tool call with ID X is referenced as tool-X. Never invent file, line, or descriptive evidence IDs, and collect a distinct evidence ID for every criterion.",
         "Use plan_report_conflict only for a material conflict that invalidates the approved Plan.",
         "Do not stop after summarizing the Plan and do not wait for another user message.",
+        "Do not emit a user-facing completion response while any PlanItem is pending, in progress, or blocked.",
         JSON.stringify(executionPlan),
         "</plan_execution>",
       ].join("\n")));
     } finally {
+      if (this.planContinuation?.planId === plan.planId) {
+        this.planContinuation = undefined;
+      }
       this.events.emit({ type: "processing:stop" });
     }
   }
@@ -1342,6 +1363,109 @@ export class Harness {
     return stopped;
   }
 
+  private planProgress(plan: Readonly<PlanRecord>): string {
+    return plan.items
+      .map((item) => `${item.itemId}:${item.status}`)
+      .join("|");
+  }
+
+  private async continueIncompletePlan(
+    planId: string,
+    hasToolCalls: boolean,
+  ): Promise<void> {
+    const tracker = this.planContinuation;
+    if (!tracker || tracker.planId !== planId) return;
+    const loaded = await this.planService.load(planId);
+    if (!loaded.ok || !loaded.plan) {
+      this.planContinuation = undefined;
+      return;
+    }
+    const plan = loaded.plan;
+    if (!["approved", "executing"].includes(plan.status)) {
+      this.planContinuation = undefined;
+      return;
+    }
+    const progress = this.planProgress(plan);
+    if (progress !== tracker.progress) {
+      tracker.progress = progress;
+      tracker.stalledFollowUps = 0;
+    }
+    if (hasToolCalls) return;
+    if (plan.items.some((item) => item.status === "blocked")) {
+      this.events.emit({
+        type: "ui:warning",
+        text: "执行已阻塞，未完成的 TODO 已保留。",
+      });
+      this.planContinuation = undefined;
+      return;
+    }
+    const unfinished = plan.items.filter((item) =>
+      item.status === "pending" || item.status === "in_progress"
+    );
+    if (unfinished.length === 0) {
+      this.planContinuation = undefined;
+      return;
+    }
+    tracker.stalledFollowUps++;
+    const maxFollowUps = Math.max(2, plan.items.length * 2);
+    if (
+      tracker.stalledFollowUps > MAX_STALLED_PLAN_FOLLOW_UPS
+      || tracker.totalFollowUps >= maxFollowUps
+    ) {
+      const activeItem = plan.items.find((item) =>
+        item.status === "in_progress"
+      );
+      let blocked = false;
+      if (activeItem) {
+        const result = await this.planService.execution.transitionItem(
+          plan.planId,
+          plan.version,
+          activeItem.itemId,
+          "blocked",
+          "Main stopped before the acceptance criteria passed",
+        );
+        blocked = result.ok;
+      }
+      this.events.emit({
+        type: "ui:warning",
+        text: blocked
+          ? "执行未能继续，未完成的 TODO 已保留并标记为阻塞。"
+          : "执行未能继续，未完成的 TODO 已保留。",
+      });
+      this.planContinuation = undefined;
+      return;
+    }
+    tracker.totalFollowUps++;
+    this.agent.followUp({
+      role: "user",
+      content: [{
+        type: "text",
+        text: [
+          "<plan_execution>",
+          "The persisted Plan is still incomplete. Continue execution now.",
+          "Do not claim completion or stop while any item is pending or in progress.",
+          "Use the current version returned by each Plan tool call.",
+          JSON.stringify({
+            planId: plan.planId,
+            version: plan.version,
+            revision: plan.revision,
+            digest: plan.digest,
+            items: unfinished.map((item) => ({
+              itemId: item.itemId,
+              status: item.status,
+              acceptanceCriteria: item.acceptanceCriteria,
+              evidenceIds: item.evidence.map((evidence) =>
+                evidence.evidenceId
+              ),
+            })),
+          }),
+          "</plan_execution>",
+        ].join("\n"),
+      }],
+      timestamp: Date.now(),
+    } as AgentMessage);
+  }
+
   private async prepareMainNextTurn(
     turn: PrepareNextTurnContext,
   ): Promise<{ context: PiAgentContext }> {
@@ -1366,6 +1490,15 @@ export class Harness {
         }],
         timestamp: Date.now(),
       } as AgentMessage);
+    }
+    const activePlanId = this.agentSupervisor
+      .get(this.mainAgentId)
+      ?.context.activePlan?.planId;
+    if (activePlanId) {
+      await this.continueIncompletePlan(
+        activePlanId,
+        batchToolNames.length > 0,
+      );
     }
     return {
       context: {

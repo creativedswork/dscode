@@ -1349,7 +1349,9 @@ export class WebUiBackend implements UiBackend {
       send({ type: "plan_state", plan: null });
       return;
     }
-    const plan = await this.harness.plans.getActivePlan(sessionId);
+    const activePlan = await this.harness.plans.getActivePlan(sessionId);
+    const plan = activePlan
+      ?? await this.harness.plans.getLatestPlan(sessionId);
     if (this.harness.sessions.currentId() !== sessionId) return;
     if (
       plan

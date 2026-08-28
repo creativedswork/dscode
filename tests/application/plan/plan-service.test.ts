@@ -97,6 +97,26 @@ async function setup() {
 }
 
 describe("PlanService API and events", () => {
+  it("rebuilds the active Session index and retains the latest terminal Plan", async () => {
+    const fixture = await setup();
+    const restarted = createTestPlanService(fixture.store);
+
+    await expect(restarted.getActivePlan("session-1")).resolves
+      .toMatchObject({ planId: "plan-1", status: "drafting" });
+    const failed = await fixture.store.update(
+      "plan-1",
+      fixture.plan.version,
+      (draft) => {
+        draft.status = "failed";
+      },
+    );
+    if (!failed.ok) throw new Error("Plan failure transition failed");
+
+    await expect(restarted.getActivePlan("session-1")).resolves.toBeUndefined();
+    await expect(restarted.getLatestPlan("session-1")).resolves
+      .toMatchObject({ planId: "plan-1", status: "failed" });
+  });
+
   it("emits only after commits and does not double-notify replayed interactions", async () => {
     const fixture = await setup();
     const appended = await fixture.service.appendDecision(

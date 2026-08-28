@@ -26,6 +26,14 @@ list in Chat and SHALL update it from persisted PlanItem status.
 - **WHEN** `plan_start_item` or `verify_item` changes persisted PlanItem state
 - **THEN** the existing TODO list updates without exposing either control tool call, raw Plan JSON, revision, digest, or an internal verification rejection
 
+#### Scenario: Execution messages accumulate
+- **WHEN** Thinking, Tool, or assistant messages are appended after Plan authorization
+- **THEN** Chat keeps exactly one live TODO after the latest message instead of leaving the execution state behind at the original Plan marker
+
+#### Scenario: Execution finishes or the Session reconnects
+- **WHEN** the Plan reaches a terminal state or the client restores the owning Session
+- **THEN** Chat projects the latest persisted Plan and retains the final completed, blocked, failed, skipped, or cancelled TODO state
+
 #### Scenario: Execution requires replanning
 - **WHEN** a material conflict derives a revision from the current Plan
 - **THEN** Chat retains the TODO list, labels it `正在调整执行计划`, updates the result marker to `执行计划已更新 · N 项任务` after authorization, and does not insert a second `进入 Planning Mode` marker

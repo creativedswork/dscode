@@ -45,6 +45,7 @@ export function setupPlanBackend(plan: PlanRecord | undefined = pendingPlan()) {
   const events = new HarnessEventBus({ error: vi.fn() } as never);
   let currentSessionId = "session-1";
   let activePlan: PlanRecord | undefined = plan;
+  let latestPlan: PlanRecord | undefined = plan;
   const base = createHarnessApiFixture();
   const prompt = vi.fn(base.conversation.prompt);
   const promptWithImages = vi.fn(base.conversation.promptWithImages);
@@ -90,6 +91,9 @@ export function setupPlanBackend(plan: PlanRecord | undefined = pendingPlan()) {
       getActivePlan: vi.fn(async (sessionId) =>
         sessionId === currentSessionId ? activePlan : undefined
       ),
+      getLatestPlan: vi.fn(async (sessionId) =>
+        sessionId === currentSessionId ? latestPlan : undefined
+      ),
       submitDecision,
       approve,
       requestReplan,
@@ -120,6 +124,10 @@ export function setupPlanBackend(plan: PlanRecord | undefined = pendingPlan()) {
     },
     setActivePlan(next: PlanRecord | undefined) {
       activePlan = next;
+      latestPlan = next;
+    },
+    setLatestPlan(next: PlanRecord | undefined) {
+      latestPlan = next;
     },
   };
 }

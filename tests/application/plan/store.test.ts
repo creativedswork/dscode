@@ -69,6 +69,24 @@ describe("PlanStore", () => {
     });
   });
 
+  it("finds the latest persisted Plan for a Session", async () => {
+    let now = 10;
+    const store = await makeStore("/workspace/project", {
+      now: () => now,
+    });
+    await store.create(makePlanInput("plan-1"));
+    now = 20;
+    await store.create(makePlanInput("plan-2"));
+    now = 30;
+    const other = makePlanInput("plan-3");
+    other.sessionId = "session-2";
+    await store.create(other);
+
+    await expect(store.findLatestForSession("session-1")).resolves
+      .toMatchObject({ planId: "plan-2", updatedAt: 20 });
+    await expect(store.findLatestForSession("missing")).resolves.toBeUndefined();
+  });
+
   it("separates persistence version from semantic revision", async () => {
     const store = await makeStore();
     const created = expectCreated(await store.create(makePlanInput()));

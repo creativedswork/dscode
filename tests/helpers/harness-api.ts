@@ -27,6 +27,7 @@ export function createHarnessApiFixture(
     events,
     plans: {
       getActivePlan: async () => undefined,
+      getLatestPlan: async () => undefined,
       submitDecision: async () => ({
         ok: false,
         reason: "invalid_command",

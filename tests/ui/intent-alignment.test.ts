@@ -227,6 +227,35 @@ describe("Web Chat intent alignment", () => {
     expect(markup).toContain("准备执行 · 0/1");
   });
 
+  it("keeps one live TODO after later execution messages", () => {
+    const plan = pendingPlan();
+    plan.status = "executing";
+    plan.pendingInteraction = undefined;
+    plan.items[0].status = "in_progress";
+
+    const markup = renderToStaticMarkup(createElement(ChatView, {
+      messages: [{
+        id: `plan-ready-${plan.planId}`,
+        role: "system",
+        content: "计划已生成 · 1 项任务",
+      }, {
+        id: "assistant-execution",
+        role: "assistant",
+        content: "正在实现第一个任务",
+      }],
+      processing: false,
+      hasStreaming: false,
+      sessionActiveMs: 0,
+      permissionPrompt: null,
+      onPermission: vi.fn(),
+      plan,
+    }));
+
+    expect(markup.indexOf("正在实现第一个任务"))
+      .toBeLessThan(markup.indexOf('aria-label="TODO 执行清单"'));
+    expect(markup.match(/aria-label="TODO 执行清单"/g)).toHaveLength(1);
+  });
+
   it("labels replanning on the existing TODO list", () => {
     const plan = pendingPlan();
     plan.status = "drafting";

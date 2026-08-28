@@ -1,4 +1,4 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
   findCommandReplay,
@@ -115,6 +115,28 @@ export class PlanStore {
         }
       }));
     }
+  }
+  async findLatestForSession(
+    sessionId: string,
+  ): Promise<PlanRecord | undefined> {
+    let names: string[];
+    try {
+      names = await readdir(this.directoryPath);
+    } catch (error) {
+      if (isErrno(error, "ENOENT")) return undefined;
+      throw error;
+    }
+    const loaded = await Promise.all(
+      names
+        .filter((name) => name.endsWith(".json"))
+        .map((name) => this.load(name.slice(0, -5))),
+    );
+    return loaded
+      .flatMap((result) => result.ok && result.plan ? [result.plan] : [])
+      .filter((plan) => plan.sessionId === sessionId)
+      .sort((left, right) =>
+        right.updatedAt - left.updatedAt || right.version - left.version
+      )[0];
   }
   async update(
     planId: string,

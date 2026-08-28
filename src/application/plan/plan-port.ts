@@ -76,6 +76,7 @@ export interface PlanInteractionPort {
 
 export interface PlanApplicationPort {
   getActivePlan(sessionId: string): Promise<Readonly<PlanRecord> | undefined>;
+  getLatestPlan(sessionId: string): Promise<Readonly<PlanRecord> | undefined>;
   submitDecision(command: PlanDecisionCommand): Promise<PlanMutationResult>;
   approve(command: PlanApprovalCommand): Promise<PlanMutationResult>;
   verifyItem(command: PlanItemVerificationCommand): Promise<PlanMutationResult>;

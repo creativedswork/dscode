@@ -443,4 +443,38 @@ describe("Plan WebSocket protocol", () => {
       createdAt: plan.updatedAt,
     });
   });
+
+  it("restores the latest completed TODO when no active Plan remains", async () => {
+    const plan = makePlan({
+      status: "completed",
+      approval: {
+        revision: 2,
+        digest: "a".repeat(64),
+        approvedEffects: [],
+        acknowledgedSideEffects: [],
+        interactionId: "internal:planner-1",
+        approvedAt: 10,
+      },
+      items: makePlan().items.map((item) => ({
+        ...item,
+        status: "completed",
+      })),
+    });
+    const fixture = setup();
+    fixture.setActivePlan(undefined);
+    fixture.setLatestPlan(plan);
+
+    await fixture.backend["syncPlanState"](fixture.client as never);
+
+    expect(fixture.client.send).toHaveBeenCalledWith({
+      type: "plan_state",
+      plan,
+    });
+    expect(fixture.client.send).toHaveBeenCalledWith({
+      type: "plan_ready",
+      id: plan.planId,
+      text: "计划已生成 · 1 项任务",
+      createdAt: 10,
+    });
+  });
 });

@@ -78,6 +78,14 @@ The system SHALL run planning through an internal Planner AgentApplication manag
 - **WHEN** Planner has persisted and internally authorized a Plan
 - **THEN** Main receives the approved Plan and TODO definitions, binds each item before side effects, verifies each item's acceptance criteria, and continues without waiting for another user message
 
+#### Scenario: Main attempts to finish an incomplete Plan
+- **WHEN** Main produces a no-tool response while the persisted Plan still contains pending or in-progress items
+- **THEN** the Host queues a hidden continuation in the same processing lifecycle and Main continues from the authoritative Plan snapshot instead of reporting the request complete
+
+#### Scenario: Incomplete execution makes no progress
+- **WHEN** bounded hidden continuations do not advance any PlanItem status
+- **THEN** the Host stops automatic continuation, marks the current in-progress item blocked when possible, preserves the unfinished TODO, and emits a user-visible warning instead of claiming completion
+
 ### Requirement: Plan Mode uses bounded RAP-lite decisions
 The Planner SHALL model planning as decision nodes with candidates, evidence, trade-offs, selection, and optional backtracking. A decision node MUST contain at most three candidates and a revision MUST contain at most six decision nodes.
 

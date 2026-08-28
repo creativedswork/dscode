@@ -74,6 +74,7 @@ export function ChatView({
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isAtBottomRef = useRef(true);
+  const visiblePlanIdRef = useRef<string | undefined>(undefined);
   // sessionTime is driven by backend's getTotalActiveMs() via sessionActiveMs prop.
   // The backend already returns live time when the timer is running, so we must
   // NOT add local wall time on top (that would double-count).
@@ -86,8 +87,15 @@ export function ChatView({
 
   // ── Auto-scroll to bottom, gated by user scroll position ──
   useLayoutEffect(() => {
-    if (isAtBottomRef.current && bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: hasStreaming ? "instant" : "smooth" });
+    const visiblePlanId = plan?.planId;
+    const planChanged = visiblePlanId !== undefined
+      && visiblePlanId !== visiblePlanIdRef.current;
+    visiblePlanIdRef.current = visiblePlanId;
+
+    if ((isAtBottomRef.current || planChanged) && bottomRef.current) {
+      bottomRef.current.scrollIntoView({
+        behavior: hasStreaming || planChanged ? "instant" : "smooth",
+      });
     }
   }, [messages, processing, permissionPrompt, plan, planInteraction]);
 
@@ -143,12 +151,7 @@ export function ChatView({
             : msg.role === "system" && msg.id.startsWith("planning-mode-")
               ? <PlanningModeMarker />
             : msg.role === "system" && msg.id.startsWith("plan-ready-")
-              ? (
-                  <>
-                    <PlanReadyMarker text={msg.content} />
-                    {plan && plan.items.length > 0 && <PlanTodoList plan={plan} />}
-                  </>
-                )
+              ? <PlanReadyMarker text={msg.content} />
             : msg.role === "agent" && msg.agentActivity
               ? (
                   <AgentActivityCard
@@ -158,6 +161,8 @@ export function ChatView({
               : <AssistantMessage message={msg} />}
         </ErrorBoundary>
       ))}
+
+      {plan && plan.items.length > 0 && <PlanTodoList plan={plan} />}
 
       {planInteraction && (
         <IntentAlignment

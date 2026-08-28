@@ -90,8 +90,8 @@ Chat interaction.
 Focused verification:
 
 ```text
-11 focused test files passed
-130 tests passed
+15 focused test files passed
+156 tests passed
 npm run typecheck: passed
 npm run build: passed
 npx openspec validate add-interactive-plan-mode --strict: passed
@@ -187,6 +187,18 @@ The fixes keep backtracking and non-user constraint updates autonomous, align
 fixtures with the user-value policy, clear stale reducer interactions, and allow
 Session loading while an alignment is actionable without disabling Stop or
 loosening New Session/delete behavior.
+
+### E — Plan execution closure and durable TODO
+
+- A Main no-tool response no longer ends processing while persisted PlanItems
+  remain pending or in progress; the Host queues a bounded hidden follow-up.
+- Two consecutive follow-ups without item-status progress stop automatically,
+  preserve the TODO, mark an in-progress item blocked when possible, and warn
+  instead of claiming completion.
+- Web renders exactly one live TODO after the latest Chat message and restores
+  the latest persisted Session Plan, including terminal `5/5` state.
+- The persisted lookup restores presentation only. Full process/binding
+  reconciliation and automatic execution recovery remain M8 work.
 
 ## Self-Test Evidence
 

@@ -79,9 +79,25 @@ export class PlanService extends PlannerService {
     sessionId: string,
   ): Promise<Readonly<PlanRecord> | undefined> {
     const planId = this.activeBySession.get(sessionId);
-    if (!planId) return undefined;
-    const loaded = await this.load(planId);
-    return loaded.ok && loaded.plan ? immutablePlan(loaded.plan) : undefined;
+    if (planId) {
+      const loaded = await this.load(planId);
+      if (
+        loaded.ok
+        && loaded.plan
+        && !TERMINAL.has(loaded.plan.status)
+      ) return immutablePlan(loaded.plan);
+      this.activeBySession.delete(sessionId);
+    }
+    const latest = await this.store.findLatestForSession(sessionId);
+    if (!latest || TERMINAL.has(latest.status)) return undefined;
+    this.activeBySession.set(sessionId, latest.planId);
+    return immutablePlan(latest);
+  }
+  async getLatestPlan(
+    sessionId: string,
+  ): Promise<Readonly<PlanRecord> | undefined> {
+    const latest = await this.store.findLatestForSession(sessionId);
+    return latest ? immutablePlan(latest) : undefined;
   }
   async requestDecision(
     ...args: Parameters<PlannerService["requestDecision"]>
