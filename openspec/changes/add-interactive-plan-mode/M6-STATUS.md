@@ -61,14 +61,40 @@ inline choice is pending, keeping the main composer non-submittable throughout.
 Empty streaming responses no longer render a blank `Response` phase. The
 Waiting timer uses a local one-second clock above the latest Session-time
 baseline so it continues advancing after Main hands foreground ownership to
-Planner.
+Planner. Each committed alignment is projected as a deduplicated user entry in
+Chat. Once Planner persists and internally authorizes the Plan/TODO, Supervisor
+restores Main and starts a hidden continuation that executes and verifies the
+pending PlanItems without waiting for another user message.
+
+Authorized PlanItems are now projected into Chat as one inline TODO list whose
+states come directly from the persisted Plan. Internal `plan_*` tool calls and
+`verify_item` calls, failures, and raw Plan payloads remain hidden. A derived
+revision updates the same list and uses `正在调整执行计划...` instead of
+inserting a second Planning Mode marker.
+The authorization handoff now inserts a stable `计划已生成 · N 项任务` result
+marker before the TODO; a derived revision updates that marker to
+`执行计划已更新 · N 项任务`. Internal continuation payloads are also excluded
+from Session title and preview extraction.
+Disconnected Web Chat submissions are now lossless: the composer is disabled
+while reconnecting, drafts are retained, and processing starts only after the
+command is written to an open WebSocket.
+
+A real Breakout run then exposed that Planner could append technical decisions
+but had no tool to select them. `plan_compile` rejected the first open technical
+decision and Planner remained in a tool-search loop. Planner now has the
+side-effect-free `plan_select_decision` operation, backed by the existing
+domain policy: technical candidates marked `satisfies` can be selected
+autonomously, while `uncertain` user-value candidates still require the durable
+Chat interaction.
 
 Focused verification:
 
 ```text
-8 test files passed
-81 tests passed
+11 focused test files passed
+130 tests passed
 npm run typecheck: passed
+npm run build: passed
+npx openspec validate add-interactive-plan-mode --strict: passed
 git diff --check: passed
 ```
 

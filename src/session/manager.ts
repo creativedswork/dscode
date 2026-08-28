@@ -91,15 +91,26 @@ export function computeSessionContentHash(
     .slice(0, 12);
 }
 
+function isInternalUserMessage(text: string): boolean {
+  const normalized = text.trimStart();
+  return normalized.startsWith("<agent_notifications>")
+    || normalized.startsWith("<plan_execution>");
+}
+
 function extractFirstUserMessage(messages: unknown[]): string {
   for (const msg of messages) {
     const m = msg as any;
     if (m.role !== "user") continue;
     const content = m.content;
-    if (typeof content === "string") return content.slice(0, 80);
+    if (typeof content === "string") {
+      if (isInternalUserMessage(content)) continue;
+      return content.slice(0, 80);
+    }
     if (Array.isArray(content)) {
       const textBlock = content.find((b: any) => b.type === "text");
-      if (textBlock) return textBlock.text.slice(0, 80);
+      if (textBlock && !isInternalUserMessage(textBlock.text)) {
+        return textBlock.text.slice(0, 80);
+      }
     }
   }
   return "";
@@ -161,6 +172,7 @@ function extractSessionTitle(messages: any[]): string {
     if (msg.role !== "user") continue;
     const text = extractText(msg);
     if (!text) continue;
+    if (isInternalUserMessage(text)) continue;
     if (isCommandMessage(text)) continue;
     if (isNoiseMessage(text)) continue;
     if (text.length < MIN_TITLE_LENGTH) continue;
@@ -173,6 +185,7 @@ function extractSessionTitle(messages: any[]): string {
     if (msg.role !== "user") continue;
     const text = extractText(msg);
     if (!text) continue;
+    if (isInternalUserMessage(text)) continue;
     if (!isCommandMessage(text)) continue;
     const arg = stripCommandPrefix(text);
     if (arg.length >= MIN_TITLE_LENGTH) {
@@ -186,6 +199,7 @@ function extractSessionTitle(messages: any[]): string {
     if (msg.role !== "user") continue;
     const text = extractText(msg);
     if (!text) continue;
+    if (isInternalUserMessage(text)) continue;
     if (isNoiseMessage(text)) continue;
     const stripped = stripCommandPrefix(text);
     if (stripped) return stripped.slice(0, 60);
@@ -401,7 +415,7 @@ export class SessionManager {
     }
 
 
-    if (!this.current.preview) {
+    if (!this.current.preview || isInternalUserMessage(this.current.preview)) {
       this.current.preview = extractFirstUserMessage(messages as unknown[]);
     }
     // Compute content hash for dashboard cache invalidation.

@@ -28,6 +28,10 @@ export interface SubmitPlannerDecision {
   interactionPayloadDigest?: string;
   action: PlanDecisionAction;
 }
+export interface PlannerProcessCoordinatorOptions {
+  interactions?: PlannerInteractionBroker;
+  onApprovedPlan?(plan: Readonly<PlanRecord>): Promise<void> | void;
+}
 export class PlannerProcessCoordinator {
   private readonly planByPlanner = new Map<string, {
     planId: string;
@@ -35,12 +39,16 @@ export class PlannerProcessCoordinator {
   }>();
   private readonly startByMain = new Map<string, Promise<PlannerProcessHandle>>();
   private readonly exits = new Map<string, Promise<void>>();
+  readonly interactions: PlannerInteractionBroker;
+  private readonly onApprovedPlan?: PlannerProcessCoordinatorOptions["onApprovedPlan"];
 
   constructor(
     private readonly supervisor: AgentSupervisor,
     private currentService: PlanService,
-    readonly interactions = new PlannerInteractionBroker(),
+    options: PlannerProcessCoordinatorOptions = {},
   ) {
+    this.interactions = options.interactions ?? new PlannerInteractionBroker();
+    this.onApprovedPlan = options.onApprovedPlan;
     this.bindExecutionCallbacks(currentService);
   }
   get service(): PlanService {
@@ -232,6 +240,7 @@ export class PlannerProcessCoordinator {
     if (!binding) return;
     const planner = this.supervisor.get(plannerAgentId);
     let pendingInteractionId: string | undefined;
+    let approvedPlan: Readonly<PlanRecord> | undefined;
     try {
       try {
         const loaded = await binding.service.load(binding.planId);
@@ -249,6 +258,7 @@ export class PlannerProcessCoordinator {
               this.supervisor.require(settled.mainAgentId),
               settled,
             );
+            approvedPlan = settled;
           } catch (error) {
             binding.service.reportCoordinationFailure({
               planId: binding.planId,
@@ -276,6 +286,12 @@ export class PlannerProcessCoordinator {
       if (planner?.parentAgentId) {
         this.startByMain.delete(planner.parentAgentId);
       }
+    }
+    if (approvedPlan && this.onApprovedPlan) {
+      await coordinateAfterCommit(approvedPlan.planId, [{
+        operation: "resume_main",
+        run: () => this.onApprovedPlan!(approvedPlan!),
+      }], (failure) => binding.service.reportCoordinationFailure(failure));
     }
   }
 

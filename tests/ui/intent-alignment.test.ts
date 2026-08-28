@@ -9,6 +9,7 @@ import {
 import type { PlanCandidate } from "../../src/application/plan/index.js";
 import {
   ChatView,
+  PlanTodoList,
   waitingElapsedMs,
 } from "../../web/src/components/ChatView.js";
 import { IntentAlignment } from "../../web/src/components/IntentAlignment.js";
@@ -170,6 +171,72 @@ describe("Web Chat intent alignment", () => {
     expect(markup).toContain("进入 Planning Mode");
     expect(markup).toContain("正在规划下一步...");
     expect(markup).toContain('role="status"');
+  });
+
+  it("renders persisted Plan items as a live TODO list", () => {
+    const plan = pendingPlan();
+    plan.status = "executing";
+    plan.pendingInteraction = undefined;
+    plan.items[0].status = "in_progress";
+    plan.items.push({
+      ...plan.items[0],
+      itemId: "item-2",
+      order: 1,
+      title: "Verify the result",
+      status: "pending",
+    });
+
+    const markup = renderToStaticMarkup(createElement(PlanTodoList, { plan }));
+
+    expect(markup).toContain("TODO");
+    expect(markup).toContain("执行中 · 0/2");
+    expect(markup).toContain("Write snapshot");
+    expect(markup).toContain("Verify the result");
+    expect(markup).toContain("待执行");
+    expect(markup).not.toContain("plan_start_item");
+    expect(markup).not.toContain(plan.digest);
+  });
+
+  it("places the Plan result before the Act TODO", () => {
+    const plan = pendingPlan();
+    plan.status = "approved";
+    plan.pendingInteraction = undefined;
+
+    const markup = renderToStaticMarkup(createElement(ChatView, {
+      messages: [{
+        id: "planning-mode-planner-1",
+        role: "system",
+        content: "进入 Planning Mode",
+      }, {
+        id: `plan-ready-${plan.planId}`,
+        role: "system",
+        content: "计划已生成 · 1 项任务",
+      }],
+      processing: false,
+      hasStreaming: false,
+      sessionActiveMs: 0,
+      permissionPrompt: null,
+      onPermission: vi.fn(),
+      plan,
+    }));
+
+    expect(markup.indexOf("进入 Planning Mode"))
+      .toBeLessThan(markup.indexOf("计划已生成 · 1 项任务"));
+    expect(markup.indexOf("计划已生成 · 1 项任务"))
+      .toBeLessThan(markup.indexOf("TODO"));
+    expect(markup).toContain("准备执行 · 0/1");
+  });
+
+  it("labels replanning on the existing TODO list", () => {
+    const plan = pendingPlan();
+    plan.status = "drafting";
+    plan.baseRevision = 2;
+    plan.pendingInteraction = undefined;
+
+    const markup = renderToStaticMarkup(createElement(PlanTodoList, { plan }));
+
+    expect(markup).toContain("正在调整执行计划");
+    expect(markup).not.toContain("进入 Planning Mode");
   });
 
   it("shows Waiting between a completed visible response and Planner spawn", () => {

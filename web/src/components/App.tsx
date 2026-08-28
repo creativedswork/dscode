@@ -213,6 +213,8 @@ export function App() {
       case "user_message":
       case "agent_activity":
       case "planning_mode":
+      case "plan_ready":
+      case "plan_response":
       case "assistant_start":
       case "thinking_delta":
       case "text_delta":
@@ -363,16 +365,16 @@ export function App() {
   const { connected, send } = useWebSocket(handleEvent);
 
   const handleSend = useCallback((text: string, images?: ImageAttachment[], fileRefs?: string[], uploadedFiles?: { name: string; content: string }[]) => {
-    if (!text.trim() && (!images || images.length === 0) && (!uploadedFiles || uploadedFiles.length === 0)) return;
-    if (viewMode === "eval_dashboard") return;
+    if (!text.trim() && (!images || images.length === 0) && (!uploadedFiles || uploadedFiles.length === 0)) return false;
+    if (viewMode === "eval_dashboard") return false;
+    const sent = viewMode === "session_dashboard"
+      ? send({ type: "artifact", action: "update", instruction: text })
+      : send({ type: "chat", text, images: images?.length ? images : undefined, fileRefs: fileRefs?.length ? fileRefs : undefined, uploadedFiles: uploadedFiles?.length ? uploadedFiles : undefined });
+    if (!sent) return false;
     turnStartRef.current = Date.now();
     setProcessing(true);
     setProcessingText("Thinking...");
-    if (viewMode === "session_dashboard") {
-      send({ type: "artifact", action: "update", instruction: text });
-    } else {
-      send({ type: "chat", text, images: images?.length ? images : undefined, fileRefs: fileRefs?.length ? fileRefs : undefined, uploadedFiles: uploadedFiles?.length ? uploadedFiles : undefined });
-    }
+    return true;
   }, [send, viewMode]);
 
   const handlePermission = useCallback((decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string, toolNamePattern?: string, fuzzyMode?: number) => {
@@ -585,6 +587,7 @@ export function App() {
               sessionActiveMs={sessionActiveMs}
               permissionPrompt={permissionPrompt}
               onPermission={handlePermission}
+              plan={planView.plan}
               planInteraction={planView.interaction}
               alignmentConnected={connected}
               alignmentConflicted={planView.conflict !== null}
@@ -595,7 +598,7 @@ export function App() {
           )}
           {shouldRenderMessageInput(viewMode) && (
             <MessageInput onSend={handleSend} onAbort={handleAbort} onSlashCommand={handleSlashCommand} onCommand={handleCommand}
-              processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} viewMode={viewMode} projectPath={config?.projectPath ?? ""}
+              connected={connected} processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} viewMode={viewMode} projectPath={config?.projectPath ?? ""}
               onToast={(type, text) => addToast({ type, text })} />
           )}
           </div>

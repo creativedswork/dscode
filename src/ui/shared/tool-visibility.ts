@@ -10,8 +10,9 @@ const INTERNAL_CONVERSATION_TOOLS = new Set([
   "continue_agent",
   "background_agent",
   "send_agent_message",
+  "verify_item",
 ]);
 
 export function isConversationToolVisible(name: string): boolean {
-  return !INTERNAL_CONVERSATION_TOOLS.has(name);
+  return !name.startsWith("plan_") && !INTERNAL_CONVERSATION_TOOLS.has(name);
 }

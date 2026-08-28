@@ -35,7 +35,28 @@ describe("prompt image attachment feedback", () => {
     );
     expect(source).toContain("src={image.previewUrl}");
     expect(source).toContain("Preparing...");
-    expect(source).toContain("disabled={pendingImages.length > 0 ||");
+    expect(source).toContain("disabled={!connected || pendingImages.length > 0 ||");
+  });
+
+  it("keeps the draft and disables submission while WebUI reconnects", () => {
+    const inputSource = readFileSync(
+      join(ROOT, "web/src/components/MessageInput.tsx"),
+      "utf8",
+    );
+    const socketSource = readFileSync(
+      join(ROOT, "web/src/hooks/useWebSocket.ts"),
+      "utf8",
+    );
+
+    expect(inputSource).toContain("disabled={processing || !connected}");
+    expect(inputSource).toContain("Reconnecting... message will stay here");
+    expect(inputSource.indexOf("if (!onSend(")).toBeLessThan(
+      inputSource.indexOf('setText("");'),
+    );
+    expect(socketSource).toContain(
+      "if (wsRef.current?.readyState !== WebSocket.OPEN) return false;",
+    );
+    expect(socketSource).toContain("return true;");
   });
 
   it("shows TUI preparation status while image data is pending", () => {

@@ -55,6 +55,10 @@ describe("Plan command acceptance", () => {
         evidenceIds: ["tool-wrong-output"],
         observedExitCode: 0,
       }],
-    })).resolves.toMatchObject({ ok: false, reason: "invalid_command" });
+    })).resolves.toMatchObject({
+      ok: false,
+      reason: "invalid_command",
+      message: expect.stringContaining("exact persisted evidence IDs"),
+    });
   });
 });

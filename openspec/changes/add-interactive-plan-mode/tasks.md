@@ -75,6 +75,12 @@
 - [x] 7.12 为缺少视觉方向的用户可见产物创建请求增加 Host 意图下限，覆盖短 brief、明确视觉方向和既有产物修复，并在真实 Workbuddy `dist` 进程中复验。
 - [x] 7.13 修复 Main → Planner handoff 的假空闲状态：保留通用 Processing 与 Stop，pending interaction 期间保持主输入禁用并使用内联控件，且不展示 Planner 内部工具。
 - [x] 7.14 在 Main response 与 Planner 启动之间显示 `Waiting...`，增加 `进入 Planning Mode` 时间线标记，在 active Plan 的 Session 恢复时重新投影，并保证等待计时持续递增。
+- [x] 7.15 将每次已提交的用户对齐选择记录为可恢复、可去重的 Chat 用户条目；Planner 授权 Plan/TODO 后自动 continuation Main 执行并逐项验收，不等待新消息。
+- [x] 7.16 暴露受领域规则约束的 `plan_select_decision`，使 Planner 在用户价值对齐后自主选择技术候选并继续 compile/authorize，避免 open 技术决策阻塞执行交接。
+- [x] 7.17 将已编译 PlanItem 投影为 Chat 内联 TODO 并随持久化状态实时更新；隐藏全部 `plan_*` 与 `verify_item` 控制工具，派生 revision 仅显示“正在调整执行计划”而不重复插入 Planning Mode 标记。
+- [x] 7.18 在 Planning 与 Act TODO 之间投影稳定的“计划已生成 / 执行计划已更新”结果标记，并过滤 Session 标题与预览中的内部 continuation。
+- [x] 7.19 WebSocket 断开时禁止提交并保留草稿；仅在命令成功写入已连接 Socket 后进入 Processing 和清空输入。
+- [x] 7.20 隐藏 `verify_item` 实时与回放记录，并明确验收证据 ID 格式及逐条件唯一约束，避免内部拒绝被误认为用户 Deny。
 
 ## 8. M7 — TUI Chat 原生意图对齐
 

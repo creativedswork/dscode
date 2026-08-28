@@ -23,12 +23,58 @@ describe("conversationReducer — Agent Activity", () => {
     };
 
     const once = conversationReducer([], event);
-    const twice = conversationReducer(once, event);
+    const twice = conversationReducer(once, {
+      ...event,
+      id: "replacement-planner",
+    });
 
     expect(twice).toEqual([{
       id: "planning-mode-planner-1",
       role: "system",
       content: "进入 Planning Mode",
+      createdAt: 1700000000000,
+    }]);
+  });
+
+  it("updates one stable Plan result marker", () => {
+    const generated: ServerEvent = {
+      type: "plan_ready",
+      id: "plan-1",
+      text: "计划已生成 · 2 项任务",
+      createdAt: 1700000000000,
+    };
+    const updated: ServerEvent = {
+      ...generated,
+      text: "执行计划已更新 · 3 项任务",
+      createdAt: 1700000001000,
+    };
+
+    const once = conversationReducer([], generated);
+    const twice = conversationReducer(once, updated);
+
+    expect(twice).toEqual([{
+      id: "plan-ready-plan-1",
+      role: "system",
+      content: "执行计划已更新 · 3 项任务",
+      createdAt: 1700000001000,
+    }]);
+  });
+
+  it("records each Plan response as one user message", () => {
+    const event: ServerEvent = {
+      type: "plan_response",
+      id: "interaction-1",
+      text: "已确认：视觉风格：复古像素",
+      createdAt: 1700000000000,
+    };
+
+    const once = conversationReducer([], event);
+    const twice = conversationReducer(once, event);
+
+    expect(twice).toEqual([{
+      id: "plan-response-interaction-1",
+      role: "user",
+      content: "已确认：视觉风格：复古像素",
       createdAt: 1700000000000,
     }]);
   });
@@ -126,8 +172,8 @@ describe("conversationReducer — Agent Activity", () => {
     messages = conversationReducer(messages, {
       type: "tool_start",
       toolCallId: "spawn-1",
-      name: "spawn_agent",
-      args: { application: "general" },
+      name: "read_file",
+      args: { path: "README.md" },
     });
     messages = conversationReducer(messages, {
       type: "agent_activity",
@@ -136,7 +182,7 @@ describe("conversationReducer — Agent Activity", () => {
     messages = conversationReducer(messages, {
       type: "tool_end",
       toolCallId: "spawn-1",
-      name: "spawn_agent",
+      name: "read_file",
       result: "completed",
       isError: false,
     });
@@ -184,6 +230,45 @@ describe("conversationReducer — Agent Activity", () => {
       state: "failed",
       error: "Timed out",
     });
+  });
+
+  it("hides verify_item from live events and ready replay", () => {
+    const streaming = conversationReducer([], {
+      type: "assistant_start",
+      messageId: "assistant-1",
+    });
+    const afterStart = conversationReducer(streaming, {
+      type: "tool_start",
+      toolCallId: "verify-1",
+      name: "verify_item",
+      args: { itemId: "item-1" },
+    });
+    const afterEnd = conversationReducer(afterStart, {
+      type: "tool_end",
+      toolCallId: "verify-1",
+      name: "verify_item",
+      result: "Verification command was rejected",
+      isError: true,
+    });
+    const replay = conversationReducer([], {
+      type: "ready",
+      model: "test-model",
+      config: {} as any,
+      messages: [{
+        role: "assistant",
+        content: "",
+        tools: [{
+          toolCallId: "verify-1",
+          name: "verify_item",
+          args: "",
+          result: "Verification command was rejected",
+          isError: true,
+        }],
+      }],
+    });
+
+    expect(afterEnd[0].tools).toEqual([]);
+    expect(replay[0].tools).toEqual([]);
   });
 
   it("clears activities with the rest of the conversation", () => {

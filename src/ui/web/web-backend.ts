@@ -20,6 +20,7 @@ import type { HarnessAPI } from "../../application/harness-api.js";
 import type { HarnessEvent } from "../../application/events.js";
 import { planInteractionRequest } from "../../application/plan/plan-events.js";
 import type { PlanMutationResult } from "../../application/plan/plan-port.js";
+import type { PlanRecord } from "../../application/plan/types.js";
 import type {
   McpAppResourceProxy,
 } from "../../mcp/app/types.js";
@@ -46,6 +47,43 @@ import type {
 
 export const DASHBOARD_AGENT_TASK_SUMMARY_LIMIT = 100;
 export const DASHBOARD_AGENT_OUTCOME_SUMMARY_LIMIT = 120;
+const ALIGNMENT_CONSTRAINT_PREFIX = "alignment:";
+
+function projectPlanResponse(
+  plan: Readonly<PlanRecord>,
+  interactionId: string,
+): ServerEvent | undefined {
+  const constraint = plan.constraints.find(
+    (item) => item.constraintId === `${ALIGNMENT_CONSTRAINT_PREFIX}${interactionId}`,
+  );
+  if (!constraint) return undefined;
+  return {
+    type: "plan_response",
+    id: interactionId,
+    text: `已确认：${constraint.description}`,
+    createdAt: plan.updatedAt,
+  };
+}
+
+export function projectPlanReady(
+  plan: Readonly<PlanRecord>,
+): ServerEvent | undefined {
+  if (plan.items.length === 0) return undefined;
+  const replanning = plan.baseRevision !== undefined
+    && ["drafting", "awaiting_decision", "awaiting_approval", "needs_replan"]
+      .includes(plan.status);
+  if (!plan.approval && !replanning) return undefined;
+  return {
+    type: "plan_ready",
+    id: plan.planId,
+    text: replanning
+      ? "正在调整执行计划"
+      : plan.baseRevision === undefined
+        ? `计划已生成 · ${plan.items.length} 项任务`
+        : `执行计划已更新 · ${plan.items.length} 项任务`,
+    createdAt: plan.approval?.approvedAt ?? plan.updatedAt,
+  };
+}
 
 export function buildDashboardThemeContract(): string {
   return `DESIGN SYSTEM THEME CONTRACT:
@@ -365,6 +403,29 @@ export class WebUiBackend implements UiBackend {
       && process.attachment === "foreground"
       && !process.exit
     );
+    const showPlannerState = (
+      plannerAgentId: string,
+      includeInitialMarker: boolean,
+    ) => {
+      const sessionId = h.sessions.currentId();
+      if (!sessionId) return;
+      void h.plans.getActivePlan(sessionId).then((plan) => {
+        if (h.sessions.currentId() !== sessionId) return;
+        const replanning = plan?.baseRevision !== undefined;
+        if (includeInitialMarker && !replanning) {
+          this.broadcast({
+            type: "planning_mode",
+            id: plan?.planId ?? plannerAgentId,
+            createdAt: Date.now(),
+          });
+        }
+        this.broadcast({
+          type: "loader",
+          state: "show",
+          text: replanning ? "正在调整执行计划..." : "正在规划下一步...",
+        });
+      }).catch(() => {});
+    };
 
     h.events.on("llm:thinking:delta", (e) => {
       const projected = projectConversationEvent(e);
@@ -447,16 +508,7 @@ export class WebUiBackend implements UiBackend {
         event.application === "planner"
         && event.attachment === "foreground"
       ) {
-        this.broadcast({
-          type: "planning_mode",
-          id: event.agentId,
-          createdAt: Date.now(),
-        });
-        this.broadcast({
-          type: "loader",
-          state: "show",
-          text: "正在规划下一步...",
-        });
+        showPlannerState(event.agentId, true);
       }
     });
     h.events.on("agent:state", (event) => {
@@ -467,11 +519,7 @@ export class WebUiBackend implements UiBackend {
         && process?.application.name === "planner"
         && process.parentSessionId === h.sessions.currentId()
       ) {
-        this.broadcast({
-          type: "loader",
-          state: "show",
-          text: "正在规划下一步...",
-        });
+        showPlannerState(event.agentId, false);
       }
     });
     h.events.on("agent:progress", projectAgentActivity);
@@ -493,6 +541,8 @@ export class WebUiBackend implements UiBackend {
     h.events.on("plan:updated", (event) => {
       if (event.plan.sessionId === h.sessions.currentId()) {
         this.broadcast({ type: "plan_state", plan: event.plan });
+        const ready = projectPlanReady(event.plan);
+        if (ready) this.broadcast(ready);
       }
     });
     h.events.on("plan:interaction", (event) => {
@@ -1268,6 +1318,10 @@ export class WebUiBackend implements UiBackend {
       return;
     }
     if (result.ok) {
+      if (command.type === "plan_decision" && !result.duplicate) {
+        const response = projectPlanResponse(result.plan, command.interactionId);
+        if (response) this.broadcast(response);
+      }
       if (result.duplicate) client.send({ type: "plan_state", plan: result.plan });
       return;
     }
@@ -1297,13 +1351,28 @@ export class WebUiBackend implements UiBackend {
     }
     const plan = await this.harness.plans.getActivePlan(sessionId);
     if (this.harness.sessions.currentId() !== sessionId) return;
-    if (plan) {
+    if (
+      plan
+      && ["drafting", "awaiting_decision", "awaiting_approval"].includes(plan.status)
+    ) {
       send({
         type: "planning_mode",
         id: plan.planId,
       });
     }
     send({ type: "plan_state", plan: plan ?? null });
+    if (plan) {
+      const ready = projectPlanReady(plan);
+      if (ready) send(ready);
+      for (const constraint of plan.constraints) {
+        if (!constraint.constraintId.startsWith(ALIGNMENT_CONSTRAINT_PREFIX)) continue;
+        const response = projectPlanResponse(
+          plan,
+          constraint.constraintId.slice(ALIGNMENT_CONSTRAINT_PREFIX.length),
+        );
+        if (response) send(response);
+      }
+    }
     if (!plan?.pendingInteraction) return;
     send({
       type: "loader",

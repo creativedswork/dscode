@@ -15,6 +15,7 @@ import { PlannerService } from "./planner-service.js";
 export const PLANNER_TOOL_NAMES = [
   "plan_initialize",
   "plan_append_decision",
+  "plan_select_decision",
   "plan_record_fact",
   "plan_compile",
   "plan_request_decision",
@@ -51,6 +52,12 @@ const appendDecisionParams = Type.Object({
   decisionNodeId: Type.String({ minLength: 1 }),
   question: Type.String(),
   candidates: Type.Array(Candidate),
+}, { additionalProperties: false });
+
+const selectDecisionParams = Type.Object({
+  expectedVersion: Type.Integer({ minimum: 1 }),
+  decisionNodeId: Type.String({ minLength: 1 }),
+  optionId: Type.String({ minLength: 1 }),
 }, { additionalProperties: false });
 
 const recordFactParams = Type.Object({
@@ -142,9 +149,30 @@ export function makePlannerTools(options: PlannerToolOptions): AgentTool<any>[] 
       return textResult("Decision appended", result.plan);
     },
   };
-  const recordFact: AgentTool<typeof recordFactParams> = {
+  const selectDecision: AgentTool<typeof selectDecisionParams> = {
     ...PLANNER_TOOL_CAPABILITIES[2],
     name: PLANNER_TOOL_NAMES[2],
+    label: "Select Plan Decision",
+    description: "Select a technical candidate that does not require user-value input.",
+    parameters: selectDecisionParams,
+    execute: async (id, params) => {
+      const result = requireSuccess(await options.service.applyDecision({
+        planId: options.planId(),
+        plannerAgentId: options.plannerAgentId,
+        expectedVersion: params.expectedVersion,
+        commandId: id,
+        action: {
+          kind: "select",
+          decisionNodeId: params.decisionNodeId,
+          optionId: params.optionId,
+        },
+      }), "Decision selection");
+      return textResult("Technical decision selected", result.plan);
+    },
+  };
+  const recordFact: AgentTool<typeof recordFactParams> = {
+    ...PLANNER_TOOL_CAPABILITIES[3],
+    name: PLANNER_TOOL_NAMES[3],
     label: "Record Plan Fact",
     description: "Persist a concise public fact and its evidence references.",
     parameters: recordFactParams,
@@ -159,8 +187,8 @@ export function makePlannerTools(options: PlannerToolOptions): AgentTool<any>[] 
     },
   };
   const compile: AgentTool<typeof compileParams> = {
-    ...PLANNER_TOOL_CAPABILITIES[3],
-    name: PLANNER_TOOL_NAMES[3],
+    ...PLANNER_TOOL_CAPABILITIES[4],
+    name: PLANNER_TOOL_NAMES[4],
     label: "Compile Execution Plan",
     description: "Compile selected public decisions into ordered executable Plan items.",
     parameters: compileParams,
@@ -176,8 +204,8 @@ export function makePlannerTools(options: PlannerToolOptions): AgentTool<any>[] 
     },
   };
   const requestDecision: AgentTool<typeof requestDecisionParams> = {
-    ...PLANNER_TOOL_CAPABILITIES[4],
-    name: PLANNER_TOOL_NAMES[4],
+    ...PLANNER_TOOL_CAPABILITIES[5],
+    name: PLANNER_TOOL_NAMES[5],
     label: "Request Plan Decision",
     description: "Persist a required human decision and wait for its durable resolution.",
     parameters: requestDecisionParams,
@@ -212,8 +240,8 @@ export function makePlannerTools(options: PlannerToolOptions): AgentTool<any>[] 
     },
   };
   const authorize: AgentTool<typeof authorizeParams> = {
-    ...PLANNER_TOOL_CAPABILITIES[5],
-    name: PLANNER_TOOL_NAMES[5],
+    ...PLANNER_TOOL_CAPABILITIES[6],
+    name: PLANNER_TOOL_NAMES[6],
     label: "Authorize Plan",
     description: "Validate and internally authorize the current revision and digest.",
     parameters: authorizeParams,
@@ -229,6 +257,7 @@ export function makePlannerTools(options: PlannerToolOptions): AgentTool<any>[] 
   return [
     initialize,
     appendDecision,
+    selectDecision,
     recordFact,
     compile,
     requestDecision,

@@ -12,7 +12,23 @@ or use the internal Planner.
 
 #### Scenario: Agent uses an internal Plan
 - **WHEN** complexity routing starts or revises an internal PlanRecord
-- **THEN** the Web UI does not expose routing scores, candidates, revision, digest, PlanItems, or Agent process details
+- **THEN** the Web UI does not expose routing scores, candidates, revision, digest, effect grants, evidence, control tools, or Agent process details
+
+### Requirement: Approved work is visible as an inline TODO
+After Planner compiles executable items, the Web UI SHALL show one inline TODO
+list in Chat and SHALL update it from persisted PlanItem status.
+
+#### Scenario: Planner authorizes execution
+- **WHEN** the Plan contains compiled items and enters `approved` or `executing`
+- **THEN** Chat inserts `计划已生成 · N 项任务` after the Planning phase and shows each user-understandable item title and its current pending, in-progress, completed, blocked, or skipped state beneath it
+
+#### Scenario: Main advances execution
+- **WHEN** `plan_start_item` or `verify_item` changes persisted PlanItem state
+- **THEN** the existing TODO list updates without exposing either control tool call, raw Plan JSON, revision, digest, or an internal verification rejection
+
+#### Scenario: Execution requires replanning
+- **WHEN** a material conflict derives a revision from the current Plan
+- **THEN** Chat retains the TODO list, labels it `正在调整执行计划`, updates the result marker to `执行计划已更新 · N 项任务` after authorization, and does not insert a second `进入 Planning Mode` marker
 
 ### Requirement: User intent alignment is native to Chat
 The Web UI SHALL render a pending user-value decision as an inline Chat
@@ -25,7 +41,7 @@ at most three user-understandable options, and a free-form adjustment path.
 
 #### Scenario: User selects a suggested direction
 - **WHEN** the user chooses an inline option
-- **THEN** the client sends the typed interaction identity and selected value, the selection becomes an explicit constraint, and the Agent resumes autonomously
+- **THEN** the client sends the typed interaction identity and selected value, the selection becomes an explicit constraint, Chat records the committed choice as a deduplicated user entry without adding it to the model transcript, and the Agent resumes autonomously
 
 #### Scenario: User provides a custom direction
 - **WHEN** none of the suggested options matches the user's intent
@@ -60,6 +76,18 @@ actionable output, and no side-effect tool may run before it is resolved.
 #### Scenario: Alignment is pending
 - **WHEN** the server publishes a persisted alignment interaction
 - **THEN** the inline controls remain reachable above the composer on desktop, mobile, and `1080x322`, while the main composer remains non-submittable until Planner ownership ends
+
+### Requirement: Disconnected Chat submissions are lossless
+The Web composer SHALL only enter processing and clear its draft after the
+command is accepted by an open WebSocket.
+
+#### Scenario: User attempts to submit while reconnecting
+- **WHEN** the WebSocket is not open
+- **THEN** the composer and Send control are disabled, any existing draft is retained, and Chat does not enter processing
+
+#### Scenario: Connection is restored
+- **WHEN** the WebSocket opens and the user submits
+- **THEN** the command is sent before the draft is cleared and Chat enters its normal processing state
 
 ### Requirement: Existing permission UI remains the authorization boundary
 The Web UI SHALL NOT request approval for an entire Plan. Filesystem,

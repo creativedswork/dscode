@@ -20,6 +20,19 @@ describe("conversation projectors", () => {
       result: { content: [{ type: "text", text: "[]" }] },
       isError: false,
     })).toBeUndefined();
+    expect(harnessEventToConversationEvent({
+      type: "tool:start",
+      toolCallId: "call-plan-item",
+      name: "plan_start_item",
+      args: { itemId: "item-1" },
+    })).toBeUndefined();
+    expect(harnessEventToConversationEvent({
+      type: "tool:end",
+      toolCallId: "call-verify-item",
+      name: "verify_item",
+      result: { content: [{ type: "text", text: "Verification command was rejected" }] },
+      isError: true,
+    })).toBeUndefined();
 
     const replay = rebuildDisplayMessages([
       {
@@ -30,6 +43,18 @@ describe("conversation projectors", () => {
             id: "call-agents",
             name: "list_agents",
             arguments: {},
+          },
+          {
+            type: "toolCall",
+            id: "call-plan-item",
+            name: "plan_start_item",
+            arguments: { itemId: "item-1" },
+          },
+          {
+            type: "toolCall",
+            id: "call-verify-item",
+            name: "verify_item",
+            arguments: { itemId: "item-1" },
           },
           {
             type: "toolCall",
@@ -46,6 +71,17 @@ describe("conversation projectors", () => {
       },
       {
         role: "toolResult",
+        toolCallId: "call-plan-item",
+        content: [{ type: "text", text: "{\"status\":\"executing\"}" }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-verify-item",
+        content: [{ type: "text", text: "Verification command was rejected" }],
+        isError: true,
+      },
+      {
+        role: "toolResult",
         toolCallId: "call-read",
         content: [{ type: "text", text: "contents" }],
       },
@@ -54,6 +90,26 @@ describe("conversation projectors", () => {
     expect(replay).toHaveLength(1);
     expect(replay[0].tools).toEqual([
       expect.objectContaining({ name: "read_file" }),
+    ]);
+  });
+
+  it("hides the internal approved-Plan continuation from replayed Chat", () => {
+    const replay = rebuildDisplayMessages([
+      {
+        role: "user",
+        content: "<plan_execution>\nExecute the approved Plan.\n</plan_execution>",
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Starting implementation." }],
+      },
+    ], [], "session-1");
+
+    expect(replay).toEqual([
+      expect.objectContaining({
+        role: "assistant",
+        content: "Starting implementation.",
+      }),
     ]);
   });
 

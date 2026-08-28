@@ -455,7 +455,7 @@ describe("Web Agent Activity projection", () => {
     expect(agentActivities(broadcast)).toHaveLength(0);
   });
 
-  it("shows generic progress while a foreground Planner owns the turn", () => {
+  it("shows generic progress while a foreground Planner owns the turn", async () => {
     const process = processFixture({
       application: { name: "planner" } as AgentProcess["application"],
       recording: "process-only",
@@ -472,15 +472,17 @@ describe("Web Agent Activity projection", () => {
       input: "Internal Planner prompt",
     });
 
-    expect(agentActivities(broadcast)).toHaveLength(0);
-    expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({
-      type: "planning_mode",
-      id: process.agentId,
-    }));
-    expect(broadcast).toHaveBeenCalledWith({
-      type: "loader",
-      state: "show",
-      text: "正在规划下一步...",
+    await vi.waitFor(() => {
+      expect(agentActivities(broadcast)).toHaveLength(0);
+      expect(broadcast).toHaveBeenCalledWith(expect.objectContaining({
+        type: "planning_mode",
+        id: process.agentId,
+      }));
+      expect(broadcast).toHaveBeenCalledWith({
+        type: "loader",
+        state: "show",
+        text: "正在规划下一步...",
+      });
     });
 
     broadcast.mockClear();
@@ -497,10 +499,12 @@ describe("Web Agent Activity projection", () => {
       previous: "waiting",
       state: "running",
     });
-    expect(broadcast).toHaveBeenCalledWith({
-      type: "loader",
-      state: "show",
-      text: "正在规划下一步...",
+    await vi.waitFor(() => {
+      expect(broadcast).toHaveBeenCalledWith({
+        type: "loader",
+        state: "show",
+        text: "正在规划下一步...",
+      });
     });
 
     broadcast.mockClear();

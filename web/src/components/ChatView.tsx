@@ -2,9 +2,17 @@ import React, { useEffect, useRef, useState, useCallback, useLayoutEffect } from
 import type {
   AgentActivity,
   PermissionPrompt,
+  PlanRecord,
   PlanViewInteraction,
   UIMessage,
 } from "../types";
+import {
+  CheckCircle,
+  Circle,
+  MinusCircle,
+  SpinnerGap,
+  WarningCircle,
+} from "@phosphor-icons/react";
 import type { IntentAlignmentAnswer } from "../utils/intentAlignment";
 import { ToolCard } from "./ToolCard";
 import { Markdown } from "./Markdown";
@@ -21,6 +29,7 @@ interface ChatViewProps {
   sessionActiveMs: number;
   permissionPrompt: PermissionPrompt | null;
   onPermission: ToolApprovalDecisionHandler;
+  plan?: Readonly<PlanRecord> | null;
   planInteraction?: PlanViewInteraction | null;
   alignmentConnected?: boolean;
   alignmentConflicted?: boolean;
@@ -54,6 +63,7 @@ export function ChatView({
   sessionActiveMs,
   permissionPrompt,
   onPermission,
+  plan = null,
   planInteraction = null,
   alignmentConnected = true,
   alignmentConflicted = false,
@@ -79,7 +89,7 @@ export function ChatView({
     if (isAtBottomRef.current && bottomRef.current) {
       bottomRef.current.scrollIntoView({ behavior: hasStreaming ? "instant" : "smooth" });
     }
-  }, [messages, processing, permissionPrompt, planInteraction]);
+  }, [messages, processing, permissionPrompt, plan, planInteraction]);
 
   const handleChatScroll = useCallback(() => {
     const el = scrollContainerRef.current;
@@ -132,6 +142,13 @@ export function ChatView({
             ? <UserBubble message={msg} />
             : msg.role === "system" && msg.id.startsWith("planning-mode-")
               ? <PlanningModeMarker />
+            : msg.role === "system" && msg.id.startsWith("plan-ready-")
+              ? (
+                  <>
+                    <PlanReadyMarker text={msg.content} />
+                    {plan && plan.items.length > 0 && <PlanTodoList plan={plan} />}
+                  </>
+                )
             : msg.role === "agent" && msg.agentActivity
               ? (
                   <AgentActivityCard
@@ -174,6 +191,102 @@ export function ChatView({
       <div ref={bottomRef} />
     </div>
   );
+}
+
+export function PlanTodoList({ plan }: { plan: Readonly<PlanRecord> }) {
+  const completed = plan.items.filter((item) => item.status === "completed").length;
+  const replanning = plan.status === "needs_replan"
+    || (plan.baseRevision !== undefined
+      && ["drafting", "awaiting_decision", "awaiting_approval"].includes(plan.status));
+  const label = replanning
+    ? "正在调整执行计划"
+    : plan.status === "completed"
+      ? "执行完成"
+      : plan.status === "failed"
+        ? "执行失败"
+        : plan.status === "cancelled"
+          ? "已取消"
+          : plan.status === "approved"
+            ? "准备执行"
+            : "执行中";
+
+  return (
+    <section
+      aria-label="TODO 执行清单"
+      className="animate-fade-up"
+      style={{
+        borderLeft: "2px solid var(--color-accent)",
+        padding: "2px 0 2px 14px",
+      }}
+    >
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <span className="text-sm font-semibold" style={{ color: "var(--color-text)" }}>
+          TODO
+        </span>
+        <span className="text-xs tabular-nums" style={{ color: "var(--color-text-muted)" }}>
+          {label} · {completed}/{plan.items.length}
+        </span>
+      </div>
+      <ol className="space-y-2" aria-live="polite">
+        {plan.items.map((item) => (
+          <li
+            key={item.itemId}
+            className="grid items-start gap-2"
+            style={{ gridTemplateColumns: "18px minmax(0, 1fr) auto" }}
+          >
+            <PlanItemStatusIcon status={item.status} />
+            <span
+              className="text-sm leading-5"
+              style={{
+                color: item.status === "completed"
+                  ? "var(--color-text-muted)"
+                  : "var(--color-text)",
+                textDecoration: item.status === "completed" ? "line-through" : "none",
+              }}
+            >
+              {item.title}
+            </span>
+            <span className="text-xs leading-5" style={{ color: "var(--color-text-muted)" }}>
+              {planItemStatusLabel(item.status)}
+            </span>
+          </li>
+        ))}
+      </ol>
+    </section>
+  );
+}
+
+function PlanItemStatusIcon({
+  status,
+}: {
+  status: Readonly<PlanRecord>["items"][number]["status"];
+}) {
+  const props = { size: 16, weight: "bold" as const, "aria-hidden": true };
+  if (status === "completed") {
+    return <CheckCircle {...props} style={{ color: "var(--color-success-text)" }} />;
+  }
+  if (status === "in_progress") {
+    return <SpinnerGap {...props} className="animate-spin" style={{ color: "var(--color-accent)" }} />;
+  }
+  if (status === "blocked") {
+    return <WarningCircle {...props} style={{ color: "var(--color-error-text)" }} />;
+  }
+  if (status === "skipped") {
+    return <MinusCircle {...props} style={{ color: "var(--color-text-muted)" }} />;
+  }
+  return <Circle {...props} style={{ color: "var(--color-text-muted)" }} />;
+}
+
+function planItemStatusLabel(
+  status: Readonly<PlanRecord>["items"][number]["status"],
+): string {
+  switch (status) {
+    case "pending": return "待执行";
+    case "in_progress": return "执行中";
+    case "blocked": return "受阻";
+    case "completed": return "已完成";
+    case "skipped": return "已跳过";
+  }
 }
 
 // ── Error Boundary ──
@@ -257,6 +370,36 @@ function PlanningModeMarker() {
           style={{ backgroundColor: "var(--color-accent)" }}
         />
         进入 Planning Mode
+      </span>
+      <span className="h-px flex-1" style={{ backgroundColor: "var(--color-border)" }} />
+    </div>
+  );
+}
+
+export function PlanReadyMarker({ text }: { text: string }) {
+  return (
+    <div
+      className="flex items-center gap-3 py-1 animate-fade-up"
+      role="status"
+      aria-label={text}
+    >
+      <span className="h-px flex-1" style={{ backgroundColor: "var(--color-border)" }} />
+      <span
+        className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-medium"
+        style={{
+          border: "1px solid var(--color-border)",
+          borderRadius: "6px",
+          color: "var(--color-text-muted)",
+          backgroundColor: "var(--color-surface)",
+        }}
+      >
+        <CheckCircle
+          size={15}
+          weight="fill"
+          aria-hidden
+          style={{ color: "var(--color-success-text)" }}
+        />
+        {text}
       </span>
       <span className="h-px flex-1" style={{ backgroundColor: "var(--color-border)" }} />
     </div>

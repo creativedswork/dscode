@@ -72,7 +72,11 @@ The system SHALL run planning through an internal Planner AgentApplication manag
 
 #### Scenario: Validated planning completes
 - **WHEN** the active revision is internally validated and no user-value interaction remains pending
-- **THEN** the Planner exits and Supervisor returns foreground control to the Main Agent
+- **THEN** the Planner exits, Supervisor returns foreground control to the Main Agent, and Main automatically starts an internal continuation that executes every pending PlanItem in dependency order
+
+#### Scenario: Main resumes an approved Plan
+- **WHEN** Planner has persisted and internally authorized a Plan
+- **THEN** Main receives the approved Plan and TODO definitions, binds each item before side effects, verifies each item's acceptance criteria, and continues without waiting for another user message
 
 ### Requirement: Plan Mode uses bounded RAP-lite decisions
 The Planner SHALL model planning as decision nodes with candidates, evidence, trade-offs, selection, and optional backtracking. A decision node MUST contain at most three candidates and a revision MUST contain at most six decision nodes.
@@ -225,6 +229,10 @@ Each PlanItem SHALL declare approved effect categories and canonical resource sc
 
 ### Requirement: Plan status and execution progress remain separate
 PlanItem status MUST represent acceptance progress, while AgentProcess and tool events MUST represent objective runtime progress. Agent or SubAgent completion MUST be treated as evidence only.
+
+#### Scenario: UI observes execution progress
+- **WHEN** a committed PlanItem changes between pending, in-progress, completed, blocked, or skipped
+- **THEN** adapters may project its title and status as a user-facing TODO while keeping raw control tools, bindings, evidence, revision, and digest hidden
 
 #### Scenario: SubAgent completes assigned work
 - **WHEN** a bound SubAgent exits successfully

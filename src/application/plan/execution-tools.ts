@@ -33,7 +33,10 @@ const verifyParams = Type.Object({
   criteria: Type.Array(Type.Object({
     criterionId: Type.String({ minLength: 1 }),
     passed: Type.Boolean(),
-    evidenceIds: Type.Array(Type.String({ minLength: 1 })),
+    evidenceIds: Type.Array(Type.String({
+      minLength: 1,
+      description: "Exact persisted evidence IDs. Successful bound tool calls use tool-<toolCallId>; do not invent file or line references, and do not reuse one evidence ID across criteria.",
+    })),
     observedExitCode: Type.Optional(Type.Integer()),
     observed: Type.Optional(Type.Object({
       matched: Type.Boolean(),
@@ -101,7 +104,7 @@ export function makePlanExecutionDriver(options: ExecutionToolOptions): Driver {
     ...capability,
     name: PLAN_EXECUTION_TOOL_NAMES[1],
     label: "Verify Plan Item",
-    description: "Verify acceptance criteria with recorded evidence.",
+    description: "Verify acceptance criteria using exact persisted evidence IDs from successful tool calls made while the item is bound. A tool call with ID X records evidence as tool-X, and each evidence ID can prove only one criterion.",
     parameters: verifyParams,
     execute: async (_id, params) => {
       const main = currentMain(options);

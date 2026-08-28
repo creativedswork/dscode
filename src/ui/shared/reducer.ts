@@ -1,5 +1,6 @@
 import type { UIMessage, ToolCallEntry, ServerEvent } from "./types.js";
 import { formatToolArgsForDisplay } from "./tool-args-formatter.js";
+import { isConversationToolVisible } from "./tool-visibility.js";
 
 function normalizeContent(c: unknown): string {
   if (typeof c === "string") return c;
@@ -60,7 +61,9 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
         content: normalizeContent(m.content),
         thinking: typeof m.thinking === "string" ? m.thinking : "",
         tools: Array.isArray(m.tools)
-          ? m.tools.map((tool: ToolCallEntry) => ({ ...tool }))
+          ? m.tools
+            .filter((tool: ToolCallEntry) => isConversationToolVisible(tool.name))
+            .map((tool: ToolCallEntry) => ({ ...tool }))
           : [],
         createdAt: typeof m.createdAt === "number" ? m.createdAt : undefined,
         images: Array.isArray(m.images) ? m.images : [],
@@ -88,13 +91,42 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
 
     case "planning_mode": {
       const id = `planning-mode-${event.id}`;
-      if (prev.some((message) => message.id === id)) return prev;
+      if (prev.some((message) => message.id.startsWith("planning-mode-"))) {
+        return prev;
+      }
       return [
         ...prev,
         {
           id,
           role: "system",
           content: "进入 Planning Mode",
+          createdAt: event.createdAt ?? Date.now(),
+        },
+      ];
+    }
+
+    case "plan_ready": {
+      const id = `plan-ready-${event.id}`;
+      const existing = prev.findIndex((message) => message.id === id);
+      const message: UIMessage = {
+        id,
+        role: "system",
+        content: event.text,
+        createdAt: event.createdAt ?? Date.now(),
+      };
+      if (existing < 0) return [...prev, message];
+      return prev.map((item, index) => index === existing ? message : item);
+    }
+
+    case "plan_response": {
+      const id = `plan-response-${event.id}`;
+      if (prev.some((message) => message.id === id)) return prev;
+      return [
+        ...prev,
+        {
+          id,
+          role: "user",
+          content: event.text,
           createdAt: event.createdAt ?? Date.now(),
         },
       ];
@@ -147,6 +179,7 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
       }), { createdAt: event.createdAt });
 
     case "tool_start":
+      if (!isConversationToolVisible(event.name)) return prev;
       return updateLastOrCreate(prev, (msg) => {
         const entry: ToolCallEntry = {
           toolCallId: event.toolCallId,
@@ -185,6 +218,7 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
     }
 
     case "tool_end": {
+      if (!isConversationToolVisible(event.name)) return prev;
       const next = [...prev];
       const index = streamingAssistantIndex(next);
       const current = index >= 0 ? next[index] : undefined;

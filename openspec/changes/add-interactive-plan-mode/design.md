@@ -51,7 +51,7 @@ Plan Mode 必须是运行时能力，不能依赖只服务于 dscode 开发流�
 - 由 `AgentSupervisor` 创建，`parentAgentId` 指向 Main，并取得当前 TTY 的前台控制权。
 - Planner 运行时 Main 进入 `waiting`；Planner 等待用户时也进入 `waiting`，但保留可恢复快照。
 - Planner 不启动 Evaluator SubAgent。技术候选由 Planner 根据证据自主选择；只有缺失的用户价值判断通过 Chat 请求输入。
-- Planner 完成已验证 revision 并取得内部执行绑定后退出；Supervisor 将前台控制权交还 Main。
+- Planner 完成已验证 revision 并取得内部执行绑定后退出；Supervisor 将前台控制权交还 Main，并自动发起隐藏的内部 continuation，让 Main 按依赖顺序绑定、执行和验收 PlanItem，不等待新的用户消息。
 
 ```mermaid
 sequenceDiagram
@@ -76,6 +76,7 @@ sequenceDiagram
     Planner->>Store: validate revision + digest
     Planner-->>Supervisor: completed
     Supervisor->>Main: resume with bound plan
+    Main->>Store: execute and verify pending PlanItems
 ```
 
 该模型保持 Agent 即进程、Session 即 TTY。PlanRecord 是进程产生和消费的数据，不是新的进程类型，也不归 Session 所有。
@@ -153,7 +154,11 @@ failed
 - 成本或可逆性差异需要用户做价值判断。
 - 用户提供的信息互相冲突，需要补充约束。
 
-技术实现候选不因“存在多个方案”而打断用户。Planner 自动选择证据最充分且满足硬约束的路径，并可自主深入调查或回溯。Chat 对齐只提交选择或自定义约束；回溯会截断其后的未授权轨迹，并产生新 revision。
+技术实现候选不因“存在多个方案”而打断用户。Planner 通过
+`plan_select_decision` 自动选择证据最充分且满足硬约束的路径，并可自主深入
+调查或回溯；包含 `constraintFit: uncertain` 的候选仍必须由持久化 Chat
+交互解决。Chat 对齐只提交选择或自定义约束；回溯会截断其后的未授权轨迹，
+并产生新 revision。
 
 交互命令使用显式 action union：
 
@@ -258,7 +263,7 @@ HarnessEventBus 增加 presentation-neutral 事件：
 - `plan:execution`
 - `plan:conflict`
 
-Web/TUI adapters 只把需要用户价值判断的 pending interaction 投影为 Chat 内联对齐项。其余计划事件供恢复、审计和轻量运行状态使用，不形成独立产品模块。领域层不携带 JSX、终端颜色、按钮标签或布局信息。
+Web/TUI adapters 把需要用户价值判断的 pending interaction 投影为 Chat 内联对齐项，并把已编译 PlanItem 的标题与持久化状态投影为 Chat 内联 TODO。候选树、revision、digest、effect grant、evidence 和 `plan_*` 控制工具仅供恢复与审计，不进入可见 Chat，也不形成独立产品模块。领域层不携带 JSX、终端颜色、按钮标签或布局信息。
 
 PlanService 在每个成功提交的 store `version` 后发出 `plan:updated`，包括只改变 approval、status、evidence、pending interaction 或 command receipt 的提交；因此 UI 的 expectedVersion 始终与真相源一致。事件同时携带 semantic revision，消费者不能用 revision 推断是否发生了运行态更新。
 
@@ -272,13 +277,14 @@ PlanService 在每个成功提交的 store `version` 后发出 `plan:updated`，
 
 ### 10. Web/TUI 使用 Chat 原生意图对齐
 
-PlanRecord、候选路径、revision、digest、PlanItem 和执行证据不进入 `UIMessage[]`，也不混入模型 transcript。共享 projection 只暴露当前需要用户回答的意图对齐请求；适配器把它渲染在 Chat 时间线中，用户选择转换为显式约束后再恢复 Agent。
+PlanRecord、候选路径、revision、digest、effect grant 和执行证据不进入 `UIMessage[]`，也不混入模型 transcript。共享 projection 暴露当前需要用户回答的意图对齐请求，以及已编译 PlanItem 的用户可理解标题与状态；适配器把它们渲染在 Chat 时间线中，用户选择转换为显式约束后再恢复 Agent。
 
 Web：
 
 - composer 保持单一 Chat 输入，不提供 `Auto / Plan` segmented control。
 - Agent 需要视觉风格、范围取舍或兼容承诺时，在 Chat 流中展示一句问题、推荐项、最多三个选项和自定义输入。
-- 技术候选、证据比较、PlanItem、revision、digest、Agent evidence 和重新规划状态不单独展示；普通执行进度继续沿用现有 Chat/Tool UI。
+- 技术候选、证据比较、revision、digest 和 Agent evidence 不展示；内部 `plan_*` 工具不进入 Chat。Planner 授权后先投影一次“计划已生成 · N 项任务”，再以单个内联 TODO 列表进入执行阶段，并随 `pending | in_progress | blocked | completed | skipped` 持久化状态更新。
+- 首次 Planner handoff 插入一次 `进入 Planning Mode`。派生 revision 不重复插入该标记；规划期间在现有 TODO 上显示“正在调整执行计划”，授权后将原计划结果标记更新为“执行计划已更新 · N 项任务”。
 - 不显示独立“正在准备规划”页面。Agent 可以使用普通 Chat 思考状态，但在意图对齐完成前不得调用副作用工具。
 - 整份计划不要求用户审批；危险副作用继续进入现有 permission prompt。
 

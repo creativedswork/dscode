@@ -4,6 +4,7 @@ export type PlanCoordinationOperation =
   | "publish_event"
   | "resolve_approval"
   | "resolve_decision"
+  | "resume_main"
   | "start_replan"
   | "terminal_cleanup";
 

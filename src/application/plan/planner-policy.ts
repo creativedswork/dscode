@@ -29,9 +29,13 @@ export function assertPlannerActionInteraction(
 ): void {
   let decisionNodeId: string | undefined;
   if (command.action.kind === "select") {
-    const decision = decisionById(plan, command.action.decisionNodeId);
-    if (!decision) throw new Error(`Decision not found: ${command.action.decisionNodeId}`);
-    if (!assessHumanInteraction(plan, decision).required) return;
+    const action = command.action;
+    const decision = decisionById(plan, action.decisionNodeId);
+    if (!decision) throw new Error(`Decision not found: ${action.decisionNodeId}`);
+    const option = decision.candidates.find((candidate) =>
+      candidate.optionId === action.optionId
+    );
+    if (!option || option.constraintFit !== "uncertain") return;
     decisionNodeId = decision.decisionNodeId;
   } else if (command.action.kind === "update_constraints") {
     if (command.action.constraints.every((patch) =>

@@ -21,6 +21,7 @@ import {
   PLANNER_TOOL_CAPABILITIES,
   PlanStore,
   PlannerProcessCoordinator,
+  type PlanRecord,
 } from "../../../src/application/plan/index.js";
 import { makePlanInput } from "./helpers.js";
 import { createTestPlanService } from "./plan-service-fixture.js";
@@ -72,7 +73,9 @@ function application(name: string): AgentApplicationSnapshot {
   }, { kind: "internal", path: `test:${name}` }, 1);
 }
 
-async function setup() {
+async function setup(
+  onApprovedPlan?: (plan: Readonly<PlanRecord>) => Promise<void> | void,
+) {
   const root = await mkdtemp(join(tmpdir(), "dscode-planner-lifecycle-"));
   roots.push(root);
   const mainApplication = application("main");
@@ -125,13 +128,15 @@ async function setup() {
   const coordinator = new PlannerProcessCoordinator(
     supervisor,
     createTestPlanService(planStore),
+    { onApprovedPlan },
   );
   return { coordinator, main, planStore, processStore, supervisor };
 }
 
 describe("Planner process lifecycle", () => {
   it("keeps one foreground owner and persists Main/Planner waiting states", async () => {
-    const fixture = await setup();
+    const onApprovedPlan = vi.fn();
+    const fixture = await setup(onApprovedPlan);
     const handle = await fixture.coordinator.start(fixture.main.agentId, {
       requestId: "request-1",
       requestText: "Plan a risky change",
@@ -203,6 +208,10 @@ describe("Planner process lifecycle", () => {
     expect(fixture.main.state).toBe("running");
     expect(fixture.supervisor.foreground("session-1")?.agentId)
       .toBe(fixture.main.agentId);
+    expect(onApprovedPlan).toHaveBeenCalledWith(expect.objectContaining({
+      planId: handle.planId,
+      status: "approved",
+    }));
   });
 
   it("spawns a replacement Planner for a settled needs_replan Plan", async () => {

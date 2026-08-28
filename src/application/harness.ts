@@ -125,6 +125,7 @@ import { PlannerProcessCoordinator } from "./plan/planner-process.js";
 import { PlanService } from "./plan/plan-service.js";
 import type { PlanMutationResult } from "./plan/plan-port.js";
 import { PlanStore } from "./plan/store.js";
+import type { PlanRecord } from "./plan/types.js";
 import type {
   PlanSubmissionMode,
   PlanSubmissionResult,
@@ -1112,6 +1113,9 @@ export class Harness {
     this.plannerCoordinator = new PlannerProcessCoordinator(
       this.agentSupervisor,
       this.planService,
+      {
+        onApprovedPlan: (plan) => this.resumeApprovedPlan(plan),
+      },
     );
     this.events.on("agent:exit", (event) => {
       const process = this.agentSupervisor.get(event.result.agentId);
@@ -1189,6 +1193,46 @@ export class Harness {
       return;
     }
     await this.submitRoutedRequest(text, "auto", prompt);
+  }
+
+  private async resumeApprovedPlan(plan: Readonly<PlanRecord>): Promise<void> {
+    if (this.sessionManager.getCurrentSessionId() !== plan.sessionId) return;
+    const main = this.agentSupervisor.get(plan.mainAgentId);
+    if (main?.context.activePlan?.planId !== plan.planId) return;
+    const executionPlan = {
+      planId: plan.planId,
+      version: plan.version,
+      revision: plan.revision,
+      digest: plan.digest,
+      goal: plan.goal,
+      constraints: plan.constraints,
+      sideEffectSummary: plan.sideEffectSummary,
+      items: plan.items.filter((item) => item.status === "pending").map((item) => ({
+        itemId: item.itemId,
+        title: item.title,
+        description: item.description,
+        dependsOn: item.dependsOn,
+        acceptanceCriteria: item.acceptanceCriteria,
+        effectGrants: item.effectGrants,
+      })),
+    };
+    this.events.emit({ type: "processing:start" });
+    try {
+      await this.conversationCoordinator.prompt(this.conversationPromptOptions([
+        "<plan_execution>",
+        "The internal Planner has completed and authorized the following Plan.",
+        "Execute every pending item now in dependency order without routing or planning again.",
+        "Before each item's side effects, call plan_start_item with the latest Plan version, revision, digest, and item ID.",
+        "After satisfying its acceptance criteria, call verify_item with concrete evidence, then continue to the next item.",
+        "For verify_item, use the current Plan version returned by plan_start_item and exact persisted evidence IDs: a successful bound tool call with ID X is referenced as tool-X. Never invent file, line, or descriptive evidence IDs, and collect a distinct evidence ID for every criterion.",
+        "Use plan_report_conflict only for a material conflict that invalidates the approved Plan.",
+        "Do not stop after summarizing the Plan and do not wait for another user message.",
+        JSON.stringify(executionPlan),
+        "</plan_execution>",
+      ].join("\n")));
+    } finally {
+      this.events.emit({ type: "processing:stop" });
+    }
   }
 
   private async submitRoutedRequest(

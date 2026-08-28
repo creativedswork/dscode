@@ -3,10 +3,11 @@ import type { ImageAttachment, FileAttachment, FileListItem, ViewMode } from "..
 import { PaperPlaneTilt, Folder, File, Image, TextAlignLeft, Video, SpeakerHigh, FilePdf, Archive, X } from "@phosphor-icons/react";
 
 interface MessageInputProps {
-  onSend: (text: string, images?: ImageAttachment[], fileRefs?: string[], uploadedFiles?: { name: string; content: string }[]) => void;
+  onSend: (text: string, images?: ImageAttachment[], fileRefs?: string[], uploadedFiles?: { name: string; content: string }[]) => boolean;
   onAbort: () => void;
   onSlashCommand: (command: string) => void;
   onCommand: (cmd: { type: "file_list"; prefix: string }) => void;
+  connected: boolean;
   processing: boolean;
   slashCommands: { name: string; description: string }[];
   fileListItems: FileListItem[];
@@ -124,6 +125,7 @@ export function MessageInput({
   onAbort,
   onSlashCommand,
   onCommand,
+  connected,
   processing,
   slashCommands,
   fileListItems,
@@ -220,6 +222,18 @@ export function MessageInput({
     if (pendingImages.length > 0) return;
     const trimmed = text.trim();
     if (!trimmed && images.length === 0 && uploadedFiles.length === 0) return;
+    const uploadPayload = uploadedFiles.length > 0
+      ? uploadedFiles.map(f => ({ name: f.name, content: f.content }))
+      : undefined;
+    if (!onSend(
+      trimmed,
+      images.length > 0 ? images : undefined,
+      undefined,
+      uploadPayload,
+    )) {
+      onToast?.("warning", "连接尚未恢复，消息未发送");
+      return;
+    }
     // Push to history if non-empty and not duplicate of last entry
     if (trimmed && historyRef.current[0] !== trimmed) {
       historyRef.current.unshift(trimmed);
@@ -228,19 +242,15 @@ export function MessageInput({
       }
     }
     historyCursorRef.current = -1;
-    const uploadPayload = uploadedFiles.length > 0
-      ? uploadedFiles.map(f => ({ name: f.name, content: f.content }))
-      : undefined;
     if (textareaRef.current) {
       syncTextareaHeight(textareaRef.current, false);
     }
-    onSend(trimmed, images.length > 0 ? images : undefined, undefined, uploadPayload);
     setText("");
     setImages([]);
     setUploadedFiles([]);
     setShowSlashMenu(false);
     setShowFileMenu(false);
-  }, [text, images, pendingImages, uploadedFiles, onSend]);
+  }, [text, images, pendingImages, uploadedFiles, onSend, onToast]);
 
   const navigateToDirectory = (dirPath: string) => {
     const textarea = textareaRef.current;
@@ -817,11 +827,13 @@ export function MessageInput({
           placeholder={
             processing
               ? "Processing... (Esc to stop)"
+              : !connected
+              ? "Reconnecting... message will stay here"
               : viewMode === "session_dashboard"
               ? "Ask about this dashboard\u2026"
               : "Type a message... (@file, Tab for multi-file, Enter to send)"
           }
-          disabled={processing}
+          disabled={processing || !connected}
           rows={1}
           className="flex-1 resize-none text-sm min-h-[40px] max-h-[200px] px-4 py-2.5 focus:outline-none"
           style={{
@@ -843,7 +855,7 @@ export function MessageInput({
         ) : (
           <button
             onClick={handleSubmit}
-            disabled={pendingImages.length > 0 || (!text.trim() && images.length === 0 && uploadedFiles.length === 0)}
+            disabled={!connected || pendingImages.length > 0 || (!text.trim() && images.length === 0 && uploadedFiles.length === 0)}
             className="btn-primary shrink-0"
             title={pendingImages.length > 0 ? "Preparing image attachments" : "Send"}
           >
@@ -858,6 +870,8 @@ export function MessageInput({
         DSCode Web &middot;{" "}
         {processing
           ? "Press Stop or Esc to abort"
+          : !connected
+            ? "Reconnect with the latest DSCode Web URL to continue"
           : viewMode === "session_dashboard"
             ? "Dashboard mode \u2014 ask follow-up questions about this session"
             : "Type @ for files, Tab to add more, Enter to send, Ctrl+V for images"}

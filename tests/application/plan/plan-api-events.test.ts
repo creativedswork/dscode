@@ -27,7 +27,7 @@ function candidate(optionId: string): PlanCandidate {
     risks: [],
     cost: "low",
     reversibility: "reversible",
-    constraintFit: "satisfies",
+    constraintFit: "uncertain",
     recommended: optionId === "a",
     rationale: `Public rationale ${optionId}`,
   };
@@ -135,7 +135,9 @@ describe("Plan HarnessAPI and domain events", () => {
     );
     fixture.harness.bindUserInteraction(interaction);
 
-    expect(interaction.requestPlanDecision).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      expect(interaction.requestPlanDecision).toHaveBeenCalledTimes(1);
+    });
     expect(timeline.slice(-3)).toEqual([
       `updated:${waiting.version}`,
       `interaction:${waiting.version}`,

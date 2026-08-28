@@ -142,6 +142,29 @@ describe("Planner tools", () => {
       .decisions[1]).not.toHaveProperty("expectedVersion");
   });
 
+  it("lets Planner select a technical decision without user interaction", async () => {
+    const fixture = await setup();
+    const tool = fixture.tools.find((item) =>
+      item.name === "plan_select_decision"
+    );
+    if (!tool) throw new Error("select decision tool missing");
+
+    const result = await tool.execute("tool-select", {
+      expectedVersion: fixture.appended.version,
+      decisionNodeId: "decision-1",
+      optionId: "a",
+    }, new AbortController().signal);
+
+    expect(result.details).toMatchObject({
+      decisions: [{
+        decisionNodeId: "decision-1",
+        status: "selected",
+        selectedOptionId: "a",
+      }],
+      pendingInteraction: undefined,
+    });
+  });
+
   it("persists a decision before waiting and resumes from its receipt", async () => {
     const fixture = await setup();
     const tool = fixture.tools.find((item) => item.name === "plan_request_decision");

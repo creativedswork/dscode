@@ -54,7 +54,10 @@ export class PlanExecutionState {
           throw new PlanDomainError("invalid_command", "Main Agent is not bound to item");
         }
         if (!allCriteriaPassed(item, draft, command)) {
-          throw new PlanDomainError("invalid_command", "Acceptance criteria did not pass");
+          throw new PlanDomainError(
+            "invalid_command",
+            "Acceptance criteria did not pass. Use exact persisted evidence IDs in the form tool-<toolCallId>, with a distinct evidence ID for each criterion.",
+          );
         }
         item.status = "completed";
         if (draft.items.every((candidate) =>

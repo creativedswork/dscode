@@ -437,6 +437,8 @@ export type ServerEvent =
     }
   | { type: "agent_activity"; activity: AgentActivity }
   | { type: "planning_mode"; id: string; createdAt?: number }
+  | { type: "plan_ready"; id: string; text: string; createdAt?: number }
+  | { type: "plan_response"; id: string; text: string; createdAt?: number }
   | { type: "user_message"; text: string; images?: ImageAttachment[]; createdAt?: number }
   | { type: "assistant_start"; messageId?: string; createdAt?: number }
   | { type: "thinking_delta"; delta: string; createdAt?: number }

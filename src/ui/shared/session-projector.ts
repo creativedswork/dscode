@@ -50,8 +50,10 @@ function extractToolResultText(blocks: any[]): string {
 }
 
 function isInternalAgentNotification(message: any): boolean {
-  return message?.role === "user"
-    && extractText(message.content).trimStart().startsWith("<agent_notifications>");
+  if (message?.role !== "user") return false;
+  const text = extractText(message.content).trimStart();
+  return text.startsWith("<agent_notifications>")
+    || text.startsWith("<plan_execution>");
 }
 
 function recoverSubagentDescriptions(messages: any[]): Map<string, string> {

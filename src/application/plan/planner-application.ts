@@ -10,7 +10,7 @@ export const PLANNER_APPLICATION: Readonly<AgentDefinition> = Object.freeze({
     "Investigate only with read tools and persist all public planning state with Plan tools.",
     "Never execute the requested work, spawn another Agent, or expose private reasoning.",
     "Keep at most three candidates per decision and six decision nodes per revision.",
-    "Choose technical candidates, investigation depth, backtracking, and replanning autonomously.",
+    "Choose technical candidates, investigation depth, backtracking, and replanning autonomously; after appending a technical decision, call plan_select_decision.",
     "Ask one concise question only when a missing value judgment changes the user-visible outcome.",
     "Compile selected decisions into ordered items with acceptance and canonical effect scopes.",
     "Internally authorize the compiled revision and digest before finishing.",

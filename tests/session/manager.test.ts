@@ -138,6 +138,26 @@ describe("SessionManager", () => {
     expect(meta!.title).toBe("Debug the auth flow please");
   });
 
+  it("should skip internal continuation messages for title and preview", () => {
+    manager.createSession("deepseek", "deepseek-v4-flash");
+    const agent = createMockAgent([
+      {
+        role: "user",
+        content: "<plan_execution>\n{\"digest\":\"secret\"}\n</plan_execution>",
+      },
+      {
+        role: "user",
+        content: "Build a retro Breakout game",
+      },
+    ]);
+
+    manager.saveSession(agent);
+
+    const meta = manager.getCurrentMetadata();
+    expect(meta!.title).toBe("Build a retro Breakout game");
+    expect(meta!.preview).toBe("Build a retro Breakout game");
+  });
+
   it("should skip Chinese noise messages", () => {
     const session = manager.createSession("deepseek", "deepseek-v4-flash");
     const agent = createMockAgent([

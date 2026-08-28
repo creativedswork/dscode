@@ -59,9 +59,9 @@ export function useWebSocket(onEvent: EventHandler) {
   }, []);
 
   const send = useCallback((command: ClientCommand) => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify(command));
-    }
+    if (wsRef.current?.readyState !== WebSocket.OPEN) return false;
+    wsRef.current.send(JSON.stringify(command));
+    return true;
   }, []);
 
   useEffect(() => {
