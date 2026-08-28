@@ -4,7 +4,6 @@ import { Markdown } from "./Markdown";
 
 interface ToolCardProps {
   tool: ToolCallEntry;
-  thinking?: string;
 }
 
 interface ParsedImage {
@@ -155,13 +154,12 @@ function RichListItem({ item }: { item: RichItem }) {
   );
 }
 
-export function ToolCard({ tool, thinking }: ToolCardProps) {
+export function ToolCard({ tool }: ToolCardProps) {
   const isError = tool.isError;
   const hasResult = tool.result && tool.result.length > 0;
   const isMcp = tool.name.startsWith("mcp__");
   const hasMcpApp = !!tool.mcpApp;
-  const [open, setOpen] = useState(isMcp && !hasResult);
-  const userManuallyCollapsed = useRef(false);
+  const [open, setOpen] = useState(false);
   const hasProgress = typeof tool.progress === "number";
   const hasProgressTotal = typeof tool.progressTotal === "number" && tool.progressTotal > 0;
   const progressPercent = hasProgressTotal
@@ -182,21 +180,7 @@ export function ToolCard({ tool, thinking }: ToolCardProps) {
   }, [isMcp, hasResult]);
   const elapsedText = hasResult ? "" : formatElapsed(elapsedMs);
 
-  // Auto-expand on first progress, respect manual collapse
-  const hadProgressRef = useRef(hasProgress);
-  useEffect(() => {
-    if (hasProgress && !hadProgressRef.current && !userManuallyCollapsed.current) {
-      setOpen(true);
-    }
-    hadProgressRef.current = hasProgress;
-  }, [hasProgress]);
-
   const handleHeaderClick = () => {
-    if (open) {
-      userManuallyCollapsed.current = true;
-    } else {
-      userManuallyCollapsed.current = false;
-    }
     setOpen(!open);
   };
 

@@ -62,6 +62,17 @@ The frontend SHALL compute elapsed processing time from the `turnStartRef` ancho
 - **WHEN** the server sends an `error` event
 - **THEN** `turnStartRef.current` is set to 0 and the elapsed timer is reset
 
+### Requirement: Thinking and tool details default to collapsed
+Thinking blocks and tool cards SHALL remain collapsed by default during live execution and history replay. Live thinking, MCP startup, and tool progress updates SHALL NOT expand them automatically. The user SHALL retain explicit control through the existing disclosure controls, while collapsed headers continue to show status, elapsed time, and progress.
+
+#### Scenario: Live thinking remains collapsed
+- **WHEN** an assistant starts or continues streaming thinking
+- **THEN** the Thinking body remains collapsed until the user expands it
+
+#### Scenario: Tool execution remains collapsed
+- **WHEN** any tool starts or an MCP tool reports progress
+- **THEN** the tool body remains collapsed until the user expands it
+
 ### Requirement: Active session click is no-op during processing
 The session list in the sidebar SHALL suppress the `session load` action when the user clicks the currently active session while `isProcessing` is true. The session item SHALL remain visually clickable (normal appearance, no opacity reduction). The click is a no-op — the conversation view remains unchanged. Non-active sessions continue to be visually disabled via the existing `isDisabled` logic.
 

@@ -538,7 +538,7 @@ function AssistantMessage({ message }: { message: UIMessage }) {
           )}
           <div className="space-y-2">
             {message.tools!.map((tool, i) => (
-              <ToolCard key={`${tool.name}-${i}`} tool={tool} thinking={message.thinking} />
+              <ToolCard key={`${tool.name}-${i}`} tool={tool} />
             ))}
           </div>
         </>
@@ -598,14 +598,9 @@ function ThinkingBlock({
   thinkingStartedAt?: number;
   thinkingUpdatedAt?: number;
 }) {
-  const [collapsed, setCollapsed] = useState(!isStreaming);
+  const [collapsed, setCollapsed] = useState(true);
   const [tick, setTick] = useState(0);
   const lastLiveElapsedRef = useRef<number | null>(null);
-
-  // auto-expand when streaming starts
-  useEffect(() => {
-    if (isStreaming) setCollapsed(false);
-  }, [isStreaming]);
 
   // local 1s tick during streaming for live timer and stall detection
   useEffect(() => {
