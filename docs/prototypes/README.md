@@ -30,3 +30,5 @@
 - [`2026-08-08-redesign-tui-conversation-interaction`](archive/2026-08-08-redesign-tui-conversation-interaction/) — TUI 对话焦点、Activity Inspector、长 Tool 输出与 SubAgent Permission 重设计
 
 - [`2026-08-13-unified-tool-approval-card`](archive/2026-08-13-unified-tool-approval-card/) — 统一 SubAgent 工具审批面（Web 吸底卡片 + TUI 底部权限面板）
+- [`2026-09-20-add-interactive-plan-mode`](archive/2026-09-20-add-interactive-plan-mode/) — Chat 原生意图对齐、全局 Plan 与 TaskState TODO
+- [`2026-09-20-redesign-plan-executive-loop`](archive/2026-09-20-redesign-plan-executive-loop/) — 有界执行 episode、反思、未验证暂停与显式恢复

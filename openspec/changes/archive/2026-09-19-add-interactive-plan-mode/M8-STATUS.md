@@ -234,9 +234,8 @@ Detailed sanitized evidence:
 
 ## Prototype Retention
 
-- `docs/prototypes/add-interactive-plan-mode-chat-alignment.html`: `archive`.
-  It matches the final Chat-native interaction and remains in staging until
-  change archival.
+- `docs/prototypes/archive/2026-09-20-add-interactive-plan-mode/add-interactive-plan-mode-chat-alignment.html`:
+  `archive`. It matches the final Chat-native interaction.
 - `docs/prototypes/add-interactive-plan-mode-workbench.html`: `delete`. The
   rejected workbench HTML was removed. No README index entry existed to
   remove, and the remaining reference is the final retention record.

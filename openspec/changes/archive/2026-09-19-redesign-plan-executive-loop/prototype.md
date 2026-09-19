@@ -1,6 +1,6 @@
 ## Prototype Files
 
-- [`docs/prototypes/redesign-plan-executive-loop-execution-state.html`](../../../docs/prototypes/redesign-plan-executive-loop-execution-state.html)
+- `docs/prototypes/archive/2026-09-20-redesign-plan-executive-loop/redesign-plan-executive-loop-execution-state.html`
   - Chat-native interactive prototype for `running`, `reflecting`,
     `paused_inconclusive`, and `completed` execution states.
   - Confirms that Plan, outcome-owned TODO, and episode state remain separate in the
@@ -14,7 +14,7 @@
 
 | File | Decision | Rationale |
 |---|---|---|
-| `docs/prototypes/redesign-plan-executive-loop-execution-state.html` | `archive` | Defines the reusable four-state Plan/TODO/episode interaction contract, matches the final Web/TUI implementation and current design tokens, and remains executable evidence for visual regression and design review. Move it during OpenSpec archive. |
+| `docs/prototypes/archive/2026-09-20-redesign-plan-executive-loop/redesign-plan-executive-loop-execution-state.html` | `archive` | Defines the reusable four-state Plan/TODO/episode interaction contract, matches the final Web/TUI implementation and current design tokens, and remains executable evidence for visual regression and design review. |
 
 ## Confirmed Decisions
 

@@ -278,9 +278,8 @@ Deferred risks:
 
 ## Prototype Retention
 
-`docs/prototypes/add-interactive-plan-mode-chat-alignment.html` remains
-`pending`. Final archive/delete handling is deferred until M7, M8, and the
-overall change are complete.
+`docs/prototypes/archive/2026-09-20-add-interactive-plan-mode/add-interactive-plan-mode-chat-alignment.html`
+was retained after M7, M8, and the overall change completed.
 
 ## Manual Acceptance
 

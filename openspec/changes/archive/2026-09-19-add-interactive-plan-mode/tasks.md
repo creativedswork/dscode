@@ -69,7 +69,7 @@
 - [x] 7.6 保持原始 PlanRecord、routing scores、revision、digest、PlanItem 内部字段、候选树、Agent evidence 和 hidden reasoning 不进入可见 Chat transcript 或独立 UI。
 - [x] 7.7 移除独立“正在准备规划”状态；等待期间使用现有 Chat activity 与 Stop，并在 unresolved alignment 存在时阻止副作用工具。
 - [x] 7.8 添加 Planner autonomy、内部 authorization、interaction persistence、Chat reducer/component、恢复、权限独立性和回归测试。
-- [x] 7.9 对照 `docs/prototypes/add-interactive-plan-mode-chat-alignment.html` 完成浏览器验收：未指定风格的俄罗斯方块、充分指定请求、自定义方向、技术路径自主选择、现有权限提示、light/dark、桌面、移动和 `1080x322`。
+- [x] 7.9 对照 `docs/prototypes/archive/2026-09-20-add-interactive-plan-mode/add-interactive-plan-mode-chat-alignment.html` 完成浏览器验收：未指定风格的俄罗斯方块、充分指定请求、自定义方向、技术路径自主选择、现有权限提示、light/dark、桌面、移动和 `1080x322`。
 - [x] 7.10 修复高用户意图不确定性被低操作复杂度覆盖的路由缺口；保持明确视觉约束请求 Direct，并保持纯技术方案分歧自治。
 - [x] 7.11 隐藏路由、工具发现和 Agent 编排工具的 Chat 实现细节；任何未消除的用户意图不确定性均路由到内联对齐。
 - [x] 7.12 为缺少视觉方向的用户可见产物创建请求增加 Host 意图下限，覆盖短 brief、明确视觉方向和既有产物修复，并在真实 Workbuddy `dist` 进程中复验。
@@ -86,7 +86,7 @@
 - [x] 7.23 在 Web Chat 中将全局计划输出置于唯一 TODO 之前并默认折叠；折叠头显示标题、任务数和状态，展开控件满足键盘与 `aria-expanded` 语义。
 - [x] 7.24 保证 `plan_state + plan_ready` 在 Main execution continuation 前发布；replan 期间保留最后授权输出，新 revision 授权后原子替换同一输出和 TODO，不展示 drafting 中间态。
 - [x] 7.25 覆盖首次授权、默认折叠、展开内容、唯一性、Plan→TODO 顺序、终态恢复、Session 切换、replan 替换、隐藏字段和窄视口测试。
-- [x] 7.26 修订并浏览器验证 `docs/prototypes/add-interactive-plan-mode-chat-alignment.html` 的计划输出场景，覆盖折叠/展开、light/dark、桌面、移动和 `1080x322`。
+- [x] 7.26 修订并浏览器验证 `docs/prototypes/archive/2026-09-20-add-interactive-plan-mode/add-interactive-plan-mode-chat-alignment.html` 的计划输出场景，覆盖折叠/展开、light/dark、桌面、移动和 `1080x322`。
 - [x] 7.27 修复 command acceptance 与执行授权脱节：编译期派生最小 `process` grant、拒绝复合 shell criterion，并约束 Main 逐项原样执行和验收。
 - [x] 7.28 将 Main 聚合 command criteria 形成的复合 Bash 作为可重试格式错误拒绝，保留当前执行授权并返回逐条原样执行提示，避免无意义 replan。
 - [x] 7.29 在 live 与 Session 回放中隐藏可重试 `invalid_command` Bash 纠偏行，同时保留真实命令失败、Plan scope 冲突和逐条验收结果。

@@ -1,6 +1,6 @@
 ## Prototype Files
 
-- `docs/prototypes/add-interactive-plan-mode-chat-alignment.html` — 当前设计事实源。复用 dscode Chat shell、暖色 `--color-*` tokens、现有 composer 和权限卡片形态；覆盖待对齐、已对齐、信息充分直接执行和现有权限确认四个场景。
+- `docs/prototypes/archive/2026-09-20-add-interactive-plan-mode/add-interactive-plan-mode-chat-alignment.html` — 当前设计事实源。复用 dscode Chat shell、暖色 `--color-*` tokens、现有 composer 和权限卡片形态；覆盖待对齐、已对齐、信息充分直接执行和现有权限确认四个场景。
 
 已确认的交互和视觉决策：
 
@@ -44,4 +44,4 @@ flex/grid 子项宽度后，文档、body、场景栏和 conversation 的 `scrol
 
 | File | Decision | Rationale |
 |---|---|---|
-| `docs/prototypes/add-interactive-plan-mode-chat-alignment.html` | `archive` | 原型定义了可复用的 Chat 原生意图对齐、折叠 Plan 与 context-owned TODO 状态矩阵；当前实现与 design tokens 保持一致，且 M9 已完成实际 Web/TUI 验收。文件保留在 staging，待 change archive 时移动。 |
+| `docs/prototypes/archive/2026-09-20-add-interactive-plan-mode/add-interactive-plan-mode-chat-alignment.html` | `archive` | 原型定义了可复用的 Chat 原生意图对齐、折叠 Plan 与 context-owned TODO 状态矩阵；当前实现与 design tokens 保持一致，且 M9 已完成实际 Web/TUI 验收。 |
