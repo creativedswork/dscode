@@ -2,10 +2,11 @@ import type {
   PlanCommandReceipt,
   PlanInteraction,
   PlanRecord,
+  PlanRecordV2,
 } from "./types.js";
 
 export type NewPlanRecord = Omit<
-  PlanRecord,
+  PlanRecordV2,
   | "schemaVersion"
   | "projectKey"
   | "version"

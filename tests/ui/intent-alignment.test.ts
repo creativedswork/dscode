@@ -6,17 +6,26 @@ import {
   EMPTY_PLAN_VIEW_STATE,
   planViewReducer,
 } from "../../src/ui/shared/plan-reducer.js";
+import { projectPublicPlan } from "../../src/ui/shared/plan-projection.js";
 import type { PlanCandidate } from "../../src/application/plan/index.js";
 import {
   ChatView,
+  ExecutionEpisodeStatus,
   PlanTodoList,
+  PublicPlanDisclosure,
   waitingElapsedMs,
 } from "../../web/src/components/ChatView.js";
 import { IntentAlignment } from "../../web/src/components/IntentAlignment.js";
 import {
   buildIntentAlignmentCommand,
+  sendIntentAlignment,
 } from "../../web/src/utils/intentAlignment.js";
-import { pendingPlan } from "./plan-protocol-fixture.js";
+import {
+  makePlan,
+  makeEpisode,
+  makeTaskState,
+  pendingPlan,
+} from "./plan-protocol-fixture.js";
 
 function candidate(
   optionId: string,
@@ -51,6 +60,20 @@ function alignmentState() {
   return planViewReducer(EMPTY_PLAN_VIEW_STATE, {
     type: "plan_state",
     plan,
+  });
+}
+
+function authorizedPlan() {
+  return makePlan({
+    status: "approved",
+    approval: {
+      revision: 2,
+      digest: "a".repeat(64),
+      approvedEffects: ["workspace_write"],
+      acknowledgedSideEffects: [],
+      interactionId: "internal:planner-1",
+      approvedAt: 10,
+    },
   });
 }
 
@@ -128,6 +151,18 @@ describe("Web Chat intent alignment", () => {
     )).toBeNull();
   });
 
+  it("allows the same alignment to retry after transport rejection", () => {
+    const state = alignmentState();
+    const send = vi.fn()
+      .mockReturnValueOnce(false)
+      .mockReturnValueOnce(true);
+    const answer = { kind: "select", optionId: "retro" } as const;
+
+    expect(sendIntentAlignment(state, "session-1", answer, send)).toBe(false);
+    expect(sendIntentAlignment(state, "session-1", answer, send)).toBe(true);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps alignment and existing permission UI in the Chat flow", () => {
     const state = alignmentState();
     if (!state.interaction) throw new Error("alignment missing");
@@ -173,34 +208,64 @@ describe("Web Chat intent alignment", () => {
     expect(markup).toContain('role="status"');
   });
 
-  it("renders persisted Plan items as a live TODO list", () => {
-    const plan = pendingPlan();
-    plan.status = "executing";
-    plan.pendingInteraction = undefined;
-    plan.items[0].status = "in_progress";
-    plan.items.push({
-      ...plan.items[0],
-      itemId: "item-2",
-      order: 1,
-      title: "Verify the result",
-      status: "pending",
+  it("renders persisted TaskState as a live TODO list", () => {
+    const taskState = makeTaskState({
+      todoList: [{
+        todoId: "outcome-1",
+        title: "Playable result",
+        status: "in_progress",
+      }, {
+        todoId: "outcome-2",
+        title: "Accessible controls",
+        status: "pending",
+      }],
     });
 
-    const markup = renderToStaticMarkup(createElement(PlanTodoList, { plan }));
+    const markup = renderToStaticMarkup(createElement(PlanTodoList, {
+      taskState,
+    }));
 
     expect(markup).toContain("TODO");
     expect(markup).toContain("执行中 · 0/2");
-    expect(markup).toContain("Write snapshot");
-    expect(markup).toContain("Verify the result");
+    expect(markup).toContain("Playable result");
+    expect(markup).toContain("Accessible controls");
     expect(markup).toContain("待执行");
     expect(markup).not.toContain("plan_start_item");
-    expect(markup).not.toContain(plan.digest);
+  });
+
+  it("renders paused execution as unverified with explicit recovery actions", () => {
+    const markup = renderToStaticMarkup(createElement(ExecutionEpisodeStatus, {
+      episode: makeEpisode(),
+      taskState: makeTaskState({
+        todoList: [{
+          todoId: "done",
+          title: "Core result",
+          status: "completed",
+          result: "Verified",
+        }, {
+          todoId: "pending",
+          title: "Mobile controls",
+          status: "in_progress",
+        }],
+      }),
+      connected: true,
+      pending: false,
+      onRecover: vi.fn(() => true),
+    }));
+
+    expect(markup).toContain("自动执行已暂停");
+    expect(markup).toContain("未验证");
+    expect(markup).toContain("已完成 1/2 项");
+    expect(markup).toContain("调整方案");
+    expect(markup).toContain("继续执行");
+    expect(markup).toContain('aria-label="自动执行已暂停"');
+    expect(markup).not.toMatch(/失败|已完成 2\/2/);
   });
 
   it("places the Plan result before the Act TODO", () => {
-    const plan = pendingPlan();
-    plan.status = "approved";
-    plan.pendingInteraction = undefined;
+    const plan = authorizedPlan();
+    const publicPlan = projectPublicPlan(plan);
+    if (!publicPlan) throw new Error("public Plan missing");
 
     const markup = renderToStaticMarkup(createElement(ChatView, {
       messages: [{
@@ -210,34 +275,38 @@ describe("Web Chat intent alignment", () => {
       }, {
         id: `plan-ready-${plan.planId}`,
         role: "system",
-        content: "计划已生成 · 1 项任务",
+        content: "计划已生成",
       }],
       processing: false,
       hasStreaming: false,
       sessionActiveMs: 0,
       permissionPrompt: null,
       onPermission: vi.fn(),
-      plan,
+      presentationPlan: plan,
+      publicPlan,
+      taskState: makeTaskState(),
     }));
 
     expect(markup.indexOf("进入 Planning Mode"))
-      .toBeLessThan(markup.indexOf("计划已生成 · 1 项任务"));
-    expect(markup.indexOf("计划已生成 · 1 项任务"))
-      .toBeLessThan(markup.indexOf("TODO"));
-    expect(markup).toContain("准备执行 · 0/1");
+      .toBeLessThan(markup.indexOf("计划已生成"));
+    expect(markup.indexOf("计划已生成"))
+      .toBeLessThan(markup.indexOf('aria-label="执行计划"'));
+    expect(markup.indexOf('aria-label="执行计划"'))
+      .toBeLessThan(markup.indexOf('aria-label="TODO 执行清单"'));
+    expect(markup).toContain("执行中 · 0/1");
   });
 
-  it("keeps one live TODO after later execution messages", () => {
-    const plan = pendingPlan();
+  it("renders one collapsed public Plan and one live TODO after later messages", () => {
+    const plan = authorizedPlan();
     plan.status = "executing";
-    plan.pendingInteraction = undefined;
-    plan.items[0].status = "in_progress";
+    const publicPlan = projectPublicPlan(plan);
+    if (!publicPlan) throw new Error("public Plan missing");
 
     const markup = renderToStaticMarkup(createElement(ChatView, {
       messages: [{
         id: `plan-ready-${plan.planId}`,
         role: "system",
-        content: "计划已生成 · 1 项任务",
+        content: "计划已生成",
       }, {
         id: "assistant-execution",
         role: "assistant",
@@ -248,24 +317,108 @@ describe("Web Chat intent alignment", () => {
       sessionActiveMs: 0,
       permissionPrompt: null,
       onPermission: vi.fn(),
-      plan,
+      presentationPlan: plan,
+      publicPlan,
+      taskState: makeTaskState({
+        todoList: [{
+          todoId: "outcome-1",
+          title: "Playable result",
+          status: "in_progress",
+        }],
+      }),
     }));
 
     expect(markup.indexOf("正在实现第一个任务"))
+      .toBeLessThan(markup.indexOf('aria-label="执行计划"'));
+    expect(markup.indexOf('aria-label="执行计划"'))
       .toBeLessThan(markup.indexOf('aria-label="TODO 执行清单"'));
+    expect(markup.match(/aria-label="执行计划"/g)).toHaveLength(1);
     expect(markup.match(/aria-label="TODO 执行清单"/g)).toHaveLength(1);
+    expect(markup).toContain("<details");
+    expect(markup).not.toContain("<details open");
   });
 
-  it("labels replanning on the existing TODO list", () => {
-    const plan = pendingPlan();
-    plan.status = "drafting";
-    plan.baseRevision = 2;
-    plan.pendingInteraction = undefined;
+  it("renders TaskState results and structured external blockers", () => {
+    const taskState = makeTaskState({
+      status: "blocked",
+      todoList: [{
+        todoId: "outcome-1",
+        title: "Playable result",
+        status: "completed",
+        result: "Game launches and accepts keyboard input",
+      }, {
+        todoId: "outcome-2",
+        title: "Published demo",
+        status: "blocked",
+        blocker: {
+          kind: "permission",
+          reason: "Deployment permission is required",
+          recovery: "Grant publish access",
+        },
+      }],
+    });
+    const markup = renderToStaticMarkup(createElement(PlanTodoList, {
+      taskState,
+    }));
 
-    const markup = renderToStaticMarkup(createElement(PlanTodoList, { plan }));
+    expect(markup).toContain("Game launches and accepts keyboard input");
+    expect(markup).toContain("Deployment permission is required");
+    expect(markup).toContain("Grant publish access");
+    expect(markup).toContain("受阻 · 1/2");
+  });
 
-    expect(markup).toContain("正在调整执行计划");
-    expect(markup).not.toContain("进入 Planning Mode");
+  it("renders Direct TaskState without a Plan", () => {
+    const markup = renderToStaticMarkup(createElement(ChatView, {
+      messages: [],
+      processing: false,
+      hasStreaming: false,
+      sessionActiveMs: 0,
+      permissionPrompt: null,
+      onPermission: vi.fn(),
+      taskState: makeTaskState(),
+    }));
+
+    expect(markup).toContain('aria-label="TODO 执行清单"');
+    expect(markup).not.toContain('aria-label="执行计划"');
+  });
+
+  it("renders the expanded Plan sections without internal fields", () => {
+    const plan = authorizedPlan();
+    plan.goal = "交付公开执行计划";
+    plan.constraints.push({
+      constraintId: "constraint-secret",
+      kind: "hard",
+      description: "保持兼容",
+      source: "user",
+    });
+    plan.decisions[0].status = "selected";
+    plan.decisions[0].selectedOptionId = plan.decisions[0].candidates[0].optionId;
+    plan.sideEffectSummary = "仅修改 Web Chat";
+    const publicPlan = projectPublicPlan(plan);
+    if (!publicPlan) throw new Error("public Plan missing");
+
+    const markup = renderToStaticMarkup(createElement(PublicPlanDisclosure, {
+      plan: publicPlan,
+    }));
+
+    for (const text of [
+      "目标",
+      "约束",
+      "确定方案",
+      "范围",
+      "执行步骤",
+      "验证",
+      "交付公开执行计划",
+      "保持兼容",
+      "仅修改 Web Chat",
+    ]) {
+      expect(markup).toContain(text);
+    }
+    expect(markup).toContain("min-width:0");
+    expect(markup).toContain("overflow-wrap:anywhere");
+    expect(markup).not.toMatch(
+      /constraint-secret|revision|digest|effectGrants|evidence|rationale/,
+    );
   });
 
   it("shows Waiting between a completed visible response and Planner spawn", () => {

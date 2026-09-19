@@ -107,6 +107,7 @@ describe("PlanRecord persistence validation", () => {
     record.version = 3;
     record.commandReceipts = [{
       commandId: "command-1",
+      operation: "select",
       interactionId: "interaction-1",
       payloadDigest: "0".repeat(64),
       result: {

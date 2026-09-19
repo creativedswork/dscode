@@ -12,6 +12,12 @@ import type {
   PlanCancelCommand,
   PlanItemVerificationCommand,
 } from "./execution-types.js";
+import type {
+  ExecutionAdjustPlanCommand,
+  ExecutionContinueCommand,
+  ExecutionEpisodeSnapshot,
+  ExecutionRecoveryResult,
+} from "./execution-episode-types.js";
 
 export interface PlanDecisionCommand {
   planId: string;
@@ -82,6 +88,9 @@ export interface PlanApplicationPort {
   verifyItem(command: PlanItemVerificationCommand): Promise<PlanMutationResult>;
   requestReplan(command: PlanReplanCommand): Promise<PlanMutationResult>;
   cancel(command: PlanCancelCommand): Promise<PlanMutationResult>;
+  getEpisode(planId: string): Promise<Readonly<ExecutionEpisodeSnapshot> | undefined>;
+  adjustPlan(command: ExecutionAdjustPlanCommand): Promise<ExecutionRecoveryResult>;
+  continueExecution(command: ExecutionContinueCommand): Promise<ExecutionRecoveryResult>;
 }
 
 export type {

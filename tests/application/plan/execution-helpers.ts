@@ -6,23 +6,26 @@ import {
   PlanExecutionService,
   PlanStore,
 } from "../../../src/application/plan/index.js";
+import type { PlanExecutionCallbacks } from "../../../src/application/plan/execution-service.js";
 import type {
-  PlanAcceptanceCriterion,
   PlanEffectGrant,
-  PlanItemDraft,
+  PlanExecutionStepDraft,
+  PlanVerification,
 } from "../../../src/application/plan/index.js";
 import { makePlanInput } from "./helpers.js";
 
 export async function createExecutionFixture(options: {
-  acceptanceCriteria?: PlanAcceptanceCriterion[];
+  verifications?: PlanVerification[];
   effectGrants?: PlanEffectGrant[];
-  items?: PlanItemDraft[];
+  executionSteps?: PlanExecutionStepDraft[];
+  callbacks?: PlanExecutionCallbacks;
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "dscode-plan-execution-"));
   const store = new PlanStore({ dataDir: root, projectPath: root });
-  const execution = new PlanExecutionService(store, () => 100);
+  const execution = new PlanExecutionService(store, () => 100, options.callbacks);
   const input = makePlanInput();
-  input.items = [];
+  input.executionSteps = [];
+  input.execution.steps = [];
   input.sideEffectSummary = "";
   const created = await store.create(input);
   if (!created.ok) throw new Error("Plan create failed");
@@ -31,17 +34,20 @@ export async function createExecutionFixture(options: {
     "planner-1",
     created.plan.version,
     {
-      items: options.items ?? [{
-        itemId: "item-1",
+      executionSteps: options.executionSteps ?? [{
+        stepId: "item-1",
         title: "Implement",
         description: "Apply the approved implementation",
         dependsOn: [],
-        acceptanceCriteria: options.acceptanceCriteria ?? [{
+        verifications: options.verifications ?? [{
           kind: "command",
-          criterionId: "tests",
+          verificationId: "tests",
+          description: "Tests pass",
           command: "npm test",
-          expectedExitCode: 0,
-          expectedOutput: "passed",
+          expect: {
+            exitCode: 0,
+            stdout: { matcher: "contains", value: "passed" },
+          },
         }],
         effectGrants: options.effectGrants ?? [{
           effect: "workspace_write",
@@ -65,8 +71,8 @@ export async function createExecutionFixture(options: {
       payload: {
         itemIds: ["item-1"],
         effectCategories: [...new Set(
-          compiled.plan.items.flatMap((item) =>
-            item.effectGrants.map((grant) => grant.effect)
+          compiled.plan.executionSteps.flatMap((step) =>
+            step.effectGrants.map((grant) => grant.effect)
           ),
         )],
         sideEffectSummary: "Writes approved Plan files",
@@ -92,9 +98,13 @@ export async function createExecutionFixture(options: {
         revision: waiting.plan.revision,
         digest: waiting.plan.digest,
         acknowledgedEffects: [...new Set(
-          waiting.plan.items.flatMap((item) =>
-            item.effectGrants.map((grant) => grant.effect)
-          ),
+          waiting.plan.schemaVersion === 2
+            ? waiting.plan.executionSteps.flatMap((step) =>
+              step.effectGrants.map((grant) => grant.effect)
+            )
+            : waiting.plan.items.flatMap((item) =>
+              item.effectGrants.map((grant) => grant.effect)
+            ),
         )],
       });
       if (!result.ok) throw new Error(`Approval failed: ${result.message}`);
@@ -119,7 +129,8 @@ export async function bindMain(
     role: "main",
   });
   if (!result.ok) throw new Error(`Bind failed: ${result.message}`);
-  const binding = result.plan.items[0].executionBindings?.[0];
+  if (result.plan.schemaVersion !== 2) throw new Error("Expected Plan schema v2");
+  const binding = result.plan.execution.steps[0].executionBindings?.[0];
   if (!binding) throw new Error("Binding missing");
   return { binding, plan: result.plan };
 }

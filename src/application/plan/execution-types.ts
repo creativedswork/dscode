@@ -62,8 +62,31 @@ export interface PlanMaterialConflictCommand {
   planId: string;
   expectedVersion: number;
   commandId: string;
+  revision: number;
+  digest: string;
+  itemId: string;
+  callerAgentId: string;
+  conflictTarget:
+    | { kind: "hard_constraint"; constraintId: string }
+    | {
+        kind: "selected_decision";
+        decisionNodeId: string;
+        optionId: string;
+      };
+  evidenceIds: string[];
   summary: string;
 }
+
+export interface PlanRequestedReplanCommand {
+  planId: string;
+  expectedVersion: number;
+  commandId: string;
+  summary: string;
+}
+
+export type PlanReplanTransitionCommand =
+  | PlanMaterialConflictCommand
+  | PlanRequestedReplanCommand;
 
 export interface PlanItemVerificationCommand {
   planId: string;
@@ -104,6 +127,7 @@ export type PlanToolAuthorizationResult =
       reason:
         | "stale_binding"
         | "invalid_transition"
+        | "invalid_command"
         | "effect_mismatch"
         | "scope_mismatch"
         | "conflict";

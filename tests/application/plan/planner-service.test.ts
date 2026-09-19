@@ -4,10 +4,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   PlanBudgetError,
+  PlanExecutionService,
   PlannerService,
   PlanStore,
   type PlanCandidate,
   type PlanDecisionNode,
+  type AlignmentRequirement,
 } from "../../../src/application/plan/index.js";
 const roots: string[] = [];
 
@@ -39,6 +41,7 @@ function candidate(
 async function setup(options: {
   constraints?: boolean;
   decisions?: PlanDecisionNode[];
+  alignmentRequirements?: AlignmentRequirement[];
 } = {}) {
   const root = await mkdtemp(join(tmpdir(), "dscode-planner-service-"));
   roots.push(root);
@@ -62,8 +65,12 @@ async function setup(options: {
       description: "Stay in scope",
       source: "user",
     }],
+    ...(options.alignmentRequirements
+      ? { alignmentRequirements: options.alignmentRequirements }
+      : {}),
     decisions: options.decisions ?? [],
-    items: [],
+    executionSteps: [],
+    execution: { steps: [] },
     sideEffectSummary: "",
     trajectoryEvents: [],
   });
@@ -72,6 +79,219 @@ async function setup(options: {
 }
 
 describe("PlannerService", () => {
+  it("resolves two alignment requirements through two persisted interactions", async () => {
+    const fixture = await setup({
+      alignmentRequirements: [{
+        requirementId: "visual",
+        topic: "visual_direction",
+        publicSummary: "Choose a visual direction",
+        status: "pending",
+      }, {
+        requirementId: "delivery",
+        topic: "delivery",
+        publicSummary: "Choose a delivery format",
+        status: "pending",
+      }],
+    });
+    expect(() => fixture.service.appendDecision(
+      "plan-1",
+      "planner-1",
+      fixture.plan.version,
+      {
+        decisionNodeId: "combined-decision",
+        question: "Choose both values",
+        resolvesRequirementIds: ["visual", "delivery"],
+        candidates: [candidate("a", { constraintFit: "uncertain" })],
+      },
+    )).toThrow("at most one alignment requirement");
+    const first = await fixture.service.appendDecision(
+      "plan-1",
+      "planner-1",
+      fixture.plan.version,
+      {
+        decisionNodeId: "visual-decision",
+        question: "Which visual direction?",
+        resolvesRequirementIds: ["visual"],
+        candidates: [candidate("a", { constraintFit: "uncertain" })],
+      },
+    );
+    if (!first.ok) throw new Error("first append failed");
+    await expect(fixture.service.applyDecision({
+      planId: "plan-1",
+      plannerAgentId: "planner-1",
+      expectedVersion: first.plan.version,
+      commandId: "visual-without-interaction",
+      action: {
+        kind: "select",
+        decisionNodeId: "visual-decision",
+        optionId: "a",
+      },
+    })).rejects.toThrow("requires a matching pending decision");
+    const firstWaiting = await fixture.service.requestDecision(
+      "plan-1",
+      "planner-1",
+      first.plan.version,
+      "visual-interaction",
+      "visual-decision",
+    );
+    const firstResolved = await fixture.service.applyDecision({
+      planId: "plan-1",
+      plannerAgentId: "planner-1",
+      expectedVersion: firstWaiting.version,
+      commandId: "visual-response",
+      interactionId: "visual-interaction",
+      interactionPayloadDigest: firstWaiting.pendingInteraction?.payloadDigest,
+      action: {
+        kind: "select",
+        decisionNodeId: "visual-decision",
+        optionId: "a",
+      },
+    });
+    if (!firstResolved.ok) throw new Error("first response failed");
+    expect(firstResolved.plan.alignmentRequirements).toMatchObject([
+      {
+        requirementId: "visual",
+        status: "resolved",
+        resolvedByDecisionNodeId: "visual-decision",
+      },
+      { requirementId: "delivery", status: "pending" },
+    ]);
+
+    const technical = await fixture.service.appendDecision(
+      "plan-1",
+      "planner-1",
+      firstResolved.plan.version,
+      {
+        decisionNodeId: "technical-decision",
+        question: "Which implementation?",
+        resolvesRequirementIds: [],
+        candidates: [candidate("technical", { recommended: true })],
+      },
+    );
+    if (!technical.ok) throw new Error("technical append failed");
+    const technicalSelected = await fixture.service.applyDecision({
+      planId: "plan-1",
+      plannerAgentId: "planner-1",
+      expectedVersion: technical.plan.version,
+      commandId: "technical-selection",
+      action: {
+        kind: "select",
+        decisionNodeId: "technical-decision",
+        optionId: "technical",
+      },
+    });
+    if (!technicalSelected.ok) throw new Error("technical selection failed");
+    expect(technicalSelected.plan.alignmentRequirements?.[1]).toMatchObject({
+      requirementId: "delivery",
+      status: "pending",
+    });
+
+    const execution = new PlanExecutionService(fixture.store, () => 100);
+    const compilation = {
+      executionSteps: [{
+        stepId: "deliver",
+        title: "Deliver",
+        description: "Produce the requested result",
+        dependsOn: [],
+        verifications: [{
+          kind: "command" as const,
+          verificationId: "exists",
+          description: "Package exists",
+          command: "test -f package.json",
+          expect: { exitCode: 0 },
+        }],
+        effectGrants: [],
+      }],
+      sideEffectSummary: "Runs a verification command.",
+    };
+    await expect(execution.compile(
+      "plan-1",
+      "planner-1",
+      technicalSelected.plan.version,
+      compilation,
+    )).rejects.toThrow("delivery is still pending");
+    await expect(fixture.service.authorize(
+      "plan-1",
+      "planner-1",
+      technicalSelected.plan.version,
+    )).rejects.toThrow("delivery is still pending");
+
+    const second = await fixture.service.appendDecision(
+      "plan-1",
+      "planner-1",
+      technicalSelected.plan.version,
+      {
+        decisionNodeId: "delivery-decision",
+        question: "How should it be delivered?",
+        resolvesRequirementIds: ["delivery"],
+        candidates: [candidate("download", {
+          constraintFit: "uncertain",
+          recommended: true,
+        })],
+      },
+    );
+    if (!second.ok) throw new Error("second append failed");
+    const secondWaiting = await fixture.service.requestDecision(
+      "plan-1",
+      "planner-1",
+      second.plan.version,
+      "delivery-interaction",
+      "delivery-decision",
+    );
+    const secondResolved = await fixture.service.applyDecision({
+      planId: "plan-1",
+      plannerAgentId: "planner-1",
+      expectedVersion: secondWaiting.version,
+      commandId: "delivery-response",
+      interactionId: "delivery-interaction",
+      interactionPayloadDigest: secondWaiting.pendingInteraction?.payloadDigest,
+      action: {
+        kind: "update_constraints",
+        constraints: [{
+          kind: "set",
+          constraint: {
+            constraintId: "delivery-format",
+            kind: "preference",
+            description: "Deliver as a downloadable package",
+            source: "user",
+          },
+        }],
+      },
+    });
+    if (!secondResolved.ok) throw new Error("second response failed");
+    expect(secondResolved.plan.alignmentRequirements).toEqual([
+      expect.objectContaining({ requirementId: "visual", status: "resolved" }),
+      expect.objectContaining({
+        requirementId: "delivery",
+        status: "resolved",
+      }),
+    ]);
+    expect(secondResolved.plan.alignmentRequirements?.[1])
+      .not.toHaveProperty("resolvedByDecisionNodeId");
+    await expect(fixture.store.load("plan-1")).resolves.toMatchObject({
+      ok: true,
+      plan: {
+        alignmentRequirements: [
+          expect.objectContaining({ requirementId: "visual", status: "resolved" }),
+          expect.objectContaining({ requirementId: "delivery", status: "resolved" }),
+        ],
+      },
+    });
+
+    const compiled = await execution.compile(
+      "plan-1",
+      "planner-1",
+      secondResolved.plan.version,
+      compilation,
+    );
+    if (!compiled.ok) throw new Error("compile failed");
+    await expect(fixture.service.authorize(
+      "plan-1",
+      "planner-1",
+      compiled.plan.version,
+    )).resolves.toMatchObject({ status: "approved" });
+  });
+
   it("persists a human selection once and rejects stale Planner identity", async () => {
     const fixture = await setup();
     const appended = await fixture.service.appendDecision(
@@ -81,7 +301,10 @@ describe("PlannerService", () => {
       {
         decisionNodeId: "decision-1",
         question: "Choose an implementation",
-        candidates: [candidate("a"), candidate("b")],
+        candidates: [
+          candidate("a", { constraintFit: "uncertain" }),
+          candidate("b", { constraintFit: "uncertain" }),
+        ],
       },
     );
     if (!appended.ok) throw new Error("append failed");
@@ -141,7 +364,10 @@ describe("PlannerService", () => {
       {
         decisionNodeId: "decision-1",
         question: "Choose",
-        candidates: [candidate("a"), candidate("b")],
+        candidates: [
+          candidate("a", { constraintFit: "uncertain" }),
+          candidate("b", { constraintFit: "uncertain" }),
+        ],
       },
     );
     if (!first.ok) throw new Error("append failed");
@@ -208,6 +434,36 @@ describe("PlannerService", () => {
     expect(result.ok && result.plan.decisions).toEqual([]);
   });
 
+  it("requires exactly one recommended candidate per decision", async () => {
+    const fixture = await setup();
+    expect(() => fixture.service.appendDecision(
+      "plan-1",
+      "planner-1",
+      fixture.plan.version,
+      {
+        decisionNodeId: "no-recommendation",
+        question: "Choose",
+        candidates: [
+          candidate("a", { recommended: false }),
+          candidate("b"),
+        ],
+      },
+    )).toThrow("must have exactly one recommended candidate");
+    expect(() => fixture.service.appendDecision(
+      "plan-1",
+      "planner-1",
+      fixture.plan.version,
+      {
+        decisionNodeId: "multiple-recommendations",
+        question: "Choose",
+        candidates: [
+          candidate("a"),
+          candidate("b", { recommended: true }),
+        ],
+      },
+    )).toThrow("must have exactly one recommended candidate");
+  });
+
   it("enforces candidate and revision budgets without truncation", async () => {
     const fixture = await setup();
     expect(() => fixture.service.appendDecision(
@@ -233,7 +489,7 @@ describe("PlannerService", () => {
         {
           decisionNodeId: `decision-${index}`,
           question: `Question ${index}`,
-          candidates: [candidate(`option-${index}`)],
+          candidates: [candidate(`option-${index}`, { recommended: true })],
         },
       );
       if (!result.ok) throw new Error("append failed");
@@ -246,7 +502,7 @@ describe("PlannerService", () => {
       {
         decisionNodeId: "decision-6",
         question: "Over budget",
-        candidates: [candidate("option-6")],
+        candidates: [candidate("option-6", { recommended: true })],
       },
     )).rejects.toMatchObject({
       limit: "decision_nodes",
@@ -271,7 +527,7 @@ describe("PlannerService", () => {
       {
         decisionNodeId: "commit",
         question: "Commit",
-        candidates: [candidate("commit")],
+        candidates: [candidate("commit", { recommended: true })],
       },
     )).rejects.toMatchObject({ behavior: "commit" });
   });

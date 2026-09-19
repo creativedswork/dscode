@@ -2,7 +2,7 @@ import { computePlanDigest } from "./digest.js";
 import { validatePlanRecord } from "./schema.js";
 import type {
   PlanCancellationRequest,
-  PlanRecord,
+  PlanRecordV2,
 } from "./types.js";
 
 export interface PlanUpdateOptions {
@@ -11,12 +11,12 @@ export interface PlanUpdateOptions {
 }
 
 export function preparePlanMutation(
-  current: PlanRecord,
-  draft: PlanRecord,
+  current: PlanRecordV2,
+  draft: PlanRecordV2,
   now: number,
   options: PlanUpdateOptions = {},
-): PlanRecord {
-  draft.schemaVersion = 1;
+): PlanRecordV2 {
+  draft.schemaVersion = 2;
   draft.planId = current.planId;
   draft.projectKey = current.projectKey;
   draft.createdAt = current.createdAt;
@@ -36,12 +36,16 @@ export function preparePlanMutation(
     } else if (current.status === "executing" && draft.status === "executing") {
       draft.status = "needs_replan";
     }
-    for (const item of draft.items) {
-      item.executionBinding = undefined;
-      item.executionBindings = [];
+    for (const state of draft.execution.steps) {
+      state.executionBinding = undefined;
+      state.executionBindings = [];
     }
   }
-  return validatePlanRecord(draft);
+  const validated = validatePlanRecord(draft);
+  if (validated.schemaVersion !== 2) {
+    throw new Error("Plan mutation unexpectedly changed schema version");
+  }
+  return validated;
 }
 
 export function isSameCancellation(

@@ -2,7 +2,11 @@ import { rm } from "node:fs/promises";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { PlannerService } from "../../../src/application/plan/index.js";
+import {
+  compileSelectedTrajectory,
+  planExecutionUnits,
+  PlannerService,
+} from "../../../src/application/plan/index.js";
 import { createExecutionFixture } from "./execution-helpers.js";
 
 const roots: string[] = [];
@@ -17,22 +21,29 @@ describe("Plan compilation and approval", () => {
   it("compiles ordered public items with canonical resource scopes", async () => {
     const fixture = await createExecutionFixture();
     roots.push(fixture.root);
-    const item = fixture.awaiting.items[0];
+    const item = planExecutionUnits(fixture.awaiting)[0];
 
     expect(item).toMatchObject({
       order: 0,
       status: "pending",
-      acceptanceCriteria: [{ criterionId: "tests", kind: "command" }],
-      effectGrants: [{
+      verifications: [{ verificationId: "tests", kind: "command" }],
+      evidence: [],
+      executionBindings: [],
+    });
+    expect(item.effectGrants).toEqual(expect.arrayContaining([{
         effect: "workspace_write",
         resourceScopes: [{
           kind: "workspace_path",
           pattern: expect.stringMatching(/^\/.*\/src\/application\/plan\/\*\*$/),
         }],
-      }],
-      evidence: [],
-      executionBindings: [],
-    });
+      }, {
+        effect: "process",
+        resourceScopes: [{
+          kind: "process_command",
+          commandClass: "npm",
+        }],
+      },
+    ]));
     expect(JSON.stringify(fixture.awaiting)).not.toMatch(
       /chain.of.thought|privateReasoning|hiddenPrompt/i,
     );
@@ -48,8 +59,8 @@ describe("Plan compilation and approval", () => {
       approval: {
         revision: fixture.awaiting.revision,
         digest: fixture.awaiting.digest,
-        approvedEffects: ["workspace_write"],
-        acknowledgedSideEffects: ["workspace_write"],
+        approvedEffects: ["process", "workspace_write"],
+        acknowledgedSideEffects: ["process", "workspace_write"],
         acknowledgementReceiptCommandId: "approve-1",
       },
     });
@@ -131,7 +142,8 @@ describe("Plan compilation and approval", () => {
       (draft) => {
         draft.status = "drafting";
         draft.pendingInteraction = undefined;
-        draft.items = [];
+        draft.executionSteps = [];
+        draft.execution.steps = [];
         draft.sideEffectSummary = "";
       },
     );
@@ -142,7 +154,7 @@ describe("Plan compilation and approval", () => {
       "planner-1",
       malformed.plan.version,
       "empty-approval",
-    )).rejects.toThrow("at least one item");
+    )).rejects.toThrow("at least one step");
 
     const waiting = await fixture.store.persistInteraction(
       malformed.plan.planId,
@@ -168,5 +180,46 @@ describe("Plan compilation and approval", () => {
       digest: waiting.plan.digest,
       acknowledgedEffects: [],
     })).resolves.toMatchObject({ ok: false, reason: "invalid_command" });
+  });
+
+  it("allows technical execution steps to share a deliverable scope", async () => {
+    const fixture = await createExecutionFixture();
+    roots.push(fixture.root);
+    expect(() => compileSelectedTrajectory(fixture.awaiting, {
+      executionSteps: [{
+        stepId: "deliverable",
+        title: "Create result",
+        description: "Create the requested result",
+        dependsOn: [],
+        verifications: [{
+          kind: "command",
+          verificationId: "exists",
+          description: "Result exists",
+          command: "test -f result.html",
+          expect: { exitCode: 0 },
+        }],
+        effectGrants: [{
+          effect: "workspace_write",
+          resourceScopes: [{ kind: "workspace_path", pattern: "result.html" }],
+        }],
+      }, {
+        stepId: "verification",
+        title: "Run smoke verification",
+        description: "Verify the same result",
+        dependsOn: ["deliverable"],
+        verifications: [{
+          kind: "command",
+          verificationId: "nonempty",
+          description: "Result is non-empty",
+          command: "test -s result.html",
+          expect: { exitCode: 0 },
+        }],
+        effectGrants: [{
+          effect: "read",
+          resourceScopes: [{ kind: "workspace_path", pattern: "result.html" }],
+        }],
+      }],
+      sideEffectSummary: "Creates and verifies result.html.",
+    }, "/project")).not.toThrow();
   });
 });

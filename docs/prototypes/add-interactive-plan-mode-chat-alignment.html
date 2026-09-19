@@ -1,3 +1,4 @@
+<!-- OpenSpec change: add-interactive-plan-mode; revised 2026-08-29 -->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -118,8 +119,11 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
   }
   .topbar {
+    min-width: 0;
+    width: 100%;
     height: 42px;
     flex: 0 0 auto;
     display: flex;
@@ -149,6 +153,8 @@
   }
 
   .prototype-bar {
+    min-width: 0;
+    width: 100%;
     flex: 0 0 auto;
     display: flex;
     align-items: center;
@@ -181,6 +187,8 @@
   }
 
   .conversation {
+    min-width: 0;
+    width: 100%;
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
@@ -202,7 +210,8 @@
     font-weight: 600;
   }
   .user-message {
-    margin-left: auto;
+    align-self: flex-end;
+    width: fit-content;
     max-width: 78%;
   }
   .user-message .meta { text-align: right; }
@@ -211,6 +220,7 @@
     border-radius: var(--radius-md);
     background: var(--user);
     color: var(--text);
+    overflow-wrap: anywhere;
   }
   .assistant-message { max-width: 680px; }
   .assistant-copy {
@@ -324,6 +334,79 @@
   }
   @keyframes pulse { 50% { opacity: .35; transform: scale(.75); } }
 
+  .plan-output,
+  .todo-list {
+    min-width: 0;
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--surface);
+  }
+  .plan-output summary {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 11px 12px;
+    cursor: pointer;
+    font-weight: 650;
+  }
+  .plan-output summary::before {
+    content: "›";
+    color: var(--muted);
+  }
+  .plan-output[open] summary::before { transform: rotate(90deg); }
+  .plan-status {
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .plan-body {
+    border-top: 1px solid var(--border);
+    padding: 12px;
+  }
+  .plan-section + .plan-section { margin-top: 12px; }
+  .plan-label {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 650;
+  }
+  .plan-body p,
+  .plan-body ol { margin: 4px 0 0; }
+  .plan-body ol { padding-left: 20px; }
+  .todo-list { padding: 11px 12px; }
+  .todo-head {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 8px;
+    font-weight: 650;
+  }
+  .todo-status {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .todo-item {
+    display: flex;
+    align-items: baseline;
+    gap: 7px;
+    color: var(--secondary);
+    font-size: 13px;
+  }
+  .todo-item + .todo-item { margin-top: 5px; }
+  .todo-mark {
+    width: 14px;
+    flex: 0 0 14px;
+    color: var(--muted);
+    text-align: center;
+  }
+  .todo-item.completed .todo-mark { color: var(--success-text); }
+  .todo-item.active {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .todo-item.active .todo-mark { color: var(--accent); }
+
   .permission {
     margin-top: 10px;
     border: 1px solid var(--border);
@@ -343,6 +426,8 @@
   }
 
   .composer {
+    min-width: 0;
+    width: 100%;
     flex: 0 0 auto;
     border-top: 1px solid var(--border);
     background: var(--bg);
@@ -382,6 +467,8 @@
     .sidebar { display: none; }
     .topbar { padding-inline: 10px; }
     .prototype-bar { padding-inline: 10px; }
+    .prototype-label { display: none; }
+    .scene-btn { padding-inline: 7px; }
     .thread {
       width: 100%;
       padding: 18px 12px 28px;
@@ -431,6 +518,7 @@
       <span class="prototype-label">原型场景</span>
       <button class="scene-btn" data-scene="align" aria-selected="true">待对齐</button>
       <button class="scene-btn" data-scene="resolved" aria-selected="false">已对齐</button>
+      <button class="scene-btn" data-scene="plan" aria-selected="false">计划输出</button>
       <button class="scene-btn" data-scene="direct" aria-selected="false">直接执行</button>
       <button class="scene-btn" data-scene="permission" aria-selected="false">权限确认</button>
     </nav>
@@ -494,6 +582,48 @@
   <article class="message assistant-message">
     <div class="activity"><span class="pulse"></span><span>正在实现并验证游戏逻辑</span></div>
   </article>
+</template>
+
+<template id="scene-plan">
+  <article class="message user-message">
+    <div class="meta">你</div>
+    <div class="user-bubble">采用霓虹街机风格，继续。</div>
+  </article>
+  <article class="message assistant-message">
+    <div class="meta">dscode</div>
+    <div class="assistant-copy">计划已生成</div>
+  </article>
+  <details class="plan-output">
+    <summary>执行计划<span class="plan-status">已就绪</span></summary>
+    <div class="plan-body">
+      <div class="plan-section">
+        <div class="plan-label">目标</div>
+        <p>完成可直接游玩的霓虹街机俄罗斯方块。</p>
+      </div>
+      <div class="plan-section">
+        <div class="plan-label">确定方案</div>
+        <p>复用现有单文件实现，补齐 7-bag、SRS、锁定延迟、输入连发和响应式适配。</p>
+      </div>
+      <div class="plan-section">
+        <div class="plan-label">范围</div>
+        <p>仅修改 tetris.html，不新增依赖、不联网、不写入工作区外路径。</p>
+      </div>
+      <div class="plan-section">
+        <div class="plan-label">执行与验证</div>
+        <ol>
+          <li>实现 7-bag、SRS、锁定延迟和计分规则，并运行规则检查。</li>
+          <li>完成键盘操作、游戏状态反馈和桌面浏览器检查。</li>
+          <li>完成触控布局、离线加载和移动端浏览器检查。</li>
+        </ol>
+      </div>
+    </div>
+  </details>
+  <section class="todo-list" aria-label="TODO 执行清单">
+    <div class="todo-head"><span>TODO</span><span class="todo-status">执行中 · 1/3</span></div>
+    <div class="todo-item completed" aria-label="已完成：核心玩法可运行"><span class="todo-mark" aria-hidden="true">✓</span><span>核心玩法可运行</span></div>
+    <div class="todo-item active" aria-label="执行中：桌面端游戏可玩"><span class="todo-mark" aria-hidden="true">◐</span><span>桌面端游戏可玩</span></div>
+    <div class="todo-item" aria-label="待处理：移动端与离线交付可用"><span class="todo-mark" aria-hidden="true">○</span><span>移动端与离线交付可用</span></div>
+  </section>
 </template>
 
 <template id="scene-direct">
@@ -576,7 +706,10 @@
   }
 
   sceneButtons.forEach((button) => {
-    button.addEventListener("click", () => render(button.dataset.scene));
+    button.addEventListener("click", () => {
+      history.replaceState(null, "", `#${button.dataset.scene}`);
+      render(button.dataset.scene);
+    });
   });
 
   document.getElementById("theme-toggle").addEventListener("click", () => {
@@ -584,7 +717,11 @@
     root.dataset.theme = root.dataset.theme === "dark" ? "light" : "dark";
   });
 
-  render("align");
+  const requestedScene = location.hash.slice(1);
+  const initialScene = sceneButtons.some((button) => button.dataset.scene === requestedScene)
+    ? requestedScene
+    : "align";
+  render(initialScene);
 </script>
 </body>
 </html>

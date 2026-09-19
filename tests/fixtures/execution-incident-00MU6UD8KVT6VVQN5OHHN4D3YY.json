@@ -1,0 +1,32 @@
+{
+  "sourceSessionId": "00MU6UD8KVT6VVQN5OHHN4D3YY",
+  "observedToolCallCount": 230,
+  "observedEquivalentEditCount": 22,
+  "action": {
+    "toolName": "edit_file",
+    "arguments": {
+      "path": "src/example.ts",
+      "old_string": "const state = previous;",
+      "new_string": "const state = next;"
+    },
+    "outcomeClass": "succeeded"
+  },
+  "unchangedProgress": {
+    "passedVerificationIds": [],
+    "planSteps": [
+      {
+        "stepId": "step-1",
+        "status": "in_progress"
+      }
+    ],
+    "task": {
+      "status": "active",
+      "todos": [
+        {
+          "todoId": "outcome-1",
+          "status": "in_progress"
+        }
+      ]
+    }
+  }
+}

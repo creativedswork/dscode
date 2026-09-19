@@ -37,6 +37,19 @@ import type {
   PlanApplicationPort,
   PlanInteractionPort,
 } from "./plan/plan-port.js";
+import type {
+  TaskStatePort,
+} from "./task-state-port.js";
+
+export type {
+  TaskState,
+  TaskStateMutationCommand,
+  TaskStateMutationResult,
+  TodoBlocker,
+  TodoItem,
+  TodoStatus,
+} from "./task-state-port.js";
+export type { TaskStatePort } from "./task-state-port.js";
 
 export interface ApplicationEventSource {
   on<E extends HarnessEventType>(
@@ -298,6 +311,7 @@ export interface ImageInputApplicationPort {
 export interface HarnessAPI {
   readonly events: ApplicationEventSource;
   readonly plans: PlanApplicationPort;
+  readonly tasks: TaskStatePort;
   readonly conversation: ConversationApplicationPort;
   readonly sessions: SessionApplicationPort;
   readonly settings: SettingsApplicationPort;

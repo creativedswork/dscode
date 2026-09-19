@@ -110,6 +110,7 @@ function makeConfig(
     mcp: [],
     appHost: { enabled: false },
     agents: { enabled: options.agentsEnabled ?? true },
+    plan: { terminalRecoveryTtlMs: 30 * 24 * 60 * 60 * 1_000 },
     vision: options.vision,
     retry: {
       maxRetries: 0,

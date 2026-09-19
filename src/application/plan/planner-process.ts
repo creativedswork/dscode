@@ -1,7 +1,11 @@
 import { randomUUID } from "node:crypto";
 import type { AgentSupervisor } from "../../agents/process/supervisor.js";
 import type { AgentExitResult } from "../../agents/process/types.js";
-import { attachPlanToAgent, clearAgentPlan } from "./execution-binding.js";
+import {
+  attachPlanToAgent,
+  bindPlanItemToAgent,
+  clearAgentPlan,
+} from "./execution-binding.js";
 import { PlanExecutionService } from "./execution-service.js";
 import type {
   PlanApprovalCommand,
@@ -9,6 +13,7 @@ import type {
 } from "./execution-types.js";
 import { PlannerInteractionBroker } from "./planner-interactions.js";
 import { coordinateAfterCommit } from "./plan-coordination.js";
+import { validMainRecoveryBinding } from "./plan-recovery.js";
 import { spawnPlanner } from "./planner-spawn.js";
 import { PlanService } from "./plan-service.js";
 import type { PlanMutationResult } from "./plan-port.js";
@@ -39,6 +44,7 @@ export class PlannerProcessCoordinator {
   }>();
   private readonly startByMain = new Map<string, Promise<PlannerProcessHandle>>();
   private readonly exits = new Map<string, Promise<void>>();
+  private readonly resumedApprovals = new Set<string>();
   readonly interactions: PlannerInteractionBroker;
   private readonly onApprovedPlan?: PlannerProcessCoordinatorOptions["onApprovedPlan"];
 
@@ -115,6 +121,58 @@ export class PlannerProcessCoordinator {
     this.bindExecutionCallbacks(service);
   }
 
+  async reconcileSession(
+    sessionId: string,
+    mainAgentId: string,
+  ): Promise<Readonly<PlanRecord> | undefined> {
+    const plan = await this.currentService.getActivePlan(sessionId);
+    const main = this.supervisor.require(mainAgentId);
+    if (main.parentSessionId !== sessionId) {
+      throw new Error(`Main Agent ${mainAgentId} is not attached to Session ${sessionId}`);
+    }
+    if (!plan) {
+      clearAgentPlan(main);
+      return undefined;
+    }
+    if (plan.status === "approved" || plan.status === "executing") {
+      const binding = validMainRecoveryBinding(plan, main);
+      if (binding) {
+        bindPlanItemToAgent(main, binding);
+        await this.resumeApproved(plan, this.currentService);
+        return plan;
+      }
+      clearAgentPlan(main);
+      const invalidated = await this.currentService.recovery.invalidateExecution(
+        plan.planId,
+        plan.version,
+        mainAgentId,
+      );
+      if (!invalidated.ok) return this.reconcileSession(sessionId, mainAgentId);
+      await this.startRecovered(invalidated.plan, mainAgentId);
+      return invalidated.plan;
+    }
+    clearAgentPlan(main);
+    const planner = plan.plannerAgentId
+      ? this.supervisor.get(plan.plannerAgentId)
+      : undefined;
+    if (
+      planner
+      && !planner.exit
+      && planner.application.name === "planner"
+      && planner.parentAgentId === mainAgentId
+      && planner.parentSessionId === sessionId
+    ) {
+      this.planByPlanner.set(planner.agentId, {
+        planId: plan.planId,
+        service: this.currentService,
+      });
+      await this.currentService.reissuePendingInteractions();
+      return plan;
+    }
+    await this.startRecovered(plan, mainAgentId);
+    return plan;
+  }
+
   async shutdown(): Promise<void> {
     await this.stopActive();
   }
@@ -137,6 +195,7 @@ export class PlannerProcessCoordinator {
     request: Readonly<PlannerRouteRequest>,
     existingPlanId?: string,
     expectedVersion?: number,
+    recoveryPlan?: Readonly<PlanRecord>,
   ): Promise<PlannerProcessHandle> {
     const service = this.currentService;
     const planId = existingPlanId ?? `plan-${randomUUID()}`;
@@ -148,11 +207,39 @@ export class PlannerProcessCoordinator {
       planId,
       request,
       expectedVersion,
+      recoveryPlan,
       onBound: (plannerAgentId) => {
         this.planByPlanner.set(plannerAgentId, { planId, service });
       },
       onExit: (exit) => this.handleExit(exit.agentId, exit),
     });
+  }
+
+  private async startRecovered(
+    plan: Readonly<PlanRecord>,
+    mainAgentId: string,
+  ): Promise<PlannerProcessHandle> {
+    const active = this.startByMain.get(mainAgentId);
+    if (active) return active;
+    const starting = this.startNew(mainAgentId, {
+      requestId: plan.request.requestId,
+      requestText: plan.request.text,
+      decision: {
+        requestId: plan.request.requestId,
+        route: "plan",
+        source: "explicit",
+      },
+    }, plan.planId, plan.version, plan);
+    this.startByMain.set(mainAgentId, starting);
+    void starting.then(
+      () => this.currentService.reissuePendingInteractions(),
+      () => {
+        if (this.startByMain.get(mainAgentId) === starting) {
+          this.startByMain.delete(mainAgentId);
+        }
+      },
+    );
+    return starting;
   }
 
   async submitDecision(
@@ -184,10 +271,17 @@ export class PlannerProcessCoordinator {
     await coordinateAfterCommit(command.planId, [{
       operation: "resolve_approval",
       run: () => { this.interactions.resolve(command.interactionId, result.plan); },
-    }, {
-      operation: "complete_approved",
-      run: () => this.completeApproved(command.planId).then(() => undefined),
     }], (failure) => this.currentService.reportCoordinationFailure(failure));
+    try {
+      await this.completeApproved(command.planId);
+    } catch (error) {
+      this.currentService.reportCoordinationFailure({
+        planId: command.planId,
+        operation: "complete_approved",
+        error,
+      });
+      await this.recoverApproved(result.plan, this.currentService);
+    }
     return result;
   }
 
@@ -209,6 +303,10 @@ export class PlannerProcessCoordinator {
     if (!plannerAgentId) throw new Error(`Plan ${planId} has no Planner`);
     if (plan.status !== "approved") {
       throw new Error(`Plan ${planId} is not approved`);
+    }
+    if (!binding) {
+      await this.recoverApproved(plan, service);
+      return plan;
     }
     const planner = this.supervisor.require(plannerAgentId);
     if (!planner.exit) await this.supervisor.terminate(planner.agentId);
@@ -265,6 +363,7 @@ export class PlannerProcessCoordinator {
               operation: "attach_main",
               error,
             });
+            await this.recoverApproved(settled, binding.service);
           }
         }
       } finally {
@@ -288,10 +387,53 @@ export class PlannerProcessCoordinator {
       }
     }
     if (approvedPlan && this.onApprovedPlan) {
-      await coordinateAfterCommit(approvedPlan.planId, [{
-        operation: "resume_main",
-        run: () => this.onApprovedPlan!(approvedPlan!),
-      }], (failure) => binding.service.reportCoordinationFailure(failure));
+      await this.resumeApproved(approvedPlan, binding.service);
+    }
+  }
+
+  private async recoverApproved(
+    plan: Readonly<PlanRecord>,
+    service: PlanService,
+  ): Promise<void> {
+    const main = this.supervisor.get(plan.mainAgentId);
+    if (
+      main?.context.activePlan?.planId !== plan.planId
+      || main.context.activePlan.revision !== plan.revision
+      || main.context.activePlan.digest !== plan.digest
+    ) {
+      await coordinateAfterCommit(plan.planId, [{
+        operation: "attach_main",
+        run: () => {
+          attachPlanToAgent(this.supervisor.require(plan.mainAgentId), plan);
+        },
+      }], (failure) => service.reportCoordinationFailure(failure));
+    }
+    const attached = this.supervisor.get(plan.mainAgentId);
+    if (attached?.context.activePlan?.planId === plan.planId) {
+      await this.resumeApproved(plan, service);
+    }
+  }
+
+  private async resumeApproved(
+    plan: Readonly<PlanRecord>,
+    service: PlanService,
+  ): Promise<void> {
+    if (!this.onApprovedPlan) return;
+    const key = `${plan.planId}:${plan.revision}`;
+    if (this.resumedApprovals.has(key)) return;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      this.resumedApprovals.add(key);
+      try {
+        await this.onApprovedPlan!(plan);
+        return;
+      } catch (error) {
+        this.resumedApprovals.delete(key);
+        service.reportCoordinationFailure({
+          planId: plan.planId,
+          operation: "resume_main",
+          error,
+        });
+      }
     }
   }
 
@@ -302,7 +444,11 @@ export class PlannerProcessCoordinator {
     });
   }
 
-  private async stopPlanExecution(planId: string, mainAgentId: string): Promise<void> {
+  private async stopPlanExecution(
+    planId: string,
+    mainAgentId: string,
+    terminateMain = true,
+  ): Promise<void> {
     for (const process of this.supervisor.list()) {
       if (
         process.context.activePlan?.planId !== planId
@@ -314,11 +460,20 @@ export class PlannerProcessCoordinator {
       }
     }
     const main = this.supervisor.get(mainAgentId);
-    if (main && !main.exit) void main.runtime.terminate().catch(() => {});
+    if (terminateMain && main && !main.exit) {
+      void main.runtime.terminate().catch(() => {});
+    }
   }
 
   private async cleanupTerminalPlan(plan: Readonly<PlanRecord>): Promise<void> {
-    await this.stopPlanExecution(plan.planId, plan.mainAgentId);
+    for (const key of this.resumedApprovals) {
+      if (key.startsWith(`${plan.planId}:`)) this.resumedApprovals.delete(key);
+    }
+    await this.stopPlanExecution(
+      plan.planId,
+      plan.mainAgentId,
+      plan.status !== "completed",
+    );
     const active = [...this.planByPlanner.entries()].find(
       ([, binding]) => binding.planId === plan.planId,
     );

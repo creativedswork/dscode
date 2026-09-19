@@ -100,6 +100,12 @@ describe("effect-based Plan capability filtering", () => {
         effect: "unknown",
         planOperation: { domain: "plan", sideEffectFree: true },
       },
+      {
+        name: "task_update",
+        effect: "unknown",
+        planOperation: { domain: "task", sideEffectFree: true },
+        audience: "main",
+      },
     ]);
 
     expect(context.allowedTools).toEqual([
@@ -111,6 +117,7 @@ describe("effect-based Plan capability filtering", () => {
       "read_external",
       "read_missing",
       "read_unknown",
+      "task_update",
     ]));
   });
 

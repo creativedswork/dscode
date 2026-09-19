@@ -1,18 +1,19 @@
-import { randomUUID } from "node:crypto";
-
 import type {
   PlanExecutionMutationResult,
   PlanHumanAcceptanceCommand,
   PlanItemVerificationCommand,
-  PlanMaterialConflictCommand,
 } from "./execution-types.js";
-import { allCriteriaPassed } from "./execution-acceptance.js";
+import {
+  allCriteriaPassed,
+  allPersistedVerificationsPassed,
+} from "./execution-acceptance.js";
 import {
   itemBindings,
   mutationFailure,
   PlanDomainError,
   requireCurrentApproval,
-  requireItem,
+  requireStep,
+  requireStepState,
 } from "./execution-rules.js";
 import { PlanStore } from "./store.js";
 import type {
@@ -24,15 +25,26 @@ import type {
 const TERMINAL = new Set<PlanStatus>(["completed", "cancelled", "failed"]);
 
 export class PlanExecutionState {
-  constructor(
-    private readonly store: PlanStore,
-    private readonly now: () => number = Date.now,
-  ) {}
+  constructor(private readonly store: PlanStore) {}
 
   async verifyItem(
     command: PlanItemVerificationCommand,
   ): Promise<PlanExecutionMutationResult> {
     try {
+      const loaded = await this.store.load(command.planId);
+      if (loaded.ok && loaded.plan?.schemaVersion === 1) {
+        const item = loaded.plan.items.find((candidate) =>
+          candidate.itemId === command.itemId
+        );
+        return item && allCriteriaPassed(item, loaded.plan, command)
+          ? { ok: true, plan: loaded.plan, duplicate: false }
+          : {
+            ok: false,
+            reason: "invalid_command",
+            message: "Legacy acceptance criteria did not pass persisted evidence",
+            plan: loaded.plan,
+          };
+      }
       const outcome = await this.store.applyCommand({
         planId: command.planId,
         expectedVersion: command.expectedVersion,
@@ -40,6 +52,12 @@ export class PlanExecutionState {
         operation: "verify_item",
         payload: command,
       }, (draft) => {
+        if (draft.schemaVersion === 2) {
+          throw new PlanDomainError(
+            "invalid_command",
+            "Schema v2 Plan verification is Host-owned",
+          );
+        }
         if (draft.status !== "executing") {
           throw new PlanDomainError("invalid_transition", "Plan is not executing");
         }
@@ -47,20 +65,24 @@ export class PlanExecutionState {
         if (draft.mainAgentId !== command.callerAgentId) {
           throw new PlanDomainError("invalid_command", "Only the bound Main Agent can verify");
         }
-        const item = requireItem(draft, command.itemId);
-        if (!itemBindings(item).some((binding) =>
+        const step = requireStep(draft, command.itemId);
+        const state = requireStepState(draft, command.itemId);
+        if (!itemBindings(state).some((binding) =>
           binding.agentId === command.callerAgentId && binding.role === "main"
         )) {
-          throw new PlanDomainError("invalid_command", "Main Agent is not bound to item");
-        }
-        if (!allCriteriaPassed(item, draft, command)) {
           throw new PlanDomainError(
             "invalid_command",
-            "Acceptance criteria did not pass. Use exact persisted evidence IDs in the form tool-<toolCallId>, with a distinct evidence ID for each criterion.",
+            "Main Agent is not bound to execution step",
           );
         }
-        item.status = "completed";
-        if (draft.items.every((candidate) =>
+        if (!allPersistedVerificationsPassed(step, state, draft)) {
+          throw new PlanDomainError(
+            "invalid_command",
+            "Plan verification did not pass against the persisted evidence.",
+          );
+        }
+        state.status = "completed";
+        if (draft.execution.steps.every((candidate) =>
           candidate.status === "completed" || candidate.status === "skipped"
         )) {
           draft.status = "completed";
@@ -103,40 +125,11 @@ export class PlanExecutionState {
         if (draft.approval?.acknowledgementReceiptCommandId === command.commandId) {
           throw new PlanDomainError("invalid_command", "Approval receipt cannot prove acceptance");
         }
-        const item = requireItem(draft, command.itemId);
-        const criterion = item.acceptanceCriteria.find((candidate) =>
-          candidate.criterionId === command.criterionId
+        void draft;
+        throw new PlanDomainError(
+          "invalid_command",
+          "Schema v2 Plans do not support human verification",
         );
-        if (criterion?.kind !== "human") {
-          throw new PlanDomainError("invalid_command", "Human criterion not found");
-        }
-        const interaction = draft.pendingInteraction;
-        if (
-          interaction?.kind !== "acceptance"
-          || interaction.payload.itemId !== item.itemId
-          || interaction.payload.criterionId !== criterion.criterionId
-          || interaction.revision !== draft.revision
-          || interaction.planDigest !== draft.digest
-        ) {
-          throw new PlanDomainError("invalid_command", "Human acceptance is not pending");
-        }
-        if (draft.items.some((candidate) => candidate.evidence.some((evidence) =>
-          evidence.kind === "human_receipt"
-          && evidence.receiptCommandId === command.commandId
-        ))) {
-          throw new PlanDomainError("invalid_command", "Human receipt was already consumed");
-        }
-        item.evidence.push({
-          kind: "human_receipt",
-          evidenceId: `human-${command.commandId}`,
-          planId: draft.planId,
-          revision: draft.revision,
-          itemId: item.itemId,
-          criterionId: criterion.criterionId,
-          receiptCommandId: command.commandId,
-          summary: command.summary.trim(),
-          recordedAt: this.now(),
-        });
       });
       if (!outcome.ok) {
         return {
@@ -164,18 +157,18 @@ export class PlanExecutionState {
         if (TERMINAL.has(draft.status)) {
           throw new PlanDomainError("invalid_transition", "Terminal Plan cannot change");
         }
-        const item = requireItem(draft, itemId);
-        const allowed = item.status === "in_progress" && status === "blocked"
-          || item.status === "blocked" && status === "in_progress"
-          || item.status === "pending" && status === "skipped";
+        const state = requireStepState(draft, itemId);
+        const allowed = state.status === "in_progress" && status === "blocked"
+          || state.status === "blocked" && status === "in_progress"
+          || state.status === "pending" && status === "skipped";
         if (!allowed) {
           throw new PlanDomainError("invalid_transition", "Illegal Plan item transition");
         }
         if (status === "skipped" && !skipReason?.trim()) {
           throw new PlanDomainError("invalid_command", "Skipped item requires a reason");
         }
-        item.status = status;
-        item.skipReason = status === "skipped" ? skipReason?.trim() : undefined;
+        state.status = status;
+        state.skipReason = status === "skipped" ? skipReason?.trim() : undefined;
         if (status === "skipped") draft.status = "needs_replan";
       }, { semanticChange: status === "skipped" });
       return result.ok
@@ -186,63 +179,11 @@ export class PlanExecutionState {
     }
   }
 
-  async materialConflict(
-    command: PlanMaterialConflictCommand,
-  ): Promise<PlanExecutionMutationResult> {
-    try {
-      const outcome = await this.store.applyCommand({
-        ...command,
-        operation: "material_conflict",
-        payload: { summary: command.summary.trim() },
-      }, (draft) => {
-        if (draft.status !== "executing") {
-          throw new PlanDomainError("invalid_transition", "Plan is no longer executing");
-        }
-        const from = draft.status;
-        draft.status = "needs_replan";
-        draft.approval = undefined;
-        draft.trajectoryEvents.push({
-          eventId: randomUUID(),
-          revision: draft.revision,
-          recordedAt: this.now(),
-          kind: "status_changed",
-          from,
-          to: "needs_replan",
-        }, {
-          eventId: randomUUID(),
-          revision: draft.revision,
-          recordedAt: this.now(),
-          kind: "fact_recorded",
-          summary: command.summary.trim(),
-          references: [],
-        });
-      });
-      if (!outcome.ok) {
-        return {
-          ok: false,
-          reason: outcome.reason === "conflict" ? "conflict" : "invalid_command",
-          message: "Material conflict was rejected",
-          plan: outcome.reason === "conflict" ? outcome.conflict.current : outcome.plan,
-        };
-      }
-      if (outcome.duplicate && outcome.plan.status !== "needs_replan") {
-        return {
-          ok: false,
-          reason: "conflict",
-          message: "Material conflict receipt belongs to an older Plan state",
-          plan: outcome.plan,
-        };
-      }
-      return { ok: true, plan: outcome.plan, duplicate: outcome.duplicate };
-    } catch (error) {
-      return mutationFailure(error);
-    }
-  }
-
   async deriveReplan(
     planId: string,
     expectedVersion: number,
     plannerAgentId: string,
+    mainAgentId?: string,
   ): Promise<PlanExecutionMutationResult> {
     try {
       const result = await this.store.update(planId, expectedVersion, (draft) => {
@@ -250,15 +191,17 @@ export class PlanExecutionState {
           throw new PlanDomainError("invalid_transition", "Plan does not need replanning");
         }
         draft.baseRevision = draft.revision;
+        if (mainAgentId) draft.mainAgentId = mainAgentId;
         draft.plannerAgentId = plannerAgentId;
         draft.status = "drafting";
         draft.pendingInteraction = undefined;
-        draft.items = draft.items.map((item) => ({
-          ...item,
+        draft.execution.steps = draft.execution.steps.map((state) => ({
+          ...state,
           executionBinding: undefined,
           executionBindings: [],
-          status: item.status === "completed" ? "completed" : "pending",
-          evidence: item.evidence.map((evidence) =>
+          status: state.status === "completed" ? "completed" : "pending",
+          skipReason: undefined,
+          evidence: state.evidence.map((evidence) =>
             evidence.kind === "tool_result" || evidence.kind === "agent_exit"
               ? { ...evidence, acceptanceEligible: false }
               : evidence

@@ -7,6 +7,10 @@
 - **WHEN** the client sends `plan_decision`
 - **THEN** the command carries planId, expectedVersion, commandId, interactionId, and the selected or custom user-value constraint
 
+#### Scenario: Client transport rejects an alignment command
+- **WHEN** the WebSocket is not open and cannot write `plan_decision`
+- **THEN** the client reports the send as unsuccessful and retains the pending interaction for a later retry with the same command identity
+
 #### Scenario: Client approves execution
 - **WHEN** an internal or compatibility adapter sends `plan_approve`
 - **THEN** the command carries planId, expectedVersion, commandId, interactionId, semantic revision, digest, and acknowledged side-effect categories
@@ -32,7 +36,11 @@
 
 #### Scenario: Plan is authorized for execution
 - **WHEN** a committed Plan has an approval and executable items
-- **THEN** the server sends one stable `plan_ready` projection containing only the generated or updated result label and item count
+- **THEN** the server sends the authoritative `plan_state` and one stable `plan_ready` label before scheduling Main execution continuation, allowing clients to derive the global Plan output without a second model summary or a new wire variant
+
+#### Scenario: Plan is replanned
+- **WHEN** a new semantic revision is still drafting or awaiting internal authorization
+- **THEN** the server does not publish it as the global Plan output; after authorization it publishes the new snapshot and updated stable label as one replacement projection
 
 #### Scenario: Client version is stale
 - **WHEN** a command fails PlanStore CAS validation
@@ -43,15 +51,47 @@ The server SHALL synchronize active Plan state after connection, Session selecti
 
 #### Scenario: Client connects with an active Plan
 - **WHEN** the initial `ready` exchange completes
-- **THEN** the server sends `plan_state`, any authorized `plan_ready`, and any pending `plan_interaction`
+- **THEN** the server sends `plan_state`, any authorized `plan_ready`, and any pending `plan_interaction`; clients restore the global Plan output collapsed by default from the authorized snapshot
 
 #### Scenario: Client switches Session
 - **WHEN** the selected Session changes
 - **THEN** the server clears the old Plan projection and sends the active Plan state for the new Session
 
+#### Scenario: Client restores a terminal Plan
+- **WHEN** the selected Session owns a cancelled or failed Plan whose execution authorization has been cleared
+- **THEN** the server sends the terminal `plan_state` whose authorization history lets the client reconstruct the last authorized public Plan, while terminal TODO state arrives separately through `task_state`
+
 #### Scenario: No active Plan exists
 - **WHEN** the selected Session has no active Plan
 - **THEN** the server sends `plan_state` with an explicit empty value
+
+### Requirement: WebSocket synchronizes TaskState independently
+`ServerEvent` SHALL define a `task_state` variant containing the selected
+Session identity and an immutable TaskState snapshot or explicit empty value.
+The event MUST NOT contain PlanExecutionStep state, verification evidence, Tool
+history, continuation counters, hidden prompts, or private reasoning. Standard
+Web and TUI clients SHALL consume TaskState as read-only state and SHALL NOT
+define a presentation command that mutates TODO.
+
+#### Scenario: TaskState changes
+- **WHEN** the backend receives a committed `task:updated` domain event for the selected Session
+- **THEN** it sends `task_state` containing the authoritative TaskState snapshot
+
+#### Scenario: Client connects with current task state
+- **WHEN** the initial `ready` exchange completes
+- **THEN** the server sends `task_state` independently of any `plan_state`, allowing Direct requests to restore TODO without a Plan
+
+#### Scenario: Client switches Session
+- **WHEN** the selected Session changes
+- **THEN** the server clears the old TaskState projection and sends the target Session's TaskState or an explicit empty value
+
+#### Scenario: Plan and task events arrive in either order
+- **WHEN** a client receives `plan_state` and `task_state` in any order
+- **THEN** it updates separate reducer slices and renders Plan before TODO without deriving one snapshot from the other
+
+#### Scenario: Terminal task is restored
+- **WHEN** the owning Main Agent retains a completed, cancelled, failed, or externally blocked TaskState
+- **THEN** the server sends that TaskState directly instead of reconstructing terminal TODO statuses from Plan history
 
 ### Requirement: Plan commands are idempotent and conflict-aware
 The server SHALL deduplicate Plan commands by commandId plus payload digest, SHALL allow one successful command to consume a pending interactionId, and SHALL NOT automatically retry stale approvals against a newer version or semantic revision.

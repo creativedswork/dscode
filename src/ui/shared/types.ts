@@ -18,6 +18,12 @@ import type {
 import type {
   PlanSubmissionMode,
 } from "../../application/plan/route.js";
+import type {
+  ExecutionEpisodeSnapshot,
+  ExecutionIncidentSummary,
+  ExecutionRecoveryResult,
+} from "../../application/plan/execution-episode-types.js";
+import type { TaskState } from "../../application/task-state-port.js";
 
 export type {
   PlanApprovalRequest,
@@ -34,6 +40,17 @@ export type {
 export type {
   PlanSubmissionMode,
 } from "../../application/plan/route.js";
+export type {
+  ExecutionEpisodeSnapshot,
+  ExecutionIncidentSummary,
+  ExecutionRecoveryResult,
+} from "../../application/plan/execution-episode-types.js";
+export type {
+  TaskState,
+  TodoBlocker,
+  TodoItem,
+  TodoStatus,
+} from "../../application/task-state-port.js";
 
 // ── Image ──
 
@@ -393,6 +410,24 @@ export type ClientCommand =
     }
   | { type: "plan_replan"; sessionId: string; planId: string; expectedVersion: number; commandId: string; reason: string }
   | { type: "plan_cancel"; sessionId: string; planId: string; expectedVersion: number; commandId: string }
+  | {
+      type: "plan_adjust";
+      sessionId: string;
+      planId: string;
+      expectedVersion: number;
+      commandId: string;
+      revision: number;
+      digest: string;
+    }
+  | {
+      type: "plan_continue";
+      sessionId: string;
+      planId: string;
+      expectedVersion: number;
+      commandId: string;
+      revision: number;
+      digest: string;
+    }
   | { type: "abort" }
   | { type: "permission"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; persistRule?: boolean; toolNamePattern?: string; fuzzyMode?: number; sessionGrantPattern?: string }
   | { type: "permission_response"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; denyReason?: string; toolNamePattern?: string }
@@ -419,6 +454,27 @@ export type ClientCommand =
 export type ServerEvent =
   | { type: "ready"; model: string; config: ConfigData; messages: ConversationMessage[] }
   | { type: "plan_state"; plan: Readonly<PlanRecord> | null }
+  | {
+      type: "plan_episode";
+      planId: string;
+      episode: Readonly<ExecutionEpisodeSnapshot> | null;
+    }
+  | {
+      type: "plan_impasse";
+      planId: string;
+      episodeId: string;
+      incident: Readonly<ExecutionIncidentSummary>;
+    }
+  | {
+      type: "plan_recovery_result";
+      commandId: string;
+      result: Readonly<ExecutionRecoveryResult>;
+    }
+  | {
+      type: "task_state";
+      sessionId: string;
+      taskState: Readonly<TaskState> | null;
+    }
   | {
       type: "plan_interaction";
       planId: string;

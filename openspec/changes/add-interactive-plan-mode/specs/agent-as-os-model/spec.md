@@ -30,9 +30,17 @@ The system MUST model a PlanRecord as persistent desired work and decisions, not
 - **WHEN** a UI switches away from a Session with an active Plan
 - **THEN** the Plan remains stored independently and the Session continues to serve only as its interaction attachment
 
-#### Scenario: PlanItem is assigned
-- **WHEN** an execution item is bound to a Main Agent or SubAgent
-- **THEN** the binding references the process identity without converting the PlanItem into that process
+#### Scenario: Plan execution step is assigned
+- **WHEN** a PlanExecutionStep is bound to a Main Agent or SubAgent
+- **THEN** the binding references the process identity without converting the PlanExecutionStep into that process
+
+#### Scenario: Main tracks current task progress
+- **WHEN** Main creates or updates TaskState in its persisted AgentContext
+- **THEN** TaskState remains process-owned context rather than becoming a Session, TTY, PlanRecord, background Job, or shared task queue
+
+#### Scenario: Main process is restored
+- **WHEN** AgentSupervisor restores a Main AgentProcess for a Session
+- **THEN** it restores that Main context's TaskState independently from PlanStore and runtime execution counters
 
 ### Requirement: Supervisor provides foreground job control for planning
 AgentSupervisor SHALL transfer the active Session attachment between Main and Planner processes and SHALL keep their lifecycle states explicit.
@@ -48,3 +56,22 @@ AgentSupervisor SHALL transfer the active Session attachment between Main and Pl
 #### Scenario: Main resumes after internal authorization
 - **WHEN** Planner exits with an internally authorized Plan reference
 - **THEN** Supervisor restores Main as the foreground process and supplies the approved planId, revision, and digest
+
+### Requirement: Plan terminal cleanup preserves role-specific lifecycle
+Terminal cleanup SHALL clear Plan bindings from Main and bound SubAgents.
+For a completed Plan, Supervisor SHALL terminate remaining bound SubAgents but
+SHALL keep the owning Main process alive for TaskState finalization and the
+final user report. For a cancelled or failed Plan, Supervisor SHALL retain the
+existing Main termination behavior.
+
+#### Scenario: Plan completes
+- **WHEN** the Plan commits `completed`
+- **THEN** Supervisor clears Main's active Plan and step binding, terminates remaining bound SubAgents, and leaves Main running
+
+#### Scenario: Completed Main reports
+- **WHEN** terminal cleanup has already removed Main's active Plan
+- **THEN** the Host may use its report tracker to run one final Main turn without reattaching Plan execution authority
+
+#### Scenario: Plan is cancelled or failed
+- **WHEN** the Plan commits `cancelled` or `failed`
+- **THEN** Supervisor clears bindings and terminates Main according to the terminal failure path

@@ -1,21 +1,13 @@
 import { randomUUID } from "node:crypto";
 
 import type {
-  PlanCancelCommand,
-  PlanExecutionMutationResult,
-  PlanMaterialConflictCommand,
+  PlanCancelCommand, PlanExecutionMutationResult, PlanMaterialConflictCommand,
+  PlanRequestedReplanCommand, PlanReplanTransitionCommand,
 } from "./execution-types.js";
 import { PlanDomainError } from "./execution-rules.js";
-import {
-  coordinateAfterCommit,
-  type PlanCoordinationFailure,
-} from "./plan-coordination.js";
+import { coordinateAfterCommit, type PlanCoordinationFailure } from "./plan-coordination.js";
 import { PlanStore } from "./store.js";
-import type {
-  PlanCancellationRequest,
-  PlanRecord,
-  PlanStatus,
-} from "./types.js";
+import type { PlanCancellationRequest, PlanRecord, PlanStatus } from "./types.js";
 
 const TERMINAL = new Set<PlanStatus>(["completed", "cancelled", "failed"]);
 
@@ -43,9 +35,8 @@ export class PlanExecutionLifecycle {
 
   constructor(
     private readonly store: PlanStore,
-    private readonly conflict: (
-      command: PlanMaterialConflictCommand,
-    ) => Promise<PlanExecutionMutationResult>,
+    private readonly replan: (command: PlanReplanTransitionCommand) =>
+      Promise<PlanExecutionMutationResult>,
     private readonly callbacks: PlanExecutionLifecycleCallbacks,
     private readonly now: () => number,
   ) {}
@@ -60,6 +51,7 @@ export class PlanExecutionLifecycle {
 
   resume(planId: string): void {
     this.blocked.delete(planId);
+    this.replanning.delete(planId);
   }
 
   startTool(planId: string): void {
@@ -67,7 +59,9 @@ export class PlanExecutionLifecycle {
   }
 
   async settleTool(planId: string): Promise<void> {
-    const remaining = Math.max(0, (this.inFlight.get(planId) ?? 1) - 1);
+    const current = this.inFlight.get(planId);
+    if (!current) return;
+    const remaining = current - 1;
     if (remaining > 0) {
       this.inFlight.set(planId, remaining);
       return;
@@ -82,13 +76,25 @@ export class PlanExecutionLifecycle {
     if (plan?.status === "needs_replan") await this.scheduleReplan(plan);
   }
 
-  async reportConflict(
-    command: PlanMaterialConflictCommand,
-  ): Promise<PlanExecutionMutationResult> {
+  async reportConflict(command: PlanMaterialConflictCommand):
+    Promise<PlanExecutionMutationResult> {
+    return this.transitionToReplan(command);
+  }
+
+  requestReplan(command: PlanRequestedReplanCommand):
+    Promise<PlanExecutionMutationResult> {
+    return this.transitionToReplan(command);
+  }
+
+  private async transitionToReplan(command: PlanReplanTransitionCommand):
+    Promise<PlanExecutionMutationResult> {
     this.blocked.add(command.planId);
-    const result = await this.conflict(command);
+    const result = await this.replan(command);
+    if (!result.ok) this.blocked.delete(command.planId);
     if (result.ok && !this.hasInFlight(command.planId)) {
-      await this.scheduleReplan(result.plan);
+      setTimeout(() => {
+        void this.scheduleReplan(result.plan);
+      }, 0);
     }
     return result;
   }

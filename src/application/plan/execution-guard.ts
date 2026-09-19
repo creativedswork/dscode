@@ -1,5 +1,8 @@
 import type { AgentSupervisor } from "../../agents/process/supervisor.js";
-import type { ToolCapability } from "../../kernel/tool-effects.js";
+import type {
+  ToolCapability,
+  ToolEffect,
+} from "../../kernel/tool-effects.js";
 import {
   isSideEffectFreePlanOperation,
   resolveToolEffect,
@@ -21,6 +24,7 @@ interface ToolCall {
 interface AuthorizedCall {
   binding: PlanExecutionBinding;
   toolName: string;
+  effect: ToolEffect;
   args: unknown;
 }
 
@@ -35,12 +39,25 @@ export class ApprovedPlanExecutionGuard {
     toolCall: ToolCall,
     args: unknown,
   ): Promise<{ block: true; reason: string } | undefined> {
-    if (isSideEffectFreePlanOperation(tool) || resolveToolEffect(tool) === "read") {
-      return undefined;
-    }
+    if (isSideEffectFreePlanOperation(tool)) return undefined;
     const process = this.options.supervisor().get(agentId);
     if (!process?.context.activePlan) return undefined;
     const inherited = process.context.planBinding;
+    if (resolveToolEffect(tool) === "read") {
+      if (inherited) {
+        this.authorized.set(this.key(agentId, toolCall.id), {
+          binding: {
+            ...inherited,
+            agentId,
+            role: process.role,
+          },
+          toolName: toolCall.name,
+          effect: "read",
+          args,
+        });
+      }
+      return undefined;
+    }
     if (!inherited) {
       return {
         block: true,
@@ -73,6 +90,7 @@ export class ApprovedPlanExecutionGuard {
     this.authorized.set(this.key(agentId, toolCall.id), {
       binding,
       toolName: toolCall.name,
+      effect: resolveToolEffect(tool),
       args,
     });
     return undefined;
@@ -95,6 +113,7 @@ export class ApprovedPlanExecutionGuard {
       authorized.args,
       result,
       isError,
+      authorized.effect,
     );
   }
 
@@ -103,7 +122,9 @@ export class ApprovedPlanExecutionGuard {
     const authorized = this.authorized.get(key);
     if (!authorized) return;
     this.authorized.delete(key);
-    await this.options.service().releaseTool(authorized.binding);
+    if (authorized.effect !== "read") {
+      await this.options.service().releaseTool(authorized.binding);
+    }
   }
 
   private key(agentId: string, toolCallId: string | undefined): string {

@@ -22,6 +22,13 @@ export interface AppHostConfig {
   enabled: boolean;
 }
 
+export const DEFAULT_TERMINAL_PLAN_RECOVERY_TTL_MS =
+  30 * 24 * 60 * 60 * 1_000;
+
+export interface PlanConfig {
+  terminalRecoveryTtlMs: number;
+}
+
 export interface RuntimeConfig {
   provider: string;
   modelId: string;
@@ -44,6 +51,7 @@ export interface RuntimeConfig {
   mcp: MCPServerConfig[];
   appHost: AppHostConfig;
   agents: { enabled: boolean };
+  plan: PlanConfig;
   managedAgentsDir?: string;
   agentsMdContent?: string;
   atFile?: AtFileConfig;

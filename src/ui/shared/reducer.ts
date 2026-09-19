@@ -1,6 +1,9 @@
 import type { UIMessage, ToolCallEntry, ServerEvent } from "./types.js";
 import { formatToolArgsForDisplay } from "./tool-args-formatter.js";
-import { isConversationToolVisible } from "./tool-visibility.js";
+import {
+  isConversationToolResultVisible,
+  isConversationToolVisible,
+} from "./tool-visibility.js";
 
 function normalizeContent(c: unknown): string {
   if (typeof c === "string") return c;
@@ -62,7 +65,11 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
         thinking: typeof m.thinking === "string" ? m.thinking : "",
         tools: Array.isArray(m.tools)
           ? m.tools
-            .filter((tool: ToolCallEntry) => isConversationToolVisible(tool.name))
+            .filter((tool: ToolCallEntry) => isConversationToolResultVisible(
+              tool.name,
+              tool.resultDetail?.text ?? tool.result,
+              tool.isError,
+            ))
             .map((tool: ToolCallEntry) => ({ ...tool }))
           : [],
         createdAt: typeof m.createdAt === "number" ? m.createdAt : undefined,
@@ -179,7 +186,10 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
       }), { createdAt: event.createdAt });
 
     case "tool_start":
-      if (!isConversationToolVisible(event.name)) return prev;
+      if (
+        !isConversationToolVisible(event.name)
+        && event.name !== "spawn_agent"
+      ) return prev;
       return updateLastOrCreate(prev, (msg) => {
         const entry: ToolCallEntry = {
           toolCallId: event.toolCallId,
@@ -218,22 +228,44 @@ export function conversationReducer(prev: UIMessage[], event: ServerEvent): UIMe
     }
 
     case "tool_end": {
-      if (!isConversationToolVisible(event.name)) return prev;
+      if (
+        !isConversationToolVisible(event.name)
+        && event.name !== "spawn_agent"
+      ) return prev;
       const next = [...prev];
       const index = streamingAssistantIndex(next);
       const current = index >= 0 ? next[index] : undefined;
       if (current) {
-        const tools = (current.tools ?? []).map((t) =>
-          t.toolCallId === event.toolCallId
-            ? {
-                ...t,
-                result: event.result,
-                resultDetail: event.resultDetail,
-                isError: event.isError,
-                images: event.images ?? t.images,
-              }
-            : t,
+        const visible = isConversationToolResultVisible(
+          event.name,
+          event.resultDetail?.text ?? event.result,
+          event.isError,
         );
+        const tools = visible
+          ? (current.tools ?? []).map((t) =>
+              t.toolCallId === event.toolCallId
+                ? {
+                    ...t,
+                    result: event.result,
+                    resultDetail: event.resultDetail,
+                    isError: event.isError,
+                    images: event.images ?? t.images,
+                  }
+                : t
+            )
+          : (current.tools ?? []).filter(
+              (tool) => tool.toolCallId !== event.toolCallId,
+            );
+        if (
+          !visible
+          && tools.length === 0
+          && !current.content
+          && !current.thinking
+          && !current.images?.length
+        ) {
+          next.splice(index, 1);
+          return next;
+        }
         next[index] = { ...current, tools };
       }
       return next;

@@ -82,6 +82,7 @@ function assessmentCall(
       impact: route === "plan" ? 2 : 0,
       risk: 0,
       coordination: 0,
+      requirements: [],
       evidence: [`${route} test evidence`],
     },
   };

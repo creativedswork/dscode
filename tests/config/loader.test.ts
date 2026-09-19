@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { loadConfig, loadUserSettings, saveUserConfig, saveUserSettings } from "../../src/config/loader.js";
+import { DEFAULT_TERMINAL_PLAN_RECOVERY_TTL_MS } from "../../src/config/types.js";
 
 describe("config and settings loading", () => {
   const originalCwd = process.cwd();
@@ -183,6 +184,42 @@ describe("config and settings loading", () => {
       }),
     ]);
 
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("loads terminal Plan recovery TTL from settings and environment", () => {
+    const root = mkdtempSync(join(tmpdir(), "dscode-config-"));
+    const configHome = join(root, "home");
+    const workspace = join(root, "workspace");
+    mkdirSync(join(workspace, ".dscode"), { recursive: true });
+    writeFileSync(
+      join(workspace, ".dscode", "settings.json"),
+      JSON.stringify({ plan: { terminalRecoveryTtlMs: 2_000 } }),
+      "utf8",
+    );
+    const environment = {
+      HOME: isolatedHome,
+      DSCODE_PROJECT_PATH: workspace,
+      DSCODE_CONFIG_HOME: configHome,
+      DSCODE_DATA_HOME: configHome,
+    };
+
+    expect(loadConfig(undefined, { environment }).plan)
+      .toEqual({ terminalRecoveryTtlMs: 2_000 });
+    expect(loadConfig(undefined, {
+      environment: {
+        ...environment,
+        DSCODE_PLAN_TERMINAL_RECOVERY_TTL_MS: "1000",
+      },
+    }).plan).toEqual({ terminalRecoveryTtlMs: 1_000 });
+    expect(loadConfig(undefined, {
+      environment: {
+        ...environment,
+        DSCODE_PLAN_TERMINAL_RECOVERY_TTL_MS: "-1",
+      },
+    }).plan).toEqual({
+      terminalRecoveryTtlMs: DEFAULT_TERMINAL_PLAN_RECOVERY_TTL_MS,
+    });
     rmSync(root, { recursive: true, force: true });
   });
 

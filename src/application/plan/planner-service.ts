@@ -62,6 +62,7 @@ export class PlannerService {
     expectedVersion: number,
     input: PlannerDecisionInput,
   ) {
+    const resolvesRequirementIds = input.resolvesRequirementIds ?? [];
     if (
       input.candidates.length < 1
       || input.candidates.length > MAX_PLAN_CANDIDATES
@@ -73,8 +74,31 @@ export class PlannerService {
           + `clarify the choice and provide between 1 and ${MAX_PLAN_CANDIDATES}`,
       );
     }
+    if (input.candidates.filter((candidate) => candidate.recommended).length !== 1) {
+      throw new Error(
+        `Decision ${input.decisionNodeId} must have exactly one recommended candidate`,
+      );
+    }
+    if (
+      resolvesRequirementIds.length > 1
+      || new Set(resolvesRequirementIds).size !== resolvesRequirementIds.length
+    ) {
+      throw new Error(
+        `Decision ${input.decisionNodeId} must resolve at most one alignment requirement`,
+      );
+    }
     return this.store.update(planId, expectedVersion, (draft) => {
       assertActivePlanner(draft, plannerAgentId);
+      for (const requirementId of resolvesRequirementIds) {
+        const requirement = draft.alignmentRequirements?.find((item) =>
+          item.requirementId === requirementId
+        );
+        if (!requirement || requirement.status !== "pending") {
+          throw new Error(
+            `Decision ${input.decisionNodeId} must reference a pending alignment requirement`,
+          );
+        }
+      }
       if (draft.decisions.length >= MAX_PLAN_DECISION_NODES) {
         const behavior = draft.decisions.some((decision) =>
           decision.status === "open"
@@ -95,6 +119,9 @@ export class PlannerService {
         question: input.question,
         candidates: structuredClone(input.candidates),
         status: "open",
+        ...(resolvesRequirementIds.length > 0
+          ? { resolvesRequirementIds: [...resolvesRequirementIds] }
+          : {}),
       });
       for (const candidate of input.candidates) {
         draft.trajectoryEvents.push({
@@ -167,8 +194,8 @@ export class PlannerService {
         throw new Error(`Plan ${planId} is not ready for internal authorization`);
       }
       assertCompiledPlan(draft, this.store.projectPath);
-      const approvedEffects = [...new Set(draft.items.flatMap((item) =>
-        item.effectGrants.map((grant) => grant.effect)
+      const approvedEffects = [...new Set(draft.executionSteps.flatMap((step) =>
+        step.effectGrants.map((grant) => grant.effect)
       ))].filter((effect) => effect !== "read").sort();
       draft.approval = {
         revision: draft.revision,
@@ -196,15 +223,20 @@ export class PlannerService {
   ): Promise<Readonly<PlanRecord>> {
     const plan = await this.requirePlan(planId);
     assertActivePlanner(plan, plannerAgentId);
+    if (plan.schemaVersion !== 2) {
+      throw new Error("Schema v1 Plan records are read-only");
+    }
     assertCompiledPlan(plan, this.store.projectPath);
     return this.persistInteraction(plan, plannerAgentId, expectedVersion, {
       interactionId,
       createdAt: this.now(),
       kind: "approval",
       payload: {
-        itemIds: plan.items.map((item) => item.itemId),
+        itemIds: plan.executionSteps.map((step) => step.stepId),
         effectCategories: [...new Set(
-          plan.items.flatMap((item) => item.effectGrants.map((grant) => grant.effect)),
+          plan.executionSteps.flatMap((step) =>
+            step.effectGrants.map((grant) => grant.effect)
+          ),
         )].filter((effect) => effect !== "read"),
         sideEffectSummary: plan.sideEffectSummary,
       },

@@ -45,19 +45,21 @@ export function makePlanInput(planId = "plan-1"): NewPlanRecord {
         rationale: "Uses the existing runtime storage model",
       }],
     }],
-    items: [{
-      itemId: "item-1",
+    executionSteps: [{
+      stepId: "item-1",
       order: 0,
       title: "Write snapshot",
       description: "Persist the Plan atomically",
       dependsOn: [],
-      status: "pending",
-      acceptanceCriteria: [{
+      verifications: [{
         kind: "command",
-        criterionId: "criterion-1",
+        verificationId: "criterion-1",
+        description: "Tests pass",
         command: "npm test",
-        expectedExitCode: 0,
-        expectedOutput: "passed",
+        expect: {
+          exitCode: 0,
+          stdout: { matcher: "contains", value: "passed" },
+        },
       }],
       effectGrants: [{
         effect: "workspace_write",
@@ -66,8 +68,14 @@ export function makePlanInput(planId = "plan-1"): NewPlanRecord {
           pattern: "src/application/plan/**",
         }],
       }],
-      evidence: [],
     }],
+    execution: {
+      steps: [{
+        stepId: "item-1",
+        status: "pending",
+        evidence: [],
+      }],
+    },
     sideEffectSummary: "Writes Plan snapshots inside the dscode data directory",
     trajectoryEvents: [],
   };

@@ -1,9 +1,13 @@
 import { computePlanDigest } from "./digest.js";
 import type {
   PlanExecutionBinding,
-  PlanItem,
+  PlanExecutionStepState,
   PlanRecord,
 } from "./types.js";
+import {
+  requireExecutionStep,
+  requireExecutionStepState,
+} from "./execution-model.js";
 
 export class PlanDomainError extends Error {
   constructor(
@@ -16,10 +20,10 @@ export class PlanDomainError extends Error {
 }
 
 export function itemBindings(
-  item: Readonly<PlanItem>,
+  state: Readonly<PlanExecutionStepState>,
 ): readonly PlanExecutionBinding[] {
-  return item.executionBindings
-    ?? (item.executionBinding ? [item.executionBinding] : []);
+  return state.executionBindings
+    ?? (state.executionBinding ? [state.executionBinding] : []);
 }
 
 export function requireCurrentApproval(
@@ -38,12 +42,26 @@ export function requireCurrentApproval(
   }
 }
 
-export function requireItem(plan: PlanRecord, itemId: string): PlanItem {
-  const item = plan.items.find((candidate) => candidate.itemId === itemId);
-  if (!item) {
-    throw new PlanDomainError("invalid_command", `Plan item not found: ${itemId}`);
+export function requireStep(plan: Readonly<PlanRecord>, stepId: string) {
+  try {
+    return requireExecutionStep(plan, stepId);
+  } catch {
+    throw new PlanDomainError(
+      "invalid_command",
+      `Plan execution step not found: ${stepId}`,
+    );
   }
-  return item;
+}
+
+export function requireStepState(plan: PlanRecord, stepId: string) {
+  try {
+    return requireExecutionStepState(plan, stepId);
+  } catch {
+    throw new PlanDomainError(
+      "invalid_command",
+      `Plan execution state not found: ${stepId}`,
+    );
+  }
 }
 
 export function mutationFailure(error: unknown): {

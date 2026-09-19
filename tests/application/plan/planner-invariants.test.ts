@@ -64,7 +64,8 @@ async function setup(planId = "plan-1") {
       source: "user",
     }],
     decisions: [],
-    items: [],
+    executionSteps: [],
+    execution: { steps: [] },
     sideEffectSummary: "",
     trajectoryEvents: [],
   });
@@ -112,7 +113,7 @@ describe("Planner domain invariants", () => {
       automatic,
       automatic.created.version,
       "single",
-      [candidate("only")],
+      [candidate("only", { recommended: true })],
     );
     const selected = await automatic.service.applyDecision({
       planId: "plan-auto",
@@ -131,7 +132,10 @@ describe("Planner domain invariants", () => {
       unresolved,
       unresolved.created.version,
       "visual-direction",
-      [candidate("retro", { constraintFit: "uncertain" })],
+      [candidate("retro", {
+        constraintFit: "uncertain",
+        recommended: true,
+      })],
     );
     await expect(unresolved.service.applyDecision({
       planId: "plan-user-value",
@@ -235,7 +239,7 @@ describe("Planner domain invariants", () => {
         `decision-${index}`,
         index <= 1
           ? [candidate("a"), candidate("b")]
-          : [candidate(`option-${index}`)],
+          : [candidate(`option-${index}`, { recommended: true })],
       );
     }
     const selectedPrefix = await fixture.store.update(
@@ -277,7 +281,7 @@ describe("Planner domain invariants", () => {
         fixture,
         plan.version,
         `revised-${index}`,
-        [candidate(`revised-option-${index}`)],
+        [candidate(`revised-option-${index}`, { recommended: true })],
       );
     }
     expect(plan.decisions).toHaveLength(6);
@@ -295,7 +299,7 @@ describe("Planner domain invariants", () => {
       fixture,
       plan.version,
       "over-budget",
-      [candidate("over-budget")],
+      [candidate("over-budget", { recommended: true })],
     )).rejects.toBeInstanceOf(PlanBudgetError);
   });
 });

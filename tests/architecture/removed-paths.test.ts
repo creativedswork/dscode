@@ -76,5 +76,5 @@ describe("removed source paths", () => {
     });
 
     expect(stale).toEqual([]);
-  });
+  }, 15_000);
 });

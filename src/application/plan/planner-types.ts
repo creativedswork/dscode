@@ -37,6 +37,7 @@ export type PlanDecisionAction =
 export interface PlannerDecisionInput {
   decisionNodeId: string;
   question: string;
+  resolvesRequirementIds?: string[];
   candidates: PlanCandidate[];
 }
 

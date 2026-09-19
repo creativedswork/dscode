@@ -44,7 +44,8 @@ async function setup() {
       source: "user",
     }],
     decisions: [],
-    items: [],
+    executionSteps: [],
+    execution: { steps: [] },
     sideEffectSummary: "",
     trajectoryEvents: [],
   });
@@ -91,6 +92,7 @@ async function setup() {
     planId: () => "plan-1",
     service,
     interactions,
+    availableExecutionToolNames: () => ["read_file", "bash"],
   });
   return { appended: appended.plan, interactions, service, tools };
 }
@@ -140,6 +142,12 @@ describe("Planner tools", () => {
     });
     expect((result.details as { decisions: Record<string, unknown>[] })
       .decisions[1]).not.toHaveProperty("expectedVersion");
+    const modelText = result.content[0];
+    expect(modelText.type).toBe("text");
+    if (modelText.type !== "text") throw new Error("Planner result text missing");
+    expect(modelText.text).toContain('"version"');
+    expect(modelText.text).not.toContain("Choose another direction");
+    expect(modelText.text).not.toContain("trajectoryEvents");
   });
 
   it("lets Planner select a technical decision without user interaction", async () => {
@@ -240,15 +248,16 @@ describe("Planner tools", () => {
     if (!compile || !authorize) throw new Error("authorization tools missing");
     await compile.execute("tool-compile", {
       expectedVersion: selected.plan.version,
-      items: [{
-        itemId: "item-1",
+      executionSteps: [{
+        stepId: "item-1",
         title: "Implement A",
         description: "Implement the selected option",
         dependsOn: [],
-        acceptanceCriteria: [{
+        verifications: [{
           kind: "observable",
-          criterionId: "done",
+          verificationId: "done",
           description: "Implementation is complete",
+          toolName: "read_file",
         }],
         effectGrants: [],
       }],
@@ -268,6 +277,193 @@ describe("Planner tools", () => {
           interactionId: "internal:planner-1",
         },
       },
+    });
+  });
+
+  it.each([
+    [
+      "compound command acceptance",
+      "npm test && npm run typecheck",
+      "must be one simple shell command",
+    ],
+    [
+      "grep patterns that can be parsed as options",
+      "grep -q \"-webkit-backdrop-filter\" glassmorphism-playground.html",
+      "must pass grep patterns with -- or -e/--regexp",
+    ],
+  ])("rejects %s", async (_label, command, expectedError) => {
+    const fixture = await setup();
+    const tool = fixture.tools.find((item) => item.name === "plan_compile");
+    if (!tool) throw new Error("compile tool missing");
+    const selected = await fixture.service.applyDecision({
+      planId: "plan-1",
+      plannerAgentId: "planner-1",
+      expectedVersion: fixture.appended.version,
+      commandId: "select-before-compile",
+      action: {
+        kind: "select",
+        decisionNodeId: "decision-1",
+        optionId: "a",
+      },
+    });
+    if (!selected.ok) throw new Error("selection failed");
+
+    await expect(tool.execute("tool-compound", {
+      expectedVersion: selected.plan.version,
+      executionSteps: [{
+        stepId: "item-1",
+        title: "Verify",
+        description: "Run verification",
+        dependsOn: [],
+        verifications: [{
+          kind: "command",
+          verificationId: "combined",
+          description: "Command succeeds",
+          command,
+          expect: { exitCode: 0 },
+        }],
+        effectGrants: [],
+      }],
+      sideEffectSummary: "Runs verification commands.",
+    }, new AbortController().signal)).rejects.toThrow(expectedError);
+  });
+
+  it("rejects observables without an available execution tool", async () => {
+    const fixture = await setup();
+    const tool = fixture.tools.find((item) => item.name === "plan_compile");
+    if (!tool) throw new Error("compile tool missing");
+    const selected = await fixture.service.applyDecision({
+      planId: "plan-1",
+      plannerAgentId: "planner-1",
+      expectedVersion: fixture.appended.version,
+      commandId: "select-before-observable",
+      action: {
+        kind: "select",
+        decisionNodeId: "decision-1",
+        optionId: "a",
+      },
+    });
+    if (!selected.ok) throw new Error("selection failed");
+
+    await expect(tool.execute("tool-observable", {
+      expectedVersion: selected.plan.version,
+      executionSteps: [{
+        stepId: "item-1",
+        title: "Verify in browser",
+        description: "Render the result",
+        dependsOn: [],
+        verifications: [{
+          kind: "observable",
+          verificationId: "browser-render",
+          description: "The page renders correctly",
+          toolName: "browser",
+        }],
+        effectGrants: [],
+      }],
+      sideEffectSummary: "No side effects.",
+    }, new AbortController().signal)).rejects.toThrow(
+      "requires an available execution tool",
+    );
+  });
+
+  it("rejects human acceptance even when mixed with executable checks", async () => {
+    const fixture = await setup();
+    const tool = fixture.tools.find((item) => item.name === "plan_compile");
+    if (!tool) throw new Error("compile tool missing");
+    const selected = await fixture.service.applyDecision({
+      planId: "plan-1",
+      plannerAgentId: "planner-1",
+      expectedVersion: fixture.appended.version,
+      commandId: "select-before-human",
+      action: {
+        kind: "select",
+        decisionNodeId: "decision-1",
+        optionId: "a",
+      },
+    });
+    if (!selected.ok) throw new Error("selection failed");
+
+    await expect(tool.execute("tool-human", {
+      expectedVersion: selected.plan.version,
+      executionSteps: [{
+        stepId: "item-1",
+        title: "Implement",
+        description: "Implement the result",
+        dependsOn: [],
+        verifications: [{
+          kind: "command",
+          verificationId: "implemented",
+          description: "Result exists",
+          command: "test -f result.html",
+          expect: { exitCode: 0 },
+        }, {
+          kind: "human",
+          verificationId: "human-check",
+          prompt: "Confirm the result",
+        }],
+        effectGrants: [],
+      }],
+      sideEffectSummary: "Runs verification commands.",
+    }, new AbortController().signal)).rejects.toThrow(
+      "is not executable",
+    );
+  });
+
+  it("allows internal execution phases that write the same deliverable", async () => {
+    const fixture = await setup();
+    const tool = fixture.tools.find((item) => item.name === "plan_compile");
+    if (!tool) throw new Error("compile tool missing");
+    const selected = await fixture.service.applyDecision({
+      planId: "plan-1",
+      plannerAgentId: "planner-1",
+      expectedVersion: fixture.appended.version,
+      commandId: "select-before-human-only",
+      action: {
+        kind: "select",
+        decisionNodeId: "decision-1",
+        optionId: "a",
+      },
+    });
+    if (!selected.ok) throw new Error("selection failed");
+
+    await expect(tool.execute("tool-agent-verification", {
+      expectedVersion: selected.plan.version,
+      executionSteps: [{
+        stepId: "item-1",
+        title: "Implement",
+        description: "Create the requested result",
+        dependsOn: [],
+        verifications: [{
+          kind: "command",
+          verificationId: "exists",
+          description: "Result exists",
+          command: "test -f result.html",
+          expect: { exitCode: 0 },
+        }],
+        effectGrants: [{
+          effect: "workspace_write",
+          resourceScopes: [{ kind: "workspace_path", pattern: "result.html" }],
+        }],
+      }, {
+        stepId: "item-2",
+        title: "Run smoke verification",
+        description: "Verify the generated result",
+        dependsOn: ["item-1"],
+        verifications: [{
+          kind: "command",
+          verificationId: "nonempty",
+          description: "Result is non-empty",
+          command: "test -s result.html",
+          expect: { exitCode: 0 },
+        }],
+        effectGrants: [{
+          effect: "workspace_write",
+          resourceScopes: [{ kind: "workspace_path", pattern: "result.html" }],
+        }],
+      }],
+      sideEffectSummary: "Runs verification commands.",
+    }, new AbortController().signal)).resolves.toMatchObject({
+      details: { schemaVersion: 2 },
     });
   });
 

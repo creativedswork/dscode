@@ -23,6 +23,7 @@ function assessment(
     impact: 0,
     risk: 0,
     coordination: 0,
+    requirements: [],
     evidence: ["The requested change is local and reversible"],
     ...overrides,
   };
@@ -43,7 +44,18 @@ describe("Plan request routing", () => {
   it.each(["intentUncertainty", "impact", "risk", "coordination"] as const)(
     "forces Plan when %s is 2",
     (dimension) => {
-      expect(decidePlanRoute(assessment({ [dimension]: 2 }))).toMatchObject({
+      const requirements = dimension === "intentUncertainty"
+        ? [{
+            requirementId: "scope",
+            topic: "product_scope" as const,
+            publicSummary: "Choose the product scope",
+            status: "pending" as const,
+          }]
+        : [];
+      expect(decidePlanRoute(assessment({
+        [dimension]: 2,
+        requirements,
+      }))).toMatchObject({
         route: "plan",
         totalScore: 2,
       });
@@ -59,6 +71,12 @@ describe("Plan request routing", () => {
   it("routes any remaining user-intent uncertainty to Plan", () => {
     expect(decidePlanRoute(assessment({
       intentUncertainty: 1,
+      requirements: [{
+        requirementId: "delivery",
+        topic: "delivery",
+        publicSummary: "Choose the delivery format",
+        status: "pending",
+      }],
     }))).toMatchObject({ route: "plan", totalScore: 1 });
   });
 
@@ -74,11 +92,38 @@ describe("Plan request routing", () => {
       totalScore: 1,
       assessment: {
         intentUncertainty: 1,
+        requirements: [{
+          requirementId: "host:visual_direction",
+          topic: "visual_direction",
+          status: "pending",
+        }],
         evidence: expect.arrayContaining([
           expect.stringContaining("Host policy"),
         ]),
       },
     });
+  });
+
+  it("does not duplicate an assessed visual-direction requirement", () => {
+    const guard = new PlanExecutionGuard();
+    guard.beginRequest("request-1", "创建一个俄罗斯方块小游戏", "auto");
+
+    const decision = guard.submitAssessment(assessment({
+      intentUncertainty: 1,
+      requirements: [{
+        requirementId: "visual",
+        topic: "visual_direction",
+        publicSummary: "Choose the visual direction",
+        status: "pending",
+      }],
+    }));
+
+    expect(decision.assessment?.requirements).toEqual([{
+      requirementId: "visual",
+      topic: "visual_direction",
+      publicSummary: "Choose the visual direction",
+      status: "pending",
+    }]);
   });
 
   it("accepts explicit visual direction for a creative request", () => {
@@ -111,6 +156,12 @@ describe("Plan request routing", () => {
   it("routes to Plan when the total score reaches four", () => {
     expect(decidePlanRoute(assessment({
       intentUncertainty: 1,
+      requirements: [{
+        requirementId: "scope",
+        topic: "product_scope",
+        publicSummary: "Choose the product scope",
+        status: "pending",
+      }],
       solutionDivergence: 1,
       impact: 1,
       risk: 1,
@@ -183,6 +234,17 @@ describe("Plan request routing", () => {
       ...assessment(),
       risk: 3,
     })).toThrow(PlanRouteAssessmentError);
+    expect(() => validatePlanRouteAssessment(assessment({
+      intentUncertainty: 1,
+    }))).toThrow("requirements are empty");
+    expect(() => validatePlanRouteAssessment(assessment({
+      requirements: [{
+        requirementId: "scope",
+        topic: "product_scope",
+        publicSummary: "Choose scope",
+        status: "pending",
+      }],
+    }))).toThrow("requirements are empty");
 
     const guard = new PlanExecutionGuard();
     guard.beginRequest("request-1", "Change a file", "auto");

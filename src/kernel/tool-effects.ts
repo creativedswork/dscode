@@ -12,7 +12,7 @@ export interface ToolCapability {
   readonly name: string;
   readonly effect?: ToolEffect;
   readonly planOperation?: {
-    readonly domain: "plan";
+    readonly domain: "plan" | "task";
     readonly sideEffectFree: true;
   };
   readonly audience?: "all" | "main" | "planner";
@@ -22,7 +22,7 @@ declare module "@earendil-works/pi-agent-core" {
   interface AgentTool {
     effect?: ToolEffect;
     planOperation?: {
-      readonly domain: "plan";
+      readonly domain: "plan" | "task";
       readonly sideEffectFree: true;
     };
     audience?: "all" | "main" | "planner";
@@ -51,8 +51,10 @@ export function resolveToolEffect(tool: ToolCapability | undefined): ToolEffect 
 export function isSideEffectFreePlanOperation(
   tool: ToolCapability | undefined,
 ): boolean {
-  return tool?.planOperation?.domain === "plan"
-    && tool.planOperation.sideEffectFree === true;
+  return (
+    tool?.planOperation?.domain === "plan"
+    || tool?.planOperation?.domain === "task"
+  ) && tool.planOperation.sideEffectFree === true;
 }
 
 export function isPlanToolAllowed(tool: ToolCapability | undefined): boolean {

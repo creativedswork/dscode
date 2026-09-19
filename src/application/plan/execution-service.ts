@@ -4,6 +4,7 @@ import {
   type PlanCompilation,
 } from "./compiler.js";
 import { PlanExecutionApproval } from "./execution-approval.js";
+import { PlanExecutionReplan } from "./execution-replan.js";
 import { PlanExecutionRuntime } from "./execution-runtime.js";
 import { PlanExecutionState } from "./execution-state.js";
 import type {
@@ -13,8 +14,10 @@ import type {
   PlanItemBindingCommand,
   PlanItemVerificationCommand,
   PlanMaterialConflictCommand,
+  PlanRequestedReplanCommand,
   PlanToolAuthorization,
 } from "./execution-types.js";
+import type { ToolEffect } from "../../kernel/tool-effects.js";
 import { PlanStore } from "./store.js";
 import type { PlanCoordinationFailure } from "./plan-coordination.js";
 import type {
@@ -31,6 +34,7 @@ export interface PlanExecutionCallbacks {
 
 export class PlanExecutionService {
   private readonly approval: PlanExecutionApproval;
+  private readonly replan: PlanExecutionReplan;
   private readonly runtime: PlanExecutionRuntime;
   private readonly state: PlanExecutionState;
 
@@ -40,10 +44,13 @@ export class PlanExecutionService {
     callbacks: PlanExecutionCallbacks = {},
   ) {
     this.approval = new PlanExecutionApproval(store, now);
-    this.state = new PlanExecutionState(store, now);
+    this.replan = new PlanExecutionReplan(store, now);
+    this.state = new PlanExecutionState(store);
     this.runtime = new PlanExecutionRuntime(
       store,
-      (command) => this.state.materialConflict(command),
+      (command) => "conflictTarget" in command
+        ? this.replan.materialConflict(command)
+        : this.replan.requestReplan(command),
       callbacks,
       now,
     );
@@ -58,6 +65,7 @@ export class PlanExecutionService {
     plannerAgentId: string,
     expectedVersion: number,
     compilation: PlanCompilation,
+    availableToolNames?: ReadonlySet<string>,
   ) {
     return this.store.update(planId, expectedVersion, (draft) => {
       if (
@@ -66,11 +74,20 @@ export class PlanExecutionService {
       ) {
         throw new Error(`Planner cannot compile Plan ${planId}`);
       }
-      draft.items = compileSelectedTrajectory(
+      draft.executionSteps = compileSelectedTrajectory(
         draft,
         compilation,
         this.store.projectPath,
+        availableToolNames,
       );
+      draft.execution = {
+        steps: draft.executionSteps.map((step) => ({
+          stepId: step.stepId,
+          status: "pending",
+          evidence: [],
+          executionBindings: [],
+        })),
+      };
       draft.sideEffectSummary = compilation.sideEffectSummary.trim();
       draft.status = "drafting";
     });
@@ -86,6 +103,10 @@ export class PlanExecutionService {
     return this.runtime.authorizeTool(authorization);
   }
 
+  hasInFlight(planId: string): boolean {
+    return this.runtime.hasInFlight(planId);
+  }
+
   releaseTool(binding: PlanExecutionBinding) {
     return this.runtime.releaseTool(binding);
   }
@@ -97,6 +118,8 @@ export class PlanExecutionService {
     args: unknown,
     result: unknown,
     isError: boolean,
+    effect?: ToolEffect,
+    settleLifecycle?: boolean,
   ) {
     return this.runtime.recordToolResult(
       binding,
@@ -105,6 +128,8 @@ export class PlanExecutionService {
       args,
       result,
       isError,
+      effect,
+      settleLifecycle,
     );
   }
 
@@ -154,34 +179,11 @@ export class PlanExecutionService {
     criterionId: string,
     interactionId: string,
   ) {
-    return this.store.persistInteraction(
-      binding.planId,
-      expectedVersion,
-      {
-        interactionId,
-        kind: "acceptance",
-        createdAt: this.now(),
-        payload: {
-          itemId: binding.itemId,
-          criterionId,
-          prompt: "Confirm the acceptance criterion",
-        },
-      },
-      (draft) => {
-        if (
-          draft.status !== "executing"
-          || draft.revision !== binding.revision
-          || draft.digest !== binding.digest
-        ) throw new Error("Plan execution binding is stale");
-        const criterion = draft.items
-          .find((item) => item.itemId === binding.itemId)
-          ?.acceptanceCriteria.find((candidate) =>
-            candidate.criterionId === criterionId
-          );
-        if (criterion?.kind !== "human") {
-          throw new Error("Human acceptance criterion not found");
-        }
-      },
+    void expectedVersion;
+    void criterionId;
+    void interactionId;
+    throw new Error(
+      `Schema v2 Plan ${binding.planId} does not support human verification`,
     );
   }
 
@@ -207,10 +209,15 @@ export class PlanExecutionService {
     return this.runtime.reportMaterialConflict(command);
   }
 
+  requestReplan(command: PlanRequestedReplanCommand) {
+    return this.runtime.requestReplan(command);
+  }
+
   deriveReplan(
     planId: string,
     expectedVersion: number,
     plannerAgentId: string,
+    mainAgentId?: string,
   ) {
     if (this.runtime.hasInFlight(planId)) {
       return Promise.resolve({
@@ -219,7 +226,12 @@ export class PlanExecutionService {
         message: "In-flight tool calls must settle before deriving a revision",
       });
     }
-    return this.state.deriveReplan(planId, expectedVersion, plannerAgentId);
+    return this.state.deriveReplan(
+      planId,
+      expectedVersion,
+      plannerAgentId,
+      mainAgentId,
+    );
   }
 
   cancel(command: PlanCancelCommand) {

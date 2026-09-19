@@ -18,7 +18,10 @@ describe("Plan execution cancellation", () => {
     roots.push(fixture.root);
     const approved = await fixture.approve();
     const { binding, plan } = await bindMain(fixture, approved.version);
-    const scope = plan.items[0].effectGrants[0].resourceScopes[0];
+    const scope = plan.executionSteps[0].effectGrants
+      .find((grant) => grant.effect === "workspace_write")
+      ?.resourceScopes[0];
+    if (!scope) throw new Error("Workspace scope missing");
     if (scope.kind !== "workspace_path") throw new Error("Workspace scope missing");
     await fixture.execution.authorizeTool({
       binding,
@@ -87,7 +90,10 @@ describe("Plan execution cancellation", () => {
     roots.push(fixture.root);
     const approved = await fixture.approve();
     const { binding, plan } = await bindMain(fixture, approved.version);
-    const scope = plan.items[0].effectGrants[0].resourceScopes[0];
+    const scope = plan.executionSteps[0].effectGrants
+      .find((grant) => grant.effect === "workspace_write")
+      ?.resourceScopes[0];
+    if (!scope) throw new Error("Workspace scope missing");
     if (scope.kind !== "workspace_path") throw new Error("Workspace scope missing");
     await fixture.execution.authorizeTool({
       binding,
@@ -99,7 +105,9 @@ describe("Plan execution cancellation", () => {
         pattern: scope.pattern.replace(/\*\*$/, "file.ts"),
       }],
     });
-    await fixture.execution.recordProgress(binding, "work", "version advanced");
+    await fixture.store.update("plan-1", plan.version, (draft) => {
+      draft.telemetry = { counters: { unrelatedRuntimeUpdate: 1 } };
+    });
 
     await expect(fixture.execution.cancel({
       planId: "plan-1",

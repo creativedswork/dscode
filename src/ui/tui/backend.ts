@@ -61,6 +61,68 @@ export class TuiBackend implements UiBackend {
     deps.events.on("agent:progress", projectAgentActivity);
     deps.events.on("agent:output", projectAgentActivity);
     deps.events.on("agent:exit", projectAgentActivity);
+    deps.events.on("plan:updated", (event) => {
+      if (event.plan.sessionId === deps.sessions.currentId()) {
+        this.tui.applyConversationEvent({
+          type: "plan_state",
+          plan: event.plan,
+        });
+      }
+    });
+    deps.events.on("task:updated", (event) => {
+      if (event.sessionId === deps.sessions.currentId()) {
+        this.tui.applyConversationEvent({
+          type: "task_state",
+          sessionId: event.sessionId,
+          taskState: event.taskState,
+        });
+      }
+    });
+    deps.events.on("plan:episode", (event) => {
+      this.tui.applyConversationEvent({
+        type: "plan_episode",
+        planId: event.planId,
+        episode: event.episode,
+      });
+    });
+    deps.events.on("plan:impasse", (event) => {
+      this.tui.applyConversationEvent({
+        type: "plan_impasse",
+        planId: event.planId,
+        episodeId: event.episodeId,
+        incident: event.incident,
+      });
+    });
+    deps.events.on("plan:interaction", (event) => {
+      const sessionId = deps.sessions.currentId();
+      if (!sessionId) return;
+      void deps.plans.getActivePlan(sessionId).then((plan) => {
+        if (
+          deps.sessions.currentId() !== sessionId
+          || plan?.planId !== event.planId
+        ) return;
+        this.tui.applyConversationEvent({
+          type: "plan_interaction",
+          planId: event.planId,
+          version: event.version,
+          revision: event.revision,
+          interaction: event.interaction,
+          request: event.request,
+        });
+      }).catch(() => {});
+    });
+    deps.events.on("plan:conflict", (event) => {
+      if (event.plan.sessionId === deps.sessions.currentId()) {
+        this.tui.applyConversationEvent({
+          type: "plan_conflict",
+          planId: event.planId,
+          expectedVersion: event.expectedVersion,
+          currentVersion: event.currentVersion,
+          revision: event.revision,
+          plan: event.plan,
+        });
+      }
+    });
     deps.events.on("eval:dashboard", (event) => {
       if (event.state.status === "completed") {
         openPath(event.state.outputPath);
@@ -71,6 +133,7 @@ export class TuiBackend implements UiBackend {
   // ── Lifecycle ──
   async start(): Promise<void> {
     await this.tui.start();
+    await this.tui.syncPlanState();
   }
 
   async waitForExit(): Promise<void> {

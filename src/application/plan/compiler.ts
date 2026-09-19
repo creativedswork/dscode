@@ -1,23 +1,28 @@
 import { canonicalStringify } from "./digest.js";
-import { canonicalizeResourceScope } from "./resource-scope.js";
+import {
+  canonicalizeResourceScope,
+  resourceScopeCovers,
+} from "./resource-scope.js";
+import { parseSimpleShellCommand } from "./shell-command.js";
 import type {
-  PlanAcceptanceCriterion,
   PlanEffectGrant,
-  PlanItem,
+  PlanExecutionStep,
   PlanRecord,
+  PlanResourceScope,
+  PlanVerification,
 } from "./types.js";
 
-export interface PlanItemDraft {
-  itemId: string;
+export interface PlanExecutionStepDraft {
+  stepId: string;
   title: string;
   description: string;
   dependsOn: string[];
-  acceptanceCriteria: PlanAcceptanceCriterion[];
+  verifications: PlanVerification[];
   effectGrants: PlanEffectGrant[];
 }
 
 export interface PlanCompilation {
-  items: PlanItemDraft[];
+  executionSteps: PlanExecutionStepDraft[];
   sideEffectSummary: string;
 }
 
@@ -44,34 +49,163 @@ function canonicalizeGrant(
   return { effect: grant.effect, resourceScopes };
 }
 
-export function assertCompiledPlan(
-  plan: Pick<PlanRecord, "items" | "sideEffectSummary">,
-  cwd: string,
-): void {
-  if (plan.items.length === 0) throw new Error("Execution Plan requires at least one item");
-  const summary = requireText(plan.sideEffectSummary, "Side-effect summary");
-  const effects = new Set<string>();
-  for (const item of plan.items) {
-    if (item.acceptanceCriteria.length === 0) {
-      throw new Error(`Plan item ${item.itemId} requires acceptance criteria`);
+function requiredCommandScopes(
+  stepId: string,
+  verifications: readonly PlanVerification[],
+): PlanResourceScope[] {
+  const commandClasses = verifications.flatMap((verification) => {
+    if (verification.kind !== "command") return [];
+    const parsed = parseSimpleShellCommand(verification.command);
+    if (!parsed) {
+      throw new Error(
+        `Plan execution step ${stepId} command verification `
+        + `${verification.verificationId} `
+        + "must be one simple shell command",
+      );
     }
-    for (const grant of item.effectGrants) {
-      if (effects.has(`${item.itemId}:${grant.effect}`)) {
-        throw new Error(`Plan item ${item.itemId} has duplicate ${grant.effect} grants`);
+    if (
+      parsed.commandClass === "grep"
+      && !parsed.args.some((argument) =>
+        argument === "--"
+        || argument === "-e"
+        || argument === "--regexp"
+        || argument.startsWith("--regexp=")
+      )
+    ) {
+      throw new Error(
+        `Plan execution step ${stepId} command verification `
+        + `${verification.verificationId} `
+        + "must pass grep patterns with -- or -e/--regexp",
+      );
+    }
+    return [parsed.commandClass];
+  });
+  return [...new Set(commandClasses)].sort().map((commandClass) => ({
+    kind: "process_command" as const,
+    commandClass,
+  }));
+}
+
+function assertExecutableAcceptance(
+  steps: readonly PlanExecutionStepDraft[],
+  availableToolNames: ReadonlySet<string>,
+): void {
+  for (const step of steps) {
+    for (const verification of step.verifications) {
+      if (verification.kind !== "command" && verification.kind !== "observable") {
+        const invalid = verification as { kind: string; verificationId?: string };
+        throw new Error(
+          `Plan execution step ${step.stepId} ${invalid.kind} verification `
+          + `${invalid.verificationId ?? ""} is not executable`,
+        );
       }
-      effects.add(`${item.itemId}:${grant.effect}`);
-      const canonical = canonicalizeGrant(grant, cwd);
-      if (canonicalStringify(canonical) !== canonicalStringify(grant)) {
-        throw new Error(`Plan item ${item.itemId} has non-canonical effect scopes`);
-      }
-      const scopes = grant.resourceScopes.map(canonicalStringify);
-      if (new Set(scopes).size !== scopes.length) {
-        throw new Error(`Plan item ${item.itemId} has duplicate effect scopes`);
+      if (verification.kind !== "observable") continue;
+      const toolName = verification.toolName.trim();
+      if (!toolName || !availableToolNames.has(toolName)) {
+        throw new Error(
+          `Plan execution step ${step.stepId} observable verification `
+          + `${verification.verificationId} requires an available execution tool; `
+          + "use Agent-run command or Tool acceptance and report any "
+          + "remaining manual evidence gap outside the TODO",
+        );
       }
     }
   }
-  const hasSideEffects = plan.items.some((item) =>
-    item.effectGrants.some((grant) => grant.effect !== "read")
+}
+
+function canonicalizeGrants(
+  step: PlanExecutionStepDraft,
+  cwd: string,
+): PlanEffectGrant[] {
+  const grants = step.effectGrants.map((grant) =>
+    canonicalizeGrant(grant, cwd)
+  );
+  const requiredScopes = requiredCommandScopes(
+    step.stepId,
+    step.verifications,
+  );
+  if (requiredScopes.length > 0) {
+    const processGrant = grants.find((grant) => grant.effect === "process");
+    if (processGrant) {
+      processGrant.resourceScopes = [
+        ...processGrant.resourceScopes,
+        ...requiredScopes.filter((required) =>
+          !processGrant.resourceScopes.some((scope) =>
+            resourceScopeCovers(scope, required)
+          )
+        ),
+      ].sort((left, right) =>
+        canonicalStringify(left).localeCompare(canonicalStringify(right))
+      );
+    } else {
+      grants.push({ effect: "process", resourceScopes: requiredScopes });
+    }
+  }
+  return grants.sort((left, right) => left.effect.localeCompare(right.effect));
+}
+
+export function assertCompiledPlan(
+  plan: Pick<
+    Extract<PlanRecord, { schemaVersion: 2 }>,
+    "alignmentRequirements" | "executionSteps" | "sideEffectSummary"
+  >,
+  cwd: string,
+): void {
+  const pendingRequirement = plan.alignmentRequirements?.find((requirement) =>
+    requirement.status === "pending"
+  );
+  if (pendingRequirement) {
+    throw new Error(
+      `Alignment requirement ${pendingRequirement.requirementId} is still pending`,
+    );
+  }
+  if (plan.executionSteps.length === 0) {
+    throw new Error("Execution Plan requires at least one step");
+  }
+  const summary = requireText(plan.sideEffectSummary, "Side-effect summary");
+  const effects = new Set<string>();
+  for (const step of plan.executionSteps) {
+    if (step.verifications.length === 0) {
+      throw new Error(`Plan execution step ${step.stepId} requires verification`);
+    }
+    const requiredScopes = requiredCommandScopes(
+      step.stepId,
+      step.verifications,
+    );
+    for (const grant of step.effectGrants) {
+      if (effects.has(`${step.stepId}:${grant.effect}`)) {
+        throw new Error(
+          `Plan execution step ${step.stepId} has duplicate ${grant.effect} grants`,
+        );
+      }
+      effects.add(`${step.stepId}:${grant.effect}`);
+      const canonical = canonicalizeGrant(grant, cwd);
+      if (canonicalStringify(canonical) !== canonicalStringify(grant)) {
+        throw new Error(
+          `Plan execution step ${step.stepId} has non-canonical effect scopes`,
+        );
+      }
+      const scopes = grant.resourceScopes.map(canonicalStringify);
+      if (new Set(scopes).size !== scopes.length) {
+        throw new Error(
+          `Plan execution step ${step.stepId} has duplicate effect scopes`,
+        );
+      }
+    }
+    const processScopes = step.effectGrants
+      .filter((grant) => grant.effect === "process")
+      .flatMap((grant) => grant.resourceScopes);
+    if (requiredScopes.some((required) =>
+      !processScopes.some((scope) => resourceScopeCovers(scope, required))
+    )) {
+      throw new Error(
+        `Plan execution step ${step.stepId} command verifications require `
+        + "matching process grants",
+      );
+    }
+  }
+  const hasSideEffects = plan.executionSteps.some((step) =>
+    step.effectGrants.some((grant) => grant.effect !== "read")
   );
   if (!hasSideEffects && summary !== NO_SIDE_EFFECTS_SUMMARY) {
     throw new Error(`Side-effect-free Plans must use "${NO_SIDE_EFFECTS_SUMMARY}"`);
@@ -85,53 +219,74 @@ export function compileSelectedTrajectory(
   plan: Readonly<PlanRecord>,
   compilation: PlanCompilation,
   cwd: string,
-): PlanItem[] {
+  availableToolNames?: ReadonlySet<string>,
+): PlanExecutionStep[] {
+  const pendingRequirement = plan.alignmentRequirements?.find((requirement) =>
+    requirement.status === "pending"
+  );
+  if (pendingRequirement) {
+    throw new Error(
+      `Alignment requirement ${pendingRequirement.requirementId} is still pending`,
+    );
+  }
   const openDecision = plan.decisions.find((decision) =>
     decision.status !== "selected"
   );
   if (openDecision) {
     throw new Error(`Decision ${openDecision.decisionNodeId} is not selected`);
   }
-  if (compilation.items.length === 0) {
-    throw new Error("Execution Plan requires at least one item");
+  if (compilation.executionSteps.length === 0) {
+    throw new Error("Execution Plan requires at least one step");
+  }
+  if (availableToolNames) {
+    assertExecutableAcceptance(compilation.executionSteps, availableToolNames);
   }
   requireText(compilation.sideEffectSummary, "Side-effect summary");
-  const ids = compilation.items.map((item) => item.itemId);
-  if (new Set(ids).size !== ids.length) throw new Error("Plan item IDs must be unique");
+  const ids = compilation.executionSteps.map((step) => step.stepId);
+  if (new Set(ids).size !== ids.length) {
+    throw new Error("Plan execution step IDs must be unique");
+  }
   const prior = new Set<string>();
-  const items: PlanItem[] = compilation.items.map((item, order) => {
-    const itemId = requireText(item.itemId, "Plan item ID");
-    for (const dependency of item.dependsOn) {
+  const executionSteps: PlanExecutionStep[] = compilation.executionSteps.map(
+    (step, order) => {
+    const stepId = requireText(step.stepId, "Plan execution step ID");
+    for (const dependency of step.dependsOn) {
       if (!prior.has(dependency)) {
-        throw new Error(`Plan item ${itemId} depends on non-prior item ${dependency}`);
+        throw new Error(
+          `Plan execution step ${stepId} depends on non-prior step ${dependency}`,
+        );
       }
     }
-    if (item.acceptanceCriteria.length === 0) {
-      throw new Error(`Plan item ${itemId} requires acceptance criteria`);
+    if (step.verifications.length === 0) {
+      throw new Error(`Plan execution step ${stepId} requires verification`);
     }
-    const criterionIds = item.acceptanceCriteria.map((criterion) =>
-      criterion.criterionId
+    const verificationIds = step.verifications.map((verification) =>
+      verification.verificationId
     );
-    if (new Set(criterionIds).size !== criterionIds.length) {
-      throw new Error(`Plan item ${itemId} has duplicate acceptance criteria`);
+    if (new Set(verificationIds).size !== verificationIds.length) {
+      throw new Error(
+        `Plan execution step ${stepId} has duplicate verifications`,
+      );
     }
-    const effectGrants = item.effectGrants
-      .map((grant) => canonicalizeGrant(grant, cwd))
-      .sort((left, right) => left.effect.localeCompare(right.effect));
-    prior.add(itemId);
+    const effectGrants = canonicalizeGrants(step, cwd);
+    prior.add(stepId);
     return {
-      itemId,
+      stepId,
       order,
-      title: requireText(item.title, `Plan item ${itemId} title`),
-      description: requireText(item.description, `Plan item ${itemId} description`),
-      dependsOn: [...item.dependsOn],
-      status: "pending",
-      acceptanceCriteria: structuredClone(item.acceptanceCriteria),
+      title: requireText(step.title, `Plan execution step ${stepId} title`),
+      description: requireText(
+        step.description,
+        `Plan execution step ${stepId} description`,
+      ),
+      dependsOn: [...step.dependsOn],
+      verifications: structuredClone(step.verifications),
       effectGrants,
-      evidence: [],
-      executionBindings: [],
     };
   });
-  assertCompiledPlan({ items, sideEffectSummary: compilation.sideEffectSummary.trim() }, cwd);
-  return items;
+  assertCompiledPlan({
+    alignmentRequirements: plan.alignmentRequirements,
+    executionSteps,
+    sideEffectSummary: compilation.sideEffectSummary.trim(),
+  }, cwd);
+  return executionSteps;
 }

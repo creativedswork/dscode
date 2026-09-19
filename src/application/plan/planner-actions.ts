@@ -1,7 +1,38 @@
 import { randomUUID } from "node:crypto";
 
 import type { PlanDecisionAction } from "./planner-types.js";
-import type { PlanRecord } from "./types.js";
+import type {
+  PlanDecisionNode,
+  PlanRecord,
+} from "./types.js";
+
+function resolvePendingRequirements(
+  draft: PlanRecord,
+  decision: PlanDecisionNode,
+  recordDecision = true,
+): void {
+  const interaction = draft.pendingInteraction;
+  if (
+    interaction?.kind !== "decision"
+    || interaction.payload.decisionNodeId !== decision.decisionNodeId
+  ) return;
+  for (const requirementId of decision.resolvesRequirementIds ?? []) {
+    const requirement = draft.alignmentRequirements?.find((item) =>
+      item.requirementId === requirementId
+    );
+    if (!requirement || requirement.status !== "pending") {
+      throw new Error(
+        `Decision ${decision.decisionNodeId} does not match a pending alignment requirement`,
+      );
+    }
+    requirement.status = "resolved";
+    if (recordDecision) {
+      requirement.resolvedByDecisionNodeId = decision.decisionNodeId;
+    } else {
+      delete requirement.resolvedByDecisionNodeId;
+    }
+  }
+}
 
 export function applyPlannerAction(
   draft: PlanRecord,
@@ -36,6 +67,7 @@ export function applyPlannerAction(
         });
       }
     }
+    resolvePendingRequirements(draft, decision);
     decision.status = "selected";
     decision.selectedOptionId = option.optionId;
     draft.status = "drafting";
@@ -75,6 +107,14 @@ export function applyPlannerAction(
     return;
   }
   if (action.kind === "update_constraints") {
+    const pendingDecisionId = draft.pendingInteraction?.kind === "decision"
+      ? draft.pendingInteraction.payload.decisionNodeId
+      : undefined;
+    const pendingDecision = pendingDecisionId
+      ? draft.decisions.find((decision) =>
+        decision.decisionNodeId === pendingDecisionId
+      )
+      : undefined;
     for (const patch of action.constraints) {
       const constraintId = patch.kind === "set"
         ? patch.constraint.constraintId
@@ -89,6 +129,9 @@ export function applyPlannerAction(
       } else {
         draft.constraints.push(structuredClone(patch.constraint));
       }
+    }
+    if (pendingDecision) {
+      resolvePendingRequirements(draft, pendingDecision, false);
     }
     draft.decisions = [];
     draft.status = "drafting";

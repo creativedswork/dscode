@@ -8,6 +8,8 @@ export { PlanLockTimeoutError, planLockPath } from "./lock.js";
 export { assertPlanId, resolvePlanProjectLocation } from "./path.js";
 export {
   PlanRecordSchema,
+  PlanRecordV1Schema,
+  PlanRecordV2Schema,
   PlanValidationError,
   validatePlanRecord,
 } from "./schema.js";
@@ -16,6 +18,11 @@ export {
   PlanStore,
 } from "./store.js";
 export { PlanService } from "./plan-service.js";
+export {
+  PlanRecoveryService,
+  validMainRecoveryBinding,
+} from "./plan-recovery.js";
+export { PlanRetentionService } from "./plan-retention.js";
 export {
   decidePlanRoute,
   PLAN_ROUTE_ASSESSMENT_TOOL_NAME,
@@ -30,6 +37,30 @@ export {
 export { compileSelectedTrajectory } from "./compiler.js";
 export { ApprovedPlanExecutionGuard } from "./execution-guard.js";
 export { PlanExecutionService } from "./execution-service.js";
+export {
+  planExecutionUnits,
+  requireExecutionStep,
+  requireExecutionStepState,
+  requireMutablePlanV2,
+} from "./execution-model.js";
+export { matchesPlanStdout } from "./execution-acceptance.js";
+export {
+  EXECUTION_EPISODE_POLICY,
+} from "./execution-episode-types.js";
+export {
+  captureExecutionProgress,
+  hasExecutionProgress,
+} from "./execution-progress.js";
+export { fingerprintExecutionAction } from "./execution-fingerprint.js";
+export {
+  ExecutiveMonitor,
+  startExecutionEpisode,
+} from "./executive-monitor.js";
+export {
+  ExecutionEpisodeService,
+  publicEpisodeSnapshot,
+} from "./execution-episode-service.js";
+export { retainVerificationEvidence } from "./evidence-retention.js";
 export {
   attachPlanToAgent,
   bindPlanItemToAgent,
@@ -59,7 +90,7 @@ export {
 } from "./planner-tools.js";
 export type {
   PlanCompilation,
-  PlanItemDraft,
+  PlanExecutionStepDraft,
 } from "./compiler.js";
 export type {
   PlanApprovalCommand,
@@ -70,6 +101,8 @@ export type {
   PlanItemBindingCommand,
   PlanItemVerificationCommand,
   PlanMaterialConflictCommand,
+  PlanRequestedReplanCommand,
+  PlanReplanTransitionCommand,
   PlanToolAuthorization,
   PlanToolAuthorizationResult,
 } from "./execution-types.js";
@@ -82,6 +115,22 @@ export type {
   PlanLoadResult,
   PlanStoreMutationResult,
 } from "./store-types.js";
+export type {
+  ExecutionActionFingerprint,
+  ExecutionAdjustPlanCommand,
+  ExecutionContinueCommand,
+  ExecutionEpisodePhase,
+  ExecutionEpisodePolicy,
+  ExecutionEpisodeSnapshot,
+  ExecutionImpasseRule,
+  ExecutionIncidentSummary,
+  ExecutionOutcomeClass,
+  ExecutionProgressSnapshot,
+  ExecutionRecoveryCommand,
+  ExecutionRecoveryReceipt,
+  ExecutionRecoveryResult,
+  PersistedExecutionEpisode,
+} from "./execution-episode-types.js";
 export type {
   PlanApplicationPort,
   PlanApprovalRequest,
@@ -125,6 +174,8 @@ export {
   PlanBudgetError,
 } from "./planner-types.js";
 export type {
+  AlignmentRequirement,
+  AlignmentRequirementTopic,
   PlanAcceptanceCriterion,
   PlanApproval,
   PlanCandidate,
@@ -143,13 +194,20 @@ export type {
   PlanEvidence,
   PlanEvidenceReference,
   PlanExecutionBinding,
+  PlanExecutionState,
+  PlanExecutionStep,
+  PlanExecutionStepState,
   PlanInteraction,
   PlanItem,
   PlanItemStatus,
   PlanRecord,
+  PlanRecordV1,
+  PlanRecordV2,
   PlanResourceScope,
+  PlanStdoutMatcher,
   PlanStatus,
   PlanTelemetry,
   PlanTrajectoryEvent,
+  PlanVerification,
 } from "./types.js";
 export { assertNever } from "./types.js";

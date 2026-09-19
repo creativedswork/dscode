@@ -5,6 +5,8 @@ import type { ClientCommand } from "../../src/ui/shared/types.js";
 import { projectPlanReady } from "../../src/ui/web/web-backend.js";
 import {
   makePlan,
+  makeEpisode,
+  makeTaskState,
   pendingPlan,
   setupPlanBackend as setup,
 } from "./plan-protocol-fixture.js";
@@ -26,12 +28,12 @@ describe("Plan WebSocket protocol", () => {
     expect(projectPlanReady(plan)).toEqual({
       type: "plan_ready",
       id: plan.planId,
-      text: `计划已生成 · ${plan.items.length} 项任务`,
+      text: "计划已生成",
       createdAt: 10,
     });
     expect(projectPlanReady({ ...plan, baseRevision: 1 })).toMatchObject({
       type: "plan_ready",
-      text: `执行计划已更新 · ${plan.items.length} 项任务`,
+      text: "执行计划已更新",
     });
     expect(projectPlanReady({
       ...plan,
@@ -42,9 +44,56 @@ describe("Plan WebSocket protocol", () => {
       type: "plan_ready",
       text: "正在调整执行计划",
     });
+    expect(projectPlanReady({
+      ...plan,
+      status: "needs_replan",
+      baseRevision: 1,
+      approval: undefined,
+    })).toMatchObject({
+      type: "plan_ready",
+      text: "执行计划需要调整",
+    });
     expect(JSON.stringify(projectPlanReady(plan))).not.toMatch(
       /digest|revision|plan_start_item/,
     );
+  });
+
+  it("publishes plan_state before plan_ready for an authorized update", () => {
+    const plan = makePlan({
+      status: "approved",
+      approval: {
+        revision: 2,
+        digest: "a".repeat(64),
+        approvedEffects: [],
+        acknowledgedSideEffects: [],
+        interactionId: "internal:planner-1",
+        approvedAt: 10,
+      },
+    });
+    const fixture = setup(plan);
+
+    fixture.events.emit({
+      type: "plan:updated",
+      planId: plan.planId,
+      version: plan.version,
+      revision: plan.revision,
+      plan,
+    });
+
+    const projected = fixture.broadcast.mock.calls
+      .map(([event]) => event as { type: string })
+      .filter((event) =>
+        event.type === "plan_state" || event.type === "plan_ready"
+      );
+    expect(projected).toEqual([
+      { type: "plan_state", plan },
+      {
+        type: "plan_ready",
+        id: plan.planId,
+        text: "计划已生成",
+        createdAt: 10,
+      },
+    ]);
   });
 
   it("keeps legacy chat compatible and forwards explicit Plan mode", async () => {
@@ -213,6 +262,87 @@ describe("Plan WebSocket protocol", () => {
     });
   });
 
+  it("maps paused recovery commands and returns typed receipts", async () => {
+    const episode = makeEpisode();
+    const fixture = setup(makePlan({ status: "executing" }), episode);
+    fixture.continueExecution.mockResolvedValue({
+      ok: true,
+      duplicate: false,
+      episode: { ...episode, episodeId: "episode-2", phase: "running" },
+      receipt: {
+        commandId: "continue-1",
+        operation: "continue_execution",
+        payloadDigest: "c".repeat(64),
+        resultingVersion: 4,
+        episodeId: "episode-2",
+        completedAt: 30,
+      },
+    });
+
+    await fixture.backend["handleMessage"](fixture.client as never, {
+      type: "plan_continue",
+      sessionId: "session-1",
+      planId: "plan-1",
+      expectedVersion: 3,
+      commandId: "continue-1",
+      revision: 2,
+      digest: "a".repeat(64),
+    });
+
+    expect(fixture.continueExecution).toHaveBeenCalledWith({
+      commandId: "continue-1",
+      planId: "plan-1",
+      expectedVersion: 3,
+      revision: 2,
+      digest: "a".repeat(64),
+      operation: "continue_execution",
+    });
+    expect(fixture.client.send).toHaveBeenCalledWith({
+      type: "plan_recovery_result",
+      commandId: "continue-1",
+      result: expect.objectContaining({
+        ok: true,
+        episode: expect.objectContaining({ phase: "running" }),
+      }),
+    });
+  });
+
+  it("broadcasts episode facts and restores pause without resuming", async () => {
+    const episode = makeEpisode();
+    const fixture = setup(makePlan({ status: "executing" }), episode);
+
+    fixture.events.emit({
+      type: "plan:episode",
+      planId: "plan-1",
+      episode,
+    });
+    fixture.events.emit({
+      type: "plan:impasse",
+      planId: "plan-1",
+      episodeId: episode.episodeId,
+      incident: episode.incident!,
+    });
+    await fixture.backend["syncPlanState"](fixture.client as never);
+
+    expect(fixture.broadcast).toHaveBeenCalledWith({
+      type: "plan_episode",
+      planId: "plan-1",
+      episode,
+    });
+    expect(fixture.broadcast).toHaveBeenCalledWith({
+      type: "plan_impasse",
+      planId: "plan-1",
+      episodeId: "episode-1",
+      incident: episode.incident,
+    });
+    expect(fixture.client.send).toHaveBeenCalledWith({
+      type: "plan_episode",
+      planId: "plan-1",
+      episode,
+    });
+    expect(fixture.continueExecution).not.toHaveBeenCalled();
+  });
+
   it("rejects a late command from a previously selected Session", async () => {
     const fixture = setup();
     const currentPlan = pendingPlan();
@@ -369,6 +499,26 @@ describe("Plan WebSocket protocol", () => {
     }));
   });
 
+  it("projects TaskState updates on an independent WebSocket channel", () => {
+    const fixture = setup();
+    const taskState = makeTaskState({ version: 4 });
+
+    fixture.events.emit({
+      type: "task:updated",
+      sessionId: taskState.sessionId,
+      taskState,
+    });
+
+    expect(fixture.broadcast).toHaveBeenCalledWith({
+      type: "task_state",
+      sessionId: taskState.sessionId,
+      taskState,
+    });
+    expect(fixture.broadcast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: "plan_state" }),
+    );
+  });
+
   it("restores pending state on connection and emits an explicit empty state", async () => {
     const plan = pendingPlan();
     plan.constraints.push({
@@ -378,6 +528,7 @@ describe("Plan WebSocket protocol", () => {
       source: "user",
     });
     const fixture = setup(plan);
+    fixture.setTaskState(makeTaskState());
 
     fixture.backend["handleConnect"](fixture.client as never);
 
@@ -385,6 +536,11 @@ describe("Plan WebSocket protocol", () => {
       expect(fixture.client.send).toHaveBeenCalledWith({
         type: "plan_state",
         plan: expect.objectContaining({ planId: "plan-1" }),
+      });
+      expect(fixture.client.send).toHaveBeenCalledWith({
+        type: "task_state",
+        sessionId: "session-1",
+        taskState: expect.objectContaining({ taskId: "task-1" }),
       });
       expect(fixture.client.send).toHaveBeenCalledWith(expect.objectContaining({
         type: "plan_interaction",
@@ -444,7 +600,29 @@ describe("Plan WebSocket protocol", () => {
     });
   });
 
-  it("restores the latest completed TODO when no active Plan remains", async () => {
+  it("hides the replanning loader when the revised Plan starts execution", () => {
+    const plan = makePlan({
+      status: "executing",
+      baseRevision: 2,
+      pendingInteraction: undefined,
+    });
+    const fixture = setup(plan);
+
+    fixture.events.emit({
+      type: "plan:updated",
+      planId: plan.planId,
+      version: plan.version,
+      revision: plan.revision,
+      plan,
+    });
+
+    expect(fixture.broadcast).toHaveBeenCalledWith({
+      type: "loader",
+      state: "hide",
+    });
+  });
+
+  it("restores terminal Plan and TaskState independently", async () => {
     const plan = makePlan({
       status: "completed",
       approval: {
@@ -455,14 +633,26 @@ describe("Plan WebSocket protocol", () => {
         interactionId: "internal:planner-1",
         approvedAt: 10,
       },
-      items: makePlan().items.map((item) => ({
-        ...item,
-        status: "completed",
-      })),
+      execution: {
+        steps: makePlan().execution.steps.map((step) => ({
+          ...step,
+          status: "completed",
+        })),
+      },
     });
     const fixture = setup();
     fixture.setActivePlan(undefined);
     fixture.setLatestPlan(plan);
+    fixture.setTaskState(makeTaskState({
+      version: 2,
+      status: "completed",
+      todoList: [{
+        todoId: "outcome-1",
+        title: "Deliver the requested outcome",
+        status: "completed",
+        result: "Delivered",
+      }],
+    }));
 
     await fixture.backend["syncPlanState"](fixture.client as never);
 
@@ -473,8 +663,13 @@ describe("Plan WebSocket protocol", () => {
     expect(fixture.client.send).toHaveBeenCalledWith({
       type: "plan_ready",
       id: plan.planId,
-      text: "计划已生成 · 1 项任务",
+      text: "计划已生成",
       createdAt: 10,
+    });
+    expect(fixture.client.send).toHaveBeenCalledWith({
+      type: "task_state",
+      sessionId: "session-1",
+      taskState: expect.objectContaining({ status: "completed", version: 2 }),
     });
   });
 });

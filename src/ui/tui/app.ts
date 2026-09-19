@@ -1,6 +1,6 @@
 import {
   ProcessTerminal,
-  TUI,
+  TuiMainScreen,
   Box,
   Text,
   TruncatedText,
@@ -11,6 +11,7 @@ import {
   type AutocompleteSuggestions,
   type AutocompleteItem,
   type Component,
+  type TUI,
   matchesKey,
   isKeyRelease,
   Key,
@@ -36,10 +37,21 @@ import { ImagePasteHandler } from "./image-paste-handler.js";
 import { FileTracker } from "../shared/file-tracker.js";
 import { stageAttachedFiles } from "../../project-files/attachments.js";
 import { existsSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { resolve as resolvePath } from "node:path";
 import { rebuildDisplayMessages } from "../shared/session-projector.js";
 import { TuiActivityInspector } from "./activity-inspector.js";
 import { TuiPermissionInput } from "./permission-input.js";
+import {
+  buildTuiPlanDecisionCommand,
+  type TuiPlanAnswer,
+} from "./plan-decision.js";
+import {
+  EMPTY_TUI_PLAN_STATE,
+  reduceTuiPlanState,
+  type TuiPlanAction,
+  type TuiPlanState,
+} from "./plan-view.js";
 import type {
   ServerEvent,
   ToolResultRef,
@@ -201,6 +213,8 @@ export class TuiApp {
     return this.deps.settings.get();
   }
   private processing = false;
+  private planState: TuiPlanState = EMPTY_TUI_PLAN_STATE;
+  private planSyncGeneration = 0;
   private lastCtrlCPress = 0;
   private ctrlCDebounceUntil = 0;
   private lastMenuNavDirection: "up" | "down" | null = null;
@@ -243,7 +257,7 @@ export class TuiApp {
   constructor(deps: HarnessAPI) {
     this.deps = deps;
     this.terminal = new ProcessTerminal();
-    this.tui = new TUI(this.terminal, true);
+    this.tui = new TuiMainScreen(this.terminal, true);
     this.conversation = new ConversationView(this.tui);
     this.imageStatus = new Text("");
 
@@ -345,6 +359,8 @@ export class TuiApp {
         && !this.processing
         && !this.activityInspectorOverlay
         && !this.resolvePermission
+        && !this.planState.view.interaction
+        && this.planState.focus !== "plan"
       ) {
         if (this.imagePasteHandler.imageCount > 0) {
           this.drainedSubmitImages = this.imagePasteHandler.drainImages();
@@ -678,6 +694,8 @@ export class TuiApp {
       return false;
     }
 
+    if (this.planState && this.handlePlanInput(data)) return true;
+
     if (this.processing) {
       if (matchesKey(data, Key.escape) || matchesKey(data, Key.tab)) {
         this.deps.conversation.abort();
@@ -731,6 +749,198 @@ export class TuiApp {
     }
 
     return false;
+  }
+
+  private handlePlanInput(data: string): boolean {
+    const focus = this.planState.focus;
+    const interaction = this.planState.view.interaction;
+    if (focus === "alignment") {
+      if (this.planState.submitting) return true;
+      if (matchesKey(data, Key.up)) {
+        this.applyPlanAction({ type: "navigate", direction: -1 });
+        return true;
+      }
+      if (matchesKey(data, Key.down)) {
+        this.applyPlanAction({ type: "navigate", direction: 1 });
+        return true;
+      }
+      if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
+        const candidates = interaction?.request.candidates.slice(0, 3) ?? [];
+        const selected = candidates[this.planState.selectedIndex];
+        if (selected) {
+          void this.submitPlanAnswer({
+            kind: "select",
+            optionId: selected.optionId,
+          });
+        } else {
+          this.applyPlanAction({ type: "custom" });
+        }
+        return true;
+      }
+      if (matchesKey(data, Key.escape)) {
+        this.applyPlanAction({ type: "focus_editor" });
+        this.focusEditor();
+        return true;
+      }
+      return true;
+    }
+
+    if (focus === "custom") {
+      if (matchesKey(data, Key.escape)) {
+        this.applyPlanAction({ type: "focus_alignment" });
+        return true;
+      }
+      return false;
+    }
+
+    if (focus === "plan") {
+      if (
+        this.planState.view.episode?.phase === "paused_inconclusive"
+        && !this.planState.submitting
+      ) {
+        if (data.toLowerCase() === "a") {
+          void this.submitEpisodeRecovery("adjust_plan");
+          return true;
+        }
+        if (data.toLowerCase() === "c") {
+          void this.submitEpisodeRecovery("continue_execution");
+          return true;
+        }
+      }
+      if (matchesKey(data, Key.enter) || matchesKey(data, Key.return)) {
+        this.applyPlanAction({ type: "toggle_plan" });
+        return true;
+      }
+      if (matchesKey(data, Key.escape) || matchesKey(data, Key.tab)) {
+        this.applyPlanAction({ type: "focus_editor" });
+        this.focusEditor();
+        return true;
+      }
+      this.applyPlanAction({ type: "focus_editor" });
+      return false;
+    }
+
+    if (matchesKey(data, Key.tab)) {
+      if (interaction) {
+        this.applyPlanAction({ type: "focus_alignment" });
+      } else if (this.planState.view.publicPlan) {
+        this.applyPlanAction({ type: "focus_plan" });
+      } else {
+        return false;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  private applyPlanAction(action: TuiPlanAction): void {
+    this.planState = reduceTuiPlanState(this.planState, action);
+    this.conversation.setPlanState(this.planState);
+    this.syncEditorSubmitState();
+  }
+
+  private syncEditorSubmitState(): void {
+    if (this.permissionExplainMode) {
+      this.editor.disableSubmit = false;
+      return;
+    }
+    if (this.planState?.view.interaction) {
+      this.editor.disableSubmit = this.planState.submitting
+        || this.planState.focus === "alignment";
+      return;
+    }
+    this.editor.disableSubmit = this.processing;
+  }
+
+  private async submitPlanAnswer(answer: TuiPlanAnswer): Promise<boolean> {
+    const sessionId = this.deps.sessions.currentId();
+    const command = buildTuiPlanDecisionCommand(
+      this.planState,
+      sessionId,
+      answer,
+      randomUUID(),
+    );
+    if (!command) return false;
+
+    this.applyPlanAction({ type: "submit_start" });
+    let result;
+    try {
+      result = await this.deps.plans.submitDecision(command);
+    } catch (error) {
+      this.applyPlanAction({ type: "submit_failed" });
+      this.addError(error instanceof Error ? error.message : String(error));
+      return false;
+    }
+    if (this.deps.sessions.currentId() !== sessionId) {
+      await this.syncPlanState();
+      return false;
+    }
+    if (result.ok) {
+      this.applyPlanAction({
+        type: "server",
+        event: { type: "plan_state", plan: result.plan },
+      });
+      return true;
+    }
+    if (result.reason === "conflict") {
+      this.applyPlanAction({
+        type: "server",
+        event: {
+          type: "plan_conflict",
+          planId: result.conflict.current.planId,
+          expectedVersion: result.conflict.expectedVersion,
+          currentVersion: result.conflict.currentVersion,
+          revision: result.conflict.current.revision,
+          plan: result.conflict.current,
+        },
+      });
+      return false;
+    }
+    this.applyPlanAction({ type: "submit_failed" });
+    this.addError(result.message);
+    return false;
+  }
+
+  private async submitEpisodeRecovery(
+    operation: "adjust_plan" | "continue_execution",
+  ): Promise<boolean> {
+    const plan = this.planState.view.plan;
+    const episode = this.planState.view.episode;
+    const sessionId = this.deps.sessions.currentId();
+    if (
+      !plan
+      || !episode
+      || !sessionId
+      || plan.sessionId !== sessionId
+      || episode.phase !== "paused_inconclusive"
+    ) return false;
+    this.applyPlanAction({ type: "submit_start" });
+    const command = {
+      commandId: randomUUID(),
+      planId: plan.planId,
+      expectedVersion: plan.version,
+      revision: episode.planRevision,
+      digest: episode.planDigest,
+    };
+    const result = operation === "adjust_plan"
+      ? await this.deps.plans.adjustPlan({ ...command, operation })
+      : await this.deps.plans.continueExecution({ ...command, operation });
+    if (result.episode) {
+      this.applyPlanAction({
+        type: "server",
+        event: {
+          type: "plan_episode",
+          planId: plan.planId,
+          episode: result.episode,
+        },
+      });
+    }
+    if (!result.ok) {
+      this.applyPlanAction({ type: "submit_failed" });
+      this.addError("执行状态已更新，请根据当前状态重试。");
+      return false;
+    }
+    return true;
   }
 
 
@@ -1231,6 +1441,18 @@ export class TuiApp {
 
   applyConversationEvent(event: ServerEvent): void {
     if (
+      event.type === "plan_state"
+      || event.type === "plan_interaction"
+      || event.type === "plan_conflict"
+      || event.type === "plan_episode"
+      || event.type === "plan_impasse"
+      || event.type === "plan_recovery_result"
+      || event.type === "task_state"
+    ) {
+      this.applyPlanAction({ type: "server", event });
+      return;
+    }
+    if (
       event.type === "thinking_delta"
       || event.type === "text_delta"
       || event.type === "tool_start"
@@ -1327,12 +1549,14 @@ export class TuiApp {
   }
 
   setProcessing(processing: boolean): void {
-    if (this.processing === processing) {
-      this.editor.disableSubmit = processing && !this.permissionExplainMode;
-      return;
-    }
+    const changed = this.processing !== processing;
     this.processing = processing;
-    this.editor.disableSubmit = processing && !this.permissionExplainMode;
+    this.editor.disableSubmit = this.permissionExplainMode
+      ? false
+      : this.planState?.view.interaction
+      ? this.planState.submitting || this.planState.focus === "alignment"
+      : processing;
+    if (!changed) return;
     if (processing) {
       this.idleStartTime = 0;
       this.lastActivityTime = Date.now();
@@ -1407,6 +1631,20 @@ export class TuiApp {
   }
 
   private async handleSubmit(text: string, echoText?: string): Promise<void> {
+    if (
+      this.planState?.view.interaction
+      && (this.planState.focus === "custom" || this.planState.focus === null)
+    ) {
+      const customText = text.trim();
+      if (!customText) return;
+      this.editor.addToHistory(customText);
+      this.editor.setText("");
+      if (!await this.submitPlanAnswer({ kind: "custom", text: customText })) {
+        this.editor.setText(customText);
+      }
+      return;
+    }
+
     const displayText = echoText ?? text;
     text = text.replace(/\[image:\d+\]\s*/g, "").trim();
     // Use pre-drained images if Enter was intercepted in input listener,
@@ -1655,6 +1893,9 @@ export class TuiApp {
   }
 
   focusEditor(): void {
+    if (this.planState && this.planState.focus !== null) {
+      this.applyPlanAction({ type: "focus_editor" });
+    }
     this.tui.setFocus(this.editor);
   }
 
@@ -1667,6 +1908,11 @@ export class TuiApp {
     }
     this.persistedAgentResultGeneration++;
     this.persistedAgentResultMessages.clear();
+    this.planSyncGeneration++;
+    this.applyPlanAction({
+      type: "server",
+      event: { type: "plan_state", plan: null },
+    });
     this.conversation.clear();
     this.permissionExplainMode = false;
     this.pendingPermissionContext = null;
@@ -1677,12 +1923,17 @@ export class TuiApp {
       this.closeMcpBrowser();
     }
     this.editor.setText("");
-    this.editor.disableSubmit = this.processing && !this.permissionExplainMode;
+    this.syncEditorSubmitState();
     this.focusEditor();
     this.tui.requestRender(true);
   }
 
   replayMessages(messages: unknown[]): void {
+    this.planSyncGeneration++;
+    this.applyPlanAction({
+      type: "server",
+      event: { type: "plan_state", plan: null },
+    });
     const sessionId = this.deps.sessions.currentId() ?? "unknown";
     const agentMessages = this.deps.conversation.snapshot().agentMessages;
     const displayMessages = rebuildDisplayMessages(
@@ -1696,6 +1947,54 @@ export class TuiApp {
       agentMessages.map((message) => message.agentId),
     );
     this.activityInspector?.refresh();
+    void this.syncPlanState();
+  }
+
+  async syncPlanState(): Promise<void> {
+    const generation = ++this.planSyncGeneration;
+    const sessionId = this.deps.sessions.currentId();
+    if (!sessionId) {
+      this.applyConversationEvent({ type: "plan_state", plan: null });
+      this.applyConversationEvent({
+        type: "plan_episode",
+        planId: "",
+        episode: null,
+      });
+      this.applyConversationEvent({
+        type: "task_state",
+        sessionId: "",
+        taskState: null,
+      });
+      return;
+    }
+    this.applyConversationEvent({
+      type: "task_state",
+      sessionId,
+      taskState: null,
+    });
+    const [active, taskState] = await Promise.all([
+      this.deps.plans.getActivePlan(sessionId),
+      this.deps.tasks?.getTaskState(sessionId),
+    ]);
+    const plan = active ?? await this.deps.plans.getLatestPlan(sessionId);
+    const episode = plan
+      ? await this.deps.plans.getEpisode(plan.planId)
+      : undefined;
+    if (
+      generation !== this.planSyncGeneration
+      || this.deps.sessions.currentId() !== sessionId
+    ) return;
+    this.applyConversationEvent({ type: "plan_state", plan: plan ?? null });
+    this.applyConversationEvent({
+      type: "plan_episode",
+      planId: plan?.planId ?? "",
+      episode: episode ?? null,
+    });
+    this.applyConversationEvent({
+      type: "task_state",
+      sessionId,
+      taskState: taskState ?? null,
+    });
   }
 
   private preloadPersistedAgentResults(agentIds: readonly string[]): void {

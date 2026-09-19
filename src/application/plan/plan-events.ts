@@ -7,6 +7,7 @@ import {
   freezePlan,
   planInteractionRequest,
 } from "./interaction-projection.js";
+import { planExecutionUnits } from "./execution-model.js";
 
 export {
   freezePlan,
@@ -22,10 +23,10 @@ export function immutablePlan(
 function executionSummary(plan: Readonly<PlanRecord>) {
   return {
     status: plan.status,
-    items: plan.items.map((item) => ({
-      itemId: item.itemId,
-      status: item.status,
-      evidenceCount: item.evidence.length,
+    items: planExecutionUnits(plan).map((step) => ({
+      itemId: step.stepId,
+      status: step.status,
+      evidenceCount: step.evidence.length,
     })),
   };
 }

@@ -5,11 +5,11 @@ import type { AgentSupervisor } from "../../agents/process/supervisor.js";
 import type { Driver } from "../../drivers/types.js";
 import { getExecutionContext } from "../../kernel/execution-context.js";
 import { bindPlanItemToAgent } from "./execution-binding.js";
+import { planExecutionUnits } from "./execution-model.js";
 import { PlanExecutionService } from "./execution-service.js";
 
 export const PLAN_EXECUTION_TOOL_NAMES = [
   "plan_start_item",
-  "verify_item",
   "plan_report_conflict",
 ] as const;
 
@@ -27,29 +27,27 @@ const itemParams = Type.Object({
   itemId: Type.String({ minLength: 1 }),
 }, { additionalProperties: false });
 
-const verifyParams = Type.Object({
-  ...itemParams.properties,
-  commandId: Type.String({ minLength: 1 }),
-  criteria: Type.Array(Type.Object({
-    criterionId: Type.String({ minLength: 1 }),
-    passed: Type.Boolean(),
-    evidenceIds: Type.Array(Type.String({
-      minLength: 1,
-      description: "Exact persisted evidence IDs. Successful bound tool calls use tool-<toolCallId>; do not invent file or line references, and do not reuse one evidence ID across criteria.",
-    })),
-    observedExitCode: Type.Optional(Type.Integer()),
-    observed: Type.Optional(Type.Object({
-      matched: Type.Boolean(),
-      description: Type.String({ minLength: 1 }),
-    }, { additionalProperties: false })),
-    humanReceiptCommandId: Type.Optional(Type.String({ minLength: 1 })),
-  }, { additionalProperties: false })),
-}, { additionalProperties: false });
-
 const conflictParams = Type.Object({
-  planId: Type.String({ minLength: 1 }),
-  expectedVersion: Type.Integer({ minimum: 1 }),
-  commandId: Type.String({ minLength: 1 }),
+  ...itemParams.properties,
+  commandId: Type.Optional(Type.String({
+    minLength: 1,
+    description: "Optional idempotency hint. The Host uses the Tool Call ID.",
+  })),
+  conflictTarget: Type.Union([
+    Type.Object({
+      kind: Type.Literal("hard_constraint"),
+      constraintId: Type.String({ minLength: 1 }),
+    }, { additionalProperties: false }),
+    Type.Object({
+      kind: Type.Literal("selected_decision"),
+      decisionNodeId: Type.String({ minLength: 1 }),
+      optionId: Type.String({ minLength: 1 }),
+    }, { additionalProperties: false }),
+  ]),
+  evidenceIds: Type.Array(Type.String({ minLength: 1 }), {
+    minItems: 1,
+    description: "Successful persisted tool evidence from the current item.",
+  }),
   summary: Type.String({ minLength: 1 }),
 }, { additionalProperties: false });
 
@@ -64,6 +62,31 @@ function currentMain(options: ExecutionToolOptions) {
   const process = options.supervisor().require(context.processId);
   if (process.role !== "main") throw new Error("Plan operation requires Main Agent");
   return process;
+}
+
+function requireTaskStateForPlanStart(
+  main: ReturnType<typeof currentMain>,
+  params: {
+    planId: string;
+    revision: number;
+    digest: string;
+  },
+): void {
+  const taskState = main.context.taskState;
+  if (
+    !taskState
+    || taskState.status !== "active"
+    || taskState.sessionId !== main.parentSessionId
+    || taskState.sourcePlan?.planId !== params.planId
+    || taskState.sourcePlan.revision !== params.revision
+    || taskState.sourcePlan.digest !== params.digest
+  ) {
+    throw new Error(
+      "plan_start_item requires task_update initialize first with an active "
+      + "TaskState for the owning Main Session and the exact Plan "
+      + "planId, revision, and digest",
+    );
+  }
 }
 
 function resultText(label: string, details: unknown, terminate = false) {
@@ -83,14 +106,15 @@ export function makePlanExecutionDriver(options: ExecutionToolOptions): Driver {
     parameters: itemParams,
     execute: async (_id, params) => {
       const main = currentMain(options);
+      requireTaskStateForPlanStart(main, params);
       const outcome = await options.service().bindItem({
         ...params,
         agentId: main.agentId,
         role: "main",
       });
       if (!outcome.ok) throw new Error(outcome.message);
-      const item = outcome.plan.items.find((candidate) =>
-        candidate.itemId === params.itemId
+      const item = planExecutionUnits(outcome.plan).find((candidate) =>
+        candidate.stepId === params.itemId
       );
       const binding = item?.executionBindings?.find((candidate) =>
         candidate.agentId === main.agentId
@@ -100,38 +124,25 @@ export function makePlanExecutionDriver(options: ExecutionToolOptions): Driver {
       return resultText("Plan item started", outcome.plan);
     },
   };
-  const verifyItem: AgentTool<typeof verifyParams> = {
-    ...capability,
-    name: PLAN_EXECUTION_TOOL_NAMES[1],
-    label: "Verify Plan Item",
-    description: "Verify acceptance criteria using exact persisted evidence IDs from successful tool calls made while the item is bound. A tool call with ID X records evidence as tool-X, and each evidence ID can prove only one criterion.",
-    parameters: verifyParams,
-    execute: async (_id, params) => {
-      const main = currentMain(options);
-      const outcome = await options.service().verifyItem({
-        ...params,
-        callerAgentId: main.agentId,
-      });
-      if (!outcome.ok) throw new Error(outcome.message);
-      return resultText(
-        "Plan item verified",
-        outcome.plan,
-        outcome.plan.status === "completed",
-      );
-    },
-  };
   const reportConflict: AgentTool<typeof conflictParams> = {
     ...capability,
-    name: PLAN_EXECUTION_TOOL_NAMES[2],
+    name: PLAN_EXECUTION_TOOL_NAMES[1],
     label: "Report Plan Conflict",
-    description: "Stop new Plan item scheduling after a material conflict.",
+    description: "Report a material conflict only when successful objective tool evidence from the current bound item invalidates an actual hard constraint or selected decision. Tool failures, permission denials, unknown outcomes, and agent summaries are not material-conflict evidence.",
     parameters: conflictParams,
-    execute: async (_id, params) => {
+    execute: async (id, params) => {
       const main = currentMain(options);
       if (main.context.activePlan?.planId !== params.planId) {
         throw new Error("Main Agent is not attached to this Plan");
       }
-      const outcome = await options.service().materialConflict(params);
+      const loaded = await options.service().load(params.planId);
+      if (!loaded.ok || !loaded.plan) throw new Error("Plan not found");
+      const outcome = await options.service().materialConflict({
+        ...params,
+        expectedVersion: loaded.plan.version,
+        commandId: id,
+        callerAgentId: main.agentId,
+      });
       if (!outcome.ok) throw new Error(outcome.message);
       return resultText("Plan requires replanning", outcome.plan, true);
     },
@@ -139,7 +150,7 @@ export function makePlanExecutionDriver(options: ExecutionToolOptions): Driver {
   return {
     name: "plan-execution",
     description: "Approved Plan execution controls",
-    tools: [startItem, verifyItem, reportConflict],
+    tools: [startItem, reportConflict],
     source: "builtin",
   };
 }

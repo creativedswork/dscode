@@ -83,6 +83,8 @@ export function deriveAgentContext(options: DeriveAgentContextOptions): AgentCon
     allowedTools: Object.freeze(allowedTools),
     deniedTools: Object.freeze([...denied]),
     activePlan: parent.activePlan,
+    taskState: undefined,
+    retainedTaskStates: undefined,
     planBinding: parent.planBinding
       ? Object.freeze({
           ...parent.planBinding,

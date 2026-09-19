@@ -21,7 +21,7 @@ afterEach(async () => {
 });
 
 describe("Harness approved Plan execution", () => {
-  it("executes a scoped tool through Plan guard and normal permission", async () => {
+  it("auto-completes after the declared Tool evidence is persisted", async () => {
     let plan: Awaited<ReturnType<typeof installApprovedPlan>> | undefined;
     let turn = 0;
     const streamFn: StreamFn = vi.fn(() => {
@@ -46,27 +46,6 @@ describe("Harness approved Plan execution", () => {
           id: "write-result",
           name: "test_write",
           arguments: { path: "result.txt", content: "approved\n" },
-        }], "toolUse");
-      }
-      if (turn === 3) {
-        return assistant([{
-          type: "toolCall",
-          id: "verify-result",
-          name: "verify_item",
-          arguments: {
-            planId: "plan-1",
-            expectedVersion: plan!.approved.version + 2,
-            commandId: "verify-result",
-            revision: plan!.approved.revision,
-            digest: plan!.approved.digest,
-            itemId: "item-1",
-            criteria: [{
-              criterionId: "file-created",
-              passed: true,
-              evidenceIds: ["tool-write-result"],
-              observed: { matched: true, description: "result.txt was written" },
-            }],
-          },
         }], "toolUse");
       }
       return assistant([{ type: "text", text: "done" }], "stop");
@@ -106,7 +85,11 @@ describe("Harness approved Plan execution", () => {
     await expect(readFile(join(fixture.root, "result.txt"), "utf8"))
       .resolves.toBe("approved\n");
     const loaded = await plan.store.load("plan-1");
-    expect(loaded.ok && loaded.plan?.items[0]).toMatchObject({
+    expect(
+      loaded.ok && loaded.plan?.schemaVersion === 2
+        ? loaded.plan.execution.steps[0]
+        : undefined,
+    ).toMatchObject({
       status: "completed",
       evidence: [expect.objectContaining({
         kind: "tool_result",
@@ -119,7 +102,7 @@ describe("Harness approved Plan execution", () => {
     expect(main?.context.planBinding).toBeUndefined();
   });
 
-  it("releases authorization after a real permission denial and replans", async () => {
+  it("rejects summary-only and permission-denial conflict reports without replanning", async () => {
     let plan: Awaited<ReturnType<typeof installApprovedPlan>> | undefined;
     let turn = 0;
     const streamFn: StreamFn = vi.fn(() => {
@@ -149,12 +132,32 @@ describe("Harness approved Plan execution", () => {
       if (turn === 3) {
         return assistant([{
           type: "toolCall",
-          id: "report-conflict",
+          id: "summary-only-conflict",
           name: "plan_report_conflict",
           arguments: {
             planId: "plan-1",
             expectedVersion: plan!.approved.version + 1,
             commandId: "material-conflict",
+            summary: "Denied permission requires a different path",
+          },
+        }], "toolUse");
+      }
+      if (turn === 4) {
+        return assistant([{
+          type: "toolCall",
+          id: "permission-conflict",
+          name: "plan_report_conflict",
+          arguments: {
+            planId: "plan-1",
+            expectedVersion: plan!.approved.version + 1,
+            revision: plan!.approved.revision,
+            digest: plan!.approved.digest,
+            itemId: "item-1",
+            conflictTarget: {
+              kind: "hard_constraint",
+              constraintId: "constraint-1",
+            },
+            evidenceIds: ["tool-denied-write"],
             summary: "Denied permission requires a different path",
           },
         }], "toolUse");
@@ -189,12 +192,100 @@ describe("Harness approved Plan execution", () => {
     fixtures.push(fixture);
     plan = await installApprovedPlan(fixture);
 
-    await fixture.harness.api.conversation.prompt("deny then replan");
+    await fixture.harness.api.conversation.prompt("deny without replanning");
     await expect(access(join(fixture.root, "denied.txt"))).rejects.toThrow();
-    await vi.waitFor(() => {
-      expect(fixture.harness.agentSupervisor.list().some((process) =>
-        process.application.name === "planner"
-      )).toBe(true);
+    expect(fixture.harness.agentSupervisor.list().some((process) =>
+      process.application.name === "planner"
+    )).toBe(false);
+    const loaded = await plan.store.load("plan-1");
+    expect(loaded.ok && loaded.plan).toMatchObject({
+      status: "executing",
+      revision: plan.approved.revision,
+      digest: plan.approved.digest,
+      approval: plan.approved.approval,
+      execution: { steps: [{
+        executionBindings: [expect.objectContaining({
+          agentId: plan.approved.mainAgentId,
+          revision: plan.approved.revision,
+          digest: plan.approved.digest,
+          itemId: "item-1",
+        })],
+      }] },
+    });
+  });
+
+  it("preserves the Plan block reason without treating a denied call as a material conflict", async () => {
+    let plan: Awaited<ReturnType<typeof installApprovedPlan>> | undefined;
+    let turn = 0;
+    const execute = vi.fn(async () => ({
+      content: [{ type: "text" as const, text: "must not execute" }],
+      details: { ok: true },
+    }));
+    const streamFn: StreamFn = vi.fn(() => {
+      turn++;
+      if (turn === 1) {
+        return assistant([{
+          type: "toolCall",
+          id: "start-item",
+          name: "plan_start_item",
+          arguments: {
+            planId: "plan-1",
+            expectedVersion: plan!.approved.version,
+            revision: plan!.approved.revision,
+            digest: plan!.approved.digest,
+            itemId: "item-1",
+          },
+        }], "toolUse");
+      }
+      if (turn === 2) {
+        return assistant([{
+          type: "toolCall",
+          id: "blocked-process",
+          name: "test_process",
+          arguments: {},
+        }], "toolUse");
+      }
+      return assistant([{ type: "text", text: "planner stopped" }], "stop");
+    });
+    const fixture = await createRoutedHarnessFixture({
+      streamFn,
+      configureDrivers: (drivers) => drivers.register({
+        name: "unapproved-process-test",
+        description: "Unapproved process test tool",
+        source: "builtin",
+        tools: [{
+          name: "test_process",
+          label: "Run process",
+          description: "Run an unapproved process",
+          effect: "process",
+          parameters: Type.Object({}, { additionalProperties: false }),
+          execute,
+        }],
+      }),
+    });
+    fixtures.push(fixture);
+    plan = await installApprovedPlan(fixture);
+
+    await fixture.harness.api.conversation.prompt("trigger Plan mismatch");
+
+    expect(execute).not.toHaveBeenCalled();
+    expect(fixture.harness.api.conversation.toolResult(
+      "session",
+      undefined,
+      "blocked-process",
+    )).toContain(
+      "Plan side effect blocked: effect_mismatch: Effect is outside Plan approval",
+    );
+    expect(fixture.harness.agentSupervisor.list().some((process) =>
+      process.application.name === "planner"
+    )).toBe(false);
+    const loaded = await plan.store.load("plan-1");
+    expect(loaded.ok && loaded.plan).toMatchObject({
+      status: "executing",
+      approval: {
+        revision: plan.approved.revision,
+        digest: plan.approved.digest,
+      },
     });
   });
 });

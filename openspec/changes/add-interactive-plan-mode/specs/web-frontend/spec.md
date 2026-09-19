@@ -2,9 +2,9 @@
 
 ### Requirement: Web keeps planning under Agent control
 The Web composer SHALL remain a single Chat input and SHALL NOT expose an
-`Auto / Plan` selector, Plan workbench, Plan summary, or separate planning
-navigation. Main Agent SHALL decide whether to execute directly, investigate,
-or use the internal Planner.
+`Auto / Plan` selector, Plan workbench, dedicated Plan page, or separate
+planning navigation. Main Agent SHALL decide whether to execute directly,
+investigate, or use the internal Planner.
 
 #### Scenario: User submits a sufficiently specified request
 - **WHEN** the request contains enough user intent to determine the visible outcome
@@ -14,38 +14,90 @@ or use the internal Planner.
 - **WHEN** complexity routing starts or revises an internal PlanRecord
 - **THEN** the Web UI does not expose routing scores, candidates, revision, digest, effect grants, evidence, control tools, or Agent process details
 
-### Requirement: Approved work is visible as an inline TODO
-After Planner compiles executable items, the Web UI SHALL show one inline TODO
-list in Chat and SHALL update it from persisted PlanItem status.
+### Requirement: Authorized Plan has one global Chat output
+After Planner internally authorizes an executable PlanRecord, the Web UI SHALL
+project one global Plan output in Chat before the live TODO. It SHALL derive the
+output deterministically from the persisted PlanRecord without another model
+call and SHALL keep it collapsed by default.
 
-#### Scenario: Planner authorizes execution
-- **WHEN** the Plan contains compiled items and enters `approved` or `executing`
-- **THEN** Chat inserts `计划已生成 · N 项任务` after the Planning phase and shows each user-understandable item title and its current pending, in-progress, completed, blocked, or skipped state beneath it
+#### Scenario: Plan is authorized
+- **WHEN** a Plan enters `approved` with executable items
+- **THEN** Chat shows a collapsed `执行计划 · 已就绪` disclosure before TODO, and execution does not start before that projection is published
 
-#### Scenario: Main advances execution
-- **WHEN** `plan_start_item` or `verify_item` changes persisted PlanItem state
-- **THEN** the existing TODO list updates without exposing either control tool call, raw Plan JSON, revision, digest, or an internal verification rejection
+#### Scenario: User expands the Plan
+- **WHEN** the user opens the Plan disclosure
+- **THEN** it shows the goal, committed user constraints, selected approach summaries, change scope or side effects, ordered execution steps, and verification approach
+
+#### Scenario: Plan is collapsed
+- **WHEN** the disclosure has not been opened or the Session projection is restored
+- **THEN** only its title and current Plan status consume conversation space; PlanExecutionStep count is not presented as TODO count
+
+#### Scenario: Internal details exist
+- **WHEN** the persisted Plan contains candidate alternatives, internal IDs, revision, digest, grants, evidence, control tools, or private reasoning
+- **THEN** the global output omits them and does not duplicate raw Plan JSON into UI messages or the model transcript
+
+#### Scenario: Plan is replanned
+- **WHEN** a material conflict derives a new revision
+- **THEN** Chat keeps the last authorized output while replanning and atomically replaces the same output after the new revision is authorized, without appending a duplicate
+
+### Requirement: Current task state is visible as an inline TODO
+When Main maintains TaskState for the current request, the Web UI SHALL show one
+inline TODO list immediately after any global Plan output and SHALL update it
+from the persisted `TaskState.todoList`. The Web UI MUST NOT derive TODO from
+PlanExecutionStep, verification, Tool, AgentProcess, or continuation state.
+
+#### Scenario: Planner authorizes execution with TaskState
+- **WHEN** the Plan enters `approved` or `executing` and Main initializes TaskState
+- **THEN** Chat inserts `计划已生成`, projects the collapsed global Plan output, and then shows each TodoItem's outcome title and current pending, in-progress, completed, blocked, or skipped state
+
+#### Scenario: Direct execution creates TaskState
+- **WHEN** autonomous routing selects Direct and Main creates a multi-item TaskState
+- **THEN** Chat shows TODO without requiring or fabricating a global Plan output
+
+#### Scenario: Main advances task state
+- **WHEN** Main commits a newer TaskState version
+- **THEN** Chat updates the existing TODO list without exposing context mutation calls, raw Plan JSON, verification, evidence, revision, digest, or runtime counters
+
+#### Scenario: Main corrects an invalid verification command
+- **WHEN** Host rejects an aggregated Bash verification command as a retryable `invalid_command`
+- **THEN** Chat removes that internal correction Tool row after classification while preserving real Bash failures and Plan scope conflicts, and the current TodoItem remains in progress
 
 #### Scenario: Execution messages accumulate
 - **WHEN** Thinking, Tool, or assistant messages are appended after Plan authorization
-- **THEN** Chat keeps exactly one live TODO after the latest message instead of leaving the execution state behind at the original Plan marker
+- **THEN** Chat keeps exactly one global Plan output followed by one live TODO after the latest message instead of leaving execution state behind at the original Plan marker
 
 #### Scenario: Execution finishes or the Session reconnects
-- **WHEN** the Plan reaches a terminal state or the client restores the owning Session
-- **THEN** Chat projects the latest persisted Plan and retains the final completed, blocked, failed, skipped, or cancelled TODO state
+- **WHEN** the task reaches a terminal state or the client restores the owning Session
+- **THEN** Chat restores the latest authorized global Plan output when one exists and independently restores the final TaskState TODO
+
+#### Scenario: Terminal transition clears execution authorization
+- **WHEN** a cancelled or failed Plan no longer contains its approval
+- **THEN** Chat retains the same Plan's last authorized public output and renders TODO statuses from the independent TaskState snapshot
 
 #### Scenario: Execution requires replanning
 - **WHEN** a material conflict derives a revision from the current Plan
-- **THEN** Chat retains the TODO list, labels it `正在调整执行计划`, updates the result marker to `执行计划已更新 · N 项任务` after authorization, and does not insert a second `进入 Planning Mode` marker
+- **THEN** Chat retains the last authorized Plan output and current TODO, labels execution `正在调整执行计划`, replaces only the Plan after the new revision is authorized, updates the result marker to `执行计划已更新`, and changes TODO only when Main commits a TaskState mutation
+
+#### Scenario: Runtime stops automatic continuation
+- **WHEN** Host exhausts the automatic continuation budget
+- **THEN** Chat retains the current in-progress TodoItem and reports that automatic execution stopped; it does not label the item blocked unless TaskState contains a structured external blocker
+
+#### Scenario: Blocker is visible
+- **WHEN** TaskState contains a blocked TodoItem
+- **THEN** Chat shows its public reason and recovery action without exposing internal errors, paths, counters, or evidence IDs
 
 ### Requirement: User intent alignment is native to Chat
 The Web UI SHALL render a pending user-value decision as an inline Chat
-interaction. It SHALL contain one concise question, an optional recommendation,
+interaction. It SHALL contain one concise question, exactly one recommended option,
 at most three user-understandable options, and a free-form adjustment path.
 
 #### Scenario: Creative direction is underspecified
 - **WHEN** a request such as “创建一个俄罗斯方块小游戏” does not determine the visual style
-- **THEN** the first user decision asks for visual direction in Chat before any implementation side effect
+- **THEN** Host persists a pending `visual_direction` alignment requirement and the first user decision asks for that direction in Chat before any implementation side effect
+
+#### Scenario: Alignment options are shown
+- **WHEN** a persisted user-value decision is projected into Chat
+- **THEN** one option is visibly labeled as recommended and selected initially
 
 #### Scenario: User selects a suggested direction
 - **WHEN** the user chooses an inline option
@@ -54,6 +106,28 @@ at most three user-understandable options, and a free-form adjustment path.
 #### Scenario: User provides a custom direction
 - **WHEN** none of the suggested options matches the user's intent
 - **THEN** the user can enter a concise custom constraint without leaving Chat
+
+#### Scenario: Several value requirements are unresolved
+- **WHEN** the Plan contains multiple pending alignment requirements
+- **THEN** Chat presents and consumes one persisted requirement at a time, and neither compilation nor execution starts while another remains pending
+
+### Requirement: Completed Plan produces one visible final report
+The Web Chat SHALL hide execution-phase assistant narration and SHALL show one
+final assistant report after a completed Plan. The report SHALL identify
+delivered results, verification actually run and its conclusions, and anything
+unverified or still missing.
+
+#### Scenario: Execution narration is produced
+- **WHEN** Main emits intermediate prose while automatic Plan execution is active
+- **THEN** Web omits that prose from live rendering and Session replay while preserving visible Tool results allowed by the normal projection
+
+#### Scenario: Plan completes
+- **WHEN** Host enters report phase after terminal cleanup
+- **THEN** Web shows the final report once, after TaskState reflects the outcomes actually delivered
+
+#### Scenario: Report has a gap
+- **WHEN** verification was not run or an outcome remains incomplete
+- **THEN** Web displays that fact in the final report and does not present it as passed
 
 ### Requirement: Agent owns technical planning decisions
 The UI SHALL NOT ask the user to choose between implementation techniques,
@@ -96,6 +170,10 @@ command is accepted by an open WebSocket.
 #### Scenario: Connection is restored
 - **WHEN** the WebSocket opens and the user submits
 - **THEN** the command is sent before the draft is cleared and Chat enters its normal processing state
+
+#### Scenario: Alignment command cannot be sent
+- **WHEN** the user submits an intent alignment while the WebSocket cannot accept the command
+- **THEN** the interaction remains actionable, does not enter a permanent busy state, and can be submitted again after reconnection
 
 ### Requirement: Existing permission UI remains the authorization boundary
 The Web UI SHALL NOT request approval for an entire Plan. Filesystem,

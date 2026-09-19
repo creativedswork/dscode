@@ -210,15 +210,16 @@ describe("PlanService API and events", () => {
       "planner-1",
       fixture.plan.version,
       {
-        items: [{
-          itemId: "item-1",
+        executionSteps: [{
+          stepId: "item-1",
           title: "Implement",
           description: "Implement the selected path",
           dependsOn: [],
-          acceptanceCriteria: [{
+          verifications: [{
             kind: "observable",
-            criterionId: "verified",
+            verificationId: "verified",
             description: "Behavior is verified",
+            toolName: "read",
           }],
           effectGrants: [],
         }],
@@ -304,7 +305,7 @@ describe("PlanService API and events", () => {
     }, new AbortController().signal)).rejects.toThrow("Plan initialization failed");
     await expect(fixture.service.execution.compile(
       "plan-1", "planner-1", fixture.plan.version,
-      { items: [], sideEffectSummary: "Stale" },
+      { executionSteps: [], sideEffectSummary: "Stale" },
     )).resolves.toMatchObject({ ok: false, reason: "conflict" });
     await fixture.store.update("plan-1", fixture.plan.version, () => {});
 

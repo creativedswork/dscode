@@ -14,6 +14,7 @@ import type {
 } from "../../src/ui/shared/types.js";
 import {
   makePlan,
+  makeEpisode,
   pendingPlan,
 } from "./plan-protocol-fixture.js";
 
@@ -38,6 +39,30 @@ function interactionEvent(plan: PlanRecord): PlanInteractionEvent {
 }
 
 describe("PlanViewState reducer", () => {
+  it("uses only authoritative episode events for execution phase", () => {
+    const plan = makePlan({ status: "executing" });
+    let state = planViewReducer(EMPTY_PLAN_VIEW_STATE, {
+      type: "plan_state",
+      plan,
+    });
+    expect(state.episode).toBeNull();
+
+    const paused = makeEpisode();
+    state = planViewReducer(state, {
+      type: "plan_episode",
+      planId: plan.planId,
+      episode: paused,
+    });
+    expect(state.episode).toBe(paused);
+    expect(state.impasse).toEqual(paused.incident);
+
+    const unchanged = planViewReducer(state, {
+      type: "warning",
+      text: "connection idle",
+    });
+    expect(unchanged.episode?.phase).toBe("paused_inconclusive");
+  });
+
   it("keeps Plan state separate from the conversation transcript", () => {
     const plan = pendingPlan();
     const messages: UIMessage[] = [{
@@ -85,6 +110,157 @@ describe("PlanViewState reducer", () => {
     });
     expect(planViewReducer(state, { type: "plan_state", plan: null }))
       .toEqual(EMPTY_PLAN_VIEW_STATE);
+  });
+
+  it("keeps the last authorized presentation through replanning and replaces it atomically", () => {
+    const approval = {
+      revision: 2,
+      digest: "a".repeat(64),
+      approvedEffects: [],
+      acknowledgedSideEffects: [],
+      interactionId: "internal:planner-1",
+      approvedAt: 10,
+    };
+    const authorized = makePlan({
+      status: "executing",
+      approval: { ...approval },
+    });
+    let state = planViewReducer(EMPTY_PLAN_VIEW_STATE, {
+      type: "plan_state",
+      plan: authorized,
+    });
+
+    const drafting = makePlan({
+      status: "drafting",
+      version: authorized.version + 1,
+      revision: authorized.revision + 1,
+      baseRevision: authorized.revision,
+      approval: undefined,
+      goal: "Draft goal must stay hidden",
+    });
+    state = planViewReducer(state, { type: "plan_state", plan: drafting });
+
+    expect(state.plan).toBe(drafting);
+    expect(state.presentationPlan).toBe(authorized);
+    expect(state.publicPlan?.goal).toBe(authorized.goal);
+
+    const revised = makePlan({
+      ...drafting,
+      status: "approved",
+      version: drafting.version + 1,
+      goal: "Authorized revised goal",
+      approval: {
+        ...approval,
+        revision: drafting.revision,
+        digest: drafting.digest,
+        approvedAt: 20,
+      },
+    });
+    state = planViewReducer(state, { type: "plan_state", plan: revised });
+
+    expect(state.presentationPlan).toBe(revised);
+    expect(state.publicPlan?.goal).toBe("Authorized revised goal");
+  });
+
+  it.each(["cancelled", "failed"] as const)(
+    "keeps %s Plan presentation after authorization is cleared",
+    (status) => {
+      const approval = {
+        revision: 2,
+        digest: "a".repeat(64),
+        approvedEffects: [],
+        acknowledgedSideEffects: [],
+        interactionId: "internal:planner-1",
+        approvedAt: 10,
+      };
+      const authorized = makePlan({
+        status: "executing",
+        approval,
+      });
+      let state = planViewReducer(EMPTY_PLAN_VIEW_STATE, {
+        type: "plan_state",
+        plan: authorized,
+      });
+      const terminal = makePlan({
+        status,
+        version: authorized.version + 1,
+        approval: undefined,
+        execution: authorized.schemaVersion === 2
+          ? {
+            steps: authorized.execution.steps.map((step) => ({
+              ...step,
+              status: "blocked",
+            })),
+          }
+          : { steps: [] },
+        trajectoryEvents: [{
+          eventId: status,
+          revision: authorized.revision,
+          recordedAt: 20,
+          kind: "status_changed",
+          from: "executing",
+          to: status,
+        }],
+      });
+
+      state = planViewReducer(state, { type: "plan_state", plan: terminal });
+
+      expect(state.presentationPlan).toMatchObject({
+        status,
+        execution: { steps: [{ status: "blocked" }] },
+      });
+      expect(state.publicPlan).toMatchObject({ status });
+
+      const restored = planViewReducer(EMPTY_PLAN_VIEW_STATE, {
+        type: "plan_state",
+        plan: terminal,
+      });
+      expect(restored.presentationPlan).toBe(terminal);
+      expect(restored.publicPlan).toMatchObject({ status });
+    },
+  );
+
+  it("clears presentation for another Plan, empty state, or invalid executable authorization", () => {
+    const authorized = makePlan({
+      status: "completed",
+      approval: {
+        revision: 2,
+        digest: "a".repeat(64),
+        approvedEffects: [],
+        acknowledgedSideEffects: [],
+        interactionId: "internal:planner-1",
+        approvedAt: 10,
+      },
+    });
+    const state = planViewReducer(EMPTY_PLAN_VIEW_STATE, {
+      type: "plan_state",
+      plan: authorized,
+    });
+    expect(state.publicPlan).not.toBeNull();
+
+    const invalid = makePlan({
+      status: "executing",
+      version: authorized.version + 1,
+      approval: undefined,
+    });
+    expect(planViewReducer(state, {
+      type: "plan_state",
+      plan: invalid,
+    }).publicPlan).toBeNull();
+
+    const otherPlan = makePlan({
+      planId: "plan-2",
+      status: "drafting",
+      approval: undefined,
+    });
+    expect(planViewReducer(state, {
+      type: "plan_state",
+      plan: otherPlan,
+    }).presentationPlan).toBeNull();
+    expect(planViewReducer(state, {
+      type: "plan_state",
+      plan: null,
+    })).toEqual(EMPTY_PLAN_VIEW_STATE);
   });
 
   it("preserves an interaction that remains pending in a conflict snapshot", () => {
@@ -260,7 +436,12 @@ describe("PlanViewState reducer", () => {
       currentVersion: plan.version,
       revision: plan.revision,
     };
-    const validState: PlanViewState = { plan, interaction, conflict };
+    const validState: PlanViewState = {
+      ...EMPTY_PLAN_VIEW_STATE,
+      plan,
+      interaction,
+      conflict,
+    };
     const otherPlan = pendingPlan();
     otherPlan.planId = "plan-2";
 
@@ -274,6 +455,7 @@ describe("PlanViewState reducer", () => {
     expect(afterOtherPlan.conflict).toBeNull();
 
     const staleState: PlanViewState = {
+      ...EMPTY_PLAN_VIEW_STATE,
       plan: makePlan({ pendingInteraction: undefined }),
       interaction,
       conflict,
@@ -320,6 +502,7 @@ describe("PlanViewState reducer", () => {
     otherSession.sessionId = "session-2";
     const decisionEvent = interactionEvent(plan);
     const legacyAcceptanceState: PlanViewState = {
+      ...EMPTY_PLAN_VIEW_STATE,
       plan: acceptance,
       interaction: {
         ...decisionEvent,

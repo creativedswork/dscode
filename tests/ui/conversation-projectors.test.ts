@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { SerializedAgentProcess } from "../../src/agents/process/types.js";
+import { INTERNAL_PLAN_EXECUTION_VISIBILITY } from "../../src/kernel/message-visibility.js";
 import { AgentActivityProjector } from "../../src/ui/shared/agent-activity.js";
 import { harnessEventToConversationEvent } from "../../src/ui/shared/harness-conversation-adapter.js";
 import { rebuildDisplayMessages } from "../../src/ui/shared/session-projector.js";
@@ -93,7 +94,7 @@ describe("conversation projectors", () => {
     ]);
   });
 
-  it("hides the internal approved-Plan continuation from replayed Chat", () => {
+  it("hides internal Plan narration while preserving tools and final output", () => {
     const replay = rebuildDisplayMessages([
       {
         role: "user",
@@ -101,14 +102,144 @@ describe("conversation projectors", () => {
       },
       {
         role: "assistant",
-        content: [{ type: "text", text: "Starting implementation." }],
+        dscodeVisibility: INTERNAL_PLAN_EXECUTION_VISIBILITY,
+        content: [
+          { type: "thinking", thinking: "Private execution reasoning" },
+          { type: "text", text: "Verbose self-correction narration" },
+          {
+            type: "toolCall",
+            id: "call-read",
+            name: "read_file",
+            arguments: { path: "README.md" },
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-read",
+        content: [{ type: "text", text: "contents" }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Implementation complete." }],
       },
     ], [], "session-1");
 
-    expect(replay).toEqual([
-      expect.objectContaining({
+    expect(replay).toHaveLength(2);
+    expect(replay[0]).toMatchObject({
+      role: "assistant",
+      content: "",
+      thinking: undefined,
+      tools: [expect.objectContaining({ name: "read_file" })],
+    });
+    expect(replay[1]).toMatchObject({
+      role: "assistant",
+      content: "Implementation complete.",
+    });
+  });
+
+  it("hides legacy untagged Plan narration around execution tools", () => {
+    const replay = rebuildDisplayMessages([
+      {
+        role: "user",
+        content: "<plan_execution>\nExecute the approved Plan.\n</plan_execution>",
+      },
+      {
         role: "assistant",
-        content: "Starting implementation.",
+        content: [{ type: "text", text: "Premature completion." }],
+      },
+      {
+        role: "user",
+        content: "<plan_execution>\nThe Plan is incomplete. Continue.\n</plan_execution>",
+      },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "I need to inspect my edit." },
+          {
+            type: "toolCall",
+            id: "call-read",
+            name: "read_file",
+            arguments: { path: "README.md" },
+          },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-read",
+        content: [{ type: "text", text: "contents" }],
+      },
+      {
+        role: "assistant",
+        content: [{ type: "text", text: "Implementation complete." }],
+      },
+    ], [], "session-1");
+
+    expect(replay).toHaveLength(2);
+    expect(replay[0]).toMatchObject({
+      content: "",
+      tools: [expect.objectContaining({ name: "read_file" })],
+    });
+    expect(replay[1].content).toBe("Implementation complete.");
+  });
+
+  it("hides retryable Plan command corrections during replay", () => {
+    const invalidCommand =
+      "Plan side effect blocked: invalid_command: Run each command separately and exactly as stored: npm test, npm run typecheck";
+    const replay = rebuildDisplayMessages([
+      {
+        role: "assistant",
+        dscodeVisibility: INTERNAL_PLAN_EXECUTION_VISIBILITY,
+        content: [{
+          type: "toolCall",
+          id: "call-retry",
+          name: "bash",
+          arguments: { command: "npm test && npm run typecheck" },
+        }, {
+          type: "toolCall",
+          id: "call-scope",
+          name: "bash",
+          arguments: { command: "curl example.com" },
+        }, {
+          type: "toolCall",
+          id: "call-exact",
+          name: "bash",
+          arguments: { command: "npm test" },
+        }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-retry",
+        content: [{ type: "text", text: invalidCommand }],
+        isError: true,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-scope",
+        content: [{
+          type: "text",
+          text: "Plan side effect blocked: scope_mismatch: Resource is outside Plan approval",
+        }],
+        isError: true,
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-exact",
+        content: [{ type: "text", text: "passed" }],
+        isError: false,
+      },
+    ], [], "session-1");
+
+    expect(replay).toHaveLength(1);
+    expect(replay[0].tools).toEqual([
+      expect.objectContaining({
+        toolCallId: "call-scope",
+        isError: true,
+      }),
+      expect.objectContaining({
+        toolCallId: "call-exact",
+        resultDetail: expect.objectContaining({ text: "passed" }),
+        isError: false,
       }),
     ]);
   });

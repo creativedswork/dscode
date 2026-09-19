@@ -56,7 +56,7 @@ describe("PlanStore", () => {
     const created = expectCreated(await store.create(makePlanInput()));
 
     expect(created).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: 2,
       planId: "plan-1",
       projectKey: store.projectKey,
       version: 1,

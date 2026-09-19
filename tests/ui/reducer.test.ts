@@ -271,6 +271,92 @@ describe("conversationReducer — Agent Activity", () => {
     expect(replay[0].tools).toEqual([]);
   });
 
+  it("hides retryable Plan command corrections but keeps real Bash failures", () => {
+    const invalidCommand =
+      "Plan side effect blocked: invalid_command: Run each command separately and exactly as stored: npm test, npm run typecheck";
+    const correctionOnly = conversationReducer(conversationReducer([], {
+      type: "tool_start",
+      toolCallId: "retry-only",
+      name: "bash",
+      args: { command: "npm test && npm run typecheck" },
+    }), {
+      type: "tool_end",
+      toolCallId: "retry-only",
+      name: "bash",
+      result: invalidCommand,
+      resultDetail: { summary: invalidCommand, text: invalidCommand },
+      isError: true,
+    });
+    let messages = conversationReducer([], {
+      type: "assistant_start",
+      messageId: "assistant-1",
+    });
+    for (const toolCallId of ["retry", "scope", "failure"]) {
+      messages = conversationReducer(messages, {
+        type: "tool_start",
+        toolCallId,
+        name: "bash",
+        args: { command: toolCallId },
+      });
+    }
+    messages = conversationReducer(messages, {
+      type: "tool_end",
+      toolCallId: "retry",
+      name: "bash",
+      result: `\`\`\`sh\n${invalidCommand}\n\`\`\``,
+      resultDetail: { summary: invalidCommand, text: invalidCommand },
+      isError: true,
+    });
+    messages = conversationReducer(messages, {
+      type: "tool_end",
+      toolCallId: "scope",
+      name: "bash",
+      result: "Plan side effect blocked: scope_mismatch: Resource is outside Plan approval",
+      isError: true,
+    });
+    messages = conversationReducer(messages, {
+      type: "tool_end",
+      toolCallId: "failure",
+      name: "bash",
+      result: "command failed",
+      isError: true,
+    });
+
+    expect(correctionOnly).toEqual([]);
+    expect(messages[0].tools).toEqual([
+      expect.objectContaining({ toolCallId: "scope", isError: true }),
+      expect.objectContaining({ toolCallId: "failure", isError: true }),
+    ]);
+
+    const replay = conversationReducer([], {
+      type: "ready",
+      model: "test-model",
+      config: {} as any,
+      messages: [{
+        role: "assistant",
+        content: "",
+        tools: [{
+          toolCallId: "retry",
+          name: "bash",
+          args: "npm test && npm run typecheck",
+          result: invalidCommand,
+          resultDetail: { summary: invalidCommand, text: invalidCommand },
+          isError: true,
+        }, {
+          toolCallId: "scope",
+          name: "bash",
+          args: "curl example.com",
+          result: "Plan side effect blocked: effect_mismatch: Effect is outside Plan approval",
+          isError: true,
+        }],
+      }],
+    });
+
+    expect(replay[0].tools).toEqual([
+      expect.objectContaining({ toolCallId: "scope", isError: true }),
+    ]);
+  });
+
   it("clears activities with the rest of the conversation", () => {
     const initial = conversationReducer([], {
       type: "agent_activity",

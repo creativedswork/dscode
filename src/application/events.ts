@@ -20,6 +20,11 @@ import type {
   PlanStatus,
 } from "./plan/types.js";
 import type { PlanRouteDecision } from "./plan/route.js";
+import type { TaskState } from "../agents/process/task-state.js";
+import type {
+  ExecutionEpisodeSnapshot,
+  ExecutionIncidentSummary,
+} from "./plan/execution-episode-types.js";
 
 export type {
   EvalDashboardEvidenceSummary,
@@ -78,6 +83,17 @@ export type HarnessEvent =
       }[];
     }
   | {
+      type: "plan:episode";
+      planId: string;
+      episode: Readonly<ExecutionEpisodeSnapshot>;
+    }
+  | {
+      type: "plan:impasse";
+      planId: string;
+      episodeId: string;
+      incident: Readonly<ExecutionIncidentSummary>;
+    }
+  | {
       type: "plan:conflict";
       planId: string;
       expectedVersion: number;
@@ -85,6 +101,11 @@ export type HarnessEvent =
       revision: number;
       conflict: PlanConflict;
       plan: Readonly<PlanRecord>;
+    }
+  | {
+      type: "task:updated";
+      sessionId: string;
+      taskState: Readonly<TaskState>;
     }
   // LLM streaming
   | { type: "llm:thinking:delta"; delta: string }

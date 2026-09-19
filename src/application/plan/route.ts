@@ -1,6 +1,8 @@
 import { Type } from "@earendil-works/pi-ai";
 import { Value } from "typebox/value";
 
+import type { AlignmentRequirement } from "./types.js";
+
 export const PLAN_ROUTE_ASSESSMENT_TOOL_NAME = "submit_plan_route_assessment";
 
 export type PlanSubmissionMode = "auto" | "plan";
@@ -14,6 +16,7 @@ export interface PlanRouteAssessment {
   impact: PlanRouteScore;
   risk: PlanRouteScore;
   coordination: PlanRouteScore;
+  requirements: AlignmentRequirement[];
   evidence: string[];
 }
 
@@ -49,6 +52,21 @@ const INTENT_UNCERTAINTY_SCORE = Type.Integer({
   description:
     "0 only when user-visible intent is explicit or fixed by established project context; 1 when a user-visible preference may remain unresolved; 2 when a missing user-value judgment such as visual style, scope, compatibility, cost, or reversibility clearly requires alignment before side effects. Never treat genre conventions or a plausible default as user intent",
 });
+const ALIGNMENT_REQUIREMENT_TOPIC = Type.Union([
+  Type.Literal("visual_direction"),
+  Type.Literal("delivery"),
+  Type.Literal("product_scope"),
+  Type.Literal("compatibility"),
+  Type.Literal("cost"),
+  Type.Literal("reversibility"),
+  Type.Literal("other"),
+]);
+const ALIGNMENT_REQUIREMENT = Type.Object({
+  requirementId: Type.String({ minLength: 1, maxLength: 200 }),
+  topic: ALIGNMENT_REQUIREMENT_TOPIC,
+  publicSummary: Type.String({ minLength: 1, maxLength: 500 }),
+  status: Type.Literal("pending"),
+}, { additionalProperties: false });
 
 export const PlanRouteAssessmentSchema = Type.Object({
   requestId: Type.String({ minLength: 1, maxLength: 200 }),
@@ -57,6 +75,7 @@ export const PlanRouteAssessmentSchema = Type.Object({
   impact: SCORE,
   risk: SCORE,
   coordination: SCORE,
+  requirements: Type.Array(ALIGNMENT_REQUIREMENT, { maxItems: 20 }),
   evidence: Type.Array(Type.String({ minLength: 1, maxLength: 500 }), {
     minItems: 1,
     maxItems: 10,
@@ -75,15 +94,33 @@ export function validatePlanRouteAssessment(
 ): PlanRouteAssessment {
   if (!Value.Check(PlanRouteAssessmentSchema, value)) {
     throw new PlanRouteAssessmentError(
-      "Plan route assessment must contain the active request ID, five scores from 0 to 2, and evidence",
+      "Plan route assessment must contain the active request ID, five scores from 0 to 2, alignment requirements, and evidence",
     );
   }
-  return structuredClone(value) as PlanRouteAssessment;
+  const assessment = structuredClone(value) as PlanRouteAssessment;
+  if (
+    new Set(assessment.requirements.map((item) => item.requirementId)).size
+    !== assessment.requirements.length
+  ) {
+    throw new PlanRouteAssessmentError(
+      "Plan route assessment requirement IDs must be unique",
+    );
+  }
+  if (
+    (assessment.intentUncertainty === 0 && assessment.requirements.length > 0)
+    || (assessment.intentUncertainty !== 0 && assessment.requirements.length === 0)
+  ) {
+    throw new PlanRouteAssessmentError(
+      "intentUncertainty must be zero exactly when alignment requirements are empty",
+    );
+  }
+  return assessment;
 }
 
 export function decidePlanRoute(
   assessment: PlanRouteAssessment,
 ): Readonly<PlanRouteDecision> {
+  validatePlanRouteAssessment(assessment);
   const totalScore = assessment.intentUncertainty
     + assessment.solutionDivergence
     + assessment.impact
@@ -103,6 +140,9 @@ export function decidePlanRoute(
     totalScore,
     assessment: Object.freeze({
       ...assessment,
+      requirements: Object.freeze(
+        assessment.requirements.map((item) => Object.freeze({ ...item })),
+      ) as AlignmentRequirement[],
       evidence: Object.freeze([...assessment.evidence]) as string[],
     }),
   });

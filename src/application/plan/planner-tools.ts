@@ -4,13 +4,15 @@ import { Type } from "@earendil-works/pi-ai";
 import type { ToolCapability } from "../../kernel/tool-effects.js";
 import { PlanExecutionService } from "./execution-service.js";
 import {
-  AcceptanceCriterion,
   Candidate,
   EffectGrant,
   EvidenceReference,
+  PlanVerification,
 } from "./schema-parts.js";
+import { planExecutionUnits } from "./execution-model.js";
 import { PlannerInteractionBroker } from "./planner-interactions.js";
 import { PlannerService } from "./planner-service.js";
+import type { PlanRecord } from "./types.js";
 
 export const PLANNER_TOOL_NAMES = [
   "plan_initialize",
@@ -51,6 +53,9 @@ const appendDecisionParams = Type.Object({
   expectedVersion: Type.Integer({ minimum: 1 }),
   decisionNodeId: Type.String({ minLength: 1 }),
   question: Type.String(),
+  resolvesRequirementIds: Type.Array(Type.String({ minLength: 1 }), {
+    maxItems: 1,
+  }),
   candidates: Type.Array(Candidate),
 }, { additionalProperties: false });
 
@@ -78,12 +83,12 @@ const authorizeParams = Type.Object({
 
 const compileParams = Type.Object({
   expectedVersion: Type.Integer({ minimum: 1 }),
-  items: Type.Array(Type.Object({
-    itemId: Type.String({ minLength: 1 }),
+  executionSteps: Type.Array(Type.Object({
+    stepId: Type.String({ minLength: 1 }),
     title: Type.String({ minLength: 1 }),
     description: Type.String({ minLength: 1 }),
     dependsOn: Type.Array(Type.String({ minLength: 1 })),
-    acceptanceCriteria: Type.Array(AcceptanceCriterion, { minItems: 1 }),
+    verifications: Type.Array(PlanVerification, { minItems: 1 }),
     effectGrants: Type.Array(EffectGrant),
   }, { additionalProperties: false }), { minItems: 1 }),
   sideEffectSummary: Type.String({ minLength: 1 }),
@@ -95,13 +100,32 @@ interface PlannerToolOptions {
   service: PlannerService;
   execution?: PlanExecutionService;
   interactions: PlannerInteractionBroker;
+  availableExecutionToolNames?(): readonly string[];
 }
 
-function textResult(label: string, details: unknown) {
+function textResult(label: string, details: Readonly<PlanRecord>) {
+  const summary = {
+    planId: details.planId,
+    status: details.status,
+    version: details.version,
+    revision: details.revision,
+    digest: details.digest,
+    alignmentRequirements: details.alignmentRequirements ?? [],
+    decisions: details.decisions.map((decision) => ({
+      decisionNodeId: decision.decisionNodeId,
+      status: decision.status,
+      selectedOptionId: decision.selectedOptionId,
+    })),
+    executionSteps: planExecutionUnits(details).map((step) => ({
+      stepId: step.stepId,
+      status: step.status,
+    })),
+    pendingInteraction: details.pendingInteraction,
+  };
   return {
     content: [{
       type: "text" as const,
-      text: `${label}\n${JSON.stringify(details, null, 2)}`,
+      text: `${label}\n${JSON.stringify(summary)}`,
     }],
     details,
   };
@@ -137,7 +161,8 @@ export function makePlannerTools(options: PlannerToolOptions): AgentTool<any>[] 
     ...PLANNER_TOOL_CAPABILITIES[1],
     name: PLANNER_TOOL_NAMES[1],
     label: "Append Plan Decision",
-    description: "Append one bounded decision node with public candidate evaluations.",
+    description:
+      "Append one bounded decision node. Set resolvesRequirementIds to one pending alignment requirement for a user-value question, or [] for a technical decision.",
     parameters: appendDecisionParams,
     execute: async (_id, params) => {
       const result = requireSuccess(await options.service.appendDecision(
@@ -194,11 +219,13 @@ export function makePlannerTools(options: PlannerToolOptions): AgentTool<any>[] 
     parameters: compileParams,
     execute: async (_id, params) => {
       const execution = options.execution ?? new PlanExecutionService(options.service.store);
+      const availableToolNames = options.availableExecutionToolNames?.();
       const result = requireSuccess(await execution.compile(
         options.planId(),
         options.plannerAgentId,
         params.expectedVersion,
         params,
+        availableToolNames ? new Set(availableToolNames) : undefined,
       ), "Plan compilation");
       return textResult("Execution Plan compiled", result.plan);
     },

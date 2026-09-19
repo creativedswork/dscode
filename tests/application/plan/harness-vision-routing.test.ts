@@ -119,6 +119,7 @@ describe("Harness/Pi Vision route effects", () => {
             impact: 0,
             risk: 0,
             coordination: 0,
+            requirements: [],
             evidence: ["Direct image inspection"],
           },
         }], "toolUse"));

@@ -58,7 +58,8 @@ async function createPlan(
       source: "user",
     }],
     decisions: [],
-    items: [],
+    executionSteps: [],
+    execution: { steps: [] },
     sideEffectSummary: "",
     trajectoryEvents: [],
   });
@@ -214,15 +215,16 @@ describe("Plan HarnessAPI and domain events", () => {
       "planner-1",
       created.version,
       {
-        items: [{
-          itemId: "item-1",
+        executionSteps: [{
+          stepId: "item-1",
           title: "Verify",
           description: "Verify observable evidence",
           dependsOn: [],
-          acceptanceCriteria: [{
+          verifications: [{
             kind: "observable",
-            criterionId: "observable-1",
+            verificationId: "observable-1",
             description: "Operation succeeded",
+            toolName: "bash",
           }],
           effectGrants: [{
             effect: "process",
@@ -289,7 +291,9 @@ describe("Plan HarnessAPI and domain events", () => {
       role: "main",
     });
     if (!bound.ok) throw new Error("Binding failed");
-    const binding = bound.plan.items[0].executionBindings?.[0];
+    const binding = bound.plan.schemaVersion === 2
+      ? bound.plan.execution.steps[0].executionBindings?.[0]
+      : undefined;
     if (!binding) throw new Error("Binding missing");
     await service.execution.authorizeTool({
       binding,
@@ -334,7 +338,7 @@ describe("Plan HarnessAPI and domain events", () => {
       reason: "conflict",
       conflict: {
         currentVersion: current.plan.version,
-        current: { version: current.plan.version, status: "executing" },
+        current: { version: current.plan.version, status: "completed" },
       },
     });
     expect(events.filter((event) => event.type === "plan:conflict")).toHaveLength(1);
@@ -350,7 +354,7 @@ describe("Plan HarnessAPI and domain events", () => {
       reason: "conflict",
       conflict: {
         currentVersion: current.plan.version,
-        current: { version: current.plan.version, status: "executing" },
+        current: { version: current.plan.version, status: "completed" },
       },
     });
     expect(events.filter((event) => event.type === "plan:conflict")).toHaveLength(2);
@@ -365,8 +369,8 @@ describe("Plan HarnessAPI and domain events", () => {
       commandId: "verify-2",
       callerAgentId: main.agentId,
     })).resolves.toMatchObject({
-      ok: true,
-      plan: { status: "completed" },
+      ok: false,
+      reason: "invalid_command",
     });
   });
 });

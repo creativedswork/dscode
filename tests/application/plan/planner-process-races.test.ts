@@ -16,12 +16,15 @@ import type {
 } from "../../../src/agents/runtimes/runtime.js";
 import { HarnessEventBus } from "../../../src/application/events.js";
 import {
+  attachPlanToAgent,
   PLANNER_APPLICATION,
   PLANNER_TOOL_CAPABILITIES,
+  type PlanRecord,
   PlanStore,
   PlannerProcessCoordinator,
 } from "../../../src/application/plan/index.js";
 import { createTestPlanService } from "./plan-service-fixture.js";
+import { makePlanInput } from "./helpers.js";
 
 const roots: string[] = [];
 
@@ -35,7 +38,7 @@ class MainRuntime implements AgentProcessRuntime {
   async start(): Promise<AgentProcessOutput> {
     return { text: "main" };
   }
-  async terminate(): Promise<void> {}
+  terminate = vi.fn(async (): Promise<void> => {});
   kill(): void {}
 }
 
@@ -87,7 +90,9 @@ async function setup(mode: "waiting" | "normal" | "failure" = "waiting") {
     ["planner", plannerApplication],
   ]);
   const logger = { error: vi.fn() };
+  const mainRuntime = new MainRuntime();
   const plannerRuntime = new PlannerRuntime(mode);
+  const processStore = new AgentProcessStore(root, "/project-a");
   const supervisor = new AgentSupervisor(
     {
       require(name: string) {
@@ -99,8 +104,8 @@ async function setup(mode: "waiting" | "normal" | "failure" = "waiting") {
     } as never,
     (app) => app.name === "planner"
       ? plannerRuntime
-      : new MainRuntime(),
-    new AgentProcessStore(root, "/project-a"),
+      : mainRuntime,
+    processStore,
     new HarnessEventBus(logger as never),
     logger as never,
     () => [
@@ -110,9 +115,10 @@ async function setup(mode: "waiting" | "normal" | "failure" = "waiting") {
   );
   const main = supervisor.registerMain(
     mainApplication,
-    new MainRuntime(),
+    mainRuntime,
     createMainAgentContext("/project-a", "session-1", ["read_file"]),
   );
+  await processStore.save(main);
   const store = new PlanStore({ dataDir: root, projectPath: "/project-a" });
   const service = createTestPlanService(store, { now: () => 100 });
   const coordinator = new PlannerProcessCoordinator(supervisor, service);
@@ -128,6 +134,7 @@ async function setup(mode: "waiting" | "normal" | "failure" = "waiting") {
   return {
     coordinator,
     main,
+    mainRuntime,
     plannerRuntime,
     request,
     root,
@@ -163,6 +170,40 @@ async function expectExit(
 }
 
 describe("Planner process races and exits", () => {
+  it.each([
+    ["completed", 0],
+    ["cancelled", 1],
+    ["failed", 1],
+  ] as const)(
+    "clears terminal Plan bindings for %s and calls Main terminate %i time(s)",
+    async (status, expectedTerminateCalls) => {
+      const fixture = await setup();
+      const plan: PlanRecord = {
+        ...makePlanInput("terminal-plan"),
+        schemaVersion: 2,
+        projectKey: "project",
+        sessionId: fixture.main.parentSessionId,
+        mainAgentId: fixture.main.agentId,
+        status,
+        version: 1,
+        revision: 1,
+        digest: "a".repeat(64),
+        commandReceipts: [],
+        createdAt: 1,
+        updatedAt: 2,
+      };
+      attachPlanToAgent(fixture.main, plan);
+
+      await fixture.coordinator["cleanupTerminalPlan"](plan);
+
+      expect(fixture.main.context.activePlan).toBeUndefined();
+      expect(fixture.main.context.planBinding).toBeUndefined();
+      expect(fixture.mainRuntime.terminate)
+        .toHaveBeenCalledTimes(expectedTerminateCalls);
+      await fixture.supervisor.shutdown();
+    },
+  );
+
   it("atomically rejects a second raw foreground claim", async () => {
     const fixture = await setup();
     const first = fixture.supervisor.spawn({
@@ -221,6 +262,12 @@ describe("Planner process races and exits", () => {
           impact: 0,
           risk: 0,
           coordination: 0,
+          requirements: [{
+            requirementId: "visual-direction",
+            topic: "visual_direction",
+            publicSummary: "Choose the visual direction",
+            status: "pending",
+          }],
           evidence: ["Visual direction is unspecified"],
         },
       },
@@ -236,7 +283,17 @@ describe("Planner process races and exits", () => {
       expect(fixture.plannerRuntime.lastInput?.prompt).toContain(
         "Resolve technical choices only after the user responds",
       );
+      expect(fixture.plannerRuntime.lastInput?.prompt).toContain(
+        "one pending alignment requirement at a time",
+      );
     });
+    const [plan] = await fixture.store.list();
+    expect(plan.alignmentRequirements).toEqual([{
+      requirementId: "visual-direction",
+      topic: "visual_direction",
+      publicSummary: "Choose the visual direction",
+      status: "pending",
+    }]);
     await fixture.coordinator.shutdown();
   });
 

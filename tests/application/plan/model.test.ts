@@ -13,7 +13,7 @@ function makeRecord(): PlanRecord {
   const input = makePlanInput();
   const record: PlanRecord = {
     ...input,
-    schemaVersion: 1,
+    schemaVersion: 2,
     projectKey: "project-123456789abc",
     version: 1,
     revision: 1,
@@ -43,16 +43,17 @@ describe("Plan semantic digest", () => {
       (draft) => { draft.goal = "A different goal"; },
       (draft) => { draft.constraints[0].description = "A different constraint"; },
       (draft) => { draft.decisions[0].candidates[0].summary = "A different path"; },
-      (draft) => { draft.items[0].title = "A different item"; },
+      (draft) => { draft.executionSteps[0].title = "A different step"; },
       (draft) => {
-        draft.items[0].acceptanceCriteria[0] = {
+        draft.executionSteps[0].verifications[0] = {
           kind: "observable",
-          criterionId: "criterion-1",
+          verificationId: "criterion-1",
           description: "A different acceptance condition",
+          toolName: "read_file",
         };
       },
       (draft) => {
-        draft.items[0].effectGrants[0].resourceScopes[0] = {
+        draft.executionSteps[0].effectGrants[0].resourceScopes[0] = {
           kind: "workspace_path",
           pattern: "src/**",
         };
@@ -72,8 +73,8 @@ describe("Plan semantic digest", () => {
     const changed = structuredClone(record);
     changed.status = "executing";
     changed.version = 12;
-    changed.items[0].status = "in_progress";
-    changed.items[0].evidence.push({
+    changed.execution.steps[0].status = "in_progress";
+    changed.execution.steps[0].evidence.push({
       kind: "agent_progress",
       evidenceId: "progress-1",
       agentId: "main-1",
@@ -81,7 +82,7 @@ describe("Plan semantic digest", () => {
       summary: "Half complete",
       recordedAt: 30,
     });
-    changed.items[0].executionBinding = {
+    changed.execution.steps[0].executionBinding = {
       agentId: "main-1",
       role: "main",
       planId: record.planId,

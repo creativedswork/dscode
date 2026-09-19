@@ -52,6 +52,25 @@ export const EvidenceReference = Type.Union([
   }, STRICT_OBJECT_OPTIONS),
 ]);
 
+export const AlignmentRequirement = Type.Object({
+  requirementId: Identifier,
+  topic: Type.Union([
+    Type.Literal("visual_direction"),
+    Type.Literal("delivery"),
+    Type.Literal("product_scope"),
+    Type.Literal("compatibility"),
+    Type.Literal("cost"),
+    Type.Literal("reversibility"),
+    Type.Literal("other"),
+  ]),
+  publicSummary: Type.String({ minLength: 1 }),
+  status: Type.Union([
+    Type.Literal("pending"),
+    Type.Literal("resolved"),
+  ]),
+  resolvedByDecisionNodeId: Type.Optional(Identifier),
+}, STRICT_OBJECT_OPTIONS);
+
 export const Candidate = Type.Object({
   optionId: Identifier,
   summary: Text,
@@ -90,6 +109,7 @@ export const DecisionNode = Type.Object({
     maxItems: MAX_PLAN_CANDIDATES,
   }),
   selectedOptionId: Type.Optional(Identifier),
+  resolvesRequirementIds: Type.Optional(Type.Array(Identifier, { maxItems: 1 })),
 }, STRICT_OBJECT_OPTIONS);
 
 export const ResourceScope = Type.Union([
@@ -124,11 +144,46 @@ export const AcceptanceCriterion = Type.Union([
     kind: Type.Literal("observable"),
     criterionId: Identifier,
     description: Text,
+    toolName: Type.Optional(Identifier),
   }, STRICT_OBJECT_OPTIONS),
   Type.Object({
     kind: Type.Literal("human"),
     criterionId: Identifier,
     prompt: Text,
+  }, STRICT_OBJECT_OPTIONS),
+]);
+
+const StdoutMatcher = Type.Union([
+  Type.Object({
+    matcher: Type.Union([
+      Type.Literal("contains"),
+      Type.Literal("equals"),
+    ]),
+    value: Text,
+  }, STRICT_OBJECT_OPTIONS),
+  Type.Object({
+    matcher: Type.Literal("regex"),
+    value: Text,
+    flags: Type.Optional(Text),
+  }, STRICT_OBJECT_OPTIONS),
+]);
+
+export const PlanVerification = Type.Union([
+  Type.Object({
+    kind: Type.Literal("command"),
+    verificationId: Identifier,
+    description: Text,
+    command: Text,
+    expect: Type.Object({
+      exitCode: Type.Integer(),
+      stdout: Type.Optional(StdoutMatcher),
+    }, STRICT_OBJECT_OPTIONS),
+  }, STRICT_OBJECT_OPTIONS),
+  Type.Object({
+    kind: Type.Literal("observable"),
+    verificationId: Identifier,
+    description: Text,
+    toolName: Identifier,
   }, STRICT_OBJECT_OPTIONS),
 ]);
 
@@ -229,6 +284,132 @@ export const PlanItem = Type.Object({
   executionBinding: Type.Optional(ExecutionBinding),
   executionBindings: Type.Optional(Type.Array(ExecutionBinding)),
   skipReason: Type.Optional(Text),
+}, STRICT_OBJECT_OPTIONS);
+
+export const PlanExecutionStep = Type.Object({
+  stepId: Identifier,
+  order: Type.Integer({ minimum: 0 }),
+  title: Text,
+  description: Text,
+  dependsOn: Type.Array(Identifier),
+  verifications: Type.Array(PlanVerification),
+  effectGrants: Type.Array(EffectGrant),
+}, STRICT_OBJECT_OPTIONS);
+
+export const PlanExecutionStepState = Type.Object({
+  stepId: Identifier,
+  status: Type.Union([
+    Type.Literal("pending"),
+    Type.Literal("in_progress"),
+    Type.Literal("blocked"),
+    Type.Literal("completed"),
+    Type.Literal("skipped"),
+  ]),
+  evidence: Type.Array(Evidence),
+  executionBinding: Type.Optional(ExecutionBinding),
+  executionBindings: Type.Optional(Type.Array(ExecutionBinding)),
+  skipReason: Type.Optional(Text),
+}, STRICT_OBJECT_OPTIONS);
+
+const ExecutionProgress = Type.Object({
+  passedVerificationIds: Type.Array(Identifier),
+  planSteps: Type.Array(Type.Object({
+    stepId: Identifier,
+    status: Type.Union([
+      Type.Literal("pending"),
+      Type.Literal("in_progress"),
+      Type.Literal("blocked"),
+      Type.Literal("completed"),
+      Type.Literal("skipped"),
+    ]),
+  }, STRICT_OBJECT_OPTIONS)),
+  task: Type.Optional(Type.Object({
+    status: Type.Union([
+      Type.Literal("active"),
+      Type.Literal("completed"),
+      Type.Literal("blocked"),
+      Type.Literal("cancelled"),
+      Type.Literal("failed"),
+    ]),
+    todos: Type.Array(Type.Object({
+      todoId: Identifier,
+      status: Type.Union([
+        Type.Literal("pending"),
+        Type.Literal("in_progress"),
+        Type.Literal("completed"),
+        Type.Literal("blocked"),
+        Type.Literal("skipped"),
+      ]),
+      result: Type.Optional(Text),
+      blocker: Type.Optional(Type.Object({
+        kind: Identifier,
+        reason: Text,
+        recovery: Text,
+      }, STRICT_OBJECT_OPTIONS)),
+    }, STRICT_OBJECT_OPTIONS)),
+  }, STRICT_OBJECT_OPTIONS)),
+}, STRICT_OBJECT_OPTIONS);
+
+const EpisodePolicy = Type.Object({
+  maxTurns: PositiveInteger,
+  maxToolCalls: PositiveInteger,
+  maxNoProgressActions: PositiveInteger,
+  maxEquivalentActions: PositiveInteger,
+  reflectionMaxTurns: PositiveInteger,
+  reflectionMaxToolCalls: PositiveInteger,
+}, STRICT_OBJECT_OPTIONS);
+
+const Incident = Type.Object({
+  rule: Type.Union([
+    Type.Literal("max_turns"),
+    Type.Literal("max_tool_calls"),
+    Type.Literal("max_no_progress_actions"),
+    Type.Literal("max_equivalent_actions"),
+  ]),
+  occurredAt: Timestamp,
+  reflectionAvailable: Type.Boolean(),
+  unchangedProgress: ExecutionProgress,
+  equivalentActionCount: Type.Optional(Type.Integer({ minimum: 1 })),
+  fingerprint: Type.Optional(Identifier),
+  errors: Type.Array(Text, { maxItems: 3 }),
+}, STRICT_OBJECT_OPTIONS);
+
+const RecoveryReceipt = Type.Object({
+  commandId: Identifier,
+  operation: Type.Union([
+    Type.Literal("adjust_plan"),
+    Type.Literal("continue_execution"),
+  ]),
+  payloadDigest: Digest,
+  resultingVersion: PositiveInteger,
+  episodeId: Type.Optional(Identifier),
+  completedAt: Timestamp,
+}, STRICT_OBJECT_OPTIONS);
+
+export const ExecutionEpisode = Type.Object({
+  episodeId: Identifier,
+  planId: Identifier,
+  planRevision: PositiveInteger,
+  planDigest: Digest,
+  sessionId: Identifier,
+  mainAgentId: Identifier,
+  phase: Type.Union([
+    Type.Literal("running"),
+    Type.Literal("reflecting"),
+    Type.Literal("paused_inconclusive"),
+    Type.Literal("completed"),
+  ]),
+  policy: EpisodePolicy,
+  turnCount: Type.Integer({ minimum: 0 }),
+  toolCallCount: Type.Integer({ minimum: 0 }),
+  noProgressActionCount: Type.Integer({ minimum: 0 }),
+  reflectionUsed: Type.Boolean(),
+  startedAt: Timestamp,
+  updatedAt: Timestamp,
+  progress: ExecutionProgress,
+  incident: Type.Optional(Incident),
+  recentFingerprints: Type.Array(Digest, { maxItems: 16 }),
+  recoveryReceipts: Type.Array(RecoveryReceipt, { maxItems: 64 }),
 }, STRICT_OBJECT_OPTIONS);
 
 const InteractionBase = {

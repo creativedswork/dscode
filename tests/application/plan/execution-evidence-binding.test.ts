@@ -16,22 +16,25 @@ describe("Plan evidence binding", () => {
   it("rejects evidence replayed across items", async () => {
     const criterion = {
       kind: "command" as const,
-      criterionId: "tests",
+      verificationId: "tests",
+      description: "Tests pass",
       command: "npm test",
-      expectedExitCode: 0,
-      expectedOutput: "passed",
+      expect: {
+        exitCode: 0,
+        stdout: { matcher: "contains" as const, value: "passed" },
+      },
     };
     const grant = {
       effect: "process" as const,
       resourceScopes: [{ kind: "process_command" as const, commandClass: "npm" }],
     };
     const fixture = await createExecutionFixture({
-      items: ["item-1", "item-2"].map((itemId) => ({
-        itemId,
-        title: itemId,
-        description: itemId,
+      executionSteps: ["item-1", "item-2"].map((stepId) => ({
+        stepId,
+        title: stepId,
+        description: stepId,
         dependsOn: [],
-        acceptanceCriteria: [criterion],
+        verifications: [criterion],
         effectGrants: [grant],
       })),
     });

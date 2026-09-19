@@ -1,4 +1,6 @@
 import type {
+  ExecutionEpisodeSnapshot,
+  ExecutionIncidentSummary,
   PlanDecisionRequest,
   PlanRecord,
   ServerEvent,
@@ -6,6 +8,10 @@ import type {
 import {
   planInteractionRequest,
 } from "../../application/plan/interaction-projection.js";
+import {
+  projectPublicPlan,
+  type PublicPlanProjection,
+} from "./plan-projection.js";
 
 type PlanInteractionEvent = Extract<
   ServerEvent,
@@ -32,15 +38,46 @@ export interface PlanViewConflict {
 
 export interface PlanViewState {
   plan: Readonly<PlanRecord> | null;
+  presentationPlan: Readonly<PlanRecord> | null;
+  publicPlan: Readonly<PublicPlanProjection> | null;
   interaction: PlanViewInteraction | null;
   conflict: PlanViewConflict | null;
+  episode: Readonly<ExecutionEpisodeSnapshot> | null;
+  impasse: Readonly<ExecutionIncidentSummary> | null;
+  recoveryPending: boolean;
 }
 
 export const EMPTY_PLAN_VIEW_STATE: PlanViewState = {
   plan: null,
+  presentationPlan: null,
+  publicPlan: null,
   interaction: null,
   conflict: null,
+  episode: null,
+  impasse: null,
+  recoveryPending: false,
 };
+
+function presentationFor(
+  state: PlanViewState,
+  plan: Readonly<PlanRecord>,
+): Pick<PlanViewState, "presentationPlan" | "publicPlan"> {
+  const publicPlan = projectPublicPlan(plan);
+  if (publicPlan) return { presentationPlan: plan, publicPlan };
+  if (
+    ["drafting", "awaiting_decision", "awaiting_approval", "needs_replan"]
+      .includes(plan.status)
+    &&
+    state.presentationPlan?.planId === plan.planId
+    && state.presentationPlan.sessionId === plan.sessionId
+  ) {
+    return {
+      presentationPlan: state.presentationPlan,
+      publicPlan: state.publicPlan,
+    };
+  }
+  return { presentationPlan: null, publicPlan: null };
+}
 
 function toPlanViewInteraction(
   event: PlanInteractionEvent,
@@ -111,8 +148,14 @@ export function planViewReducer(
         && state.plan.version > event.plan.version) return state;
       const nextState: PlanViewState = {
         plan: event.plan,
+        ...presentationFor(state, event.plan),
         interaction: state.interaction,
         conflict: null,
+        episode: event.plan.schemaVersion === 2
+          ? event.plan.execution.episode ?? state.episode
+          : null,
+        impasse: state.impasse,
+        recoveryPending: false,
       };
       const current = currentSnapshotInteraction(nextState);
       return {
@@ -152,6 +195,7 @@ export function planViewReducer(
         : null;
       return {
         plan: event.plan,
+        ...presentationFor(state, event.plan),
         interaction: currentInteraction ?? projectPendingInteraction(event.plan),
         conflict: {
           planId: event.planId,
@@ -159,6 +203,31 @@ export function planViewReducer(
           currentVersion: event.currentVersion,
           revision: event.revision,
         },
+        episode: event.plan.schemaVersion === 2
+          ? event.plan.execution.episode ?? null
+          : null,
+        impasse: state.impasse,
+        recoveryPending: false,
+      };
+    case "plan_episode":
+      if (!event.episode) {
+        return { ...state, episode: null, impasse: null, recoveryPending: false };
+      }
+      if (state.plan && state.plan.planId !== event.planId) return state;
+      return {
+        ...state,
+        episode: event.episode,
+        impasse: event.episode.incident ?? null,
+        recoveryPending: false,
+      };
+    case "plan_impasse":
+      if (state.episode?.episodeId !== event.episodeId) return state;
+      return { ...state, impasse: event.incident };
+    case "plan_recovery_result":
+      return {
+        ...state,
+        episode: event.result.episode ?? state.episode,
+        recoveryPending: false,
       };
     default:
       return state;

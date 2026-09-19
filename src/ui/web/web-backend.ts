@@ -19,6 +19,7 @@ import { executeSlashCommand, getSlashCommandAutocomplete, resolveCustomCommand 
 import type { HarnessAPI } from "../../application/harness-api.js";
 import type { HarnessEvent } from "../../application/events.js";
 import { planInteractionRequest } from "../../application/plan/plan-events.js";
+import { planExecutionUnits } from "../../application/plan/execution-model.js";
 import type { PlanMutationResult } from "../../application/plan/plan-port.js";
 import type { PlanRecord } from "../../application/plan/types.js";
 import type {
@@ -28,6 +29,7 @@ import { rebuildDisplayMessages } from "../shared/session-projector.js";
 import { AgentActivityProjector } from "../shared/agent-activity.js";
 import { projectTraceTreeFromSession } from "../shared/trace-tree-projection.js";
 import { harnessEventToConversationEvent } from "../shared/harness-conversation-adapter.js";
+import { isConversationToolResultVisible } from "../shared/tool-visibility.js";
 import { formatAgentDisplayId } from "../shared/agent-id.js";
 import { serializeArtifactThemeVariables } from "../../application/artifact-theme.js";
 import { stageAttachedFiles } from "../../project-files/attachments.js";
@@ -68,19 +70,22 @@ function projectPlanResponse(
 export function projectPlanReady(
   plan: Readonly<PlanRecord>,
 ): ServerEvent | undefined {
-  if (plan.items.length === 0) return undefined;
+  if (planExecutionUnits(plan).length === 0) return undefined;
   const replanning = plan.baseRevision !== undefined
-    && ["drafting", "awaiting_decision", "awaiting_approval", "needs_replan"]
+    && ["drafting", "awaiting_decision", "awaiting_approval"]
       .includes(plan.status);
-  if (!plan.approval && !replanning) return undefined;
+  const needsReplan = plan.status === "needs_replan";
+  if (!plan.approval && !replanning && !needsReplan) return undefined;
   return {
     type: "plan_ready",
     id: plan.planId,
-    text: replanning
+    text: needsReplan
+      ? "执行计划需要调整"
+      : replanning
       ? "正在调整执行计划"
       : plan.baseRevision === undefined
-        ? `计划已生成 · ${plan.items.length} 项任务`
-        : `执行计划已更新 · ${plan.items.length} 项任务`,
+        ? "计划已生成"
+        : "执行计划已更新",
     createdAt: plan.approval?.approvedAt ?? plan.updatedAt,
   };
 }
@@ -455,17 +460,25 @@ export class WebUiBackend implements UiBackend {
         const index = this.currentAssistant.tools.findIndex(
           (tool) => tool.toolCallId === e.toolCallId,
         );
-        const completed: ToolCallEntry = {
-          toolCallId: e.toolCallId,
-          name: e.name,
-          args: index >= 0 ? this.currentAssistant.tools[index].args : "",
-          result: projected.result,
-          resultDetail: projected.resultDetail,
-          isError: e.isError,
-          images: projected.images,
-        };
-        if (index >= 0) this.currentAssistant.tools[index] = completed;
-        else this.currentAssistant.tools.push(completed);
+        if (!isConversationToolResultVisible(
+          e.name,
+          projected.resultDetail?.text ?? projected.result,
+          e.isError,
+        )) {
+          if (index >= 0) this.currentAssistant.tools.splice(index, 1);
+        } else {
+          const completed: ToolCallEntry = {
+            toolCallId: e.toolCallId,
+            name: e.name,
+            args: index >= 0 ? this.currentAssistant.tools[index].args : "",
+            result: projected.result,
+            resultDetail: projected.resultDetail,
+            isError: e.isError,
+            images: projected.images,
+          };
+          if (index >= 0) this.currentAssistant.tools[index] = completed;
+          else this.currentAssistant.tools.push(completed);
+        }
       }
       this.broadcast(projected);
       this.broadcastContextWindow(false);    });
@@ -543,7 +556,36 @@ export class WebUiBackend implements UiBackend {
         this.broadcast({ type: "plan_state", plan: event.plan });
         const ready = projectPlanReady(event.plan);
         if (ready) this.broadcast(ready);
+        if (!["drafting", "awaiting_decision", "awaiting_approval", "needs_replan"]
+          .includes(event.plan.status)) {
+          this.stopSessionTimeBroadcast();
+          this.broadcast({ type: "loader", state: "hide" });
+        }
       }
+    });
+    h.events.on("task:updated", (event) => {
+      if (event.sessionId === h.sessions.currentId()) {
+        this.broadcast({
+          type: "task_state",
+          sessionId: event.sessionId,
+          taskState: event.taskState,
+        });
+      }
+    });
+    h.events.on("plan:episode", (event) => {
+      this.broadcast({
+        type: "plan_episode",
+        planId: event.planId,
+        episode: event.episode,
+      });
+    });
+    h.events.on("plan:impasse", (event) => {
+      this.broadcast({
+        type: "plan_impasse",
+        planId: event.planId,
+        episodeId: event.episodeId,
+        incident: event.incident,
+      });
     });
     h.events.on("plan:interaction", (event) => {
       this.broadcast({
@@ -725,6 +767,8 @@ export class WebUiBackend implements UiBackend {
     this.pendingImages = [];
     this.broadcast({ type: "clear_conversation" });
     this.broadcast({ type: "plan_state", plan: null });
+    this.broadcast({ type: "plan_episode", planId: "", episode: null });
+    this.broadcast({ type: "task_state", sessionId: "", taskState: null });
     this.broadcastContextWindow(true, toolsForBroadcast3);
   }
 
@@ -1000,6 +1044,11 @@ export class WebUiBackend implements UiBackend {
           expectedVersion: cmd.expectedVersion,
           commandId: cmd.commandId,
         }));
+        break;
+      }
+      case "plan_adjust":
+      case "plan_continue": {
+        await this.handleEpisodeRecovery(client, cmd);
         break;
       }
       case "abort": {
@@ -1341,14 +1390,52 @@ export class WebUiBackend implements UiBackend {
     }
   }
 
+  private async handleEpisodeRecovery(
+    client: WebSocketClient,
+    command: Extract<ClientCommand, {
+      type: "plan_adjust" | "plan_continue";
+    }>,
+  ): Promise<void> {
+    if (this.harness.sessions.currentId() !== command.sessionId) {
+      await this.syncPlanState(client);
+      return;
+    }
+    const payload = {
+      commandId: command.commandId,
+      planId: command.planId,
+      expectedVersion: command.expectedVersion,
+      revision: command.revision,
+      digest: command.digest,
+    };
+    const result = command.type === "plan_adjust"
+      ? await this.harness.plans.adjustPlan({
+        ...payload,
+        operation: "adjust_plan",
+      })
+      : await this.harness.plans.continueExecution({
+        ...payload,
+        operation: "continue_execution",
+      });
+    client.send({
+      type: "plan_recovery_result",
+      commandId: command.commandId,
+      result,
+    });
+  }
+
   private async syncPlanState(client?: WebSocketClient): Promise<void> {
     const sessionId = this.harness.sessions.currentId();
     const send = (event: ServerEvent) =>
       client ? client.send(event) : this.broadcast(event);
     if (!sessionId) {
       send({ type: "plan_state", plan: null });
+      send({ type: "task_state", sessionId: "", taskState: null });
+      send({ type: "plan_episode", planId: "", episode: null });
       return;
     }
+    const taskState = await this.harness.tasks.getTaskState(sessionId);
+    if (this.harness.sessions.currentId() !== sessionId) return;
+    send({ type: "task_state", sessionId, taskState: taskState ?? null });
     const activePlan = await this.harness.plans.getActivePlan(sessionId);
     const plan = activePlan
       ?? await this.harness.plans.getLatestPlan(sessionId);
@@ -1363,6 +1450,11 @@ export class WebUiBackend implements UiBackend {
       });
     }
     send({ type: "plan_state", plan: plan ?? null });
+    send({
+      type: "plan_episode",
+      planId: plan?.planId ?? "",
+      episode: plan ? await this.harness.plans.getEpisode(plan.planId) ?? null : null,
+    });
     if (plan) {
       const ready = projectPlanReady(plan);
       if (ready) send(ready);

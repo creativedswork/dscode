@@ -58,3 +58,13 @@ export function buildIntentAlignmentCommand(
     action,
   };
 }
+
+export function sendIntentAlignment(
+  state: PlanViewState,
+  sessionId: string | null,
+  answer: IntentAlignmentAnswer,
+  send: (command: ClientCommand) => boolean,
+): boolean {
+  const command = buildIntentAlignmentCommand(state, sessionId, answer);
+  return command ? send(command) : false;
+}

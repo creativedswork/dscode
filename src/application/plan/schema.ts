@@ -2,12 +2,16 @@ import { Type } from "@earendil-works/pi-ai";
 import { Value } from "typebox/value";
 import { digestCanonicalPayload } from "./digest.js";
 import {
+  AlignmentRequirement,
   DecisionNode,
   Digest,
   EffectCategory,
   EvidenceReference,
+  ExecutionEpisode,
   Identifier,
   Interaction,
+  PlanExecutionStep,
+  PlanExecutionStepState,
   PlanItem,
   PlanStatus,
   PositiveInteger,
@@ -15,7 +19,10 @@ import {
   Timestamp,
 } from "./schema-parts.js";
 import { assertNever } from "./types.js";
-import type { PlanRecord, PlanTrajectoryEvent } from "./types.js";
+import type {
+  PlanRecord,
+  PlanTrajectoryEvent,
+} from "./types.js";
 import { MAX_PLAN_DECISION_NODES } from "./planner-types.js";
 const STRICT_OBJECT_OPTIONS = { additionalProperties: false } as const;
 const ReceiptResult = Type.Union([
@@ -89,8 +96,7 @@ const TrajectoryEvent = Type.Union([
     summary: Text,
   }, STRICT_OBJECT_OPTIONS),
 ]);
-export const PlanRecordSchema = Type.Object({
-  schemaVersion: Type.Literal(1),
+const PlanRecordCommon = {
   planId: Identifier,
   projectKey: Identifier,
   sessionId: Identifier,
@@ -117,8 +123,8 @@ export const PlanRecordSchema = Type.Object({
       Type.Literal("evidence"),
     ]),
   }, STRICT_OBJECT_OPTIONS)),
+  alignmentRequirements: Type.Optional(Type.Array(AlignmentRequirement)),
   decisions: Type.Array(DecisionNode, { maxItems: MAX_PLAN_DECISION_NODES }),
-  items: Type.Array(PlanItem),
   sideEffectSummary: Text,
   approval: Type.Optional(Type.Object({
     revision: PositiveInteger,
@@ -142,7 +148,28 @@ export const PlanRecordSchema = Type.Object({
   }, STRICT_OBJECT_OPTIONS)),
   createdAt: Timestamp,
   updatedAt: Timestamp,
+};
+
+export const PlanRecordV1Schema = Type.Object({
+  schemaVersion: Type.Literal(1),
+  ...PlanRecordCommon,
+  items: Type.Array(PlanItem),
 }, STRICT_OBJECT_OPTIONS);
+
+export const PlanRecordV2Schema = Type.Object({
+  schemaVersion: Type.Literal(2),
+  ...PlanRecordCommon,
+  executionSteps: Type.Array(PlanExecutionStep),
+  execution: Type.Object({
+    steps: Type.Array(PlanExecutionStepState),
+    episode: Type.Optional(ExecutionEpisode),
+  }, STRICT_OBJECT_OPTIONS),
+}, STRICT_OBJECT_OPTIONS);
+
+export const PlanRecordSchema = Type.Union([
+  PlanRecordV1Schema,
+  PlanRecordV2Schema,
+]);
 export class PlanValidationError extends Error { constructor(message: string) { super(message); this.name = "PlanValidationError"; }}
 function requireUnique(values: string[], label: string): void {
   if (new Set(values).size !== values.length) {
@@ -164,20 +191,51 @@ function assertTrajectoryEventHandled(event: PlanTrajectoryEvent): void {
 }
 export function validatePlanRecord(value: unknown): PlanRecord {
   if (!Value.Check(PlanRecordSchema, value)) {
-    throw new PlanValidationError("Plan record does not match schema version 1");
+    throw new PlanValidationError("Plan record does not match a supported schema version");
   }
   const plan = value as PlanRecord;
+  const definitions = plan.schemaVersion === 1
+    ? plan.items.map((item) => ({
+      stepId: item.itemId,
+      dependsOn: item.dependsOn,
+    }))
+    : plan.executionSteps;
+  const executionStates = plan.schemaVersion === 1
+    ? plan.items.map((item) => ({
+      stepId: item.itemId,
+      status: item.status,
+      evidence: item.evidence,
+      executionBinding: item.executionBinding,
+      executionBindings: item.executionBindings,
+      skipReason: item.skipReason,
+    }))
+    : plan.execution.steps;
   requireUnique(plan.constraints.map((item) => item.constraintId), "constraint IDs");
+  requireUnique(
+    (plan.alignmentRequirements ?? []).map((item) => item.requirementId),
+    "alignment requirement IDs",
+  );
   requireUnique(plan.decisions.map((item) => item.decisionNodeId), "decision node IDs");
-  requireUnique(plan.items.map((item) => item.itemId), "item IDs");
+  requireUnique(definitions.map((step) => step.stepId), "execution step IDs");
+  requireUnique(executionStates.map((step) => step.stepId), "execution state step IDs");
+  if (
+    definitions.length !== executionStates.length
+    || definitions.some((step) =>
+      !executionStates.some((state) => state.stepId === step.stepId)
+    )
+  ) {
+    throw new PlanValidationError("Plan execution state does not match execution steps");
+  }
   requireUnique(plan.commandReceipts.map((item) => item.commandId), "command IDs");
   requireUnique(plan.trajectoryEvents.map((item) => item.eventId), "trajectory event IDs");
   requireUnique(
-    plan.items.flatMap((item) => item.evidence.map((evidence) => evidence.evidenceId)),
+    executionStates.flatMap((step) =>
+      step.evidence.map((evidence) => evidence.evidenceId)
+    ),
     "evidence IDs",
   );
   requireUnique(
-    plan.items.flatMap((item) => item.evidence.flatMap((evidence) =>
+    executionStates.flatMap((step) => step.evidence.flatMap((evidence) =>
       evidence.kind === "human_receipt" ? [evidence.receiptCommandId] : []
     )),
     "human acceptance receipts",
@@ -227,30 +285,78 @@ export function validatePlanRecord(value: unknown): PlanRecord {
         `Decision ${decision.decisionNodeId} selects an unknown option`,
       );
     }
-  }
-  for (const item of plan.items) {
-    if (item.evidence.some((evidence) =>
-      evidence.planId !== plan.planId
-      || evidence.itemId !== item.itemId
-    )) {
-      throw new PlanValidationError(`Plan item ${item.itemId} has stale evidence`);
+    requireUnique(
+      decision.resolvesRequirementIds ?? [],
+      `resolved requirement IDs in ${decision.decisionNodeId}`,
+    );
+    for (const requirementId of decision.resolvesRequirementIds ?? []) {
+      if (!(plan.alignmentRequirements ?? []).some((requirement) =>
+        requirement.requirementId === requirementId
+      )) {
+        throw new PlanValidationError(
+          `Decision ${decision.decisionNodeId} resolves an unknown alignment requirement`,
+        );
+      }
     }
-    const bindings = item.executionBindings
-      ?? (item.executionBinding ? [item.executionBinding] : []);
+  }
+  for (const requirement of plan.alignmentRequirements ?? []) {
+    if (
+      requirement.status === "pending"
+      && requirement.resolvedByDecisionNodeId !== undefined
+    ) {
+      throw new PlanValidationError(
+        `Pending alignment requirement ${requirement.requirementId} has a resolver`,
+      );
+    }
+  }
+  for (const step of executionStates) {
+    if (step.evidence.some((evidence) =>
+      evidence.planId !== plan.planId
+      || evidence.itemId !== step.stepId
+    )) {
+      throw new PlanValidationError(`Plan execution step ${step.stepId} has stale evidence`);
+    }
+    const bindings = step.executionBindings
+      ?? (step.executionBinding ? [step.executionBinding] : []);
     requireUnique(
       bindings.map((binding) => binding.agentId),
-      `execution Agent IDs in ${item.itemId}`,
+      `execution Agent IDs in ${step.stepId}`,
     );
     if (bindings.some((binding) =>
       binding.planId !== plan.planId
-      || binding.itemId !== item.itemId
+      || binding.itemId !== step.stepId
       || binding.revision !== plan.revision
       || binding.digest !== plan.digest
     )) {
-      throw new PlanValidationError(`Plan item ${item.itemId} has a stale execution binding`);
+      throw new PlanValidationError(
+        `Plan execution step ${step.stepId} has a stale execution binding`,
+      );
     }
-    if ((item.status === "skipped") !== (item.skipReason !== undefined)) {
-      throw new PlanValidationError(`Plan item ${item.itemId} has an invalid skip reason`);
+    if ((step.status === "skipped") !== (step.skipReason !== undefined)) {
+      throw new PlanValidationError(
+        `Plan execution step ${step.stepId} has an invalid skip reason`,
+      );
+    }
+  }
+  if (plan.schemaVersion === 2) {
+    for (const step of plan.executionSteps) {
+      requireUnique(
+        step.verifications.map((verification) => verification.verificationId),
+        `verification IDs in ${step.stepId}`,
+      );
+      for (const verification of step.verifications) {
+        if (verification.kind !== "command" || !verification.expect.stdout) continue;
+        const matcher = verification.expect.stdout;
+        if (matcher.matcher === "regex") {
+          try {
+            new RegExp(matcher.value, matcher.flags);
+          } catch {
+            throw new PlanValidationError(
+              `Plan execution step ${step.stepId} has an invalid stdout regex`,
+            );
+          }
+        }
+      }
     }
   }
   if (
@@ -279,9 +385,11 @@ export function validatePlanRecord(value: unknown): PlanRecord {
     }
     if (plan.pendingInteraction.kind === "acceptance") {
       const interaction = plan.pendingInteraction;
-      const item = plan.items.find((candidate) =>
-        candidate.itemId === interaction.payload.itemId
-      );
+      const item = plan.schemaVersion === 1
+        ? plan.items.find((candidate) =>
+          candidate.itemId === interaction.payload.itemId
+        )
+        : undefined;
       if (
         !item
         || !item.acceptanceCriteria.some((criterion) =>

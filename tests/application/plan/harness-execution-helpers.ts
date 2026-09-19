@@ -39,11 +39,15 @@ export function assistant(
   return stream;
 }
 
-export async function installApprovedPlan(fixture: RoutedHarnessFixture) {
+export async function installApprovedPlan(
+  fixture: RoutedHarnessFixture,
+  options: { initializeTaskState?: boolean } = {},
+) {
   const main = fixture.harness.agentSupervisor.list().find((item) =>
     item.role === "main"
   );
-  if (!main) throw new Error("Main process missing");
+  const sessionId = fixture.harness.api.sessions.currentId();
+  if (!main || !sessionId) throw new Error("Main process or Session missing");
   const store = new PlanStore({
     dataDir: join(fixture.root, "data"),
     projectPath: fixture.root,
@@ -51,20 +55,23 @@ export async function installApprovedPlan(fixture: RoutedHarnessFixture) {
   const service = new PlanExecutionService(store, () => 100);
   const input = makePlanInput();
   input.mainAgentId = main.agentId;
-  input.items = [];
+  input.sessionId = sessionId;
+  input.executionSteps = [];
+  input.execution.steps = [];
   input.sideEffectSummary = "";
   const created = await store.create(input);
   if (!created.ok) throw new Error("Plan create failed");
   const compiled = await service.compile("plan-1", "planner-1", 1, {
-    items: [{
-      itemId: "item-1",
+    executionSteps: [{
+      stepId: "item-1",
       title: "Write result",
       description: "Write the approved result file",
       dependsOn: [],
-      acceptanceCriteria: [{
+      verifications: [{
         kind: "observable",
-        criterionId: "file-created",
+        verificationId: "file-created",
         description: "The result file exists",
+        toolName: "test_write",
       }],
       effectGrants: [{
         effect: "workspace_write",
@@ -99,5 +106,25 @@ export async function installApprovedPlan(fixture: RoutedHarnessFixture) {
   });
   if (!approved.ok) throw new Error("Approval failed");
   attachPlanToAgent(main, approved.plan);
+  if (options.initializeTaskState !== false) {
+    const initialized = await fixture.harness.api.tasks.mutateTaskState({
+      operation: "initialize",
+      callerAgentId: main.agentId,
+      expectedVersion: main.context.taskState?.version ?? 0,
+      taskId: "task-1",
+      requestId: input.request.requestId,
+      sessionId,
+      sourcePlan: {
+        planId: approved.plan.planId,
+        revision: approved.plan.revision,
+        digest: approved.plan.digest,
+      },
+      todoList: [{
+        todoId: "outcome-1",
+        title: "The approved result is available",
+      }],
+    });
+    if (!initialized.ok) throw new Error("TaskState initialization failed");
+  }
   return { approved: approved.plan, store };
 }

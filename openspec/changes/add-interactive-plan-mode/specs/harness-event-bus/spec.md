@@ -40,3 +40,25 @@ Events representing persisted Plan state SHALL be emitted only after a successfu
 #### Scenario: Commit fails
 - **WHEN** serialization, CAS, or atomic rename fails
 - **THEN** no event claims that the uncommitted revision became authoritative
+
+### Requirement: HarnessEvent includes presentation-neutral TaskState events
+The HarnessEvent discriminated union SHALL include `task:updated` with the
+owning Session identity and immutable TaskState snapshot. TaskState events SHALL
+be emitted only after the owning Main AgentContext is committed and SHALL remain
+independent from Plan events and runtime progress events.
+
+#### Scenario: Main commits a TaskState mutation
+- **WHEN** initialization, refinement, reordering, or a TodoItem transition commits
+- **THEN** the Host emits one `task:updated` event carrying the committed TaskState version
+
+#### Scenario: Task mutation fails
+- **WHEN** context persistence or TaskState version validation fails
+- **THEN** no `task:updated` event claims that the attempted mutation committed
+
+#### Scenario: Tool or Plan progress changes alone
+- **WHEN** only Tool evidence, PlanExecutionState, Agent progress, or continuation counters change
+- **THEN** the Host does not emit `task:updated` or synthesize a TodoItem transition
+
+#### Scenario: TaskState event reaches presentation adapters
+- **WHEN** Web and TUI consume `task:updated`
+- **THEN** both receive the same outcome titles, statuses, results, and public blocker summaries without Plan verification, Tool evidence, hidden prompts, or private reasoning

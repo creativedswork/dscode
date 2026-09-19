@@ -1,4 +1,5 @@
 import type { ToolEffect } from "../../kernel/tool-effects.js";
+import type { PersistedExecutionEpisode } from "./execution-episode-types.js";
 export type PlanStatus =
   | "drafting"
   | "awaiting_decision"
@@ -16,6 +17,21 @@ export interface PlanConstraint {
   kind: PlanConstraintKind;
   description: string;
   source: PlanConstraintSource;
+}
+export type AlignmentRequirementTopic =
+  | "visual_direction"
+  | "delivery"
+  | "product_scope"
+  | "compatibility"
+  | "cost"
+  | "reversibility"
+  | "other";
+export interface AlignmentRequirement {
+  requirementId: string;
+  topic: AlignmentRequirementTopic;
+  publicSummary: string;
+  status: "pending" | "resolved";
+  resolvedByDecisionNodeId?: string;
 }
 export type PlanEvidenceReference =
   | { kind: "file"; referenceId: string; path: string; description: string }
@@ -43,6 +59,7 @@ export interface PlanDecisionNode {
   status: PlanDecisionStatus;
   candidates: PlanCandidate[];
   selectedOptionId?: string;
+  resolvesRequirementIds?: string[];
 }
 export type PlanEffectCategory = ToolEffect;
 export type PlanResourceScope =
@@ -54,7 +71,7 @@ export interface PlanEffectGrant {
   effect: PlanEffectCategory;
   resourceScopes: PlanResourceScope[];
 }
-export type PlanAcceptanceCriterion =
+export type LegacyPlanAcceptanceCriterion =
   | {
       kind: "command";
       criterionId: string;
@@ -66,12 +83,45 @@ export type PlanAcceptanceCriterion =
       kind: "observable";
       criterionId: string;
       description: string;
+      toolName?: string;
     }
   | {
       kind: "human";
       criterionId: string;
       prompt: string;
     };
+
+export type PlanStdoutMatcher =
+  | {
+      matcher: "contains" | "equals";
+      value: string;
+    }
+  | {
+      matcher: "regex";
+      value: string;
+      flags?: string;
+    };
+
+export type PlanVerification =
+  | {
+      kind: "command";
+      verificationId: string;
+      description: string;
+      command: string;
+      expect: {
+        exitCode: number;
+        stdout?: PlanStdoutMatcher;
+      };
+    }
+  | {
+      kind: "observable";
+      verificationId: string;
+      description: string;
+      toolName: string;
+    };
+
+/** @deprecated Schema v1 compatibility only. */
+export type PlanAcceptanceCriterion = LegacyPlanAcceptanceCriterion;
 interface PlanEvidenceIdentity {
   planId: string;
   revision: number;
@@ -150,6 +200,30 @@ export interface PlanItem {
   executionBinding?: PlanExecutionBinding;
   executionBindings?: PlanExecutionBinding[];
   skipReason?: string;
+}
+
+export interface PlanExecutionStep {
+  stepId: string;
+  order: number;
+  title: string;
+  description: string;
+  dependsOn: string[];
+  verifications: PlanVerification[];
+  effectGrants: PlanEffectGrant[];
+}
+
+export interface PlanExecutionStepState {
+  stepId: string;
+  status: PlanItemStatus;
+  evidence: PlanEvidence[];
+  executionBinding?: PlanExecutionBinding;
+  executionBindings?: PlanExecutionBinding[];
+  skipReason?: string;
+}
+
+export interface PlanExecutionState {
+  steps: PlanExecutionStepState[];
+  episode?: PersistedExecutionEpisode;
 }
 
 export interface PlanApproval {
@@ -263,8 +337,7 @@ export interface PlanTelemetry {
   counters: Record<string, number>;
 }
 
-export interface PlanRecord {
-  schemaVersion: 1;
+interface PlanRecordBase {
   planId: string;
   projectKey: string;
   sessionId: string;
@@ -282,8 +355,8 @@ export interface PlanRecord {
   digest: string;
   goal: string;
   constraints: PlanConstraint[];
+  alignmentRequirements?: AlignmentRequirement[];
   decisions: PlanDecisionNode[];
-  items: PlanItem[];
   sideEffectSummary: string;
   approval?: PlanApproval;
   cancellation?: PlanCancellationRequest;
@@ -294,6 +367,19 @@ export interface PlanRecord {
   createdAt: number;
   updatedAt: number;
 }
+
+export interface PlanRecordV1 extends PlanRecordBase {
+  schemaVersion: 1;
+  items: PlanItem[];
+}
+
+export interface PlanRecordV2 extends PlanRecordBase {
+  schemaVersion: 2;
+  executionSteps: PlanExecutionStep[];
+  execution: PlanExecutionState;
+}
+
+export type PlanRecord = PlanRecordV1 | PlanRecordV2;
 
 export function assertNever(value: never): never {
   throw new Error(`Unhandled Plan union member: ${JSON.stringify(value)}`);

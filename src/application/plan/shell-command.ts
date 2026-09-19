@@ -1,5 +1,6 @@
 export interface SimpleShellCommand {
   commandClass: string;
+  args: string[];
 }
 
 export function parseSimpleShellCommand(command: string): SimpleShellCommand | undefined {
@@ -45,9 +46,12 @@ export function parseSimpleShellCommand(command: string): SimpleShellCommand | u
   }
   if (quote || escaped) return undefined;
   pushWord();
-  const commandWord = words.find((candidate) =>
+  const commandIndex = words.findIndex((candidate) =>
     !/^[A-Za-z_][A-Za-z0-9_]*=/.test(candidate)
   );
-  if (!commandWord) return undefined;
-  return { commandClass: commandWord.toLowerCase() };
+  if (commandIndex < 0) return undefined;
+  return {
+    commandClass: words[commandIndex]!.toLowerCase(),
+    args: words.slice(commandIndex + 1),
+  };
 }

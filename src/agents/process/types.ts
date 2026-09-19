@@ -5,6 +5,7 @@ import type {
   AgentRuntimeSnapshot,
 } from "../runtimes/runtime.js";
 import type { PlanExecutionBinding } from "../../application/plan/types.js";
+import type { TaskState } from "./task-state.js";
 
 export type AgentProcessState =
   | "created"
@@ -66,6 +67,8 @@ export interface AgentContext {
   deniedTools: readonly string[];
   activePlan?: Pick<PlanExecutionBinding, "planId" | "revision" | "digest">;
   planBinding?: PlanExecutionBinding;
+  taskState?: Readonly<TaskState>;
+  retainedTaskStates?: Readonly<Record<string, Readonly<TaskState>>>;
   worktree?: {
     repositoryRoot: string;
     path: string;

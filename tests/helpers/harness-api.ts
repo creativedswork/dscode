@@ -25,6 +25,14 @@ export function createHarnessApiFixture(
   };
   const fixture: HarnessAPI = {
     events,
+    tasks: {
+      getTaskState: async () => undefined,
+      mutateTaskState: async () => ({
+        ok: false,
+        reason: "invalid_command",
+        message: "TaskState API is not configured",
+      }),
+    },
     plans: {
       getActivePlan: async () => undefined,
       getLatestPlan: async () => undefined,
@@ -53,6 +61,9 @@ export function createHarnessApiFixture(
         reason: "invalid_command",
         message: "Plan API is not configured",
       }),
+      getEpisode: async () => undefined,
+      adjustPlan: async () => ({ ok: false, reason: "invalid_phase" }),
+      continueExecution: async () => ({ ok: false, reason: "invalid_phase" }),
     },
     conversation: {
       prompt: async () => {},

@@ -50,7 +50,9 @@ describe("Harness Plan API", () => {
     const snapshot = await fixture.harness.api.plans.getActivePlan("session-1");
     expect(snapshot).toMatchObject({ planId: "plan-1", version: 1 });
     expect(Object.isFrozen(snapshot)).toBe(true);
-    expect(Object.isFrozen(snapshot?.items)).toBe(true);
+    expect(Object.isFrozen(
+      snapshot?.schemaVersion === 2 ? snapshot.executionSteps : undefined,
+    )).toBe(true);
 
     await expect(fixture.harness.api.plans.submitDecision({
       planId: "plan-1",
@@ -92,7 +94,7 @@ describe("Harness Plan API", () => {
     });
     expect(rejected).toMatchObject({
       ok: false,
-      reason: "invalid_transition",
+      reason: "invalid_command",
     });
     expect(verify).toHaveBeenCalledWith(expect.objectContaining({
       callerAgentId: "subagent-not-main",
@@ -153,7 +155,8 @@ describe("Harness Plan API", () => {
     if (!main) throw new Error("Main process missing");
     const input = makePlanInput();
     input.mainAgentId = main.agentId;
-    input.items = [];
+    input.executionSteps = [];
+    input.execution.steps = [];
     input.sideEffectSummary = "";
     const created = await service.create(input);
     if (!created.ok) throw new Error("Plan create failed");
@@ -162,15 +165,16 @@ describe("Harness Plan API", () => {
       "planner-1",
       created.plan.version,
       {
-        items: [{
-          itemId: "item-1",
+        executionSteps: [{
+          stepId: "item-1",
           title: "Implement",
           description: "Implement the plan",
           dependsOn: [],
-          acceptanceCriteria: [{
+          verifications: [{
             kind: "observable",
-            criterionId: "done",
+            verificationId: "done",
             description: "Done",
+            toolName: "read",
           }],
           effectGrants: [],
         }],

@@ -10,7 +10,8 @@ import {
   mutationFailure,
   PlanDomainError,
   requireCurrentApproval,
-  requireItem,
+  requireStep,
+  requireStepState,
 } from "./execution-rules.js";
 import { PlanStore } from "./store.js";
 import type { PlanExecutionBinding } from "./types.js";
@@ -44,8 +45,8 @@ export class PlanExecutionApproval {
         ) {
           throw new PlanDomainError("stale_approval", "Approval revision or digest is stale");
         }
-        const required = [...new Set(draft.items.flatMap((item) =>
-          item.effectGrants.map((grant) => grant.effect)
+        const required = [...new Set(draft.executionSteps.flatMap((step) =>
+          step.effectGrants.map((grant) => grant.effect)
         ))].filter((effect) => effect !== "read").sort();
         const acknowledged = [...new Set(command.acknowledgedEffects)].sort();
         if (
@@ -97,17 +98,22 @@ export class PlanExecutionApproval {
             throw new PlanDomainError("invalid_transition", "Plan is not executable");
           }
           requireCurrentApproval(draft, command.revision, command.digest);
-          const item = requireItem(draft, command.itemId);
-          if (!["pending", "blocked", "in_progress"].includes(item.status)) {
-            throw new PlanDomainError("invalid_transition", "Plan item cannot be bound");
+          const step = requireStep(draft, command.itemId);
+          const state = requireStepState(draft, command.itemId);
+          if (!["pending", "blocked", "in_progress"].includes(state.status)) {
+            throw new PlanDomainError(
+              "invalid_transition",
+              "Plan execution step cannot be bound",
+            );
           }
-          if (item.dependsOn.some((dependency) =>
-            draft.items.find((candidate) => candidate.itemId === dependency)
-              ?.status !== "completed"
+          if (step.dependsOn.some((dependency) =>
+            draft.execution.steps.find((candidate) =>
+              candidate.stepId === dependency
+            )?.status !== "completed"
           )) {
             throw new PlanDomainError(
               "invalid_transition",
-              "Plan item dependencies are incomplete",
+              "Plan execution step dependencies are incomplete",
             );
           }
           const binding: PlanExecutionBinding = {
@@ -116,17 +122,17 @@ export class PlanExecutionApproval {
             planId: draft.planId,
             revision: draft.revision,
             digest: draft.digest,
-            itemId: item.itemId,
+            itemId: step.stepId,
             boundAt: this.now(),
           };
-          item.executionBindings = [
-            ...itemBindings(item).filter((candidate) =>
+          state.executionBindings = [
+            ...itemBindings(state).filter((candidate) =>
               candidate.agentId !== command.agentId
             ),
             binding,
           ];
-          item.executionBinding = undefined;
-          item.status = "in_progress";
+          state.executionBinding = undefined;
+          state.status = "in_progress";
           draft.status = "executing";
         },
       );

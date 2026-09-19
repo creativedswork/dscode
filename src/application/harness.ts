@@ -10,6 +10,7 @@ import type {
   AgentTool,
   BeforeToolCallContext,
   PrepareNextTurnContext,
+  ShouldStopAfterTurnContext,
   StreamFn,
 } from "@earendil-works/pi-agent-core";
 import { createAssistantMessageEventStream, Type } from "@earendil-works/pi-ai";
@@ -79,6 +80,10 @@ import type {
   VisionMessage,
 } from "../session/types.js";
 import {
+  markInternalPlanExecutionMessage,
+  stripMessageVisibility,
+} from "../kernel/message-visibility.js";
+import {
   initCheckpointSystem,
   shutdownCheckpointSystem,
   type CheckpointSystem,
@@ -115,6 +120,10 @@ import {
   makeAgentProcessTools,
 } from "../agents/tools/process-tools.js";
 import {
+  makeTaskStateDriver,
+  TASK_STATE_TOOL_NAME,
+} from "../agents/tools/task-state-tools.js";
+import {
   makePlanRouteDriver,
   PlanExecutionGuard,
 } from "./plan/route-guard.js";
@@ -126,6 +135,20 @@ import { PlanService } from "./plan/plan-service.js";
 import type { PlanMutationResult } from "./plan/plan-port.js";
 import { PlanStore } from "./plan/store.js";
 import type { PlanRecord } from "./plan/types.js";
+import { planExecutionUnits } from "./plan/execution-model.js";
+import { captureExecutionProgress } from "./plan/execution-progress.js";
+import { ExecutiveMonitor } from "./plan/executive-monitor.js";
+import { fingerprintExecutionAction } from "./plan/execution-fingerprint.js";
+import {
+  publicEpisodeSnapshot,
+} from "./plan/execution-episode-service.js";
+import type {
+  ExecutionAdjustPlanCommand,
+  ExecutionContinueCommand,
+  ExecutionOutcomeClass,
+  ExecutionRecoveryResult,
+  PersistedExecutionEpisode,
+} from "./plan/execution-episode-types.js";
 import type {
   PlanSubmissionMode,
   PlanSubmissionResult,
@@ -153,12 +176,11 @@ interface PendingRoutedImages {
 
 interface PlanContinuationTracker {
   planId: string;
+  phase: "execution" | "report";
   progress: string;
   stalledFollowUps: number;
   totalFollowUps: number;
 }
-
-const MAX_STALLED_PLAN_FOLLOW_UPS = 2;
 
 export function shouldUseNativeMainImagePath(
   agentsEnabled: boolean,
@@ -264,6 +286,9 @@ export class Harness {
   private readonly terminalRouteBlocks = new Map<string, string>();
   private pendingRoutedImages: PendingRoutedImages | undefined;
   private planContinuation: PlanContinuationTracker | undefined;
+  private executionMonitor: ExecutiveMonitor | undefined;
+  private episodeObservationQueue: Promise<void> = Promise.resolve();
+  private episodeStopRequested = false;
 
   get agent(): PiAgentRuntime {
     return this.piAgentRuntime;
@@ -285,7 +310,11 @@ export class Harness {
   ) {
     this.hostId = dependencies.hostId;
     this.events = dependencies.events;
-    this.planService = this.createPlanService(_config.dataDir, _config.projectPath);
+    this.planService = this.createPlanService(
+      _config.dataDir,
+      _config.projectPath,
+      _config.plan.terminalRecoveryTtlMs,
+    );
     this.facilities = dependencies.facilities;
     this.checkpointSystem = dependencies.checkpointSystem;
     this.permissionSuggestions = dependencies.permissionSuggestions;
@@ -345,6 +374,7 @@ export class Harness {
       supervisor: () => this.agentSupervisor,
       planner: () => this.plannerCoordinator,
       skillTool: () => this.makeSkillTool(),
+      executionTools: () => this.toolRegistry.buildToolsForRequest(),
       skillManifest: (name) => this.skillManager.getManifest(name),
       requestPermission: (toolName, preview, args, context) =>
         this.permissionPromptQueue.enqueue(() =>
@@ -395,8 +425,17 @@ export class Harness {
         this.sessionManager.updateProjectPath(dataDir, projectPath),
       updateMemoryProject: (dataDir, projectPath) =>
         this.memoryManager.updateProjectPath(dataDir, projectPath),
-      updateProcessProject: async (dataDir, projectPath) => {
-        const planService = this.createPlanService(dataDir, projectPath);
+      updateProcessProject: async (
+        dataDir,
+        projectPath,
+        terminalPlanRecoveryTtlMs,
+      ) => {
+        const planService = this.createPlanService(
+          dataDir,
+          projectPath,
+          terminalPlanRecoveryTtlMs,
+        );
+        await planService.retention.pruneExpiredTerminalPlans();
         await this.plannerCoordinator.rebindProject(planService);
         this.planService = planService;
         this.processStore.updateProjectPath(projectPath);
@@ -406,11 +445,7 @@ export class Harness {
       rebindMainSession: async (projectPath) => {
         const sessionId = this.sessionManager.getCurrentSessionId();
         if (sessionId) {
-          await this.agentSupervisor.updateParentSession(
-            this.mainAgentId,
-            sessionId,
-            projectPath,
-          );
+          await this.rebindMainSession(sessionId, projectPath);
         }
       },
       replaceRuntime: (next) => this.settings.replaceProjectRuntime(next)
@@ -421,7 +456,11 @@ export class Harness {
     this.api = this.createApplicationApi();
   }
 
-  private createPlanService(dataDir: string, projectPath: string): PlanService {
+  private createPlanService(
+    dataDir: string,
+    projectPath: string,
+    terminalRecoveryTtlMs: number,
+  ): PlanService {
     const store = new PlanStore({ dataDir, projectPath });
     return new PlanService(store, {
       publish: (event) => this.events.emit(event),
@@ -430,12 +469,13 @@ export class Harness {
         this.logger.error("PlanInteraction", String(error)),
       onCoordinationFailure: ({ operation, error }) =>
         this.logger.error("PlanCoordination", `${operation}: ${String(error)}`),
+      terminalRecoveryTtlMs,
     });
   }
 
   bindUserInteraction(port: UserInteractionPort): void {
     this.userInteraction = port;
-    this.planService.reissuePendingInteractions();
+    void this.planService.reissuePendingInteractions();
   }
 
   private createApplicationApi(): HarnessAPI {
@@ -489,6 +529,16 @@ export class Harness {
           mutatePlan(() => this.planService.requestReplan(command)),
         cancel: (command) =>
           mutatePlan(() => this.plannerCoordinator.cancel(command)),
+        getEpisode: (planId) => this.planService.episodes.get(planId),
+        adjustPlan: (command) => this.adjustPausedExecution(command),
+        continueExecution: (command) =>
+          this.continuePausedExecution(command),
+      }),
+      tasks: Object.freeze<HarnessAPI["tasks"]>({
+        getTaskState: async (sessionId) =>
+          this.agentSupervisor.getTaskState(sessionId),
+        mutateTaskState: (command) =>
+          this.agentSupervisor.mutateTaskState(command),
       }),
       conversation: Object.freeze<HarnessAPI["conversation"]>({
         prompt: (text, images, mode) =>
@@ -919,6 +969,9 @@ export class Harness {
       service: () => this.plannerCoordinator.execution,
       supervisor: () => this.agentSupervisor,
     }));
+    this.driverRegistry.register(makeTaskStateDriver(
+      () => this.agentSupervisor,
+    ));
 
     // 4.2: Initialize checkpoint system for baseline hygiene
     const sessionId = this.sessionManager.getCurrentSessionId?.() ?? `session-${Date.now()}`;
@@ -984,15 +1037,20 @@ export class Harness {
           const deferredHint = self.toolRegistry.buildDeferredToolsHint();
           self.agent.state.systemPrompt = self.activeSystemPrompt(deferredHint);
           await self.dumpDebugPrompt();
-          return self.contextManager.transform(msgs, signal) as Promise<AgentMessage[]>;
+          const transformed = await self.contextManager.transform(msgs, signal);
+          return transformed.map((message) =>
+            stripMessageVisibility(message as AgentMessage)
+          );
         } catch (err) {
           this.logger.error("TransformContext", String(err));
           // Return original messages to keep the agent loop running
-          return msgs as unknown as Promise<AgentMessage[]>;
+          return msgs.map(stripMessageVisibility);
         }
       },
       prepareNextTurnWithContext: (turn) =>
         this.prepareMainNextTurn(turn),
+      shouldStopAfterTurn: (turn) =>
+        this.shouldStopExecutionEpisode(turn),
       beforeToolCall: async (
         ctx: BeforeToolCallContext,
         signal?: AbortSignal,
@@ -1004,6 +1062,16 @@ export class Harness {
         const tool = ctx.context.tools?.find(
           (candidate) => candidate.name === ctx.toolCall.name,
         );
+        if (
+          this.planContinuation?.phase === "report"
+          && tool?.name !== TASK_STATE_TOOL_NAME
+          && tool?.effect !== "read"
+        ) {
+          return {
+            block: true,
+            reason: "The Plan is completed; only TaskState updates and read-only tools are allowed before the final report",
+          };
+        }
         const mainHasPlan = Boolean(
           this.agentSupervisor.get(this.mainAgentId)?.context.activePlan,
         );
@@ -1066,6 +1134,7 @@ export class Harness {
             ctx.result,
             ctx.isError,
           );
+          await this.observeExecutionAction(ctx);
           if (ctx.toolCall.name === "search_tools" && ctx.context.tools) {
             ctx.context.tools = self.buildMainToolsForRequest();
           }
@@ -1098,8 +1167,8 @@ export class Harness {
         }
         return undefined;
       },    });
-    const streamMain = this.piAgentRuntime.streamFn;
-    this.piAgentRuntime.streamFn = (model, context, options) =>
+    const streamMain = this.piAgentRuntime.streamFunction;
+    this.piAgentRuntime.streamFunction = (model, context, options) =>
       this.streamMainModel(streamMain, model, context, options);
 
     this.bindEvents();
@@ -1128,6 +1197,20 @@ export class Harness {
         onApprovedPlan: (plan) => this.resumeApprovedPlan(plan),
       },
     );
+    this.agentSupervisor.bindTaskCompletionGuard(async (taskState) => {
+      if (!taskState.sourcePlan) return undefined;
+      const loaded = await this.planService.load(taskState.sourcePlan.planId);
+      const plan = loaded.ok ? loaded.plan : undefined;
+      if (
+        !plan
+        || plan.revision !== taskState.sourcePlan.revision
+        || plan.digest !== taskState.sourcePlan.digest
+        || plan.status !== "completed"
+      ) {
+        return "Required Plan verification is not complete; TaskState remains unchanged";
+      }
+      return undefined;
+    });
     this.events.on("agent:exit", (event) => {
       const process = this.agentSupervisor.get(event.result.agentId);
       if (process?.context.planBinding) {
@@ -1165,13 +1248,13 @@ export class Harness {
     );
     this.mainAgentId = mainProcess.agentId;
     const updateMainSession = (sessionId: string) => {
-      void this.agentSupervisor.updateParentSession(
-        this.mainAgentId,
-        sessionId,
-        this.config.projectPath,
-      );
+      void this.rebindMainSession(sessionId, this.config.projectPath)
+        .catch((error) => this.logger.error("PlanRecovery", String(error)));
     };
     this.events.on("session:created", (event) => updateMainSession(event.id));
+    this.events.on("session:loaded", (event) => updateMainSession(event.id));
+    await this.planService.retention.pruneExpiredTerminalPlans();
+    await this.rebindMainSession(session.id, this.config.projectPath);
     await this.syncAgentProcessDriver(this.config.agents.enabled);
     await this.dumpDebugPrompt();
   }
@@ -1210,25 +1293,55 @@ export class Harness {
     if (this.sessionManager.getCurrentSessionId() !== plan.sessionId) return;
     const main = this.agentSupervisor.get(plan.mainAgentId);
     if (main?.context.activePlan?.planId !== plan.planId) return;
+    const loaded = await this.planService.load(plan.planId);
+    const current = loaded.ok && loaded.plan ? loaded.plan : plan;
+    if (current.schemaVersion !== 2) return;
+    const taskState = this.agentSupervisor.getTaskState(current.sessionId);
+    if (
+      current.execution.episode?.phase === "paused_inconclusive"
+      || (current.status === "completed" && !taskState)
+    ) return;
+    const active = current.execution.episode
+      && current.execution.episode.planRevision === current.revision
+      && current.execution.episode.planDigest === current.digest
+      ? current
+      : await this.planService.episodes.start(current, taskState);
+    if (active.schemaVersion !== 2 || !active.execution.episode) return;
+    this.executionMonitor = new ExecutiveMonitor(active.execution.episode);
+    this.episodeObservationQueue = Promise.resolve();
+    this.episodeStopRequested = false;
+    this.publishEpisode(active.execution.episode);
+    const executionSteps = planExecutionUnits(active);
     const executionPlan = {
-      planId: plan.planId,
-      version: plan.version,
-      revision: plan.revision,
-      digest: plan.digest,
-      goal: plan.goal,
-      constraints: plan.constraints,
-      sideEffectSummary: plan.sideEffectSummary,
-      items: plan.items.filter((item) => item.status === "pending").map((item) => ({
-        itemId: item.itemId,
-        title: item.title,
-        description: item.description,
-        dependsOn: item.dependsOn,
-        acceptanceCriteria: item.acceptanceCriteria,
-        effectGrants: item.effectGrants,
+      planId: active.planId,
+      requestId: active.request.requestId,
+      sessionId: active.sessionId,
+      version: active.version,
+      revision: active.revision,
+      digest: active.digest,
+      goal: active.goal,
+      constraints: active.constraints,
+      selectedDecisions: active.decisions
+        .filter((decision) => decision.status === "selected")
+        .map((decision) => ({
+          decisionNodeId: decision.decisionNodeId,
+          optionId: decision.selectedOptionId,
+        })),
+      sideEffectSummary: active.sideEffectSummary,
+      executionSteps: executionSteps
+        .filter((step) => step.status === "pending")
+        .map((step) => ({
+        stepId: step.stepId,
+        title: step.title,
+        description: step.description,
+        dependsOn: step.dependsOn,
+        verifications: step.verifications,
+        effectGrants: step.effectGrants,
       })),
     };
     this.planContinuation = {
-      planId: plan.planId,
+      planId: active.planId,
+      phase: "execution",
       progress: this.planProgress(plan),
       stalledFollowUps: 0,
       totalFollowUps: 0,
@@ -1238,22 +1351,239 @@ export class Harness {
       await this.conversationCoordinator.prompt(this.conversationPromptOptions([
         "<plan_execution>",
         "The internal Planner has completed and authorized the following Plan.",
-        "Execute every pending item now in dependency order without routing or planning again.",
-        "Before each item's side effects, call plan_start_item with the latest Plan version, revision, digest, and item ID.",
-        "After satisfying its acceptance criteria, call verify_item with concrete evidence, then continue to the next item.",
-        "For verify_item, use the current Plan version returned by plan_start_item and exact persisted evidence IDs: a successful bound tool call with ID X is referenced as tool-X. Never invent file, line, or descriptive evidence IDs, and collect a distinct evidence ID for every criterion.",
-        "Use plan_report_conflict only for a material conflict that invalidates the approved Plan.",
+        "Before calling plan_start_item, use task_update initialize with the requestId and sessionId from this payload exactly as provided and with sourcePlan exactly matching this Plan; do not infer or replace these identity fields.",
+        "TaskState TodoItems must be user-visible observable outcomes. Never derive TodoItems from PlanExecutionSteps or create items for files, implementation phases, commands, tests, or manual acceptance.",
+        "Execute every pending PlanExecutionStep now in dependency order without routing or planning again.",
+        "Work on exactly one PlanExecutionStep at a time; do not start another until the current step is completed.",
+        "Before each step's side effects, call plan_start_item with the latest Plan version, revision, digest, and step ID as itemId.",
+        "Run each command verification separately and exactly as stored after binding its step; do not prefix, combine, or rewrite commands.",
+        "The Host completes the current PlanExecutionStep automatically when persisted evidence satisfies every verification; do not call verify_item.",
+        "Update TaskState only when an observable outcome changes. Tool or SubAgent completion does not directly complete a TodoItem.",
+        "After Host completion, continue to the next pending PlanExecutionStep in dependency order.",
+        "Use plan_report_conflict only when successful objective Tool evidence from the current step invalidates a listed hard constraint or selected decision. Tool failures, permission denials, unknown outcomes, and summaries are execution incidents, not material conflicts.",
         "Do not stop after summarizing the Plan and do not wait for another user message.",
-        "Do not emit a user-facing completion response while any PlanItem is pending, in progress, or blocked.",
+        "Do not emit a user-facing completion response while TaskState is active.",
         JSON.stringify(executionPlan),
         "</plan_execution>",
       ].join("\n")));
+      while (
+        this.executionMonitor?.snapshot().phase === "reflecting"
+        && this.episodeStopRequested
+      ) {
+        this.episodeStopRequested = false;
+        const incident = this.executionMonitor.snapshot().incident;
+        await this.conversationCoordinator.prompt(this.conversationPromptOptions([
+          "<execution_reflection>",
+          "The Host stopped the previous bounded execution episode.",
+          "Compare the unchanged persisted outcomes with these incident facts.",
+          "Choose a materially different tactic within the approved Plan.",
+          "Do not expose private reasoning and do not change Plan intent.",
+          JSON.stringify(incident),
+          "</execution_reflection>",
+        ].join("\n")));
+      }
+      if (
+        this.executionMonitor?.snapshot().phase === "paused_inconclusive"
+      ) {
+        this.events.emit({
+          type: "ui:warning",
+          text: "自动执行已暂停；未验证结果和 TODO 状态保持不变。",
+        });
+      }
     } finally {
-      if (this.planContinuation?.planId === plan.planId) {
+      if (this.planContinuation?.planId === active.planId) {
         this.planContinuation = undefined;
       }
+      this.executionMonitor = undefined;
+      this.episodeStopRequested = false;
       this.events.emit({ type: "processing:stop" });
     }
+  }
+
+  private async observeExecutionAction(
+    context: AfterToolCallContext,
+  ): Promise<void> {
+    if (!this.executionMonitor) return;
+    const operation = this.episodeObservationQueue.then(async () => {
+      const monitor = this.executionMonitor;
+      if (!monitor) return;
+      const currentEpisode = monitor.snapshot();
+      const loaded = await this.planService.load(currentEpisode.planId);
+      const plan = loaded.ok ? loaded.plan : undefined;
+      if (
+        !plan
+        || plan.schemaVersion !== 2
+        || plan.revision !== currentEpisode.planRevision
+        || plan.digest !== currentEpisode.planDigest
+      ) {
+        this.episodeStopRequested = true;
+        return;
+      }
+      const details = context.result.details as Record<string, unknown> | undefined;
+      const outcomeClass: ExecutionOutcomeClass = details?.routeBlocked
+        || details?.blocked
+        || details?.denied
+        ? "rejected"
+        : context.isError
+        ? "failed"
+        : details?.structuredOutcome === "unknown"
+        ? "inconclusive"
+        : "succeeded";
+      const progress = captureExecutionProgress(
+        plan,
+        this.agentSupervisor.getTaskState(plan.sessionId),
+      );
+      const observation = monitor.recordAction(
+        fingerprintExecutionAction(
+          context.toolCall.name,
+          context.args,
+          outcomeClass,
+        ),
+        progress,
+      );
+      await this.persistEpisodeObservation(observation);
+    });
+    this.episodeObservationQueue = operation.catch((error) => {
+      this.episodeStopRequested = true;
+      this.logger.error("ExecutiveMonitor", String(error));
+    });
+    await operation;
+  }
+
+  private async shouldStopExecutionEpisode(
+    turn: ShouldStopAfterTurnContext,
+  ): Promise<boolean> {
+    await this.episodeObservationQueue;
+    const monitor = this.executionMonitor;
+    if (!monitor) return false;
+    if (this.episodeStopRequested) return true;
+    const episode = monitor.snapshot();
+    const loaded = await this.planService.load(episode.planId);
+    const plan = loaded.ok ? loaded.plan : undefined;
+    if (
+      !plan
+      || plan.schemaVersion !== 2
+      || plan.revision !== episode.planRevision
+      || plan.digest !== episode.planDigest
+    ) {
+      this.episodeStopRequested = true;
+      return true;
+    }
+    const taskState = this.agentSupervisor.getTaskState(plan.sessionId);
+    const progress = captureExecutionProgress(plan, taskState);
+    const hasToolCalls = turn.message.content.some((block) =>
+      block.type === "toolCall"
+    );
+    const observation = plan.status === "completed"
+      && taskState?.status === "completed"
+      && !hasToolCalls
+      ? monitor.markCompleted(progress)
+      : monitor.recordTurn(progress, turn.message.errorMessage);
+    await this.persistEpisodeObservation(observation);
+    if (!observation.stop && !hasToolCalls) {
+      const injected = await this.continueIncompletePlan(
+        plan.planId,
+        false,
+      );
+      if (injected) this.agent.followUp(injected);
+    }
+    return observation.stop;
+  }
+
+  private async persistEpisodeObservation(
+    observation: ReturnType<ExecutiveMonitor["recordTurn"]>,
+  ): Promise<void> {
+    const episode = observation.episode as Readonly<PersistedExecutionEpisode>;
+    await this.planService.episodes.persist(episode.planId, episode);
+    const snapshot = publicEpisodeSnapshot(episode);
+    if (!snapshot) return;
+    this.events.emit({
+      type: "plan:episode",
+      planId: episode.planId,
+      episode: snapshot,
+    });
+    if (observation.impasse && episode.incident) {
+      this.events.emit({
+        type: "plan:impasse",
+        planId: episode.planId,
+        episodeId: episode.episodeId,
+        incident: episode.incident,
+      });
+    }
+    if (observation.stop) this.episodeStopRequested = true;
+  }
+
+  private publishEpisode(episode: Readonly<PersistedExecutionEpisode>): void {
+    const snapshot = publicEpisodeSnapshot(episode);
+    if (!snapshot) return;
+    this.events.emit({
+      type: "plan:episode",
+      planId: episode.planId,
+      episode: snapshot,
+    });
+  }
+
+  private async adjustPausedExecution(
+    command: ExecutionAdjustPlanCommand,
+  ): Promise<ExecutionRecoveryResult> {
+    const loaded = await this.planService.load(command.planId);
+    const taskState = loaded.ok && loaded.plan
+      ? this.agentSupervisor.getTaskState(loaded.plan.sessionId)
+      : undefined;
+    const result = await this.planService.episodes.recover(command, taskState);
+    if (result.episode) {
+      this.events.emit({
+        type: "plan:episode",
+        planId: command.planId,
+        episode: result.episode,
+      });
+    }
+    if (result.ok && !result.duplicate) {
+      void this.plannerCoordinator.replan(
+        command.planId,
+        result.receipt.resultingVersion,
+      ).catch((error) => this.logger.error("EpisodeRecovery", String(error)));
+    }
+    return result;
+  }
+
+  private async continuePausedExecution(
+    command: ExecutionContinueCommand,
+  ): Promise<ExecutionRecoveryResult> {
+    const loaded = await this.planService.load(command.planId);
+    const taskState = loaded.ok && loaded.plan
+      ? this.agentSupervisor.getTaskState(loaded.plan.sessionId)
+      : undefined;
+    const result = await this.planService.episodes.recover(command, taskState);
+    if (result.episode) {
+      this.events.emit({
+        type: "plan:episode",
+        planId: command.planId,
+        episode: result.episode,
+      });
+    }
+    if (result.ok && !result.duplicate) {
+      const current = await this.planService.load(command.planId);
+      if (current.ok && current.plan) {
+        setTimeout(() => {
+          void this.resumeApprovedPlan(current.plan!)
+            .catch((error) => this.logger.error("EpisodeRecovery", String(error)));
+        }, 0);
+      }
+    }
+    return result;
+  }
+
+  private async rebindMainSession(
+    sessionId: string,
+    cwd: string,
+  ): Promise<void> {
+    await this.agentSupervisor.updateParentSession(
+      this.mainAgentId,
+      sessionId,
+      cwd,
+    );
+    await this.plannerCoordinator.reconcileSession(sessionId, this.mainAgentId);
   }
 
   private async submitRoutedRequest(
@@ -1332,8 +1662,11 @@ export class Harness {
     context: Context,
     options?: SimpleStreamOptions,
   ) {
+    const streamOptions = this.planContinuation
+      ? { ...options, reasoning: undefined }
+      : options;
     if (this.planExecutionGuard.activeDecision?.route !== "plan") {
-      return stream(model, context, options);
+      return stream(model, context, streamOptions);
     }
     const stopped = createAssistantMessageEventStream();
     const message: AssistantMessage = {
@@ -1364,15 +1697,15 @@ export class Harness {
   }
 
   private planProgress(plan: Readonly<PlanRecord>): string {
-    return plan.items
-      .map((item) => `${item.itemId}:${item.status}`)
+    return planExecutionUnits(plan)
+      .map((step) => `${step.stepId}:${step.status}`)
       .join("|");
   }
 
   private async continueIncompletePlan(
     planId: string,
     hasToolCalls: boolean,
-  ): Promise<void> {
+  ): Promise<AgentMessage | undefined> {
     const tracker = this.planContinuation;
     if (!tracker || tracker.planId !== planId) return;
     const loaded = await this.planService.load(planId);
@@ -1381,6 +1714,29 @@ export class Harness {
       return;
     }
     const plan = loaded.plan;
+    const executionSteps = planExecutionUnits(plan);
+    if (plan.status === "completed") {
+      if (tracker.phase === "execution") {
+        tracker.phase = "report";
+        return {
+          role: "user",
+          content: [{
+            type: "text",
+            text: [
+              "<plan_completion>",
+              "The persisted Plan is completed. Do not execute any further Plan side effects.",
+              "Before reporting, use legal task_update transitions to move every actually delivered TaskState outcome to completed with a concise result; move pending outcomes through in_progress first.",
+              "If a real external blocker or failure remains, record it truthfully instead of claiming completion.",
+              "Then output exactly one user-visible final report covering: delivered results; verification actually run and its conclusions; and anything unverified or still missing.",
+              "</plan_completion>",
+            ].join("\n"),
+          }],
+          timestamp: Date.now(),
+        } as AgentMessage;
+      }
+      if (!hasToolCalls) this.planContinuation = undefined;
+      return;
+    }
     if (!["approved", "executing"].includes(plan.status)) {
       this.planContinuation = undefined;
       return;
@@ -1391,7 +1747,7 @@ export class Harness {
       tracker.stalledFollowUps = 0;
     }
     if (hasToolCalls) return;
-    if (plan.items.some((item) => item.status === "blocked")) {
+    if (executionSteps.some((step) => step.status === "blocked")) {
       this.events.emit({
         type: "ui:warning",
         text: "执行已阻塞，未完成的 TODO 已保留。",
@@ -1399,39 +1755,10 @@ export class Harness {
       this.planContinuation = undefined;
       return;
     }
-    const unfinished = plan.items.filter((item) =>
-      item.status === "pending" || item.status === "in_progress"
+    const unfinished = executionSteps.filter((step) =>
+      step.status === "pending" || step.status === "in_progress"
     );
     if (unfinished.length === 0) {
-      this.planContinuation = undefined;
-      return;
-    }
-    tracker.stalledFollowUps++;
-    const maxFollowUps = Math.max(2, plan.items.length * 2);
-    if (
-      tracker.stalledFollowUps > MAX_STALLED_PLAN_FOLLOW_UPS
-      || tracker.totalFollowUps >= maxFollowUps
-    ) {
-      const activeItem = plan.items.find((item) =>
-        item.status === "in_progress"
-      );
-      let blocked = false;
-      if (activeItem) {
-        const result = await this.planService.execution.transitionItem(
-          plan.planId,
-          plan.version,
-          activeItem.itemId,
-          "blocked",
-          "Main stopped before the acceptance criteria passed",
-        );
-        blocked = result.ok;
-      }
-      this.events.emit({
-        type: "ui:warning",
-        text: blocked
-          ? "执行未能继续，未完成的 TODO 已保留并标记为阻塞。"
-          : "执行未能继续，未完成的 TODO 已保留。",
-      });
       this.planContinuation = undefined;
       return;
     }
@@ -1442,19 +1769,22 @@ export class Harness {
         type: "text",
         text: [
           "<plan_execution>",
-          "The persisted Plan is still incomplete. Continue execution now.",
-          "Do not claim completion or stop while any item is pending or in progress.",
-          "Use the current version returned by each Plan tool call.",
+          "The persisted Plan is still incomplete. Continue execution now from Main TaskState.",
+          "Do not claim completion or stop while TaskState remains active.",
+          "Work on exactly one PlanExecutionStep at a time and collect evidence only for the currently bound step.",
+          "Run each command verification separately and exactly as stored; do not prefix, combine, or rewrite commands.",
+          "The Host completes the current PlanExecutionStep automatically when persisted evidence satisfies every verification; do not call verify_item.",
+          "Tool failures, permission denials, unknown outcomes, failed verification, and continuation exhaustion do not change TODO state or establish material conflicts.",
           JSON.stringify({
             planId: plan.planId,
             version: plan.version,
             revision: plan.revision,
             digest: plan.digest,
-            items: unfinished.map((item) => ({
-              itemId: item.itemId,
-              status: item.status,
-              acceptanceCriteria: item.acceptanceCriteria,
-              evidenceIds: item.evidence.map((evidence) =>
+            executionSteps: unfinished.map((step) => ({
+              stepId: step.stepId,
+              status: step.status,
+              verifications: step.verifications,
+              evidenceIds: step.evidence.map((evidence) =>
                 evidence.evidenceId
               ),
             })),
@@ -1494,11 +1824,13 @@ export class Harness {
     const activePlanId = this.agentSupervisor
       .get(this.mainAgentId)
       ?.context.activePlan?.planId;
-    if (activePlanId) {
-      await this.continueIncompletePlan(
-        activePlanId,
+    const continuationPlanId = activePlanId ?? this.planContinuation?.planId;
+    if (continuationPlanId) {
+      const injected = await this.continueIncompletePlan(
+        continuationPlanId,
         batchToolNames.length > 0,
       );
+      if (injected) messages.push(injected);
     }
     return {
       context: {
@@ -1815,7 +2147,7 @@ export class Harness {
     }
     const sessionId = this.sessionManager.getCurrentSessionId();
     if (!sessionId) throw new Error("Cannot launch Vision Agent without an active session");
-    await this.agentSupervisor.updateParentSession(this.mainAgentId, sessionId);
+    await this.rebindMainSession(sessionId, this.config.projectPath);
     options?.onProgress?.({ phase: "compressing", cachedRefs: [] });
     const cachedRefs = await Promise.all(
       images.map((image) => this.imageStore.put(image)),
@@ -2598,6 +2930,17 @@ __DEFERRED_HINT__`;
             this.logger.info("PreTurnSave", `Saving session pre-turn (${(this.agent.state.messages as any[]).length} messages)`);
             this.sessionManager.trySaveSession(this.agent);
             this.sessionCoordinator.noteSavedMessageCount();
+          } else if (
+            event.message.role === "assistant"
+            && this.planContinuation?.phase === "execution"
+          ) {
+            const messages = this.agent.state.messages;
+            const lastIndex = messages.length - 1;
+            if (messages[lastIndex] === event.message) {
+              messages[lastIndex] = markInternalPlanExecutionMessage(
+                event.message,
+              );
+            }
           }
           break;
         }
@@ -2606,10 +2949,17 @@ __DEFERRED_HINT__`;
           if (!ev) break;
           switch (ev.type) {
             case "thinking_delta":
-              this.events.emit({ type: "llm:thinking:delta", delta: ev.delta });
+              if (this.planContinuation?.phase !== "execution") {
+                this.events.emit({
+                  type: "llm:thinking:delta",
+                  delta: ev.delta,
+                });
+              }
               break;
             case "text_delta":
-              this.events.emit({ type: "llm:text:delta", delta: ev.delta });
+              if (this.planContinuation?.phase !== "execution") {
+                this.events.emit({ type: "llm:text:delta", delta: ev.delta });
+              }
               break;
           }
           break;

@@ -10,14 +10,20 @@ import {
 } from "./planner-types.js";
 
 export function assessHumanInteraction(
-  _plan: Readonly<PlanRecord>,
+  plan: Readonly<PlanRecord>,
   decision?: Readonly<PlanDecisionNode>,
 ): HumanInteractionAssessment {
   const viable = decision?.candidates.filter((candidate) =>
     candidate.constraintFit !== "violates"
   ) ?? [];
   const reasons: HumanInteractionAssessment["reasons"] =
-    viable.some((candidate) => candidate.constraintFit === "uncertain")
+    decision?.resolvesRequirementIds?.some((requirementId) =>
+      plan.alignmentRequirements?.some((requirement) =>
+        requirement.requirementId === requirementId
+        && requirement.status === "pending"
+      )
+    )
+    || viable.some((candidate) => candidate.constraintFit === "uncertain")
       ? ["user_value_missing"]
       : [];
   return { required: reasons.length > 0, reasons };
@@ -35,7 +41,13 @@ export function assertPlannerActionInteraction(
     const option = decision.candidates.find((candidate) =>
       candidate.optionId === action.optionId
     );
-    if (!option || option.constraintFit !== "uncertain") return;
+    if (
+      !option
+      || (
+        option.constraintFit !== "uncertain"
+        && !(decision.resolvesRequirementIds?.length)
+      )
+    ) return;
     decisionNodeId = decision.decisionNodeId;
   } else if (command.action.kind === "update_constraints") {
     if (command.action.constraints.every((patch) =>

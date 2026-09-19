@@ -6,6 +6,7 @@ import type {
   PlanInteraction,
   PlanRecord,
 } from "./types.js";
+import { planExecutionUnits } from "./execution-model.js";
 
 export function freezePlan<T>(value: T): Readonly<T> {
   if (value && typeof value === "object" && !Object.isFrozen(value)) {
@@ -40,7 +41,20 @@ export function planInteractionRequest(
     version: plan.version,
     revision: plan.revision,
     digest: plan.digest,
-    items: structuredClone(plan.items),
+    items: structuredClone(planExecutionUnits(plan).map((step) => ({
+      itemId: step.stepId,
+      order: step.order,
+      title: step.title,
+      description: step.description,
+      dependsOn: step.dependsOn,
+      status: step.status,
+      acceptanceCriteria: [],
+      effectGrants: step.effectGrants,
+      evidence: step.evidence,
+      executionBinding: step.executionBinding,
+      executionBindings: step.executionBindings,
+      skipReason: step.skipReason,
+    }))),
     effectCategories: [...interaction.payload.effectCategories],
     sideEffectSummary: interaction.payload.sideEffectSummary,
   });

@@ -1,5 +1,6 @@
 import type { HarnessEvent } from "../events.js";
 import { PlanExecutionService } from "./execution-service.js";
+import { ExecutionEpisodeService } from "./execution-episode-service.js";
 import type { PlanExecutionCallbacks } from "./execution-service.js";
 import type {
   PlanExecutionMutationResult,
@@ -22,6 +23,8 @@ import {
   publishPlanConflict,
 } from "./plan-events.js";
 import type { PlanCoordinationFailure } from "./plan-coordination.js";
+import { PlanRecoveryService } from "./plan-recovery.js";
+import { PlanRetentionService } from "./plan-retention.js";
 import { PlannerService } from "./planner-service.js";
 import type { PlannerMutationResult } from "./planner-types.js";
 import type { PlanConflict } from "./store-types.js";
@@ -44,11 +47,15 @@ export interface PlanServiceOptions {
   interactionPort(): PlanInteractionPort;
   onInteractionError?(error: unknown): void;
   onCoordinationFailure?(failure: PlanCoordinationFailure): void;
+  terminalRecoveryTtlMs?: number;
   now?: () => number;
 }
 
 export class PlanService extends PlannerService {
   readonly execution: PlanExecutionService;
+  readonly episodes: ExecutionEpisodeService;
+  readonly recovery: PlanRecoveryService;
+  readonly retention: PlanRetentionService;
   private readonly activeBySession = new Map<string, string>();
   private readonly notified = new WeakMap<PlanInteractionPort, Set<string>>();
   private executionCallbacks: PlanExecutionCallbacks = {};
@@ -67,6 +74,13 @@ export class PlanService extends PlannerService {
       onTerminal: (plan) => this.executionCallbacks.onTerminal?.(plan),
       onCoordinationFailure: (failure) => this.reportCoordinationFailure(failure),
     });
+    this.episodes = new ExecutionEpisodeService(store, options.now);
+    this.recovery = new PlanRecoveryService(store, options.now);
+    this.retention = new PlanRetentionService(
+      store,
+      options.terminalRecoveryTtlMs,
+      options.now,
+    );
   }
   bindExecutionCallbacks(callbacks: PlanExecutionCallbacks): void {
     this.executionCallbacks = callbacks;
@@ -157,7 +171,7 @@ export class PlanService extends PlannerService {
 
   async requestReplan(command: PlanReplanCommand): Promise<PlanMutationResult> {
     return this.runExecution(
-      () => this.execution.materialConflict({
+      () => this.execution.requestReplan({
         planId: command.planId,
         expectedVersion: command.expectedVersion,
         commandId: command.commandId,
@@ -193,12 +207,15 @@ export class PlanService extends PlannerService {
     }
   }
 
-  reissuePendingInteractions(): void {
-    for (const planId of this.activeBySession.values()) {
-      void this.load(planId).then((loaded) => {
-        if (loaded.ok && loaded.plan) return this.notifyInteraction(loaded.plan);
-      }).catch((error) => this.options.onInteractionError?.(error));
-    }
+  async reissuePendingInteractions(): Promise<void> {
+    await Promise.all([...this.activeBySession.values()].map(async (planId) => {
+      try {
+        const loaded = await this.load(planId);
+        if (loaded.ok && loaded.plan) await this.notifyInteraction(loaded.plan);
+      } catch (error) {
+        this.options.onInteractionError?.(error);
+      }
+    }));
   }
 
   private async notifyInteraction(plan: Readonly<PlanRecord>): Promise<void> {

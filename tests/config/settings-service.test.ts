@@ -51,6 +51,7 @@ function baseConfig(projectPath: string): RuntimeConfig {
     mcp: [],
     appHost: { enabled: false },
     agents: { enabled: true },
+    plan: { terminalRecoveryTtlMs: 30 * 24 * 60 * 60 * 1_000 },
     retry: {
       maxRetries: 3,
       baseDelayMs: 1000,

@@ -1,21 +1,28 @@
 import { createHash } from "node:crypto";
 
 import type {
+  AlignmentRequirement,
   PlanCandidate,
   PlanConstraint,
+  PlanExecutionStep,
   PlanItem,
   PlanRecord,
 } from "./types.js";
 
-export interface PlanSemanticPayload {
+interface PlanSemanticPayloadBase {
   goal: string;
   constraints: PlanConstraint[];
+  alignmentRequirements?: AlignmentRequirement[];
   selectedDecisions: Array<{
     decisionNodeId: string;
     question: string;
     selectedOptionId: string;
     candidate: PlanCandidate;
   }>;
+  sideEffectSummary: string;
+}
+
+export interface PlanSemanticPayloadV1 extends PlanSemanticPayloadBase {
   items: Array<Pick<
     PlanItem,
     | "itemId"
@@ -27,8 +34,13 @@ export interface PlanSemanticPayload {
     | "effectGrants"
     | "skipReason"
   >>;
-  sideEffectSummary: string;
 }
+
+export interface PlanSemanticPayloadV2 extends PlanSemanticPayloadBase {
+  executionSteps: PlanExecutionStep[];
+}
+
+export type PlanSemanticPayload = PlanSemanticPayloadV1 | PlanSemanticPayloadV2;
 
 export function canonicalStringify(value: unknown): string {
   if (value === null || typeof value === "boolean" || typeof value === "string") {
@@ -78,22 +90,33 @@ export function planSemanticPayload(record: PlanRecord): PlanSemanticPayload {
       candidate,
     }];
   });
-  const items = record.items.map((item) => ({
-    itemId: item.itemId,
-    order: item.order,
-    title: item.title,
-    description: item.description,
-    dependsOn: item.dependsOn,
-    acceptanceCriteria: item.acceptanceCriteria,
-    effectGrants: item.effectGrants,
-    ...(item.skipReason === undefined ? {} : { skipReason: item.skipReason }),
-  }));
-  return {
+  const base = {
     goal: record.goal,
     constraints: record.constraints,
+    ...("alignmentRequirements" in record
+      ? { alignmentRequirements: record.alignmentRequirements }
+      : {}),
     selectedDecisions,
-    items,
     sideEffectSummary: record.sideEffectSummary,
+  };
+  if (record.schemaVersion === 2) {
+    return {
+      ...base,
+      executionSteps: record.executionSteps,
+    };
+  }
+  return {
+    ...base,
+    items: record.items.map((item) => ({
+      itemId: item.itemId,
+      order: item.order,
+      title: item.title,
+      description: item.description,
+      dependsOn: item.dependsOn,
+      acceptanceCriteria: item.acceptanceCriteria,
+      effectGrants: item.effectGrants,
+      ...(item.skipReason === undefined ? {} : { skipReason: item.skipReason }),
+    })),
   };
 }
 

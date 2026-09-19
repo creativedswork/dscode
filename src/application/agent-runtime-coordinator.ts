@@ -50,6 +50,7 @@ export interface AgentRuntimeCoordinatorOptions {
   supervisor(): AgentSupervisor;
   planner(): PlannerProcessCoordinator;
   skillTool(): RegisteredAgentTool;
+  executionTools(): readonly RegisteredAgentTool[];
   skillManifest(name: string): {
     name: string;
     description: string;
@@ -170,6 +171,10 @@ export class AgentRuntimeCoordinator {
           service: this.options.planner().service,
           execution: this.options.planner().execution,
           interactions: this.options.planner().interactions,
+          availableExecutionToolNames: () =>
+            this.options.executionTools()
+              .filter((tool) => tool.audience !== "planner")
+              .map((tool) => tool.name),
         })
       : [];
     const toolsByName = new Map<string, AgentTool<any>>();

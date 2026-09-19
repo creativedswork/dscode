@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import {
   findCommandReplay,
@@ -9,7 +9,11 @@ import { acquirePlanLock } from "./lock.js";
 import type { PlanLockOptions } from "./lock.js";
 import { assertPlanId, resolvePlanProjectLocation } from "./path.js";
 import { PlanValidationError, validatePlanRecord } from "./schema.js";
-import { quarantineFile, writeJsonAtomically } from "./storage-io.js";
+import {
+  fsyncDirectory,
+  quarantineFile,
+  writeJsonAtomically,
+} from "./storage-io.js";
 import {
   isSameCancellation,
   preparePlanMutation,
@@ -25,12 +29,17 @@ import type {
   PlanMutationObserver,
   PlanStoreMutationResult,
 } from "./store-types.js";
-import type { PlanCommandReceipt, PlanRecord } from "./types.js";
+import type {
+  PlanCommandReceipt,
+  PlanRecord,
+  PlanRecordV2,
+} from "./types.js";
+import type { PersistedExecutionEpisode } from "./execution-episode-types.js";
 export interface PlanStoreOptions extends PlanLockOptions {
   dataDir: string;
   projectPath: string;
 }
-export type PlanRecordUpdater = (draft: PlanRecord) => void;
+export type PlanRecordUpdater = (draft: PlanRecordV2) => void;
 export type { PlanUpdateOptions } from "./store-mutation.js";
 export class PlanNotFoundError extends Error {
   constructor(planId: string) {
@@ -74,7 +83,7 @@ export class PlanStore {
       const now = this.now();
       const plan = {
         ...structuredClone(input),
-        schemaVersion: 1,
+        schemaVersion: 2,
         projectKey: this.projectKey,
         version: 1,
         revision: 1,
@@ -82,7 +91,7 @@ export class PlanStore {
         commandReceipts: [],
         createdAt: now,
         updatedAt: now,
-      } satisfies PlanRecord;
+      } satisfies PlanRecordV2;
       plan.digest = computePlanDigest(plan);
       validatePlanRecord(plan);
       await writeJsonAtomically(this.planPath(plan.planId), plan);
@@ -119,11 +128,18 @@ export class PlanStore {
   async findLatestForSession(
     sessionId: string,
   ): Promise<PlanRecord | undefined> {
+    return (await this.list())
+      .filter((plan) => plan.sessionId === sessionId)
+      .sort((left, right) =>
+        right.updatedAt - left.updatedAt || right.version - left.version
+      )[0];
+  }
+  async list(): Promise<PlanRecord[]> {
     let names: string[];
     try {
       names = await readdir(this.directoryPath);
     } catch (error) {
-      if (isErrno(error, "ENOENT")) return undefined;
+      if (isErrno(error, "ENOENT")) return [];
       throw error;
     }
     const loaded = await Promise.all(
@@ -132,11 +148,28 @@ export class PlanStore {
         .map((name) => this.load(name.slice(0, -5))),
     );
     return loaded
-      .flatMap((result) => result.ok && result.plan ? [result.plan] : [])
-      .filter((plan) => plan.sessionId === sessionId)
-      .sort((left, right) =>
-        right.updatedAt - left.updatedAt || right.version - left.version
-      )[0];
+      .flatMap((result) => result.ok && result.plan ? [result.plan] : []);
+  }
+  async deleteExpiredTerminal(
+    planId: string,
+    expectedVersion: number,
+    expiresAt: number,
+  ): Promise<boolean> {
+    assertPlanId(planId);
+    return this.enqueue(planId, async () => this.withLock(planId, async () => {
+      const current = await this.readCurrent(planId);
+      if (
+        !current
+        || current.version !== expectedVersion
+        || !["completed", "cancelled", "failed"].includes(current.status)
+        || current.updatedAt > expiresAt
+      ) {
+        return false;
+      }
+      await unlink(this.planPath(planId));
+      await fsyncDirectory(this.directoryPath);
+      return true;
+    }));
   }
   async update(
     planId: string,
@@ -147,6 +180,9 @@ export class PlanStore {
     assertPlanId(planId);
     return this.enqueue(planId, async () => this.withLock(planId, async () => {
       const current = await this.requireCurrent(planId);
+      if (current.schemaVersion !== 2) {
+        throw new PlanValidationError("Schema v1 Plan records are read-only");
+      }
       const accepted = options.cancellation;
       if (current.version !== expectedVersion
         && (!accepted || !isSameCancellation(current.cancellation, accepted))) {
@@ -158,6 +194,27 @@ export class PlanStore {
       await writeJsonAtomically(this.planPath(planId), next);
       this.mutationObserver?.committed(next, current);
       return { ok: true, plan: next };
+    }));
+  }
+  async persistExecutionEpisode(
+    planId: string,
+    revision: number,
+    digest: string,
+    episode: Readonly<PersistedExecutionEpisode>,
+  ): Promise<Readonly<PlanRecord> | undefined> {
+    assertPlanId(planId);
+    return this.enqueue(planId, async () => this.withLock(planId, async () => {
+      const current = await this.requireCurrent(planId);
+      if (
+        current.schemaVersion !== 2
+        || current.revision !== revision
+        || current.digest !== digest
+      ) return undefined;
+      const next = structuredClone(current);
+      next.execution.episode = structuredClone(episode);
+      validatePlanRecord(next);
+      await writeJsonAtomically(this.planPath(planId), next);
+      return next;
     }));
   }
   async persistInteraction(
@@ -197,6 +254,9 @@ export class PlanStore {
     return this.enqueue(command.planId, async () =>
       this.withLock(command.planId, async () => {
         const current = await this.requireCurrent(command.planId);
+        if (current.schemaVersion !== 2) {
+          throw new PlanValidationError("Schema v1 Plan records are read-only");
+        }
         const payloadDigest = digestCanonicalPayload({
           operation: command.operation,
           interactionId: command.interactionId ?? null,

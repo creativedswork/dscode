@@ -1,15 +1,22 @@
 import React, { useEffect, useRef, useState, useCallback, useLayoutEffect } from "react";
 import type {
   AgentActivity,
+  ExecutionEpisodeSnapshot,
   PermissionPrompt,
   PlanRecord,
   PlanViewInteraction,
+  TaskState,
+  TodoStatus,
   UIMessage,
 } from "../types";
+import type { PublicPlanProjection } from "@dscode/shared/plan-projection";
+import { isConversationToolResultVisible } from "@dscode/shared/tool-visibility";
 import {
   CheckCircle,
   Circle,
+  ArrowClockwise,
   MinusCircle,
+  PencilSimple,
   SpinnerGap,
   WarningCircle,
 } from "@phosphor-icons/react";
@@ -29,7 +36,13 @@ interface ChatViewProps {
   sessionActiveMs: number;
   permissionPrompt: PermissionPrompt | null;
   onPermission: ToolApprovalDecisionHandler;
-  plan?: Readonly<PlanRecord> | null;
+  presentationPlan?: Readonly<PlanRecord> | null;
+  publicPlan?: Readonly<PublicPlanProjection> | null;
+  taskState?: Readonly<TaskState> | null;
+  episode?: Readonly<ExecutionEpisodeSnapshot> | null;
+  episodeRecoveryPending?: boolean;
+  onEpisodeRecovery?(operation: "adjust_plan" | "continue_execution"): boolean;
+  planReplanning?: boolean;
   planInteraction?: PlanViewInteraction | null;
   alignmentConnected?: boolean;
   alignmentConflicted?: boolean;
@@ -63,7 +76,13 @@ export function ChatView({
   sessionActiveMs,
   permissionPrompt,
   onPermission,
-  plan = null,
+  presentationPlan = null,
+  publicPlan = null,
+  taskState = null,
+  episode = null,
+  episodeRecoveryPending = false,
+  onEpisodeRecovery = () => false,
+  planReplanning = false,
   planInteraction = null,
   alignmentConnected = true,
   alignmentConflicted = false,
@@ -87,7 +106,7 @@ export function ChatView({
 
   // ── Auto-scroll to bottom, gated by user scroll position ──
   useLayoutEffect(() => {
-    const visiblePlanId = plan?.planId;
+    const visiblePlanId = presentationPlan?.planId;
     const planChanged = visiblePlanId !== undefined
       && visiblePlanId !== visiblePlanIdRef.current;
     visiblePlanIdRef.current = visiblePlanId;
@@ -97,7 +116,13 @@ export function ChatView({
         behavior: hasStreaming || planChanged ? "instant" : "smooth",
       });
     }
-  }, [messages, processing, permissionPrompt, plan, planInteraction]);
+  }, [
+    messages,
+    processing,
+    permissionPrompt,
+    presentationPlan,
+    planInteraction,
+  ]);
 
   const handleChatScroll = useCallback(() => {
     const el = scrollContainerRef.current;
@@ -114,7 +139,14 @@ export function ChatView({
     }
   }, [hasStreaming]);
 
-  if (messages.length === 0 && !permissionPrompt && !planInteraction) {
+  if (
+    messages.length === 0
+    && !permissionPrompt
+    && !planInteraction
+    && !presentationPlan
+    && !taskState
+    && !episode
+  ) {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center" style={{ maxWidth: "520px", padding: "0 var(--space-xl)" }}>
@@ -162,7 +194,24 @@ export function ChatView({
         </ErrorBoundary>
       ))}
 
-      {plan && plan.items.length > 0 && <PlanTodoList plan={plan} />}
+      {presentationPlan && publicPlan && (
+        <PublicPlanDisclosure
+          plan={publicPlan}
+          replanning={planReplanning}
+        />
+      )}
+      {taskState && taskState.todoList.length > 0 && (
+        <PlanTodoList taskState={taskState} />
+      )}
+      {episode && (
+        <ExecutionEpisodeStatus
+          episode={episode}
+          taskState={taskState}
+          connected={alignmentConnected}
+          pending={episodeRecoveryPending}
+          onRecover={onEpisodeRecovery}
+        />
+      )}
 
       {planInteraction && (
         <IntentAlignment
@@ -198,21 +247,157 @@ export function ChatView({
   );
 }
 
-export function PlanTodoList({ plan }: { plan: Readonly<PlanRecord> }) {
-  const completed = plan.items.filter((item) => item.status === "completed").length;
-  const replanning = plan.status === "needs_replan"
-    || (plan.baseRevision !== undefined
-      && ["drafting", "awaiting_decision", "awaiting_approval"].includes(plan.status));
-  const label = replanning
-    ? "正在调整执行计划"
-    : plan.status === "completed"
+function publicPlanStatusLabel(
+  status: PublicPlanProjection["status"],
+  replanning: boolean,
+): string {
+  if (replanning) return "正在调整";
+  switch (status) {
+    case "approved": return "准备执行";
+    case "executing": return "执行中";
+    case "completed": return "已完成";
+    case "cancelled": return "已取消";
+    case "failed": return "执行失败";
+    default: return "已授权";
+  }
+}
+
+function PublicPlanSection({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-1">
+      <h3
+        className="text-xs font-semibold"
+        style={{ color: "var(--color-text-muted)" }}
+      >
+        {title}
+      </h3>
+      {children}
+    </section>
+  );
+}
+
+function PublicTextList({
+  values,
+  empty,
+}: {
+  values: readonly string[];
+  empty: string;
+}) {
+  if (values.length === 0) {
+    return <p className="text-sm leading-5">{empty}</p>;
+  }
+  return (
+    <ul className="list-disc pl-5 space-y-1">
+      {values.map((value) => (
+        <li key={value} className="text-sm leading-5">{value}</li>
+      ))}
+    </ul>
+  );
+}
+
+export function PublicPlanDisclosure({
+  plan,
+  replanning = false,
+}: {
+  plan: Readonly<PublicPlanProjection>;
+  replanning?: boolean;
+}) {
+  return (
+    <details
+      aria-label="执行计划"
+      className="animate-fade-up"
+      style={{
+        minWidth: 0,
+        border: "1px solid var(--color-border)",
+        borderRadius: "8px",
+        backgroundColor: "var(--color-surface)",
+        color: "var(--color-text)",
+        overflowWrap: "anywhere",
+      }}
+    >
+      <summary
+        className="text-sm font-semibold"
+        style={{ padding: "11px 12px", cursor: "pointer" }}
+      >
+        执行计划
+        <span
+          className="text-xs font-normal tabular-nums"
+          style={{ color: "var(--color-text-muted)", float: "right" }}
+        >
+          {publicPlanStatusLabel(plan.status, replanning)}
+        </span>
+      </summary>
+      <div
+        className="space-y-3"
+        style={{
+          borderTop: "1px solid var(--color-border)",
+          padding: "12px",
+        }}
+      >
+        <PublicPlanSection title="目标">
+          <p className="text-sm leading-5">{plan.goal}</p>
+        </PublicPlanSection>
+        <PublicPlanSection title="约束">
+          <PublicTextList
+            values={plan.committedConstraints}
+            empty="无额外用户约束"
+          />
+        </PublicPlanSection>
+        <PublicPlanSection title="确定方案">
+          <PublicTextList
+            values={plan.selectedDecisionSummaries}
+            empty="按当前目标执行"
+          />
+        </PublicPlanSection>
+        <PublicPlanSection title="范围">
+          <PublicTextList values={plan.scope} empty="无额外范围说明" />
+          {plan.sideEffectSummary && (
+            <p className="text-sm leading-5">{plan.sideEffectSummary}</p>
+          )}
+        </PublicPlanSection>
+        <PublicPlanSection title="执行步骤">
+          <ol className="list-decimal pl-5 space-y-2">
+            {plan.steps.map((step, index) => (
+              <li key={index} className="text-sm leading-5">
+                <strong>{step.title}</strong>
+                {step.description ? `：${step.description}` : ""}
+              </li>
+            ))}
+          </ol>
+        </PublicPlanSection>
+        <PublicPlanSection title="验证">
+          <PublicTextList
+            values={plan.verificationApproach}
+            empty="按执行步骤完成结果验证"
+          />
+        </PublicPlanSection>
+      </div>
+    </details>
+  );
+}
+
+export function PlanTodoList({
+  taskState,
+}: {
+  taskState: Readonly<TaskState>;
+}) {
+  const completed = taskState.todoList.filter((item) =>
+    item.status === "completed" || item.status === "skipped"
+  ).length;
+  const label = taskState.status === "completed"
       ? "执行完成"
-      : plan.status === "failed"
+      : taskState.status === "failed"
         ? "执行失败"
-        : plan.status === "cancelled"
+        : taskState.status === "cancelled"
           ? "已取消"
-          : plan.status === "approved"
-            ? "准备执行"
+          : taskState.status === "blocked"
+            ? "受阻"
             : "执行中";
 
   return (
@@ -229,13 +414,13 @@ export function PlanTodoList({ plan }: { plan: Readonly<PlanRecord> }) {
           TODO
         </span>
         <span className="text-xs tabular-nums" style={{ color: "var(--color-text-muted)" }}>
-          {label} · {completed}/{plan.items.length}
+          {label} · {completed}/{taskState.todoList.length}
         </span>
       </div>
       <ol className="space-y-2" aria-live="polite">
-        {plan.items.map((item) => (
+        {taskState.todoList.map((item) => (
           <li
-            key={item.itemId}
+            key={item.todoId}
             className="grid items-start gap-2"
             style={{ gridTemplateColumns: "18px minmax(0, 1fr) auto" }}
           >
@@ -250,6 +435,16 @@ export function PlanTodoList({ plan }: { plan: Readonly<PlanRecord> }) {
               }}
             >
               {item.title}
+              {item.result && (
+                <span className="block text-xs" style={{ color: "var(--color-text-muted)" }}>
+                  {item.result}
+                </span>
+              )}
+              {item.blocker && (
+                <span className="block text-xs" style={{ color: "var(--color-error-text)" }}>
+                  {item.blocker.reason} · {item.blocker.recovery}
+                </span>
+              )}
             </span>
             <span className="text-xs leading-5" style={{ color: "var(--color-text-muted)" }}>
               {planItemStatusLabel(item.status)}
@@ -261,10 +456,106 @@ export function PlanTodoList({ plan }: { plan: Readonly<PlanRecord> }) {
   );
 }
 
+function episodeReason(
+  episode: Readonly<ExecutionEpisodeSnapshot>,
+): string {
+  switch (episode.incident?.rule) {
+    case "max_equivalent_actions":
+      return "相同操作重复出现，但验收结果没有变化。";
+    case "max_no_progress_actions":
+      return "连续操作没有产生新的验收结果。";
+    case "max_tool_calls":
+      return "本轮已达到工具调用上限。";
+    case "max_turns":
+      return "本轮已达到执行轮次上限。";
+    default:
+      return "自动执行已暂停，当前结果仍需验证。";
+  }
+}
+
+export function ExecutionEpisodeStatus({
+  episode,
+  taskState,
+  connected,
+  pending,
+  onRecover,
+}: {
+  episode: Readonly<ExecutionEpisodeSnapshot>;
+  taskState: Readonly<TaskState> | null;
+  connected: boolean;
+  pending: boolean;
+  onRecover(operation: "adjust_plan" | "continue_execution"): boolean;
+}) {
+  const completed = taskState?.todoList.filter((item) =>
+    item.status === "completed" || item.status === "skipped"
+  ).length ?? 0;
+  const total = taskState?.todoList.length ?? 0;
+  const labels = {
+    running: "执行中",
+    reflecting: "正在反思",
+    paused_inconclusive: "自动执行已暂停",
+    completed: "任务已完成",
+  } as const;
+  const paused = episode.phase === "paused_inconclusive";
+  const completedState = episode.phase === "completed";
+
+  return (
+    <section
+      className={`execution-episode execution-episode-${episode.phase}`}
+      role="status"
+      aria-live="polite"
+      aria-label={labels[episode.phase]}
+    >
+      <div className="execution-episode-heading">
+        {completedState
+          ? <CheckCircle size={17} weight="fill" aria-hidden />
+          : paused
+          ? <WarningCircle size={17} weight="fill" aria-hidden />
+          : <SpinnerGap size={17} className="animate-spin" aria-hidden />}
+        <strong>{labels[episode.phase]}</strong>
+        <span>{paused ? "未验证" : `${completed}/${total}`}</span>
+      </div>
+      {episode.phase === "running" && (
+        <p>
+          本轮 {episode.turnCount}/{episode.policy.maxTurns} 次循环，
+          {episode.toolCallCount}/{episode.policy.maxToolCalls} 次工具调用
+        </p>
+      )}
+      {episode.phase === "reflecting" && (
+        <p>系统正在根据未变化的验收结果调整执行策略。</p>
+      )}
+      {paused && (
+        <>
+          <p>{episodeReason(episode)} 已完成 {completed}/{total} 项。</p>
+          <div className="execution-episode-actions">
+            <button
+              type="button"
+              disabled={!connected || pending}
+              onClick={() => onRecover("adjust_plan")}
+            >
+              <PencilSimple size={16} aria-hidden />
+              调整方案
+            </button>
+            <button
+              type="button"
+              disabled={!connected || pending}
+              onClick={() => onRecover("continue_execution")}
+            >
+              <ArrowClockwise size={16} aria-hidden />
+              {pending ? "处理中" : "继续执行"}
+            </button>
+          </div>
+        </>
+      )}
+      {completedState && <p>计划验证与任务结果均已完成。</p>}
+    </section>
+  );
+}
+
 function PlanItemStatusIcon({
   status,
 }: {
-  status: Readonly<PlanRecord>["items"][number]["status"];
+  status: TodoStatus;
 }) {
   const props = { size: 16, weight: "bold" as const, "aria-hidden": true };
   if (status === "completed") {
@@ -283,7 +574,7 @@ function PlanItemStatusIcon({
 }
 
 function planItemStatusLabel(
-  status: Readonly<PlanRecord>["items"][number]["status"],
+  status: TodoStatus,
 ): string {
   switch (status) {
     case "pending": return "待执行";
@@ -503,7 +794,14 @@ function UserBubble({ message }: { message: UIMessage }) {
 function AssistantMessage({ message }: { message: UIMessage }) {
   const safeContent = typeof message.content === "string" ? message.content : "";
   const hasThinking = !!message.thinking;
-  const hasTools = !!(message.tools && message.tools.length > 0);
+  const visibleTools = (message.tools ?? []).filter((tool) =>
+    isConversationToolResultVisible(
+      tool.name,
+      tool.resultDetail?.text ?? tool.result,
+      tool.isError,
+    )
+  );
+  const hasTools = visibleTools.length > 0;
   const hasResponse = safeContent.length > 0;
   const isSimpleResponse = !hasThinking && !hasTools;
 
@@ -537,7 +835,7 @@ function AssistantMessage({ message }: { message: UIMessage }) {
             </div>
           )}
           <div className="space-y-2">
-            {message.tools!.map((tool, i) => (
+            {visibleTools.map((tool, i) => (
               <ToolCard key={`${tool.name}-${i}`} tool={tool} />
             ))}
           </div>

@@ -20,10 +20,11 @@ afterEach(async () => {
 describe("Plan MCP observable acceptance", () => {
   it("uses explicit structured success and gives protocol errors precedence", async () => {
     const fixture = await createExecutionFixture({
-      acceptanceCriteria: [{
+      verifications: [{
         kind: "observable",
-        criterionId: "observable",
+        verificationId: "observable",
         description: "MCP operation succeeded",
+        toolName: "mcp__demo__observe",
       }],
     });
     roots.push(fixture.root);
@@ -53,7 +54,7 @@ describe("Plan MCP observable acceptance", () => {
     await manager.registerDrivers(registry);
     const tool = registry.get(mcpDriverName("demo"))?.tools[0];
     if (!tool) throw new Error("MCP tool missing");
-    const scope = plan.items[0].effectGrants[0].resourceScopes[0];
+    const scope = plan.executionSteps[0].effectGrants[0].resourceScopes[0];
     if (scope.kind !== "workspace_path") throw new Error("Workspace scope missing");
 
     for (const id of ["unknown", "error", "success"]) {
@@ -87,50 +88,16 @@ describe("Plan MCP observable acceptance", () => {
 
     const current = await fixture.execution.load("plan-1");
     if (!current.ok || !current.plan) throw new Error("Plan missing");
-    expect(current.plan.items[0].evidence).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        evidenceId: "tool-unknown",
-        structuredOutcome: "unknown",
-      }),
-      expect.objectContaining({
-        evidenceId: "tool-error",
-        structuredOutcome: "business_error",
-      }),
+    expect(current.plan.schemaVersion === 2
+      && current.plan.execution.steps[0].evidence).toEqual([
       expect.objectContaining({
         evidenceId: "tool-success",
         structuredOutcome: "success",
       }),
-    ]));
-    await expect(fixture.execution.verifyItem({
-      planId: binding.planId,
-      expectedVersion: current.plan.version,
-      commandId: "verify-error",
-      revision: binding.revision,
-      digest: binding.digest,
-      itemId: binding.itemId,
-      callerAgentId: "main-1",
-      criteria: [{
-        criterionId: "observable",
-        passed: true,
-        evidenceIds: ["tool-error"],
-        observed: { matched: true, description: "MCP returned" },
-      }],
-    })).resolves.toMatchObject({ ok: false, reason: "invalid_command" });
-    const verified = await fixture.execution.verifyItem({
-      planId: binding.planId,
-      expectedVersion: current.plan.version,
-      commandId: "verify-success",
-      revision: binding.revision,
-      digest: binding.digest,
-      itemId: binding.itemId,
-      callerAgentId: "main-1",
-      criteria: [{
-        criterionId: "observable",
-        passed: true,
-        evidenceIds: ["tool-success"],
-        observed: { matched: true, description: "MCP succeeded" },
-      }],
+    ]);
+    expect(current.plan).toMatchObject({
+      status: "completed",
+      execution: { steps: [{ status: "completed" }] },
     });
-    expect(verified.ok && verified.plan.status).toBe("completed");
   });
 });

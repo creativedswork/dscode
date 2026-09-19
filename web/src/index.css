@@ -1314,6 +1314,101 @@
     }
   }
 
+  .execution-episode {
+    width: min(100%, 720px);
+    padding: 10px 12px;
+    border: 1px solid var(--color-border);
+    border-left: 3px solid var(--color-accent);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface);
+    color: var(--color-text);
+  }
+
+  .execution-episode-reflecting,
+  .execution-episode-paused_inconclusive {
+    border-left-color: var(--color-warning-text);
+    background: var(--color-warning);
+  }
+
+  .execution-episode-completed {
+    border-left-color: var(--color-success-text);
+    background: var(--color-success);
+  }
+
+  .execution-episode-heading {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .execution-episode-heading > span {
+    margin-left: auto;
+    color: var(--color-text-muted);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .execution-episode p {
+    margin: 5px 0 0 25px;
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .execution-episode-actions {
+    display: flex;
+    gap: 8px;
+    margin: 10px 0 0 25px;
+  }
+
+  .execution-episode-actions button {
+    display: inline-flex;
+    min-height: 34px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 6px 11px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    color: var(--color-text);
+    background: var(--color-bg);
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .execution-episode-actions button:first-child {
+    border-color: var(--color-accent);
+    color: var(--color-bg);
+    background: var(--color-accent);
+  }
+
+  .execution-episode-actions button:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  .execution-episode-actions button:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  .execution-episode-actions button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
+
+  @media (max-width: 767px) {
+    .execution-episode-actions {
+      flex-direction: column;
+      margin-left: 0;
+    }
+
+    .execution-episode-actions button {
+      width: 100%;
+    }
+  }
+
   .resize-handle {
     position: absolute;
     right: 0;

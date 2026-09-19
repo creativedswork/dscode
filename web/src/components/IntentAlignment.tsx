@@ -36,6 +36,12 @@ export function IntentAlignment({
     setBusy(false);
   }, [request.interactionId, request.version]);
 
+  useEffect(() => {
+    // #region debug-point C,D:web-render
+    void fetch("http://127.0.0.1:7777/event", { method: "POST", body: JSON.stringify({ sessionId: "alignment-recommendation-missing", runId: "post-fix", hypothesisId: "C,D", location: "web/src/components/IntentAlignment.tsx:render", msg: "[DEBUG] Web candidate recommendations", data: { interactionId: request.interactionId, candidates: request.candidates.map((candidate) => ({ optionId: candidate.optionId, recommended: candidate.recommended })), recommendationMarkupExpected: request.candidates.some((candidate) => candidate.recommended) }, ts: Date.now() }) }).catch(() => {});
+    // #endregion
+  }, [request.interactionId, request.version]);
+
   const submit = (answer: IntentAlignmentAnswer) => {
     if (!connected || busy || !onSubmit(answer)) return;
     setBusy(true);

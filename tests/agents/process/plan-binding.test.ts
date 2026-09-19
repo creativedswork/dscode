@@ -17,6 +17,7 @@ import { HarnessEventBus } from "../../../src/application/events.js";
 import {
   ApprovedPlanExecutionGuard,
   bindPlanItemToAgent,
+  planExecutionUnits,
   PlannerProcessCoordinator,
 } from "../../../src/application/plan/index.js";
 import { createTestPlanService } from "../../application/plan/plan-service-fixture.js";
@@ -188,7 +189,8 @@ describe("AgentSupervisor Plan bindings", () => {
       role: "main",
     });
     if (!bound.ok) throw new Error("Main bind failed");
-    const mainBinding = bound.plan.items[0].executionBindings?.[0];
+    const mainBinding = planExecutionUnits(bound.plan)[0]
+      .executionBindings?.[0];
     if (!mainBinding) throw new Error("Main binding missing");
     bindPlanItemToAgent(main, mainBinding);
     const spawned = await supervisor.spawn({
@@ -216,7 +218,9 @@ describe("AgentSupervisor Plan bindings", () => {
       false,
     );
     const loaded = await execution.store.load("plan-1");
-    expect(loaded.ok && loaded.plan?.items[0].executionBindings)
+    expect(loaded.ok && loaded.plan
+      ? planExecutionUnits(loaded.plan)[0].executionBindings
+      : false)
       .toEqual(expect.arrayContaining([
         expect.objectContaining({ agentId: spawned.agentId, role: "subagent" }),
       ]));

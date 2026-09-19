@@ -19,6 +19,10 @@ import {
   EMPTY_PLAN_VIEW_STATE,
   planViewReducer,
 } from "@dscode/shared/plan-reducer";
+import {
+  EMPTY_TASK_VIEW_STATE,
+  taskViewReducer,
+} from "@dscode/shared/task-reducer";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { ChatView } from "./ChatView";
 import { MessageInput } from "./MessageInput";
@@ -62,7 +66,7 @@ import {
   viewModeForMessageCount,
 } from "../utils/viewMode";
 import {
-  buildIntentAlignmentCommand,
+  sendIntentAlignment,
   type IntentAlignmentAnswer,
 } from "../utils/intentAlignment";
 
@@ -140,6 +144,11 @@ export function App() {
     planViewReducer,
     EMPTY_PLAN_VIEW_STATE,
   );
+  const [taskView, dispatchTaskEvent] = useReducer(
+    taskViewReducer,
+    EMPTY_TASK_VIEW_STATE,
+  );
+  const [episodeRecoveryPending, setEpisodeRecoveryPending] = useState(false);
 
   const [transitionPhase, setTransitionPhase] = useState<"idle" | "animating">("idle");
   const viewModeRef = useRef(viewMode);
@@ -208,7 +217,25 @@ export function App() {
       case "plan_state":
       case "plan_interaction":
       case "plan_conflict":
+      case "plan_episode":
+      case "plan_impasse":
+      case "plan_recovery_result":
         dispatchPlanEvent(event);
+        if (event.type === "plan_recovery_result") {
+          setEpisodeRecoveryPending(false);
+        }
+        if (
+          event.type === "plan_recovery_result"
+          && !event.result.ok
+        ) {
+          addToast({
+            type: "warning",
+            text: "执行状态已更新，请根据当前状态重试。",
+          });
+        }
+        break;
+      case "task_state":
+        dispatchTaskEvent(event);
         break;
       case "user_message":
       case "agent_activity":
@@ -233,6 +260,11 @@ export function App() {
         setProcessing(false);
         turnStartRef.current = 0;
         dispatchPlanEvent({ type: "plan_state", plan: null });
+        dispatchTaskEvent({
+          type: "task_state",
+          sessionId: "",
+          taskState: null,
+        });
         break;
       case "info": {
         const txt = event.text;
@@ -403,15 +435,37 @@ export function App() {
   const handleMcpAction = useCallback((action: "list" | "refresh" | "connect" | "disconnect", serverName?: string) => send({ type: "mcp", action, serverName } as any), [send]);
   const handleNewSession = useCallback(() => send({ type: "slash", command: "/reset" }), [send]);
   const handleIntentAlignment = useCallback((answer: IntentAlignmentAnswer) => {
-    const command = buildIntentAlignmentCommand(
+    return sendIntentAlignment(
       planView,
       currentSessionId,
       answer,
+      send,
     );
-    if (!command) return false;
-    send(command);
-    return true;
   }, [currentSessionId, planView, send]);
+  const handleEpisodeRecovery = useCallback((
+    operation: "adjust_plan" | "continue_execution",
+  ) => {
+    const plan = planView.plan;
+    const episode = planView.episode;
+    if (
+      !connected
+      || !currentSessionId
+      || !plan
+      || !episode
+      || episode.phase !== "paused_inconclusive"
+    ) return false;
+    const sent = send({
+      type: operation === "adjust_plan" ? "plan_adjust" : "plan_continue",
+      sessionId: currentSessionId,
+      planId: plan.planId,
+      expectedVersion: plan.version,
+      commandId: crypto.randomUUID(),
+      revision: episode.planRevision,
+      digest: episode.planDigest,
+    });
+    if (sent) setEpisodeRecoveryPending(true);
+    return sent;
+  }, [connected, currentSessionId, planView, send]);
 
   const handleOpenEvalExternal = useCallback((html: string) => {
     if (evalObjectUrlRef.current) {
@@ -587,7 +641,26 @@ export function App() {
               sessionActiveMs={sessionActiveMs}
               permissionPrompt={permissionPrompt}
               onPermission={handlePermission}
-              plan={planView.plan}
+              presentationPlan={planView.presentationPlan}
+              publicPlan={planView.publicPlan}
+              taskState={taskView.taskState}
+              episode={planView.episode}
+              episodeRecoveryPending={episodeRecoveryPending}
+              onEpisodeRecovery={handleEpisodeRecovery}
+              planReplanning={Boolean(
+                planView.plan
+                && planView.presentationPlan
+                && planView.plan.planId === planView.presentationPlan.planId
+                && planView.plan.sessionId === planView.presentationPlan.sessionId
+                && (
+                  planView.plan.status === "needs_replan"
+                  || (
+                    planView.plan.baseRevision !== undefined
+                    && ["drafting", "awaiting_decision", "awaiting_approval"]
+                      .includes(planView.plan.status)
+                  )
+                )
+              )}
               planInteraction={planView.interaction}
               alignmentConnected={connected}
               alignmentConflicted={planView.conflict !== null}

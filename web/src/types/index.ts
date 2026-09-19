@@ -26,6 +26,9 @@ export type {
   EvalDashboardServerEvent,
   EvalDashboardStage,
   EvalDashboardEvidenceSummary,
+  ExecutionEpisodeSnapshot,
+  ExecutionIncidentSummary,
+  ExecutionRecoveryResult,
   PlanApprovalRequest,
   PlanDecisionAction,
   PlanDecisionRequest,
@@ -33,6 +36,8 @@ export type {
   PlanInteraction,
   PlanRecord,
   PlanSubmissionMode,
+  TaskState,
+  TodoStatus,
 } from "@dscode/shared/types";
 
 export type { TraceTree } from "@dscode/shared/trace-tree";
