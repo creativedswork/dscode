@@ -200,6 +200,8 @@ async function main(): Promise<void> {
 
   host.bindUserInteraction({
     requestPermission: ui.getPromptPermission(),
+    requestPlanDecision: async () => {},
+    requestPlanApproval: async () => {},
   });
   activeUi = ui;
   await ui.start();

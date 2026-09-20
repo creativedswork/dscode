@@ -1,4 +1,6 @@
 import type { AgentApplicationSnapshot } from "../definitions/types.js";
+import { isPlanToolAllowed } from "../../kernel/tool-effects.js";
+import type { ToolCapability } from "../../kernel/tool-effects.js";
 import type { AgentAttachment, AgentContext } from "./types.js";
 
 const MUTATING_TOOLS = new Set([
@@ -12,7 +14,7 @@ const MUTATING_TOOLS = new Set([
 export interface DeriveAgentContextOptions {
   application: AgentApplicationSnapshot;
   parent: AgentContext;
-  availableTools: readonly string[];
+  availableTools: readonly (string | ToolCapability)[];
   attachment: AgentAttachment;
   cwd?: string;
   maxDepth?: number;
@@ -34,16 +36,38 @@ export function deriveAgentContext(options: DeriveAgentContextOptions): AgentCon
 
   const parentAllowed = new Set(parent.allowedTools);
   const parentDenied = new Set(parent.deniedTools);
+  const availableCapabilities = availableTools.map((tool) =>
+    typeof tool === "string" ? { name: tool } : tool
+  );
+  const availableByName = new Map(
+    availableCapabilities.map((tool) => [tool.name, tool]),
+  );
+  const availableNames = availableCapabilities.map((tool) => tool.name);
   const requested = application.tools?.includes("*")
-    ? availableTools.filter((tool) => parentAllowed.has(tool))
+    ? availableNames.filter((tool) => parentAllowed.has(tool))
     : application.tools
     ? application.tools.filter((tool) => parentAllowed.has(tool))
-    : availableTools.filter((tool) => parentAllowed.has(tool));
+    : availableNames.filter((tool) => parentAllowed.has(tool));
   const denied = new Set([...parentDenied, ...(application.disallowedTools ?? [])]);
   denied.add("spawn_agent");
 
   if (application.permissionMode === "plan") {
-    for (const tool of MUTATING_TOOLS) denied.add(tool);
+    for (const tool of requested) {
+      if (!isPlanToolAllowed(availableByName.get(tool))) denied.add(tool);
+    }
+  }
+  for (const tool of requested) {
+    if (availableByName.get(tool)?.audience === "main") denied.add(tool);
+    if (
+      availableByName.get(tool)?.audience === "planner"
+      && (
+        application.name !== "planner"
+        || application.source.kind !== "internal"
+        || application.permissionMode !== "plan"
+      )
+    ) {
+      denied.add(tool);
+    }
   }
   if (attachment === "background" && application.isolation !== "worktree") {
     for (const tool of MUTATING_TOOLS) denied.add(tool);
@@ -58,6 +82,17 @@ export function deriveAgentContext(options: DeriveAgentContextOptions): AgentCon
     attachment,
     allowedTools: Object.freeze(allowedTools),
     deniedTools: Object.freeze([...denied]),
+    activePlan: parent.activePlan,
+    taskState: undefined,
+    retainedTaskStates: undefined,
+    planBinding: parent.planBinding
+      ? Object.freeze({
+          ...parent.planBinding,
+          agentId: "",
+          role: "subagent" as const,
+          boundAt: Date.now(),
+        })
+      : undefined,
   });
 }
 

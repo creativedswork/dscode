@@ -13,15 +13,17 @@ const bashParams = Type.Object({
 export const bashTool: AgentTool<typeof bashParams> = {
   name: "bash",
   label: "Shell",
+  effect: "process",
   description: "Execute a shell command and return stdout/stderr.",
   parameters: bashParams,
   executionMode: "sequential",
   execute: async (_id, { command, timeout }) => {
+    const cwd = resolveExecutionPath(".");
     const execAsync = promisify(exec);
     const timeoutMs = timeout ?? 30000;
     try {
       const { stdout } = await execAsync(command, {
-        cwd: resolveExecutionPath("."),
+        cwd,
         timeout: timeoutMs,
         encoding: "utf8",
         maxBuffer: 1024 * 1024,

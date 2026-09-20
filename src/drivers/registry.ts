@@ -1,6 +1,4 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
-
-import type { Driver } from "./types.js";
+import type { Driver, RegisteredAgentTool } from "./types.js";
 import { readFileTool, writeFileTool, overwriteFileTool, listFilesTool } from "./fs.js";
 import { bashTool } from "./shell.js";
 import { grepTool, globTool } from "./search.js";
@@ -54,8 +52,8 @@ export class DriverRegistry {
     return Array.from(this.drivers.values());
   }
 
-  getAllTools(): AgentTool<any>[] {
-    const tools: AgentTool<any>[] = [];
+  getAllTools(): RegisteredAgentTool[] {
+    const tools: RegisteredAgentTool[] = [];
     for (const d of this.drivers.values()) {
       tools.push(...d.tools);
     }

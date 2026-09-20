@@ -95,6 +95,20 @@ describe("PermissionManager", () => {
     expect(result).toBeUndefined();
   });
 
+  it.each(["skill", "list_agents"])(
+    "should allow internal read tool %s by default",
+    async (toolName) => {
+      const pm = new PermissionManager(defaultConfig, async () => {
+        throw new Error("internal read tools must not prompt");
+      });
+      const result = await pm.check({
+        toolCall: { name: toolName },
+        args: {},
+      });
+      expect(result).toBeUndefined();
+    },
+  );
+
   it("should deny dangerous bash patterns", async () => {
     const pm = new PermissionManager(defaultConfig, createPromptFn());
     const result = await pm.check({

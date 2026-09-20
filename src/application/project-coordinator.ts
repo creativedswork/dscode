@@ -1,4 +1,7 @@
-import type { RuntimeConfig } from "../config/types.js";
+import {
+  DEFAULT_TERMINAL_PLAN_RECOVERY_TTL_MS,
+  type RuntimeConfig,
+} from "../config/types.js";
 import type { MCPServerConfig } from "../mcp/types.js";
 
 export interface ProjectCoordinatorOptions {
@@ -13,7 +16,11 @@ export interface ProjectCoordinatorOptions {
   reloadMcp(servers: readonly MCPServerConfig[]): Promise<void>;
   updateSessionProject(dataDir: string, projectPath: string): void;
   updateMemoryProject(dataDir: string, projectPath: string): void;
-  updateProcessProject(projectPath: string): void;
+  updateProcessProject(
+    dataDir: string,
+    projectPath: string,
+    terminalPlanRecoveryTtlMs: number,
+  ): Promise<void> | void;
   updateApplications(projectPath: string): Promise<void>;
   rebindMainSession(projectPath: string): Promise<void>;
   replaceRuntime(config: RuntimeConfig): Promise<void>;
@@ -24,6 +31,11 @@ export class ProjectCoordinator {
   private switching = false;
 
   constructor(private readonly options: ProjectCoordinatorOptions) {}
+
+  private planRecoveryTtl(config: RuntimeConfig): number {
+    return config.plan?.terminalRecoveryTtlMs
+      ?? DEFAULT_TERMINAL_PLAN_RECOVERY_TTL_MS;
+  }
 
   async switchProject(
     requestedPath: string,
@@ -56,6 +68,18 @@ export class ProjectCoordinator {
       rollback.push(() => this.options.reloadMcp(previous.mcp));
       await this.options.reloadMcp(mcpServers);
       rollback.push(() =>
+        this.options.updateProcessProject(
+          previous.dataDir,
+          previous.projectPath,
+          this.planRecoveryTtl(previous),
+        )
+      );
+      await this.options.updateProcessProject(
+        targetConfig.dataDir,
+        projectPath,
+        this.planRecoveryTtl(targetConfig),
+      );
+      rollback.push(() =>
         this.options.updateSessionProject(
           previous.dataDir,
           previous.projectPath,
@@ -69,10 +93,6 @@ export class ProjectCoordinator {
         )
       );
       this.options.updateMemoryProject(targetConfig.dataDir, projectPath);
-      rollback.push(() =>
-        this.options.updateProcessProject(previous.projectPath)
-      );
-      this.options.updateProcessProject(projectPath);
       rollback.push(() =>
         this.options.updateApplications(previous.projectPath)
       );

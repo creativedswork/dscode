@@ -218,7 +218,7 @@ describe("Application coordinators", () => {
       reloadMcp: async (servers) => { state.mcp = servers[0]?.name ?? ""; },
       updateSessionProject: (_dataDir, path) => { state.session = path; },
       updateMemoryProject: (_dataDir, path) => { state.memory = path; },
-      updateProcessProject: (path) => { state.process = path; },
+      updateProcessProject: (_dataDir, path) => { state.process = path; },
       updateApplications: async (path) => { state.applications = path; },
       rebindMainSession: async (path) => {
         state.main = path;

@@ -102,6 +102,7 @@ const grepParams = Type.Object({
 export const grepTool: AgentTool<typeof grepParams> = {
   name: "grep",
   label: "Search content",
+  effect: "read",
   description: "Search file contents by pattern (regex). Returns matching lines with file paths.",
   parameters: grepParams,
   execute: async (_id, { pattern, path, include, maxResults }) => {
@@ -168,6 +169,7 @@ const globParams = Type.Object({
 export const globTool: AgentTool<typeof globParams> = {
   name: "glob",
   label: "Find files",
+  effect: "read",
   description: "Find files matching a glob pattern.",
   parameters: globParams,
   execute: async (_id, { pattern, cwd: cwdArg }) => {

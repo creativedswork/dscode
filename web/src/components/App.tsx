@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useReducer } from "react";
 import type {
   UIMessage,
   ServerEvent,
@@ -12,8 +12,17 @@ import type {
   EvalDashboardServerEvent,
   PermissionPrompt,
   ViewMode,
+  TraceTree,
 } from "../types";
 import { conversationReducer } from "@dscode/shared/reducer";
+import {
+  EMPTY_PLAN_VIEW_STATE,
+  planViewReducer,
+} from "@dscode/shared/plan-reducer";
+import {
+  EMPTY_TASK_VIEW_STATE,
+  taskViewReducer,
+} from "@dscode/shared/task-reducer";
 import { useWebSocket } from "../hooks/useWebSocket";
 import { ChatView } from "./ChatView";
 import { MessageInput } from "./MessageInput";
@@ -56,6 +65,10 @@ import {
   viewModeAfterSessionChange,
   viewModeForMessageCount,
 } from "../utils/viewMode";
+import {
+  sendIntentAlignment,
+  type IntentAlignmentAnswer,
+} from "../utils/intentAlignment";
 
 const SLASH_COMMANDS = [
   { name: "help", description: "Show available commands" },
@@ -106,6 +119,7 @@ function saveDashCache(cache: Record<string, DashboardCacheEntry>): void {
 export function App() {
   const [messages, setMessages] = useState<UIMessage[]>([]);
   const [processing, setProcessing] = useState(false);
+  const [processingText, setProcessingText] = useState("Waiting...");
   const [config, setConfig] = useState<ConfigData | null>(null);
   const [model, setModel] = useState("");
   const [permissionPrompt, setPermissionPrompt] = useState<PermissionPrompt | null>(null);
@@ -122,9 +136,19 @@ export function App() {
   const [viewMode, setViewMode] = useState<ViewMode>("chat");
   const [sessionArtifactHtml, setSessionArtifactHtml] = useState("");
   const [sessionArtifactLoading, setSessionArtifactLoading] = useState(false);
+  const [traceTree, setTraceTree] = useState<TraceTree | null>(null);
   const [cacheSize, setCacheSize] = useState<{ totalBytes: number; fileCount: number; sessionCount: number } | null>(null);
   const [cacheClearing, setCacheClearing] = useState(false);
   const [skills, setSkills] = useState<SkillInfo[]>([]);
+  const [planView, dispatchPlanEvent] = useReducer(
+    planViewReducer,
+    EMPTY_PLAN_VIEW_STATE,
+  );
+  const [taskView, dispatchTaskEvent] = useReducer(
+    taskViewReducer,
+    EMPTY_TASK_VIEW_STATE,
+  );
+  const [episodeRecoveryPending, setEpisodeRecoveryPending] = useState(false);
 
   const [transitionPhase, setTransitionPhase] = useState<"idle" | "animating">("idle");
   const viewModeRef = useRef(viewMode);
@@ -190,8 +214,34 @@ export function App() {
         setMessages((prev) => conversationReducer(prev, event));
         break;
       }
+      case "plan_state":
+      case "plan_interaction":
+      case "plan_conflict":
+      case "plan_episode":
+      case "plan_impasse":
+      case "plan_recovery_result":
+        dispatchPlanEvent(event);
+        if (event.type === "plan_recovery_result") {
+          setEpisodeRecoveryPending(false);
+        }
+        if (
+          event.type === "plan_recovery_result"
+          && !event.result.ok
+        ) {
+          addToast({
+            type: "warning",
+            text: "执行状态已更新，请根据当前状态重试。",
+          });
+        }
+        break;
+      case "task_state":
+        dispatchTaskEvent(event);
+        break;
       case "user_message":
       case "agent_activity":
+      case "planning_mode":
+      case "plan_ready":
+      case "plan_response":
       case "assistant_start":
       case "thinking_delta":
       case "text_delta":
@@ -207,6 +257,14 @@ export function App() {
       case "clear_conversation":
         setMessages((prev) => conversationReducer(prev, event));
         setPermissionPrompt(null);
+        setProcessing(false);
+        turnStartRef.current = 0;
+        dispatchPlanEvent({ type: "plan_state", plan: null });
+        dispatchTaskEvent({
+          type: "task_state",
+          sessionId: "",
+          taskState: null,
+        });
         break;
       case "info": {
         const txt = event.text;
@@ -233,8 +291,10 @@ export function App() {
       case "loader":
         setProcessing(event.state === "show");
         if (event.state === "show") {
+          setProcessingText(event.text ?? "Waiting...");
           if (!turnStartRef.current) turnStartRef.current = Date.now();
         } else {
+          setProcessingText("Waiting...");
           turnStartRef.current = 0;
         }
         break;
@@ -245,6 +305,7 @@ export function App() {
       case "mcp_state": setMcpServers(event.servers); break;
       case "mcp_open_browser": setSidebarOpen(true); setActivePanel("mcp"); break;
       case "model": setModel(event.name); break;
+      case "trace_tree": setTraceTree(event.tree); break;
       case "context_window": setContextWindow(event); break;
       case "config": setConfig(event.data); break;
       case "file_list_result": setFileListItems(event.items); setFileListPrefix(event.prefix); break;
@@ -336,15 +397,16 @@ export function App() {
   const { connected, send } = useWebSocket(handleEvent);
 
   const handleSend = useCallback((text: string, images?: ImageAttachment[], fileRefs?: string[], uploadedFiles?: { name: string; content: string }[]) => {
-    if (!text.trim() && (!images || images.length === 0) && (!uploadedFiles || uploadedFiles.length === 0)) return;
-    if (viewMode === "eval_dashboard") return;
+    if (!text.trim() && (!images || images.length === 0) && (!uploadedFiles || uploadedFiles.length === 0)) return false;
+    if (viewMode === "eval_dashboard") return false;
+    const sent = viewMode === "session_dashboard"
+      ? send({ type: "artifact", action: "update", instruction: text })
+      : send({ type: "chat", text, images: images?.length ? images : undefined, fileRefs: fileRefs?.length ? fileRefs : undefined, uploadedFiles: uploadedFiles?.length ? uploadedFiles : undefined });
+    if (!sent) return false;
     turnStartRef.current = Date.now();
     setProcessing(true);
-    if (viewMode === "session_dashboard") {
-      send({ type: "artifact", action: "update", instruction: text });
-    } else {
-      send({ type: "chat", text, images: images?.length ? images : undefined, fileRefs: fileRefs?.length ? fileRefs : undefined, uploadedFiles: uploadedFiles?.length ? uploadedFiles : undefined });
-    }
+    setProcessingText("Thinking...");
+    return true;
   }, [send, viewMode]);
 
   const handlePermission = useCallback((decision: "allow" | "always_allow" | "always_allow_save" | "deny", explainText?: string, toolNamePattern?: string, fuzzyMode?: number) => {
@@ -372,6 +434,38 @@ export function App() {
   const handleSessionAction = useCallback((action: "list" | "save" | "load" | "delete", id?: string) => send({ type: "session", action, id }), [send]);
   const handleMcpAction = useCallback((action: "list" | "refresh" | "connect" | "disconnect", serverName?: string) => send({ type: "mcp", action, serverName } as any), [send]);
   const handleNewSession = useCallback(() => send({ type: "slash", command: "/reset" }), [send]);
+  const handleIntentAlignment = useCallback((answer: IntentAlignmentAnswer) => {
+    return sendIntentAlignment(
+      planView,
+      currentSessionId,
+      answer,
+      send,
+    );
+  }, [currentSessionId, planView, send]);
+  const handleEpisodeRecovery = useCallback((
+    operation: "adjust_plan" | "continue_execution",
+  ) => {
+    const plan = planView.plan;
+    const episode = planView.episode;
+    if (
+      !connected
+      || !currentSessionId
+      || !plan
+      || !episode
+      || episode.phase !== "paused_inconclusive"
+    ) return false;
+    const sent = send({
+      type: operation === "adjust_plan" ? "plan_adjust" : "plan_continue",
+      sessionId: currentSessionId,
+      planId: plan.planId,
+      expectedVersion: plan.version,
+      commandId: crypto.randomUUID(),
+      revision: episode.planRevision,
+      digest: episode.planDigest,
+    });
+    if (sent) setEpisodeRecoveryPending(true);
+    return sent;
+  }, [connected, currentSessionId, planView, send]);
 
   const handleOpenEvalExternal = useCallback((html: string) => {
     if (evalObjectUrlRef.current) {
@@ -511,6 +605,7 @@ export function App() {
           sessions={sessions} currentSessionId={currentSessionId} mcpServers={mcpServers} config={config}
           onSessionAction={handleSessionAction} onMcpAction={handleMcpAction}
           onConfigChange={handleConfigChange} isProcessing={processing} onNewSession={handleNewSession}
+          canSwitchSession={planView.interaction !== null}
           onCacheAction={handleCacheAction} cacheSize={cacheSize} cacheClearing={cacheClearing}
           skills={skills} onToggleSkill={handleToggleSkill} />
         <main className="flex-1 flex flex-col min-w-0">
@@ -526,6 +621,7 @@ export function App() {
                 loading: sessionArtifactLoading,
               }}
               theme={theme}
+              traceTree={traceTree}
             />
           ) : viewMode === "eval_dashboard" && evalState ? (
             <EvalDashboardView
@@ -537,11 +633,45 @@ export function App() {
               onOpenExternal={handleOpenEvalExternal}
             />
           ) : (
-            <ChatView messages={messages} processing={processing} hasStreaming={hasStreaming} sessionActiveMs={sessionActiveMs} permissionPrompt={permissionPrompt} onPermission={handlePermission} containerRef={chatContainerRef} scrollLocked={transitionPhase === "animating"} />
+            <ChatView
+              messages={messages}
+              processing={processing}
+              processingText={processingText}
+              hasStreaming={hasStreaming}
+              sessionActiveMs={sessionActiveMs}
+              permissionPrompt={permissionPrompt}
+              onPermission={handlePermission}
+              presentationPlan={planView.presentationPlan}
+              publicPlan={planView.publicPlan}
+              taskState={taskView.taskState}
+              episode={planView.episode}
+              episodeRecoveryPending={episodeRecoveryPending}
+              onEpisodeRecovery={handleEpisodeRecovery}
+              planReplanning={Boolean(
+                planView.plan
+                && planView.presentationPlan
+                && planView.plan.planId === planView.presentationPlan.planId
+                && planView.plan.sessionId === planView.presentationPlan.sessionId
+                && (
+                  planView.plan.status === "needs_replan"
+                  || (
+                    planView.plan.baseRevision !== undefined
+                    && ["drafting", "awaiting_decision", "awaiting_approval"]
+                      .includes(planView.plan.status)
+                  )
+                )
+              )}
+              planInteraction={planView.interaction}
+              alignmentConnected={connected}
+              alignmentConflicted={planView.conflict !== null}
+              onIntentAlignment={handleIntentAlignment}
+              containerRef={chatContainerRef}
+              scrollLocked={transitionPhase === "animating"}
+            />
           )}
           {shouldRenderMessageInput(viewMode) && (
             <MessageInput onSend={handleSend} onAbort={handleAbort} onSlashCommand={handleSlashCommand} onCommand={handleCommand}
-              processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} viewMode={viewMode} projectPath={config?.projectPath ?? ""}
+              connected={connected} processing={processing} slashCommands={SLASH_COMMANDS} fileListItems={fileListItems} fileListPrefix={fileListPrefix} viewMode={viewMode} projectPath={config?.projectPath ?? ""}
               onToast={(type, text) => addToast({ type, text })} />
           )}
           </div>

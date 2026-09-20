@@ -3,8 +3,6 @@ import {
   Text,
   Box,
   Image,
-  getCapabilities,
-  hyperlink,
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
@@ -28,6 +26,7 @@ import type {
 import { formatAgentDisplayId } from "../shared/agent-id.js";
 import { conversationReducer } from "../shared/reducer.js";
 import { createToolResultProjection } from "../shared/tool-result-projection.js";
+import { TuiPlanView, type TuiPlanState } from "./plan-view.js";
 
 interface AgentActivityBlock {
   type: "agent";
@@ -408,6 +407,7 @@ export function findPermOptionByKey(input: string): PermOption | undefined {
 
 export class ConversationView {
   private box: Box;
+  private planView = new TuiPlanView();
   private blocks: ContentBlock[] = [];
   private renderedBlockCount = 0;
   private messages: UIMessage[] = [];
@@ -476,6 +476,11 @@ export class ConversationView {
 
   getMessages(): readonly UIMessage[] {
     return this.messages;
+  }
+
+  setPlanState(state: TuiPlanState): void {
+    this.planView.setState(state);
+    this.rerenderStaticBlocks();
   }
 
   applyConversationEvent(event: ServerEvent): void {
@@ -1118,6 +1123,12 @@ export class ConversationView {
       const card = this.makeAgentCard(block);
       this.box.addChild(card);
       this.liveComponents.push(card);
+    }
+
+    const planLines = this.planView.render(80);
+    if (planLines.length > 0) {
+      this.box.addChild(this.planView);
+      this.liveComponents.push(this.planView);
     }
 
     if (this._activePermission) {

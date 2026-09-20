@@ -1,0 +1,1032 @@
+<!doctype html>
+<!--
+  change: fix-transition-incomplete-strike
+  descriptor: full-content-cascade
+  generated: 2026-08-15 (explore)
+  purpose: 可执行验收标准 —— "dscode" cluster 全文撞击 chat DOM 的参考原型。
+  关键契约（实现必须对齐）：
+    1) buildRowList 收集「全文所有叶子 [data-collider]」，用内容坐标 top = rect.top - scrollRect.top + scrollTop
+    2) 落地 = 紧凑文本边界中心（Range.getClientRects()）
+    3) cluster 绘制用 vy = c.y - scrollTop（内容坐标 → 视口坐标），canvas 原点必须 == 滚动容器原点
+    4) autoScroll 把 scrollTop 平滑逼近 clamp(c.y - clientHeight*0.62)
+    5) 撞一行 → 字符四散 + 冲击环 + 震屏 + 径向粒子；>80 字符退化为粒子爆发
+    6) 全部行 struck 才 startGather（HUD 显示 撞击 N/N）
+-->
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fix-transition-incomplete-strike · full-content cascade 参考原型</title>
+<style>
+  :root {
+    --color-bg: #f8f7f5;
+    --color-surface: #f3f2ef;
+    --color-surface-hover: #ebe9e5;
+    --color-border: #e6e4e0;
+    --color-text: #2d2a26;
+    --color-text-muted: #8a8580;
+    --color-accent: #b87503;
+    --color-user-bubble: #ebe9e5;
+    --topbar-h: 38px;
+  }
+  .dark {
+    --color-bg: #1e1c19;
+    --color-surface: #282622;
+    --color-surface-hover: #322e2a;
+    --color-border: #3a3732;
+    --color-text: #e8e4dd;
+    --color-text-muted: #8a8580;
+    --color-accent: #c98605;
+    --color-user-bubble: #322e2a;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+    background: var(--color-bg);
+    color: var(--color-text);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── top bar ── */
+  header {
+    height: var(--topbar-h);
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 0 14px;
+    background: var(--color-surface);
+    border-bottom: 1px solid var(--color-border);
+  }
+  header .brand { font-weight: 600; font-size: 13px; }
+  header .hint { font-size: 11px; color: var(--color-text-muted); margin-left: auto; }
+  header button {
+    font: inherit; font-size: 12px;
+    padding: 5px 12px; border-radius: 6px;
+    border: 1px solid var(--color-border);
+    background: var(--color-surface-hover);
+    color: var(--color-text);
+    cursor: pointer;
+  }
+  header button.primary { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+
+  /* ── wrap == canvas 的定位父级；scroll 是第一个 flex 子项，保证 canvas 原点 == scroll 原点 ── */
+  #wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
+
+  #scroll {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 0;
+    padding: 16px;
+    scroll-behavior: auto;
+  }
+  #scroll > * + * { margin-top: 14px; }
+
+  canvas {
+    position: absolute;
+    inset: 0;
+    z-index: 50;
+    pointer-events: none;
+  }
+
+  #input {
+    flex-shrink: 0;
+    height: 52px;
+    display: flex; align-items: center;
+    padding: 0 16px;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-surface);
+    color: var(--color-text-muted);
+    font-size: 13px;
+  }
+
+  /* ── chat content ── */
+  .meta { font-size: 11px; color: var(--color-text-muted); margin-bottom: 4px; }
+  .user-msg { display: flex; justify-content: flex-end; }
+  .user-msg .content {
+    background: var(--color-user-bubble);
+    border-radius: 12px;
+    padding: 10px 14px;
+    max-width: 78%;
+  }
+  .assistant-msg { max-width: 100%; }
+  .phase-label { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--color-text-muted); margin: 8px 0 4px; }
+  .phase-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-accent); }
+  .phase-dot.done { background: var(--color-text-muted); }
+  .thinking {
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 13px;
+    color: var(--color-text-muted);
+    line-height: 1.55;
+  }
+  .text-response { font-size: 14px; line-height: 1.6; }
+  .text-response p { margin: 6px 0; }
+  .text-response code { background: var(--color-surface-hover); border-radius: 4px; padding: 1px 5px; font-family: ui-monospace, monospace; font-size: 12px; color: var(--color-accent); }
+
+  .tool-card {
+    border: 1px solid var(--color-border);
+    background: var(--color-surface);
+    border-radius: 12px;
+    padding: 10px 12px;
+    margin: 6px 0;
+  }
+  .tool-header { font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 7px; }
+  .tool-header .status { color: var(--color-text-muted); font-weight: 400; }
+  .tool-result-line { font-size: 13px; line-height: 1.5; padding: 3px 0; border-top: 1px solid var(--color-border); margin-top: 6px; }
+  .tool-result-line:first-of-type { border-top: 0; margin-top: 8px; }
+
+  pre {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 12px;
+    overflow-x: auto;
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    margin: 8px 0;
+  }
+  pre code { display: block; }
+  pre code span { display: block; white-space: pre; }
+
+  .result-list { font-size: 13px; }
+  .result-list .tool-result-line { font-family: ui-monospace, monospace; font-size: 12px; }
+
+  /* ── HUD ── */
+  #hud {
+    position: fixed;
+    right: 14px;
+    bottom: 14px;
+    z-index: 100;
+    font-family: ui-monospace, monospace;
+    font-size: 11px;
+    color: var(--color-text-muted);
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 6px 10px;
+    pointer-events: none;
+  }
+  #hud .count { color: var(--color-accent); font-weight: 700; }
+
+  @keyframes dscodeCharScatter {
+    0%   { opacity: 1; transform: translate(0,0) rotate(0deg) scale(1); }
+    100% { opacity: 0; transform: translate(var(--sx), var(--sy)) rotate(var(--sr)) scale(0.55); }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <span class="brand">dscode · full-content cascade</span>
+    <button id="btnTrigger" class="primary">触发 Cascade</button>
+    <button id="btnReset">重置</button>
+    <button id="btnTheme">暗色</button>
+    <span class="hint">撞击覆盖全文所有行 · 全部撞完才 gather</span>
+  </header>
+
+  <div id="wrap">
+    <div id="scroll"></div>
+    <canvas id="cv"></canvas>
+    <div id="input">输入区（占位，用于复现 canvas 与滚动容器不同高度的场景）</div>
+  </div>
+
+  <div id="hud">CASCADE ACTIVE · 撞击 <span class="count">0/0</span></div>
+
+<script>
+(() => {
+  "use strict";
+
+  /* ───────────────────────── 常量 ───────────────────────── */
+  const CLUSTER_OFFSETS = [
+    { char: "d", ox: -40, oy: 0 },
+    { char: "s", ox: -24, oy: 0 },
+    { char: "c", ox: -8,  oy: 0 },
+    { char: "o", ox: +8,  oy: 0 },
+    { char: "d", ox: +24, oy: 0 },
+    { char: "e", ox: +40, oy: 0 },
+  ];
+  const SQUASH_MS = 80;
+  const STRETCH_MS = 60;
+  const DWELL_MS = 300;
+  const CLUSTER_SIZE = 22;
+  const DROP_SPEED = 4;
+  const CASCADE_STALL_TIMEOUT_MS = 6000;
+  const MAX_PARTICLES = 2500;
+  const DPR_CAP = 2;
+
+  const TEXT_LIKE = new Set([
+    "text-block", "code-line", "tool-result-line",
+    "tool-header", "phase-label", "table-cell",
+  ]);
+
+  /* ───────────────────────── 元素 ───────────────────────── */
+  const wrap = document.getElementById("wrap");
+  const scroll = document.getElementById("scroll");
+  const canvas = document.getElementById("cv");
+  const ctx = canvas.getContext("2d");
+  const hud = document.getElementById("hud");
+  const hudCount = hud.querySelector(".count");
+
+  /* ───────────────────────── 工具 ───────────────────────── */
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const randInt = (a, b) => Math.floor(rand(a, b + 1));
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const easeOutQuad = (t) => 1 - (1 - t) * (1 - t);
+
+  function hexToRgb(hex) {
+    const h = hex.replace("#", "");
+    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+  }
+
+  function getContentBounds(el) {
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const rects = range.getClientRects();
+      let l = Infinity, r = -Infinity, t = Infinity, b = -Infinity;
+      for (let i = 0; i < rects.length; i++) {
+        const rc = rects[i];
+        if (rc.width === 0 || rc.height === 0) continue;
+        l = Math.min(l, rc.left); r = Math.max(r, rc.right);
+        t = Math.min(t, rc.top); b = Math.max(b, rc.bottom);
+      }
+      if (l === Infinity || r === -Infinity) return null;
+      return { top: t, bottom: b, left: l, right: r };
+    } catch { return null; }
+  }
+
+  const isTextLike = (type) => TEXT_LIKE.has(type);
+  const hasRenderable = (type, text) => type === "media-item" || !!text?.trim();
+
+  /* ───────────────────────── 主题 ───────────────────────── */
+  const root = document.documentElement;
+  const btnTheme = document.getElementById("btnTheme");
+  btnTheme.addEventListener("click", () => {
+    const dark = root.classList.toggle("dark");
+    btnTheme.textContent = dark ? "亮色" : "暗色";
+  });
+
+  /* ───────────────────────── 内容构建 ───────────────────────── */
+  function buildContentHTML() {
+    const lines = [];
+    const push = (s) => lines.push(s);
+
+    // 1. user message
+    push('<div class="user-msg">');
+    push('  <div class="meta">You · 10:02</div>');
+    push('  <div class="content" data-collider="message-card">');
+    push('    <div class="text-response"><p data-collider="text-block">帮我写一个基于 Canvas 的粒子系统，并解释几个关键物理参数。</p></div>');
+    push('  </div>');
+    push('</div>');
+
+    // 2. assistant thinking + response
+    push('<div class="assistant-msg">');
+    push('  <div class="meta">dscode · 10:02</div>');
+    push('  <div class="phase-label" data-collider="phase-label"><span class="phase-dot"></span>Thinking</div>');
+    push('  <div class="thinking" data-collider="thinking-block">这是一个关于粒子运动、生命周期和渲染上限的平衡问题。</div>');
+    push('  <div class="phase-label" data-collider="phase-label"><span class="phase-dot"></span>Response</div>');
+    push('  <div class="text-response">');
+    push('    <p data-collider="text-block">粒子系统由三部分组成：发射、积分、绘制。</p>');
+    push('    <p data-collider="text-block">发射器以固定速率产出粒子，每个粒子携带位置、速度、寿命。</p>');
+    push('    <p data-collider="text-block">积分器每帧对粒子施加重力并衰减速度，寿命耗尽后回收。</p>');
+    push('  </div>');
+    push('</div>');
+
+    // 3. assistant with tools
+    push('<div class="assistant-msg">');
+    push('  <div class="meta">dscode · 10:03</div>');
+    push('  <div class="phase-label" data-collider="phase-label"><span class="phase-dot"></span>Executing</div>');
+    push('  <div class="tool-card" data-collider="tool-card">');
+    push('    <div class="tool-header" data-collider="tool-header">run_command <span class="status">· completed</span></div>');
+    push('    <div class="tool-result-line" data-collider="tool-result-line">npm run build → compiled in 2.1s</div>');
+    push('    <div class="tool-result-line" data-collider="tool-result-line">✓ 214 modules transformed</div>');
+    push('    <div class="tool-result-line" data-collider="tool-result-line">✓ no type errors</div>');
+    push('  </div>');
+    push('  <div class="phase-label" data-collider="phase-label"><span class="phase-dot done"></span>Response</div>');
+    push('  <div class="text-response"><p data-collider="text-block">构建通过，下面是核心实现。</p></div>');
+    push('</div>');
+
+    // 4. code-heavy assistant (many code-lines → auto-scroll)
+    push('<div class="assistant-msg">');
+    push('  <div class="meta">dscode · 10:04</div>');
+    push('  <div class="phase-label" data-collider="phase-label"><span class="phase-dot done"></span>Response</div>');
+    push('  <pre><code>');
+    const code = [
+      'const MAX_PARTICLES = 2500;',
+      'const GRAVITY = 0.28;',
+      'const DAMPING = 0.995;',
+      '',
+      'function spawn(x, y) {',
+      '  if (particles.length >= MAX_PARTICLES) return;',
+      '  particles.push({',
+      '    x, y,',
+      '    vx: Math.cos(a) * speed,',
+      '    vy: Math.sin(a) * speed,',
+      '    life: randInt(500, 1300),',
+      '  });',
+      '}',
+      '',
+      'function integrate(dt) {',
+      '  for (const p of particles) {',
+      '    p.vy += GRAVITY * dt;',
+      '    p.x += p.vx;',
+      '    p.y += p.vy;',
+      '    p.vx *= DAMPING;',
+      '    p.life -= dt;',
+      '  }',
+      '}',
+    ];
+    code.forEach((ln, i) => push(`<span data-collider="code-line">${ln}</span>`));
+    push('  </code></pre>');
+    push('</div>');
+
+    // 5. result list → 复现「交互完成…下面还有数十行」的场景
+    push('<div class="assistant-msg result-list">');
+    push('  <div class="meta">dscode · 10:05 · 结果清单</div>');
+    for (let i = 1; i <= 30; i++) {
+      push(`  <div class="tool-result-line" data-collider="tool-result-line">item-${String(i).padStart(2, "0")}  ·  processing result #${i}</div>`);
+    }
+    push('</div>');
+
+    return lines.join("\n");
+  }
+
+  function resetContent() {
+    scroll.innerHTML = buildContentHTML();
+  }
+  resetContent();
+
+  /* ───────────────────────── 状态 ───────────────────────── */
+  const accentHex = () => getComputedStyle(root).getPropertyValue("--color-accent").trim() || "#b87503";
+  const textHex = () => getComputedStyle(root).getPropertyValue("--color-text").trim() || "#2d2a26";
+  const mutedHex = () => getComputedStyle(root).getPropertyValue("--color-text-muted").trim() || "#8a8580";
+
+  function makeLetterColors() {
+    const accent = accentHex();
+    const [r, g, b] = hexToRgb(accent);
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+    let hue = 38;
+    if (d !== 0) {
+      if (max === r) hue = ((g - b) / d + (g < b ? 6 : 0)) * 60;
+      else if (max === g) hue = ((b - r) / d + 2) * 60;
+      else hue = ((r - g) / d + 4) * 60;
+    }
+    const warmAccent2 = `hsl(${(hue + 20) % 360}, 45%, 52%)`;
+    return { d: accent, s: warmAccent2, c: warmAccent2, o: mutedHex(), e: textHex() };
+  }
+
+  let s = null;
+  let rafId = 0;
+  let running = false;
+  let lastStrikeAt = 0;
+  let prevOverflow = "";
+
+  function getScrollTop() { return scroll.scrollTop; }
+  function currentScrollRect() { return scroll.getBoundingClientRect(); }
+
+  /* ───────────────────────── buildRowList（契约核心） ───────────────────────── */
+  function buildRowList() {
+    const all = wrap.querySelectorAll("[data-collider]");
+    const scrollRect = currentScrollRect();
+    const scrollTop = getScrollTop();
+    const rows = [];
+    const fragments = [];
+
+    all.forEach((el) => {
+      if (el.querySelector("[data-collider]")) return; // 只保留叶子
+      const type = el.getAttribute("data-collider");
+      if (!hasRenderable(type, el.textContent)) return;
+
+      const rect = el.getBoundingClientRect();
+      // 内容坐标：稳定，不受当前滚动影响
+      const top = rect.top - scrollRect.top + scrollTop;
+      const bottom = top + rect.height;
+      const left = rect.left - scrollRect.left;
+      const width = rect.width;
+
+      let contentTop = top, contentBottom = bottom, contentLeft = left, contentRight = left + width;
+      if (isTextLike(type)) {
+        const cb = getContentBounds(el);
+        if (cb) {
+          contentTop = cb.top - scrollRect.top + scrollTop;
+          contentBottom = cb.bottom - scrollRect.top + scrollTop;
+          contentLeft = cb.left - scrollRect.left;
+          contentRight = cb.right - scrollRect.left;
+        }
+      }
+
+      fragments.push({ el, top, bottom, left, right: left + width, contentTop, contentBottom, contentLeft, contentRight });
+    });
+
+    fragments.forEach((f) => {
+      const contentCenterX = (f.contentLeft + f.contentRight) / 2;
+      const contentCenterY = (f.contentTop + f.contentBottom) / 2;
+      rows.push({
+        el: f.el, elements: [f.el],
+        top: f.top, left: f.left, width: f.right - f.left, height: f.bottom - f.top,
+        landingX: contentCenterX, landingY: contentCenterY,
+        struck: false,
+        contentTop: f.contentTop, contentBottom: f.contentBottom,
+        contentLeft: f.contentLeft, contentRight: f.contentRight,
+        contentCenterX, contentCenterY,
+      });
+    });
+
+    rows.sort((a, b) => a.top - b.top);
+    return rows;
+  }
+
+  function measureRow(row) {
+    const rects = row.elements.map((el) => el.getBoundingClientRect());
+    const scrollRect = currentScrollRect();
+    const scrollTop = getScrollTop();
+    return {
+      top: Math.min(...rects.map((r) => r.top)) - scrollRect.top + scrollTop,
+      bottom: Math.max(...rects.map((r) => r.bottom)) - scrollRect.top + scrollTop,
+      left: Math.min(...rects.map((r) => r.left)) - scrollRect.left,
+      right: Math.max(...rects.map((r) => r.right)) - scrollRect.left,
+    };
+  }
+
+  /* ───────────────────────── 破坏效果 ───────────────────────── */
+  function spawnParticles(el) {
+    const rect = el.getBoundingClientRect();
+    const cRect = canvas.getBoundingClientRect();
+    const rx = rect.left - cRect.left, ry = rect.top - cRect.top;
+    const count = randInt(20, 40);
+    for (let i = 0; i < count; i++) {
+      const px = rx + rand(0, rect.width), py = ry + rand(0, rect.height);
+      const angle = Math.atan2(py - (ry + rect.height / 2), px - (rx + rect.width / 2));
+      const speed = rand(2, 8);
+      s.particles.push({
+        x: px, y: py,
+        vx: Math.cos(angle) * speed + rand(-3, 3),
+        vy: Math.sin(angle) * speed - rand(1, 5),
+        size: rand(1.5, 4), color: s.letterColorMap.d,
+        phase: "fall", life: randInt(1500, 3000),
+      });
+    }
+  }
+
+  function spawnImpact(row) {
+    const st = getScrollTop();
+    const cx = row.contentCenterX;
+    const cy = row.contentCenterY - st;
+    const w = Math.max(1, row.contentRight - row.contentLeft);
+    const h = Math.max(1, row.contentBottom - row.contentTop);
+    const count = Math.max(34, Math.min(80, Math.round(w / 6)));
+    for (let i = 0; i < count; i++) {
+      const angle = rand(0, Math.PI * 2);
+      const speed = rand(2, 9);
+      s.particles.push({
+        x: cx + rand(-w / 2, w / 2), y: cy + rand(-h / 2, h / 2),
+        vx: Math.cos(angle) * speed + rand(-2, 2),
+        vy: Math.sin(angle) * speed - rand(1, 4),
+        size: rand(1.5, 4.5),
+        color: Math.random() < 0.55 ? s.letterColorMap.d : s.letterColorMap.s,
+        phase: "fall", life: randInt(500, 1300),
+      });
+    }
+    s.impactRings.push({ x: cx, y: cy, r: 4, life: 1 });
+    s.shake = Math.min(10, s.shake + 6);
+  }
+
+  function destroyTextLine(el) {
+    const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+    el.style.transition = "opacity 180ms ease-out";
+    el.style.opacity = "0";
+
+    if (text === "") return;
+    if (text.length > 80) return; // 长文本退化为粒子爆发
+
+    const bounds = getContentBounds(el) ?? el.getBoundingClientRect();
+    const w = Math.max(1, bounds.right - bounds.left);
+    const cy = (bounds.top + bounds.bottom) / 2;
+    const baseColor = getComputedStyle(el).color;
+    const fontSize = getComputedStyle(el).fontSize || "14px";
+
+    const holder = document.createElement("div");
+    holder.style.position = "fixed";
+    holder.style.left = bounds.left + "px";
+    holder.style.top = (cy - 8) + "px";
+    holder.style.width = w + "px";
+    holder.style.height = "16px";
+    holder.style.pointerEvents = "none";
+    holder.style.zIndex = "55";
+    holder.style.overflow = "visible";
+
+    const chars = Array.from(text);
+    const stepX = w / Math.max(chars.length, 1);
+    chars.forEach((ch, i) => {
+      const span = document.createElement("span");
+      span.textContent = ch === " " ? "\u00A0" : ch;
+      span.style.position = "absolute";
+      span.style.left = (i * stepX) + "px";
+      span.style.top = "0";
+      span.style.color = Math.random() < 0.28 ? s.letterColorMap.d : baseColor;
+      span.style.fontSize = fontSize;
+      span.style.lineHeight = "1";
+      span.style.whiteSpace = "pre";
+      span.style.setProperty("--sx", `${rand(-70, 70).toFixed(0)}px`);
+      span.style.setProperty("--sy", `${rand(-90, 30).toFixed(0)}px`);
+      span.style.setProperty("--sr", `${rand(-220, 220).toFixed(0)}deg`);
+      span.style.animation = "dscodeCharScatter 480ms cubic-bezier(0.2,0.7,0.3,1) forwards";
+      holder.appendChild(span);
+    });
+    document.body.appendChild(holder);
+    setTimeout(() => holder.remove(), 540);
+  }
+
+  function destroyToolCard(el, impactX, impactY) {
+    const cRect = canvas.getBoundingClientRect();
+    const rect = el.getBoundingClientRect();
+    const rx = rect.left - cRect.left;
+    const ry = rect.top - cRect.top;
+    el.style.clipPath = `circle(100% at ${impactX - rx}px ${impactY - ry}px)`;
+    el.style.transition = "clip-path 350ms ease-in, opacity 200ms ease-out 250ms";
+    requestAnimationFrame(() => {
+      el.style.clipPath = `circle(0% at ${impactX - rx}px ${impactY - ry}px)`;
+      el.style.opacity = "0";
+    });
+  }
+
+  function destroyByType(el, impactX, impactY) {
+    const type = el.getAttribute("data-collider");
+    switch (type) {
+      case "text-block": case "code-line": case "tool-header":
+      case "tool-result-line": case "phase-label": case "table-cell":
+        destroyTextLine(el); break;
+      case "tool-card":
+        destroyToolCard(el, impactX, impactY); break;
+      default:
+        spawnParticles(el);
+        el.style.transition = "opacity 220ms ease-out";
+        el.style.opacity = "0";
+    }
+  }
+
+  function cleanupParents(el) {
+    let current = el.parentElement;
+    while (current) {
+      const type = current.getAttribute && current.getAttribute("data-collider");
+      if (type !== "tool-card" && type !== "message-card" && type !== "agent-card") {
+        current = current.parentElement;
+        continue;
+      }
+      const children = current.querySelectorAll("[data-collider]");
+      const allDone = [...children].every((child) => {
+        const childRow = s.rows.find((r) => r.elements.includes(child));
+        return !!childRow && childRow.struck;
+      });
+      if (!allDone) break;
+      const rect = current.getBoundingClientRect();
+      const cRect = canvas.getBoundingClientRect();
+      destroyByType(current, rect.left - cRect.left + rect.width / 2, rect.top - cRect.top + rect.height / 2);
+      current = current.parentElement;
+    }
+  }
+
+  /* ───────────────────────── 选行 / 撞击 / gather ───────────────────────── */
+  function selectNextRowIndex() {
+    const unstruck = s.rows
+      .map((r, index) => ({ index, struck: r.struck, top: r.top, left: r.left }))
+      .filter((c) => !c.struck)
+      .sort((a, b) => a.top - b.top || a.left - b.left);
+    return unstruck.length === 0 ? -1 : unstruck[0].index;
+  }
+
+  function startGather() {
+    if (s.gatherStarted) return;
+    s.gatherStarted = true;
+    const struck = s.rows.filter((r) => r.struck).length;
+    console.log(`[dscode] all rows struck: ${struck}/${s.rows.length} → gather`);
+    scroll.style.transition = "opacity 120ms ease-out";
+    scroll.style.opacity = "0";
+    s.phase = "gather";
+    s.phaseTime = 0;
+    s.targetPoints = renderTargets();
+    s.particlesAssigned = 0;
+    const cap = Math.min(s.particles.length, s.targetPoints.length);
+    for (let i = 0; i < cap; i++) {
+      s.particles[i].tx = s.targetPoints[i].x;
+      s.particles[i].ty = s.targetPoints[i].y;
+      s.particles[i].gatherDelay = rand(20, 80);
+      s.particlesAssigned++;
+    }
+  }
+
+  function launchHop() {
+    const c = s.cluster;
+    const nextIndex = selectNextRowIndex();
+    if (nextIndex < 0) { startGather(); return; }
+    const nextRow = s.rows[nextIndex];
+    c.nextRowIndex = nextIndex;
+    c.hopStartX = c.x;
+    c.hopStartY = c.y;
+    c.hopEndX = nextRow.landingX;
+    c.hopEndY = nextRow.landingY;
+    const gap = Math.abs(c.hopEndY - c.hopStartY);
+    c.hopDuration = Math.max(350, Math.min(800, Math.sqrt(gap) * 25));
+    c.hopProgress = 0;
+    c.hopState = "hopping";
+  }
+
+  function strikeRow() {
+    const c = s.cluster;
+    if (c.rowIndex < 0 || c.rowIndex >= s.rows.length) return;
+    const row = s.rows[c.rowIndex];
+    if (row.struck) return;
+    row.struck = true;
+    lastStrikeAt = performance.now();
+
+    const impactX = row.contentCenterX;
+    const impactY = row.contentCenterY - getScrollTop();
+
+    row.elements.forEach((el) => destroyByType(el, impactX, impactY));
+    cleanupParents(row.el);
+    spawnImpact(row);
+
+    for (let i = 0; i < s.rows.length; i++) {
+      const r = s.rows[i];
+      const g = measureRow(r);
+      r.top = g.top; r.left = g.left; r.width = g.right - g.left; r.height = g.bottom - g.top;
+    }
+    s.rows.sort((a, b) => a.top - b.top);
+    c.rowIndex = s.rows.findIndex((r) => r === row);
+
+    if (c.hopState === "hopping") {
+      const ni = c.rowIndex + 1;
+      if (ni < s.rows.length) {
+        c.hopEndY = s.rows[ni].landingY;
+        c.hopEndX = s.rows[ni].landingX;
+      }
+    }
+    updateHUD();
+  }
+
+  /* ───────────────────────── 自动滚动 ───────────────────────── */
+  function autoScroll() {
+    const maxScroll = Math.max(0, scroll.scrollHeight - scroll.clientHeight);
+    const target = clamp(s.cluster.y - scroll.clientHeight * 0.62, 0, maxScroll);
+    scroll.scrollTop += (target - scroll.scrollTop) * 0.22;
+  }
+
+  /* ───────────────────────── gather 目标 ───────────────────────── */
+  function renderTargets() {
+    const fontSize = Math.min(320, s.W * 0.18, s.H * 0.5);
+    const off = document.createElement("canvas");
+    const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
+    off.width = s.W * dpr; off.height = s.H * dpr;
+    const octx = off.getContext("2d");
+    octx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    octx.clearRect(0, 0, s.W, s.H);
+    octx.font = `700 ${fontSize}px -apple-system, sans-serif`;
+    octx.textAlign = "center"; octx.textBaseline = "middle";
+    octx.fillStyle = "#fff";
+    octx.fillText("DSCode", s.W / 2, s.H / 2);
+
+    const fullText = "DSCode";
+    const fullWidth = octx.measureText(fullText).width;
+    const startX = s.W / 2 - fullWidth / 2;
+    const bounds = []; let cur = startX;
+    for (let i = 0; i < fullText.length; i++) {
+      const w = octx.measureText(fullText[i]).width;
+      bounds.push({ letter: fullText[i], left: cur, right: cur + w });
+      cur += w;
+    }
+
+    const img = octx.getImageData(0, 0, Math.floor(s.W * dpr), Math.floor(s.H * dpr));
+    const pts = []; const step = 6;
+    for (let py = 0; py < s.H; py += step) {
+      for (let px = 0; px < s.W; px += step) {
+        const idx = (Math.floor(py * dpr) * Math.floor(s.W * dpr) + Math.floor(px * dpr)) * 4;
+        if (idx + 3 < img.data.length && img.data[idx + 3] > 128) {
+          const b = bounds.find((lb) => px >= lb.left && px < lb.right);
+          const letter = b ? b.letter : fullText[Math.min(Math.floor((px - startX) / (fullWidth / fullText.length)), fullText.length - 1)];
+          pts.push({ x: px, y: py, letter });
+        }
+      }
+    }
+    for (let i = pts.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [pts[i], pts[j]] = [pts[j], pts[i]];
+    }
+    return pts.slice(0, MAX_PARTICLES);
+  }
+
+  /* ───────────────────────── 更新 ───────────────────────── */
+  function updateFx() {
+    for (const ring of s.impactRings) { ring.r += 2.4; ring.life -= 0.05; }
+    s.impactRings = s.impactRings.filter((r) => r.life > 0);
+    if (s.shake > 0) s.shake *= 0.88;
+  }
+
+  function updateCascade(dt, dtFactor) {
+    s.phaseTime += dt;
+    updateFx();
+    const c = s.cluster;
+
+    if (s.rows.length === 0 && s.phaseTime > 2000 && !s.gatherStarted) { startGather(); return; }
+    if (lastStrikeAt > 0 && performance.now() - lastStrikeAt > CASCADE_STALL_TIMEOUT_MS && !s.gatherStarted) { startGather(); return; }
+
+    switch (c.hopState) {
+      case "drop": {
+        if (s.rows.length > 0 && c.rowIndex === -1) { c.rowIndex = 0; c.x = s.rows[0].landingX; }
+        const targetY = s.rows.length > 0 ? s.rows[0].landingY : s.H / 2;
+        c.y += DROP_SPEED * dtFactor;
+        if (c.y >= targetY) {
+          c.y = targetY;
+          c.hopState = "squash"; c.hopTimer = SQUASH_MS;
+          strikeRow();
+        }
+        break;
+      }
+      case "squash": {
+        c.hopTimer -= dt;
+        const t = clamp(1 - c.hopTimer / SQUASH_MS, 0, 1);
+        s.scaleY = lerp(1.0, 0.6, t);
+        s.scaleX = lerp(1.0, 1.3, t);
+        if (c.hopTimer <= 0) { c.hopState = "stretch"; c.hopTimer = STRETCH_MS; }
+        break;
+      }
+      case "stretch": {
+        c.hopTimer -= dt;
+        const t = clamp(1 - c.hopTimer / STRETCH_MS, 0, 1);
+        s.scaleY = lerp(0.6, 1.2, t);
+        s.scaleX = lerp(1.3, 0.85, t);
+        if (c.hopTimer <= 0) { s.scaleY = 1; s.scaleX = 1; c.hopState = "dwell"; c.hopTimer = DWELL_MS; }
+        break;
+      }
+      case "dwell": {
+        c.hopTimer -= dt;
+        s.breathPhase += dt * (Math.PI * 2 / 600);
+        const breath = 1.0 + Math.sin(s.breathPhase) * 0.02;
+        s.scaleX = breath; s.scaleY = breath;
+        if (c.hopTimer <= 0) { s.scaleX = 1; s.scaleY = 1; launchHop(); }
+        break;
+      }
+      case "hopping": {
+        c.hopProgress += dt / c.hopDuration;
+        const t = clamp(c.hopProgress, 0, 1);
+        const et = easeOutQuad(t);
+        const gap = Math.abs(c.hopEndY - c.hopStartY);
+        const rawPeak = Math.max(40, gap * 0.55);
+        const midY = (c.hopStartY + c.hopEndY) / 2;
+        const peak = Math.min(rawPeak, Math.max(0, midY));
+        c.y = lerp(c.hopStartY, c.hopEndY, t) - peak * Math.sin(t * Math.PI);
+        c.x = lerp(c.hopStartX, c.hopEndX, et);
+        if (t >= 1.0) {
+          c.y = c.hopEndY; c.x = c.hopEndX; c.hopProgress = 0;
+          const ni = c.nextRowIndex;
+          c.nextRowIndex = -1;
+          if (ni < 0 || ni >= s.rows.length) { startGather(); return; }
+          c.rowIndex = ni;
+          c.hopState = "squash"; c.hopTimer = SQUASH_MS;
+          strikeRow();
+        }
+        break;
+      }
+    }
+
+    for (const p of s.particles) {
+      if (p.phase !== "fall") continue;
+      p.vy += 0.28 * dtFactor;
+      p.x += p.vx; p.y += p.vy; p.vx *= 0.995;
+      if (p.life !== undefined) p.life -= dt;
+      if (p.y > s.H + 10 || (p.life !== undefined && p.life <= 0)) p.dead = true;
+    }
+    s.particles = s.particles.filter((p) => !p.dead);
+
+    for (const sh of s.shards) {
+      sh.x += sh.vx; sh.y += sh.vy; sh.vy += 0.15 * dtFactor;
+      sh.rotation += sh.rotationSpeed; sh.life -= dt;
+    }
+    s.shards = s.shards.filter((sh) => sh.life > 0);
+
+    autoScroll();
+  }
+
+  function updateGather(dt, dtFactor) {
+    s.phaseTime += dt;
+    updateFx();
+
+    if (s.particles.length < s.targetPoints.length && s.particles.length < MAX_PARTICLES) {
+      const needed = Math.min(s.targetPoints.length - s.particles.length, 50);
+      for (let i = 0; i < needed && s.particlesAssigned < s.targetPoints.length; i++) {
+        const t = s.targetPoints[s.particlesAssigned++];
+        s.particles.push({
+          x: rand(0, s.W), y: s.H + rand(20, 80),
+          vx: rand(-2, 2), vy: rand(-8, -3),
+          size: rand(2, 4),
+          color: s.letterColorMap[t.letter] ?? textHex(),
+          phase: "fall", tx: t.x, ty: t.y, gatherDelay: rand(20, 80),
+        });
+      }
+    }
+
+    for (const p of s.particles) {
+      if (p.phase === "fall") {
+        p.vy += 0.28 * dtFactor; p.x += p.vx; p.y += p.vy; p.vx *= 0.995;
+        if (p.y > s.H - 4) { p.y = s.H - 4; p.vy *= -0.3; p.vx *= 0.75; }
+        if (p.tx !== undefined && p.gatherDelay !== undefined) {
+          p.gatherDelay -= dt;
+          if (p.gatherDelay <= 0) p.phase = "gather";
+        }
+      } else if (p.phase === "gather") {
+        if (p.tx === undefined || p.ty === undefined) continue;
+        const dx = p.tx - p.x, dy = p.ty - p.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 4) { p.x = p.tx; p.y = p.ty; p.phase = "formed"; p.flash = 1; }
+        else {
+          const f = 0.55;
+          p.vx += (dx / dist) * f; p.vy += (dy / dist) * f;
+          p.vx *= 0.88; p.vy *= 0.88; p.x += p.vx; p.y += p.vy;
+        }
+      } else if (p.phase === "formed") {
+        if (p.flash !== undefined) p.flash *= 0.92;
+      }
+    }
+
+    if (s.particles.length > 0 && s.particles.every((p) => p.phase === "formed") && s.phaseTime > 800) {
+      s.phase = "formed"; s.phaseTime = 0; s.formedTime = 0;
+    }
+    if (s.phaseTime > 5000) { s.phase = "formed"; s.phaseTime = 0; s.formedTime = 0; }
+  }
+
+  function updateFormed(dt) {
+    s.phaseTime += dt; s.formedTime += dt;
+    updateFx();
+    for (const p of s.particles) if (p.flash !== undefined) p.flash *= 0.92;
+    if (s.formedTime > 5000) stop();
+  }
+
+  /* ───────────────────────── 绘制 ───────────────────────── */
+  function drawCluster() {
+    if (s.phase !== "cascade") return;
+    if (s.cluster.hopState === "drop" && s.rows.length === 0) return;
+    const c = s.cluster;
+    const vy = c.y - getScrollTop();
+
+    let originX = c.x;
+    if (c.rowIndex >= 0 && c.rowIndex < s.rows.length) {
+      const row = s.rows[c.rowIndex];
+      const dFootX = c.x + CLUSTER_OFFSETS[0].ox;
+      const eFootX = c.x + CLUSTER_OFFSETS[5].ox;
+      if (dFootX >= row.left && eFootX <= row.left + row.width) originX = (dFootX + eFootX) / 2;
+      else originX = dFootX;
+    }
+
+    ctx.save();
+    ctx.translate(originX, vy);
+    ctx.scale(s.scaleX, s.scaleY);
+    ctx.translate(-originX, -vy);
+
+    for (const off of CLUSTER_OFFSETS) {
+      const jx = rand(-2, 2), jy = rand(-2, 2);
+      const lx = c.x + off.ox + jx;
+      const ly = vy + off.oy + jy;
+      ctx.font = `700 ${CLUSTER_SIZE}px -apple-system, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = s.letterColorMap[off.char] ?? textHex();
+      ctx.fillText(off.char, lx, ly);
+    }
+    ctx.restore();
+  }
+
+  function drawParticles() {
+    for (const p of s.particles) {
+      const size = p.phase === "formed" ? p.size * (1 + (p.flash ?? 0) * 3) : p.size;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
+      ctx.fillStyle = p.color;
+      ctx.fill();
+    }
+  }
+
+  function drawRings() {
+    for (const ring of s.impactRings) {
+      ctx.globalAlpha = Math.max(0, ring.life);
+      ctx.beginPath();
+      ctx.arc(ring.x, ring.y, ring.r, 0, Math.PI * 2);
+      ctx.strokeStyle = s.letterColorMap.d;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  function drawFormedGlow(now) {
+    if (s.phase !== "formed") return;
+    const cx = s.W / 2, cy = s.H / 2;
+    const breathe = Math.sin(now * 0.002) * 0.5 + 0.5;
+    const alpha = Math.floor((0.05 + breathe * 0.08) * 255).toString(16).padStart(2, "0");
+    ctx.globalCompositeOperation = "lighter";
+    const g = ctx.createRadialGradient(cx, cy, 0, cx, cy, Math.min(s.W, s.H) * 0.4);
+    g.addColorStop(0, s.letterColorMap.d + alpha);
+    g.addColorStop(1, "transparent");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, s.W, s.H);
+    ctx.globalCompositeOperation = "source-over";
+  }
+
+  function frame(now) {
+    const dt = Math.min(now - lastTime, 33);
+    lastTime = now;
+    const dtFactor = dt / 16.667;
+
+    ctx.clearRect(0, 0, s.W, s.H);
+    ctx.save();
+    if (s.shake > 0.1) ctx.translate(rand(-s.shake, s.shake), rand(-s.shake, s.shake));
+    drawFormedGlow(now);
+    drawCluster();
+    drawParticles();
+    drawRings();
+    ctx.restore();
+
+    if (s.phase === "cascade") updateCascade(dt, dtFactor);
+    else if (s.phase === "gather") updateGather(dt, dtFactor);
+    else if (s.phase === "formed") updateFormed(dt);
+
+    rafId = requestAnimationFrame(frame);
+  }
+
+  let lastTime = 0;
+
+  function updateHUD() {
+    if (!s) return;
+    const struck = s.rows.filter((r) => r.struck).length;
+    const label = s.phase === "cascade" ? "CASCADE ACTIVE" : s.phase === "gather" ? "PARTICLE CONVERGENCE" : "FORMATION COMPLETE";
+    hud.firstChild.textContent = label + " · 撞击 ";
+    hudCount.textContent = `${struck}/${s.rows.length}`;
+  }
+
+  function stop() {
+    running = false;
+    cancelAnimationFrame(rafId);
+    scroll.style.overflow = prevOverflow;
+  }
+
+  /* ───────────────────────── 触发 ───────────────────────── */
+  function start() {
+    if (running) return;
+    resetContent();
+    scroll.style.opacity = "1";
+    scroll.style.transition = "";
+
+    const dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
+    const W = wrap.clientWidth, H = wrap.clientHeight;
+    canvas.width = W * dpr; canvas.height = H * dpr;
+    canvas.style.width = W + "px"; canvas.style.height = H + "px";
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    s = {
+      phase: "cascade", phaseTime: 0, particles: [], impactRings: [], shards: [],
+      shake: 0, formedTime: 0, targetPoints: [], particlesAssigned: 0, gatherStarted: false,
+      W, H, scaleX: 1, scaleY: 1, breathPhase: 0,
+      letterColorMap: makeLetterColors(),
+      cluster: {
+        x: W / 2, y: -rand(60, 140), hopState: "drop", hopTimer: 0,
+        rowIndex: -1, hopStartX: 0, hopStartY: 0, hopEndX: 0, hopEndY: 0,
+        hopDuration: 0, hopProgress: 0, nextRowIndex: -1,
+      },
+      rows: [],
+    };
+
+    s.rows = buildRowList();
+    lastStrikeAt = performance.now();
+
+    // 锁定滚动（程序化 scrollTop 仍可用）
+    prevOverflow = scroll.style.overflow;
+    scroll.style.overflow = "hidden";
+
+    console.log(`[dscode] rows: ${s.rows.length} · canvas ${W}x${H} · scrollTop ${scroll.scrollTop}`);
+    updateHUD();
+
+    running = true;
+    lastTime = performance.now();
+    rafId = requestAnimationFrame(frame);
+  }
+
+  document.getElementById("btnTrigger").addEventListener("click", start);
+  document.getElementById("btnReset").addEventListener("click", () => {
+    stop();
+    resetContent();
+    scroll.style.opacity = "1";
+    scroll.style.transition = "";
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    hud.firstChild.textContent = "CASCADE ACTIVE · 撞击 ";
+    hudCount.textContent = "0/0";
+  });
+})();
+</script>
+</body>
+</html>

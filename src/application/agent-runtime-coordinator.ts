@@ -25,18 +25,32 @@ import { makeAgentProcessTools } from "../agents/tools/process-tools.js";
 import type { RuntimeConfig } from "../config/types.js";
 import { ContextManager } from "../context/manager.js";
 import type { DriverRegistryPort } from "../drivers/types.js";
+import type {
+  RegisteredAgentTool,
+  ToolCapability,
+} from "../kernel/tool-effects.js";
+import { isPlanToolAllowed } from "../kernel/tool-effects.js";
 import type { HarnessEvent } from "../application/events.js";
 import { getEnvApiKey, resolveModel } from "../models/index.js";
 import { streamSimple } from "../models/index.js";
 import { PermissionManager } from "../permissions/manager.js";
 import type { PermissionPromptResult } from "../permissions/types.js";
+import { PLANNER_APPLICATION_NAME } from "./plan/planner-application.js";
+import { ApprovedPlanExecutionGuard } from "./plan/execution-guard.js";
+import type { PlannerProcessCoordinator } from "./plan/planner-process.js";
+import {
+  makePlannerTools,
+  PLANNER_TOOL_CAPABILITIES,
+} from "./plan/planner-tools.js";
 
 export interface AgentRuntimeCoordinatorOptions {
   config(): RuntimeConfig;
   environment: Readonly<Record<string, string | undefined>>;
   drivers: DriverRegistryPort;
   supervisor(): AgentSupervisor;
-  skillTool(): AgentTool<any>;
+  planner(): PlannerProcessCoordinator;
+  skillTool(): RegisteredAgentTool;
+  executionTools(): readonly RegisteredAgentTool[];
   skillManifest(name: string): {
     name: string;
     description: string;
@@ -52,23 +66,73 @@ export interface AgentRuntimeCoordinatorOptions {
 }
 
 export class AgentRuntimeCoordinator {
-  constructor(private readonly options: AgentRuntimeCoordinatorOptions) {}
+  private readonly planGuard: ApprovedPlanExecutionGuard;
 
-  availableToolNames(extraNames: readonly string[] = []): string[] {
-    return [...new Set([
-      ...this.options.drivers.getAllTools().map((tool) => tool.name),
-      "skill",
-      ...extraNames,
-    ])];
+  constructor(private readonly options: AgentRuntimeCoordinatorOptions) {
+    this.planGuard = new ApprovedPlanExecutionGuard({
+      service: () => this.options.planner().execution,
+      supervisor: () => this.options.supervisor(),
+    });
+  }
+
+  beforePlanToolCall(
+    agentId: string,
+    tool: ToolCapability | undefined,
+    toolCall: { id?: string; name: string },
+    args: unknown,
+  ) {
+    return this.planGuard.beforeToolCall(agentId, tool, toolCall, args);
+  }
+
+  afterPlanToolCall(
+    agentId: string,
+    toolCall: { id?: string; name: string },
+    result: unknown,
+    isError: boolean,
+  ) {
+    return this.planGuard.afterToolCall(agentId, toolCall, result, isError);
+  }
+
+  releasePlanToolCall(
+    agentId: string,
+    toolCall: { id?: string; name: string },
+  ) {
+    return this.planGuard.releaseToolCall(agentId, toolCall);
+  }
+
+  availableToolCapabilities(
+    extraCapabilities: readonly ToolCapability[] = [],
+  ): ToolCapability[] {
+    const capabilities = [
+      ...this.options.drivers.getAllTools(),
+      this.options.skillTool(),
+      ...PLANNER_TOOL_CAPABILITIES,
+      ...extraCapabilities,
+    ];
+    return [...new Map(
+      capabilities.map((tool) => [tool.name, {
+        name: tool.name,
+        effect: tool.effect,
+        planOperation: tool.planOperation,
+        audience: tool.audience,
+      }]),
+    ).values()];
+  }
+
+  availableToolNames(
+    extraCapabilities: readonly ToolCapability[] = [],
+  ): string[] {
+    return this.availableToolCapabilities(extraCapabilities)
+      .map((tool) => tool.name);
   }
 
   async refreshMain(
     mainAgentId: string,
-    extraNames: readonly string[] = [],
+    extraCapabilities: readonly ToolCapability[] = [],
   ): Promise<void> {
     await this.options.supervisor().updateMainCapabilities(
       mainAgentId,
-      this.availableToolNames(extraNames),
+      this.availableToolNames(extraCapabilities),
     );
   }
 
@@ -100,11 +164,25 @@ export class AgentRuntimeCoordinator {
       this.options.supervisor(),
       agentId,
     );
+    const plannerTools = application.name === PLANNER_APPLICATION_NAME
+      ? makePlannerTools({
+          plannerAgentId: agentId,
+          planId: () => this.options.planner().planIdForPlanner(agentId),
+          service: this.options.planner().service,
+          execution: this.options.planner().execution,
+          interactions: this.options.planner().interactions,
+          availableExecutionToolNames: () =>
+            this.options.executionTools()
+              .filter((tool) => tool.audience !== "planner")
+              .map((tool) => tool.name),
+        })
+      : [];
     const toolsByName = new Map<string, AgentTool<any>>();
     for (const tool of [
       ...this.options.drivers.getAllTools(),
       this.options.skillTool(),
       ...processTools,
+      ...plannerTools,
     ]) {
       toolsByName.set(tool.name, tool);
     }
@@ -231,10 +309,41 @@ export class AgentRuntimeCoordinator {
         const permissions = currentContext.attachment === "background"
           ? backgroundPermissions
           : childPermissions;
-        return capability ?? await permissions.check(toolContext, signal);
+        if (capability) return capability;
+        const tool = toolsByName.get(toolContext.toolCall.name);
+        const planBlock = await this.beforePlanToolCall(
+          agentId,
+          tool,
+          toolContext.toolCall,
+          toolContext.args,
+        );
+        if (planBlock) return planBlock;
+        if (
+          application.permissionMode === "plan"
+          && isPlanToolAllowed(tool)
+        ) {
+          return undefined;
+        }
+        try {
+          const permissionBlock = await permissions.check(toolContext, signal);
+          if (permissionBlock || signal?.aborted) {
+            await this.releasePlanToolCall(agentId, toolContext.toolCall);
+          }
+          return permissionBlock;
+        } catch (error) {
+          await this.releasePlanToolCall(agentId, toolContext.toolCall);
+          throw error;
+        }
       },
-      afterToolCall: async (_toolContext, signal) =>
-        signal?.aborted ? { terminate: true } : undefined,
+      afterToolCall: async (toolContext, signal) => {
+        await this.afterPlanToolCall(
+          agentId,
+          toolContext.toolCall,
+          toolContext.result,
+          toolContext.isError,
+        );
+        return signal?.aborted ? { terminate: true } : undefined;
+      },
     });
     if (application.maxTurns) {
       let turns = 0;

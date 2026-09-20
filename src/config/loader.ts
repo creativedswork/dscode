@@ -28,7 +28,10 @@ export const PROVIDER_ENV_VARS: Record<string, string> = {
   "moonshotai-cn": "MOONSHOT_API_KEY",
 };
 
-import type { RuntimeConfig } from "./types.js";
+import {
+  DEFAULT_TERMINAL_PLAN_RECOVERY_TTL_MS,
+  type RuntimeConfig,
+} from "./types.js";
 import type { MCPProtocolVersion, MCPServerConfig, MCPTransport } from "../mcp/types.js";
 import { DEFAULT_MCP_PROTOCOL_VERSION } from "../mcp/types.js";
 import { getThinkingLevel } from "../models/index.js";
@@ -259,6 +262,15 @@ export function loadConfig(
   const visionKey = (userConfig.vision as any)?.key as string | undefined;
   const vision = visionProvider && visionModel ? { provider: visionProvider, model: visionModel, key: visionKey } : undefined;
   const maxTokens = Number(environment.DSCODE_MAX_TOKENS) || (merged.maxTokens as number) || 16384;
+  const configuredPlanTtl = environment.DSCODE_PLAN_TERMINAL_RECOVERY_TTL_MS
+    ?? (merged.plan as { terminalRecoveryTtlMs?: unknown } | undefined)
+      ?.terminalRecoveryTtlMs;
+  const parsedPlanTtl = Number(configuredPlanTtl);
+  const terminalRecoveryTtlMs = configuredPlanTtl !== undefined
+      && Number.isFinite(parsedPlanTtl)
+      && parsedPlanTtl >= 0
+    ? parsedPlanTtl
+    : DEFAULT_TERMINAL_PLAN_RECOVERY_TTL_MS;
 
   // Parse Claude Code compatible allow/deny arrays
   const userAllow = ((userSettings.permissions as any)?.allow as string[]) ?? [];
@@ -377,6 +389,7 @@ export function loadConfig(
         ? environment.DSCODE_AGENTS_ENABLED !== "false"
         : (merged.agents as { enabled?: boolean } | undefined)?.enabled ?? true,
     },
+    plan: { terminalRecoveryTtlMs },
     managedAgentsDir: typeof (environment.DSCODE_MANAGED_AGENTS_DIR ?? merged.managedAgentsDir) === "string"
       ? resolve(String(environment.DSCODE_MANAGED_AGENTS_DIR ?? merged.managedAgentsDir))
       : undefined,

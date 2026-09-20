@@ -75,6 +75,7 @@ function setup(
   runtime: AgentProcessRuntime,
   availableTools: () => readonly string[] = () => ["read_file"],
   generalOverrides: Partial<AgentApplicationSnapshot> = {},
+  persistedProcesses: any[] = [],
 ): {
   supervisor: AgentSupervisor;
   mainAgentId: string;
@@ -106,9 +107,13 @@ function setup(
         parentSessionId: value.parentSessionId,
         contextParentSessionId: value.context.parentSessionId,
         allowedTools: value.context.allowedTools,
+        taskState: value.context.taskState,
         recording: value.recording,
         runtimeSnapshot: value.runtimeSnapshot,
       });
+    },
+    async list() {
+      return persistedProcesses;
     },
   };
   const logger = { error: vi.fn() };
@@ -181,7 +186,9 @@ describe("AgentSupervisor", () => {
     expect(child.context.depth).toBe(1);
     expect(events).toContain("agent:spawned");
     expect(events).toContain("agent:output");
-    expect(events.at(-1)).toBe("agent:exit");
+    expect(events.slice(-2)).toEqual(["agent:exit", "agent:state"]);
+    expect(supervisor.require(mainAgentId).state).toBe("running");
+    expect(supervisor.foreground("session-1")?.agentId).toBe(mainAgentId);
     expect(saves.length).toBeGreaterThanOrEqual(3);
   });
 
@@ -228,7 +235,7 @@ describe("AgentSupervisor", () => {
       state: "completed",
     }));
     expect(events).toContain("agent:spawned");
-    expect(events.at(-1)).toBe("agent:exit");
+    expect(events.slice(-2)).toEqual(["agent:exit", "agent:state"]);
   });
 
   it("separates the display prompt from the runtime prompt", async () => {
@@ -317,6 +324,34 @@ describe("AgentSupervisor", () => {
       parentSessionId: "session-2",
       contextParentSessionId: "session-2",
     }));
+  });
+
+  it("clears the previous Session Plan binding during Main rebind", async () => {
+    const { supervisor, mainAgentId } = setup(new ImmediateRuntime());
+    const main = supervisor.require(mainAgentId);
+    main.context = Object.freeze({
+      ...main.context,
+      activePlan: {
+        planId: "plan-session-1",
+        revision: 2,
+        digest: "a".repeat(64),
+      },
+      planBinding: {
+        planId: "plan-session-1",
+        revision: 2,
+        digest: "a".repeat(64),
+        itemId: "item-1",
+        agentId: mainAgentId,
+        role: "main" as const,
+        boundAt: 10,
+      },
+    });
+
+    await supervisor.updateParentSession(mainAgentId, "session-2");
+
+    expect(main.context.parentSessionId).toBe("session-2");
+    expect(main.context.activePlan).toBeUndefined();
+    expect(main.context.planBinding).toBeUndefined();
   });
 
   it("refreshes Main capabilities for MCP tools registered after initialization", async () => {
@@ -474,5 +509,158 @@ describe("AgentSupervisor", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(supervisor.require(spawned.agentId).state).toBe("running");
     await supervisor.kill(spawned.agentId);
+  });
+
+  it("commits Main TaskState before emitting one immutable update", async () => {
+    const { supervisor, mainAgentId, saves } = setup(new ImmediateRuntime());
+    const observed: Array<{ frozen: boolean; persisted: boolean }> = [];
+    const events = (supervisor as any).events as HarnessEventBus;
+    events.on("task:updated", (event) => {
+      observed.push({
+        frozen: Object.isFrozen(event.taskState)
+          && Object.isFrozen(event.taskState.todoList),
+        persisted: saves.some((save: any) =>
+          save.taskState?.version === event.taskState.version
+        ),
+      });
+    });
+
+    const result = await supervisor.mutateTaskState({
+      operation: "initialize",
+      callerAgentId: mainAgentId,
+      expectedVersion: 0,
+      taskId: "task-1",
+      requestId: "request-1",
+      sessionId: "session-1",
+      todoList: [{ todoId: "outcome-1", title: "Playable result" }],
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      taskState: { version: 1, status: "active" },
+    });
+    expect(observed).toEqual([{ frozen: true, persisted: true }]);
+
+    const conflict = await supervisor.mutateTaskState({
+      operation: "append",
+      callerAgentId: mainAgentId,
+      expectedVersion: 0,
+      items: [{ todoId: "outcome-2", title: "Mobile result" }],
+    });
+    expect(conflict).toMatchObject({
+      ok: false,
+      reason: "conflict",
+      currentVersion: 1,
+    });
+    expect(observed).toHaveLength(1);
+  });
+
+  it("rejects SubAgent mutation and restores TaskState by Session", async () => {
+    const { supervisor, mainAgentId } = setup(new ImmediateRuntime());
+    const initialized = await supervisor.mutateTaskState({
+      operation: "initialize",
+      callerAgentId: mainAgentId,
+      expectedVersion: 0,
+      taskId: "task-1",
+      requestId: "request-1",
+      sessionId: "session-1",
+      todoList: [{ todoId: "outcome-1", title: "First result" }],
+    });
+    expect(initialized.ok).toBe(true);
+
+    const child = await supervisor.spawn({
+      application: "general",
+      input: { prompt: "done" },
+      parentAgentId: mainAgentId,
+    });
+    await expect(supervisor.mutateTaskState({
+      operation: "append",
+      callerAgentId: child.agentId,
+      expectedVersion: 1,
+      items: [{ todoId: "forbidden", title: "Forbidden" }],
+    })).resolves.toMatchObject({ ok: false, reason: "not_main" });
+
+    await supervisor.updateParentSession(mainAgentId, "session-2");
+    expect(supervisor.getTaskState("session-1")).toBeUndefined();
+    expect(supervisor.getTaskState("session-2")).toBeUndefined();
+    await supervisor.updateParentSession(mainAgentId, "session-1");
+    expect(supervisor.getTaskState("session-1")).toMatchObject({
+      taskId: "task-1",
+      version: 1,
+    });
+  });
+
+  it("restores persisted TaskState into a restarted Main without Session leakage", async () => {
+    const persistedTaskState = {
+      taskId: "task-before-restart",
+      requestId: "request-before-restart",
+      sessionId: "session-2",
+      version: 5,
+      status: "completed" as const,
+      todoList: [{
+        todoId: "outcome-1",
+        title: "Playable result",
+        status: "completed" as const,
+        result: "Verified",
+      }],
+      history: [{
+        version: 5,
+        operation: "transition" as const,
+        summary: "Completed outcome-1",
+        committedAt: 50,
+      }],
+      updatedAt: 50,
+    };
+    const { supervisor, mainAgentId } = setup(
+      new ImmediateRuntime(),
+      () => ["read_file"],
+      {},
+      [
+        {
+          role: "main",
+          context: {
+            taskState: { ...persistedTaskState, version: 4, updatedAt: 40 },
+          },
+        },
+        {
+          role: "main",
+          context: { taskState: persistedTaskState },
+        },
+        {
+          role: "main",
+          context: {
+            taskState: {
+              ...persistedTaskState,
+              sessionId: "session-3",
+              version: 99,
+            },
+          },
+        },
+        {
+          role: "subagent",
+          context: {
+            taskState: { ...persistedTaskState, version: 100 },
+          },
+        },
+      ],
+    );
+
+    await supervisor.updateParentSession(mainAgentId, "session-2");
+
+    const main = supervisor.require(mainAgentId);
+    expect(main.context.taskState).toEqual(persistedTaskState);
+    expect(Object.isFrozen(main.context.taskState)).toBe(true);
+    await expect(supervisor.mutateTaskState({
+      operation: "append",
+      callerAgentId: mainAgentId,
+      expectedVersion: 5,
+      items: [{ todoId: "outcome-2", title: "Restart-safe result" }],
+    })).resolves.toMatchObject({
+      ok: true,
+      taskState: { sessionId: "session-2", version: 6 },
+    });
+
+    await supervisor.updateParentSession(mainAgentId, "session-4");
+    expect(main.context.taskState).toBeUndefined();
   });
 });

@@ -15,6 +15,70 @@ const runningActivity = {
 };
 
 describe("conversationReducer — Agent Activity", () => {
+  it("appends one stable Planning Mode marker", () => {
+    const event: ServerEvent = {
+      type: "planning_mode",
+      id: "planner-1",
+      createdAt: 1700000000000,
+    };
+
+    const once = conversationReducer([], event);
+    const twice = conversationReducer(once, {
+      ...event,
+      id: "replacement-planner",
+    });
+
+    expect(twice).toEqual([{
+      id: "planning-mode-planner-1",
+      role: "system",
+      content: "进入 Planning Mode",
+      createdAt: 1700000000000,
+    }]);
+  });
+
+  it("updates one stable Plan result marker", () => {
+    const generated: ServerEvent = {
+      type: "plan_ready",
+      id: "plan-1",
+      text: "计划已生成 · 2 项任务",
+      createdAt: 1700000000000,
+    };
+    const updated: ServerEvent = {
+      ...generated,
+      text: "执行计划已更新 · 3 项任务",
+      createdAt: 1700000001000,
+    };
+
+    const once = conversationReducer([], generated);
+    const twice = conversationReducer(once, updated);
+
+    expect(twice).toEqual([{
+      id: "plan-ready-plan-1",
+      role: "system",
+      content: "执行计划已更新 · 3 项任务",
+      createdAt: 1700000001000,
+    }]);
+  });
+
+  it("records each Plan response as one user message", () => {
+    const event: ServerEvent = {
+      type: "plan_response",
+      id: "interaction-1",
+      text: "已确认：视觉风格：复古像素",
+      createdAt: 1700000000000,
+    };
+
+    const once = conversationReducer([], event);
+    const twice = conversationReducer(once, event);
+
+    expect(twice).toEqual([{
+      id: "plan-response-interaction-1",
+      role: "user",
+      content: "已确认：视觉风格：复古像素",
+      createdAt: 1700000000000,
+    }]);
+  });
+
   it("appends a new activity on spawn", () => {
     const previous: UIMessage[] = [{
       id: "user-1",
@@ -108,8 +172,8 @@ describe("conversationReducer — Agent Activity", () => {
     messages = conversationReducer(messages, {
       type: "tool_start",
       toolCallId: "spawn-1",
-      name: "spawn_agent",
-      args: { application: "general" },
+      name: "read_file",
+      args: { path: "README.md" },
     });
     messages = conversationReducer(messages, {
       type: "agent_activity",
@@ -118,7 +182,7 @@ describe("conversationReducer — Agent Activity", () => {
     messages = conversationReducer(messages, {
       type: "tool_end",
       toolCallId: "spawn-1",
-      name: "spawn_agent",
+      name: "read_file",
       result: "completed",
       isError: false,
     });
@@ -166,6 +230,131 @@ describe("conversationReducer — Agent Activity", () => {
       state: "failed",
       error: "Timed out",
     });
+  });
+
+  it("hides verify_item from live events and ready replay", () => {
+    const streaming = conversationReducer([], {
+      type: "assistant_start",
+      messageId: "assistant-1",
+    });
+    const afterStart = conversationReducer(streaming, {
+      type: "tool_start",
+      toolCallId: "verify-1",
+      name: "verify_item",
+      args: { itemId: "item-1" },
+    });
+    const afterEnd = conversationReducer(afterStart, {
+      type: "tool_end",
+      toolCallId: "verify-1",
+      name: "verify_item",
+      result: "Verification command was rejected",
+      isError: true,
+    });
+    const replay = conversationReducer([], {
+      type: "ready",
+      model: "test-model",
+      config: {} as any,
+      messages: [{
+        role: "assistant",
+        content: "",
+        tools: [{
+          toolCallId: "verify-1",
+          name: "verify_item",
+          args: "",
+          result: "Verification command was rejected",
+          isError: true,
+        }],
+      }],
+    });
+
+    expect(afterEnd[0].tools).toEqual([]);
+    expect(replay[0].tools).toEqual([]);
+  });
+
+  it("hides retryable Plan command corrections but keeps real Bash failures", () => {
+    const invalidCommand =
+      "Plan side effect blocked: invalid_command: Run each command separately and exactly as stored: npm test, npm run typecheck";
+    const correctionOnly = conversationReducer(conversationReducer([], {
+      type: "tool_start",
+      toolCallId: "retry-only",
+      name: "bash",
+      args: { command: "npm test && npm run typecheck" },
+    }), {
+      type: "tool_end",
+      toolCallId: "retry-only",
+      name: "bash",
+      result: invalidCommand,
+      resultDetail: { summary: invalidCommand, text: invalidCommand },
+      isError: true,
+    });
+    let messages = conversationReducer([], {
+      type: "assistant_start",
+      messageId: "assistant-1",
+    });
+    for (const toolCallId of ["retry", "scope", "failure"]) {
+      messages = conversationReducer(messages, {
+        type: "tool_start",
+        toolCallId,
+        name: "bash",
+        args: { command: toolCallId },
+      });
+    }
+    messages = conversationReducer(messages, {
+      type: "tool_end",
+      toolCallId: "retry",
+      name: "bash",
+      result: `\`\`\`sh\n${invalidCommand}\n\`\`\``,
+      resultDetail: { summary: invalidCommand, text: invalidCommand },
+      isError: true,
+    });
+    messages = conversationReducer(messages, {
+      type: "tool_end",
+      toolCallId: "scope",
+      name: "bash",
+      result: "Plan side effect blocked: scope_mismatch: Resource is outside Plan approval",
+      isError: true,
+    });
+    messages = conversationReducer(messages, {
+      type: "tool_end",
+      toolCallId: "failure",
+      name: "bash",
+      result: "command failed",
+      isError: true,
+    });
+
+    expect(correctionOnly).toEqual([]);
+    expect(messages[0].tools).toEqual([
+      expect.objectContaining({ toolCallId: "scope", isError: true }),
+      expect.objectContaining({ toolCallId: "failure", isError: true }),
+    ]);
+
+    const replay = conversationReducer([], {
+      type: "ready",
+      model: "test-model",
+      config: {} as any,
+      messages: [{
+        role: "assistant",
+        content: "",
+        tools: [{
+          toolCallId: "retry",
+          name: "bash",
+          args: "npm test && npm run typecheck",
+          result: invalidCommand,
+          resultDetail: { summary: invalidCommand, text: invalidCommand },
+          isError: true,
+        }, {
+          toolCallId: "scope",
+          name: "bash",
+          args: "curl example.com",
+          result: "Plan side effect blocked: effect_mismatch: Effect is outside Plan approval",
+          isError: true,
+        }],
+      }],
+    });
+
+    expect(replay[0].tools).toEqual([
+      expect.objectContaining({ toolCallId: "scope", isError: true }),
+    ]);
   });
 
   it("clears activities with the rest of the conversation", () => {

@@ -17,12 +17,19 @@ import type {
 } from "../../session/types.js";
 import { executeSlashCommand, getSlashCommandAutocomplete, resolveCustomCommand } from "../../slash-commands/builtins.js";
 import type { HarnessAPI } from "../../application/harness-api.js";
+import type { HarnessEvent } from "../../application/events.js";
+import { planInteractionRequest } from "../../application/plan/plan-events.js";
+import { planExecutionUnits } from "../../application/plan/execution-model.js";
+import type { PlanMutationResult } from "../../application/plan/plan-port.js";
+import type { PlanRecord } from "../../application/plan/types.js";
 import type {
   McpAppResourceProxy,
 } from "../../mcp/app/types.js";
 import { rebuildDisplayMessages } from "../shared/session-projector.js";
 import { AgentActivityProjector } from "../shared/agent-activity.js";
+import { projectTraceTreeFromSession } from "../shared/trace-tree-projection.js";
 import { harnessEventToConversationEvent } from "../shared/harness-conversation-adapter.js";
+import { isConversationToolResultVisible } from "../shared/tool-visibility.js";
 import { formatAgentDisplayId } from "../shared/agent-id.js";
 import { serializeArtifactThemeVariables } from "../../application/artifact-theme.js";
 import { stageAttachedFiles } from "../../project-files/attachments.js";
@@ -42,6 +49,46 @@ import type {
 
 export const DASHBOARD_AGENT_TASK_SUMMARY_LIMIT = 100;
 export const DASHBOARD_AGENT_OUTCOME_SUMMARY_LIMIT = 120;
+const ALIGNMENT_CONSTRAINT_PREFIX = "alignment:";
+
+function projectPlanResponse(
+  plan: Readonly<PlanRecord>,
+  interactionId: string,
+): ServerEvent | undefined {
+  const constraint = plan.constraints.find(
+    (item) => item.constraintId === `${ALIGNMENT_CONSTRAINT_PREFIX}${interactionId}`,
+  );
+  if (!constraint) return undefined;
+  return {
+    type: "plan_response",
+    id: interactionId,
+    text: `已确认：${constraint.description}`,
+    createdAt: plan.updatedAt,
+  };
+}
+
+export function projectPlanReady(
+  plan: Readonly<PlanRecord>,
+): ServerEvent | undefined {
+  if (planExecutionUnits(plan).length === 0) return undefined;
+  const replanning = plan.baseRevision !== undefined
+    && ["drafting", "awaiting_decision", "awaiting_approval"]
+      .includes(plan.status);
+  const needsReplan = plan.status === "needs_replan";
+  if (!plan.approval && !replanning && !needsReplan) return undefined;
+  return {
+    type: "plan_ready",
+    id: plan.planId,
+    text: needsReplan
+      ? "执行计划需要调整"
+      : replanning
+      ? "正在调整执行计划"
+      : plan.baseRevision === undefined
+        ? "计划已生成"
+        : "执行计划已更新",
+    createdAt: plan.approval?.approvedAt ?? plan.updatedAt,
+  };
+}
 
 export function buildDashboardThemeContract(): string {
   return `DESIGN SYSTEM THEME CONTRACT:
@@ -241,7 +288,8 @@ export const SESSION_DASHBOARD_VISUAL_REQUIREMENTS = `DASHBOARD CONTENT REQUIREM
 - Full SubAgent execution detail belongs exclusively in Chat Agent Activity and must not be duplicated in Dashboard.
 - Failed, terminated, and killed records must use the error semantic colors plus visible status text; never communicate failure by color alone.
 - Label totalDurationFormatted as "Delegated time" and keep it distinct from Session active time because parallel Agents may overlap.
-- When subagents.total is 0, retain the Agent section with an explicit "Main Agent only" empty state.`;
+- When subagents.total is 0, retain the Agent section with an explicit "Main Agent only" empty state.
+- Reserve an empty placeholder block <div id="trace-tree"></div> in the report content flow (after the overview metric cards and before the "Agent Processes" section). Leave it completely empty with no content or styles — the client injects an interactive Trace trajectory tree widget into that exact placeholder.`;
 
 export function buildSessionDashboardUserPrompt(sessionSummary: string): string {
   return `Create a rich visual dashboard for this coding session. Use the data below to build a comprehensive, beautiful dashboard:
@@ -354,6 +402,35 @@ export class WebUiBackend implements UiBackend {
     ) => harnessEventToConversationEvent(event, {
       sessionId: h.sessions.currentId(),
     });
+    const activeForegroundPlanner = () => h.agents.list().some((process) =>
+      process.parentSessionId === h.sessions.currentId()
+      && process.application.name === "planner"
+      && process.attachment === "foreground"
+      && !process.exit
+    );
+    const showPlannerState = (
+      plannerAgentId: string,
+      includeInitialMarker: boolean,
+    ) => {
+      const sessionId = h.sessions.currentId();
+      if (!sessionId) return;
+      void h.plans.getActivePlan(sessionId).then((plan) => {
+        if (h.sessions.currentId() !== sessionId) return;
+        const replanning = plan?.baseRevision !== undefined;
+        if (includeInitialMarker && !replanning) {
+          this.broadcast({
+            type: "planning_mode",
+            id: plan?.planId ?? plannerAgentId,
+            createdAt: Date.now(),
+          });
+        }
+        this.broadcast({
+          type: "loader",
+          state: "show",
+          text: replanning ? "正在调整执行计划..." : "正在规划下一步...",
+        });
+      }).catch(() => {});
+    };
 
     h.events.on("llm:thinking:delta", (e) => {
       const projected = projectConversationEvent(e);
@@ -383,17 +460,25 @@ export class WebUiBackend implements UiBackend {
         const index = this.currentAssistant.tools.findIndex(
           (tool) => tool.toolCallId === e.toolCallId,
         );
-        const completed: ToolCallEntry = {
-          toolCallId: e.toolCallId,
-          name: e.name,
-          args: index >= 0 ? this.currentAssistant.tools[index].args : "",
-          result: projected.result,
-          resultDetail: projected.resultDetail,
-          isError: e.isError,
-          images: projected.images,
-        };
-        if (index >= 0) this.currentAssistant.tools[index] = completed;
-        else this.currentAssistant.tools.push(completed);
+        if (!isConversationToolResultVisible(
+          e.name,
+          projected.resultDetail?.text ?? projected.result,
+          e.isError,
+        )) {
+          if (index >= 0) this.currentAssistant.tools.splice(index, 1);
+        } else {
+          const completed: ToolCallEntry = {
+            toolCallId: e.toolCallId,
+            name: e.name,
+            args: index >= 0 ? this.currentAssistant.tools[index].args : "",
+            result: projected.result,
+            resultDetail: projected.resultDetail,
+            isError: e.isError,
+            images: projected.images,
+          };
+          if (index >= 0) this.currentAssistant.tools[index] = completed;
+          else this.currentAssistant.tools.push(completed);
+        }
       }
       this.broadcast(projected);
       this.broadcastContextWindow(false);    });
@@ -411,18 +496,116 @@ export class WebUiBackend implements UiBackend {
       if (projected) this.broadcast(projected);
       this.broadcastContextWindow(true, toolsForBroadcast);
       this.pushSessionListToAll();
+      void this.broadcastTraceTree();
     });
     h.events.on("turn:abort", () => { this.stopSessionTimeBroadcast(); this.broadcast({ type: "loader", state: "hide" }); });
     h.events.on("turn:error", (e) => { this.broadcast({ type: "error", text: e.error }); });
     h.events.on("processing:start", () => { this.broadcast({ type: "loader", state: "show", text: "Thinking..." }); });
-    h.events.on("processing:stop", () => { this.stopSessionTimeBroadcast(); this.broadcast({ type: "loader", state: "hide" }); });
-    h.events.on("agent:spawned", projectAgentActivity);
-    h.events.on("agent:state", projectAgentActivity);
+    h.events.on("plan:route", (event) => {
+      if (event.decision.route === "plan") {
+        this.broadcast({
+          type: "loader",
+          state: "show",
+          text: "Waiting...",
+        });
+      }
+    });
+    h.events.on("processing:stop", () => {
+      if (activeForegroundPlanner()) return;
+      this.stopSessionTimeBroadcast();
+      this.broadcast({ type: "loader", state: "hide" });
+    });
+    h.events.on("agent:spawned", (event) => {
+      projectAgentActivity(event);
+      if (
+        event.application === "planner"
+        && event.attachment === "foreground"
+      ) {
+        showPlannerState(event.agentId, true);
+      }
+    });
+    h.events.on("agent:state", (event) => {
+      projectAgentActivity(event);
+      const process = h.agents.get(event.agentId);
+      if (
+        event.state === "running"
+        && process?.application.name === "planner"
+        && process.parentSessionId === h.sessions.currentId()
+      ) {
+        showPlannerState(event.agentId, false);
+      }
+    });
     h.events.on("agent:progress", projectAgentActivity);
     h.events.on("agent:output", projectAgentActivity);
-    h.events.on("agent:exit", projectAgentActivity);
+    h.events.on("agent:exit", (event) => {
+      projectAgentActivity(event);
+      const process = h.agents.get(event.result.agentId);
+      if (
+        process?.application.name === "planner"
+        && process.parentSessionId === h.sessions.currentId()
+      ) {
+        this.stopSessionTimeBroadcast();
+        this.broadcast({ type: "loader", state: "hide" });
+      }
+    });
     h.events.on("eval:dashboard", (event) => {
       this.broadcast(projectEvalDashboardState(event.state));
+    });
+    h.events.on("plan:updated", (event) => {
+      if (event.plan.sessionId === h.sessions.currentId()) {
+        this.broadcast({ type: "plan_state", plan: event.plan });
+        const ready = projectPlanReady(event.plan);
+        if (ready) this.broadcast(ready);
+        if (!["drafting", "awaiting_decision", "awaiting_approval", "needs_replan"]
+          .includes(event.plan.status)) {
+          this.stopSessionTimeBroadcast();
+          this.broadcast({ type: "loader", state: "hide" });
+        }
+      }
+    });
+    h.events.on("task:updated", (event) => {
+      if (event.sessionId === h.sessions.currentId()) {
+        this.broadcast({
+          type: "task_state",
+          sessionId: event.sessionId,
+          taskState: event.taskState,
+        });
+      }
+    });
+    h.events.on("plan:episode", (event) => {
+      this.broadcast({
+        type: "plan_episode",
+        planId: event.planId,
+        episode: event.episode,
+      });
+    });
+    h.events.on("plan:impasse", (event) => {
+      this.broadcast({
+        type: "plan_impasse",
+        planId: event.planId,
+        episodeId: event.episodeId,
+        incident: event.incident,
+      });
+    });
+    h.events.on("plan:interaction", (event) => {
+      this.broadcast({
+        type: "loader",
+        state: "show",
+        text: "等待你选择方向...",
+      });
+      void this.broadcastPlanInteraction(event);
+    });
+    h.events.on("plan:conflict", (event) => {
+      if (event.plan.sessionId === h.sessions.currentId()) {
+        this.broadcast({
+          type: "plan_conflict",
+          planId: event.planId,
+          expectedVersion: event.expectedVersion,
+          currentVersion: event.currentVersion,
+          revision: event.revision,
+          plan: event.plan,
+        });
+      }
     });
     h.events.on("message:user", (e) => {
       const projected = projectConversationEvent(e);
@@ -583,6 +766,9 @@ export class WebUiBackend implements UiBackend {
     this.currentAssistant = null;
     this.pendingImages = [];
     this.broadcast({ type: "clear_conversation" });
+    this.broadcast({ type: "plan_state", plan: null });
+    this.broadcast({ type: "plan_episode", planId: "", episode: null });
+    this.broadcast({ type: "task_state", sessionId: "", taskState: null });
     this.broadcastContextWindow(true, toolsForBroadcast3);
   }
 
@@ -594,7 +780,9 @@ export class WebUiBackend implements UiBackend {
       config: this.buildConfigData(),
       messages: this.buildConversationHistory(),
     });
+    void this.syncPlanState();
     this.broadcastContextWindow(true);
+    void this.broadcastTraceTree();
   }
 
   takePendingPermission(): PendingPermission | undefined {
@@ -654,13 +842,15 @@ export class WebUiBackend implements UiBackend {
     const messages = this.buildConversationHistory();
     const model = this.harness.conversation.snapshot().modelName;
 
-      client.send({
+    client.send({
       type: "ready",
       model,
       config: configData,
       messages,
     });
+    void this.syncPlanState(client);
     this.broadcastContextWindow(true);
+    void this.broadcastTraceTree();
     if (this.harness.mcp.list().length > 0) {
       this.pushMcpState();
     }
@@ -793,10 +983,15 @@ export class WebUiBackend implements UiBackend {
               text,
               imageContents,
               displayText,
+              cmd.planMode ?? "auto",
             );
           } else {
             this.pendingImages = [];
-            await this.harness.conversation.prompt(text);
+            await this.harness.conversation.prompt(
+              text,
+              undefined,
+              cmd.planMode ?? "auto",
+            );
           }
         } catch (err) {
           this.harness.conversation.save();
@@ -810,6 +1005,52 @@ export class WebUiBackend implements UiBackend {
         break;
       }
 
+      case "plan_decision": {
+        await this.handlePlanMutation(client, cmd, () => this.harness.plans.submitDecision({
+          planId: cmd.planId,
+          expectedVersion: cmd.expectedVersion,
+          commandId: cmd.commandId,
+          interactionId: cmd.interactionId,
+          interactionPayloadDigest: cmd.interactionPayloadDigest,
+          action: cmd.action,
+        }));
+        break;
+      }
+      case "plan_approve": {
+        await this.handlePlanMutation(client, cmd, () => this.harness.plans.approve({
+          planId: cmd.planId,
+          expectedVersion: cmd.expectedVersion,
+          commandId: cmd.commandId,
+          interactionId: cmd.interactionId,
+          interactionPayloadDigest: cmd.interactionPayloadDigest,
+          revision: cmd.revision,
+          digest: cmd.digest,
+          acknowledgedEffects: cmd.acknowledgedEffects,
+        }));
+        break;
+      }
+      case "plan_replan": {
+        await this.handlePlanMutation(client, cmd, () => this.harness.plans.requestReplan({
+          planId: cmd.planId,
+          expectedVersion: cmd.expectedVersion,
+          commandId: cmd.commandId,
+          reason: cmd.reason,
+        }));
+        break;
+      }
+      case "plan_cancel": {
+        await this.handlePlanMutation(client, cmd, () => this.harness.plans.cancel({
+          planId: cmd.planId,
+          expectedVersion: cmd.expectedVersion,
+          commandId: cmd.commandId,
+        }));
+        break;
+      }
+      case "plan_adjust":
+      case "plan_continue": {
+        await this.handleEpisodeRecovery(client, cmd);
+        break;
+      }
       case "abort": {
         this.harness.conversation.abort();
         // Save pending permission to session metadata before denying,
@@ -1088,6 +1329,178 @@ export class WebUiBackend implements UiBackend {
     this.wsServer.broadcast(projectSessionListEvent(this.harness));
   }
 
+  private async handlePlanMutation(
+    client: WebSocketClient,
+    command: Extract<ClientCommand, {
+      type: "plan_decision" | "plan_approve" | "plan_replan" | "plan_cancel";
+    }>,
+    operation: () => Promise<PlanMutationResult>,
+  ): Promise<void> {
+    if (this.harness.sessions.currentId() !== command.sessionId) {
+      await this.syncPlanState(client);
+      return;
+    }
+    const activePlan = await this.harness.plans.getActivePlan(command.sessionId);
+    if (this.harness.sessions.currentId() !== command.sessionId
+      || activePlan?.planId !== command.planId) {
+      await this.syncPlanState(client);
+      return;
+    }
+
+    let domainConflictSent = false;
+    const unsubscribe = this.harness.events.on("plan:conflict", (event) => {
+      if (event.planId === command.planId
+        && event.expectedVersion === command.expectedVersion
+        && event.plan.sessionId === this.harness.sessions.currentId()) {
+        domainConflictSent = true;
+      }
+    });
+    let result: PlanMutationResult;
+    try {
+      result = await operation();
+    } finally {
+      unsubscribe();
+    }
+
+    if (this.harness.sessions.currentId() !== command.sessionId) {
+      await this.syncPlanState(client);
+      return;
+    }
+    if (result.ok) {
+      if (command.type === "plan_decision" && !result.duplicate) {
+        const response = projectPlanResponse(result.plan, command.interactionId);
+        if (response) this.broadcast(response);
+      }
+      if (result.duplicate) client.send({ type: "plan_state", plan: result.plan });
+      return;
+    }
+    if (result.reason === "conflict") {
+      if (!domainConflictSent) {
+        client.send({
+          type: "plan_conflict",
+          planId: result.conflict.current.planId,
+          expectedVersion: result.conflict.expectedVersion,
+          currentVersion: result.conflict.currentVersion,
+          revision: result.conflict.current.revision,
+          plan: result.conflict.current,
+        });
+      }
+    } else {
+      client.send({ type: "error", text: result.message });
+    }
+  }
+
+  private async handleEpisodeRecovery(
+    client: WebSocketClient,
+    command: Extract<ClientCommand, {
+      type: "plan_adjust" | "plan_continue";
+    }>,
+  ): Promise<void> {
+    if (this.harness.sessions.currentId() !== command.sessionId) {
+      await this.syncPlanState(client);
+      return;
+    }
+    const payload = {
+      commandId: command.commandId,
+      planId: command.planId,
+      expectedVersion: command.expectedVersion,
+      revision: command.revision,
+      digest: command.digest,
+    };
+    const result = command.type === "plan_adjust"
+      ? await this.harness.plans.adjustPlan({
+        ...payload,
+        operation: "adjust_plan",
+      })
+      : await this.harness.plans.continueExecution({
+        ...payload,
+        operation: "continue_execution",
+      });
+    client.send({
+      type: "plan_recovery_result",
+      commandId: command.commandId,
+      result,
+    });
+  }
+
+  private async syncPlanState(client?: WebSocketClient): Promise<void> {
+    const sessionId = this.harness.sessions.currentId();
+    const send = (event: ServerEvent) =>
+      client ? client.send(event) : this.broadcast(event);
+    if (!sessionId) {
+      send({ type: "plan_state", plan: null });
+      send({ type: "task_state", sessionId: "", taskState: null });
+      send({ type: "plan_episode", planId: "", episode: null });
+      return;
+    }
+    const taskState = await this.harness.tasks.getTaskState(sessionId);
+    if (this.harness.sessions.currentId() !== sessionId) return;
+    send({ type: "task_state", sessionId, taskState: taskState ?? null });
+    const activePlan = await this.harness.plans.getActivePlan(sessionId);
+    const plan = activePlan
+      ?? await this.harness.plans.getLatestPlan(sessionId);
+    if (this.harness.sessions.currentId() !== sessionId) return;
+    if (
+      plan
+      && ["drafting", "awaiting_decision", "awaiting_approval"].includes(plan.status)
+    ) {
+      send({
+        type: "planning_mode",
+        id: plan.planId,
+      });
+    }
+    send({ type: "plan_state", plan: plan ?? null });
+    send({
+      type: "plan_episode",
+      planId: plan?.planId ?? "",
+      episode: plan ? await this.harness.plans.getEpisode(plan.planId) ?? null : null,
+    });
+    if (plan) {
+      const ready = projectPlanReady(plan);
+      if (ready) send(ready);
+      for (const constraint of plan.constraints) {
+        if (!constraint.constraintId.startsWith(ALIGNMENT_CONSTRAINT_PREFIX)) continue;
+        const response = projectPlanResponse(
+          plan,
+          constraint.constraintId.slice(ALIGNMENT_CONSTRAINT_PREFIX.length),
+        );
+        if (response) send(response);
+      }
+    }
+    if (!plan?.pendingInteraction) return;
+    send({
+      type: "loader",
+      state: "show",
+      text: "等待你选择方向...",
+    });
+    send({
+      type: "plan_interaction",
+      planId: plan.planId,
+      version: plan.version,
+      revision: plan.revision,
+      interaction: plan.pendingInteraction,
+      request: planInteractionRequest(plan, plan.pendingInteraction),
+    });
+  }
+
+  private async broadcastPlanInteraction(
+    event: Extract<HarnessEvent, { type: "plan:interaction" }>,
+  ): Promise<void> {
+    const sessionId = this.harness.sessions.currentId();
+    if (!sessionId) return;
+    const plan = await this.harness.plans.getActivePlan(sessionId);
+    if (this.harness.sessions.currentId() !== sessionId
+      || plan?.planId !== event.planId) return;
+    this.broadcast({
+      type: "plan_interaction",
+      planId: event.planId,
+      version: event.version,
+      revision: event.revision,
+      interaction: event.interaction,
+      request: event.request,
+    });
+  }
+
   private async handleConfig(
     client: WebSocketClient,
     cmd: ClientCommand & { type: "config" },
@@ -1240,6 +1653,7 @@ export class WebUiBackend implements UiBackend {
         }
         if (wasCurrent) {
           client.send({ type: "clear_conversation" });
+          client.send({ type: "plan_state", plan: null });
         }
         this.cleanupUploadDir(cmd.id);
         client.send({ type: "info", display: "toast", text: "Session deleted." });
@@ -1401,6 +1815,22 @@ export class WebUiBackend implements UiBackend {
   }
 
 
+  private async broadcastTraceTree(): Promise<void> {
+    try {
+      const snapshot = this.harness.conversation.snapshot();
+      const sessionId = this.harness.sessions.currentId() ?? "unknown";
+      const tree = await projectTraceTreeFromSession({
+        messages: snapshot.messages,
+        agentMessages: snapshot.agentMessages,
+        sessionId,
+        loadProcesses: (ids) => this.harness.agents.loadPersisted(ids),
+        resolveImage: (ref) => this.harness.conversation.resolveImage(ref),
+      });
+      this.broadcast({ type: "trace_tree", tree });
+    } catch {
+      // Trace projection is read-only best-effort; never break the dashboard.
+    }
+  }
   private broadcast(event: ServerEvent): void {
     this.wsServer.broadcast(event);
   }
@@ -1596,6 +2026,7 @@ Modify the HTML to fulfill the user's request. Output the complete modified HTML
       // DEBUG: write artifact output for inspection
       try { writeFileSync(join(this.config.projectPath, "_artifact_debug.html"), fullHtml, "utf-8"); } catch {}
       this.lastArtifactHtml = fullHtml;
+      if (cmd.context === "session_dashboard") void this.broadcastTraceTree();
       client.send({ type: "artifact_end" });
     } catch (err) {
       client.send({ type: "artifact_end" });

@@ -1,3 +1,5 @@
+import type { ContentBounds } from "./types";
+
 export interface CascadeCandidate {
   index: number;
   struck: boolean;
@@ -24,6 +26,55 @@ export interface CascadeColliderGroup {
   right: number;
 }
 
+export const LONG_CASCADE_ROW_THRESHOLD = 8;
+export const LONG_CASCADE_DIRECT_HITS = 3;
+
+function nearlyEqual(a: number, b: number, tolerance = 0.75): boolean {
+  return Math.abs(a - b) <= tolerance;
+}
+
+function sameVisualLine(
+  a: Pick<ContentBounds, "top" | "bottom">,
+  b: Pick<ContentBounds, "top" | "bottom">,
+  lineTolerance: number,
+): boolean {
+  if (Math.abs(a.top - b.top) <= lineTolerance) return true;
+  const overlap = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+  const minHeight = Math.min(a.bottom - a.top, b.bottom - b.top);
+  return minHeight > 0 && overlap / minHeight >= 0.6;
+}
+
+export function groupVisualLineRects(
+  rects: ContentBounds[],
+  lineTolerance = 3,
+): ContentBounds[] {
+  const ordered = rects
+    .filter((rect) => rect.right > rect.left && rect.bottom > rect.top)
+    .sort((a, b) => a.top - b.top || a.left - b.left);
+  const unique = ordered.filter((rect, index) => {
+    const previous = ordered[index - 1];
+    return !previous
+      || !nearlyEqual(rect.top, previous.top)
+      || !nearlyEqual(rect.bottom, previous.bottom)
+      || !nearlyEqual(rect.left, previous.left)
+      || !nearlyEqual(rect.right, previous.right);
+  });
+
+  return groupCascadeColliderFragments(
+    unique.map((rect, index) => ({
+      ...rect,
+      index,
+      blockId: "visual-line",
+    })),
+    lineTolerance,
+  ).map(({ top, bottom, left, right }) => ({
+    top,
+    bottom,
+    left,
+    right,
+  }));
+}
+
 export function groupCascadeColliderFragments(
   fragments: CascadeColliderFragment[],
   lineTolerance = 3,
@@ -34,7 +85,7 @@ export function groupCascadeColliderFragments(
     const group = fragment.blockId
       ? groups.find((candidate) =>
           candidate.blockId === fragment.blockId
-          && Math.abs(candidate.top - fragment.top) <= lineTolerance,
+          && sameVisualLine(candidate, fragment, lineTolerance),
         )
       : undefined;
 
@@ -67,20 +118,51 @@ export function hasRenderableColliderContent(
   return colliderType === "media-item" || !!textContent?.trim();
 }
 
+export function intersectContentBounds(
+  bounds: ContentBounds,
+  clip: ContentBounds,
+): ContentBounds | null {
+  const intersection = {
+    top: Math.max(bounds.top, clip.top),
+    bottom: Math.min(bounds.bottom, clip.bottom),
+    left: Math.max(bounds.left, clip.left),
+    right: Math.min(bounds.right, clip.right),
+  };
+  return intersection.bottom > intersection.top
+    && intersection.right > intersection.left
+    ? intersection
+    : null;
+}
+
+export function hasSufficientVisibleHeight(
+  original: ContentBounds,
+  visible: ContentBounds,
+  minimumRatio = 0.5,
+): boolean {
+  const height = original.bottom - original.top;
+  return height > 0 && (visible.bottom - visible.top) / height >= minimumRatio;
+}
+
+export function shouldAbsorbCascadeOwner(
+  totalRows: number,
+  directHits: number,
+): boolean {
+  return totalRows >= LONG_CASCADE_ROW_THRESHOLD
+    && directHits >= LONG_CASCADE_DIRECT_HITS;
+}
+
 export function selectNextCascadeRowIndex(
   candidates: CascadeCandidate[],
-  currentTop: number,
-  canvasHeight: number,
+  _currentTop: number,
+  _canvasHeight: number,
 ): number {
-  const visible = candidates
-    .filter((candidate) =>
-      !candidate.struck
-      && candidate.top < canvasHeight
-      && candidate.bottom > 0,
-    )
+  // Full-content selection: return the topmost unstruck row in the entire list.
+  // No viewport (canvas height) filtering — rows below the fold must still be
+  // reachable so the cascade covers every rendered collider before gather.
+  const unstruck = candidates
+    .filter((candidate) => !candidate.struck)
     .sort((a, b) => a.top - b.top || a.left - b.left);
 
-  if (visible.length === 0) return -1;
-  const forward = visible.find((candidate) => candidate.top >= currentTop - 8);
-  return (forward ?? visible[0]).index;
+  if (unstruck.length === 0) return -1;
+  return unstruck[0].index;
 }

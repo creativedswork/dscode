@@ -1,9 +1,15 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { RegisteredAgentTool } from "../kernel/tool-effects.js";
+
+export type {
+  RegisteredAgentTool,
+  ToolCapability,
+  ToolEffect,
+} from "../kernel/tool-effects.js";
 
 export interface Driver {
   name: string;
   description: string;
-  tools: AgentTool<any>[];
+  tools: RegisteredAgentTool[];
   source: "builtin" | "mcp";
 }
 
@@ -11,18 +17,18 @@ export interface DriverRegistryPort {
   register(driver: Driver): void;
   get(name: string): Driver | undefined;
   listAll(): Driver[];
-  getAllTools(): AgentTool<any>[];
+  getAllTools(): RegisteredAgentTool[];
   getDriversBySource(source: "builtin" | "mcp"): Driver[];
   unregister(name: string): boolean;
 }
 
 export interface ToolCatalogPort {
   initialize(
-    skillTool: AgentTool<any>,
+    skillTool: RegisteredAgentTool,
     alwaysLoadNames?: Set<string>,
     appOnlyNames?: Set<string>,
   ): void;
-  buildToolsForRequest(): AgentTool<any>[];
+  buildToolsForRequest(): RegisteredAgentTool[];
   buildDeferredToolsHint(): string;
   getDeferredToolNames(): string[];
   getDiscoveredToolNames(): Set<string>;

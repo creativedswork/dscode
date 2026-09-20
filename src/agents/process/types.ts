@@ -4,6 +4,8 @@ import type {
   AgentProcessRuntime,
   AgentRuntimeSnapshot,
 } from "../runtimes/runtime.js";
+import type { PlanExecutionBinding } from "../../application/plan/types.js";
+import type { TaskState } from "./task-state.js";
 
 export type AgentProcessState =
   | "created"
@@ -63,6 +65,10 @@ export interface AgentContext {
   attachment: AgentAttachment;
   allowedTools: readonly string[];
   deniedTools: readonly string[];
+  activePlan?: Pick<PlanExecutionBinding, "planId" | "revision" | "digest">;
+  planBinding?: PlanExecutionBinding;
+  taskState?: Readonly<TaskState>;
+  retainedTaskStates?: Readonly<Record<string, Readonly<TaskState>>>;
   worktree?: {
     repositoryRoot: string;
     path: string;
@@ -143,7 +149,8 @@ export interface SpawnAgentRequest {
   contextMode?: AgentContextMode;
   contextSelection?: ContextSelection;
   cwd?: string;
-  onSpawn?: (agentId: string) => void;
+  onSpawn?: (agentId: string) => void | Promise<void>;
+  restoreParentOnExit?: boolean;
   signal?: AbortSignal;
 }
 

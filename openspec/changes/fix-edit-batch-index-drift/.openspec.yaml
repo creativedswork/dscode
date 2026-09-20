@@ -1,0 +1,5 @@
+schema: spec-driven-plus
+created: 2026-08-19
+goal: "Fix edit tool batched single-line operations corrupting files via anchor
+  index drift, and strengthen model guidance to trust safety-check failures and
+  verify multi-op edits by re-reading"

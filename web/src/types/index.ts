@@ -26,7 +26,26 @@ export type {
   EvalDashboardServerEvent,
   EvalDashboardStage,
   EvalDashboardEvidenceSummary,
+  ExecutionEpisodeSnapshot,
+  ExecutionIncidentSummary,
+  ExecutionRecoveryResult,
+  PlanApprovalRequest,
+  PlanDecisionAction,
+  PlanDecisionRequest,
+  PlanEffectCategory,
+  PlanInteraction,
+  PlanRecord,
+  PlanSubmissionMode,
+  TaskState,
+  TodoStatus,
 } from "@dscode/shared/types";
+
+export type { TraceTree } from "@dscode/shared/trace-tree";
+export type {
+  PlanViewConflict,
+  PlanViewInteraction,
+  PlanViewState,
+} from "@dscode/shared/plan-reducer";
 
 
 // ── Web-specific local types ──

@@ -5,6 +5,7 @@ import type {
   ToolResultRef,
 } from "./types.js";
 import { createToolResultProjection } from "./tool-result-projection.js";
+import { isConversationToolVisible } from "./tool-visibility.js";
 
 export interface HarnessConversationContext {
   sessionId?: string;
@@ -45,6 +46,7 @@ export function harnessEventToConversationEvent(
     case "llm:text:delta":
       return { type: "text_delta", delta: event.delta, createdAt };
     case "tool:start":
+      if (!isConversationToolVisible(event.name)) return undefined;
       return {
         type: "tool_start",
         toolCallId: event.toolCallId,
@@ -53,6 +55,7 @@ export function harnessEventToConversationEvent(
         createdAt,
       };
     case "tool:end": {
+      if (!isConversationToolVisible(event.name)) return undefined;
       const ref: ToolResultRef | undefined = context.sessionId
         ? {
             owner: "session",

@@ -328,7 +328,11 @@ Equivalent prompt
         allowedTools: ["read_file", "bash"],
         deniedTools: ["bash"],
       },
-      availableTools: ["read_file", "bash", "write_file"],
+      availableTools: [
+        { name: "read_file", effect: "read" },
+        { name: "bash", effect: "process" },
+        { name: "write_file", effect: "workspace_write" },
+      ],
       attachment: "foreground",
     });
     expect(capabilities.allowedTools).toEqual(["read_file"]);

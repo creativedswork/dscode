@@ -7,6 +7,7 @@ function supportedSurface(api: HarnessAPI): void {
   api.skills.list();
   api.mcp.list();
   api.agents.list();
+  void api.plans.getActivePlan("session-id");
   api.events.on("turn:end", () => {});
 }
 
@@ -21,6 +22,8 @@ function rejectedImplementationSurface(api: HarnessAPI): void {
   void api.agentSupervisor;
   // @ts-expect-error Runtime configuration stores are internal.
   void api.configStore;
+  // @ts-expect-error PlanStore remains behind the typed Plan port.
+  void api.planStore;
   // @ts-expect-error Presentation receives a subscribe-only event source.
   api.events.emit({ type: "turn:start" });
   // @ts-expect-error Presentation cannot clear Application subscriptions.

@@ -29,6 +29,27 @@ import type {
   SwitchSessionResult,
 } from "../session/types.js";
 import type { ImageRef } from "../resources/images/types.js";
+import type {
+  PlanSubmissionMode,
+  PlanSubmissionResult,
+} from "./plan/route.js";
+import type {
+  PlanApplicationPort,
+  PlanInteractionPort,
+} from "./plan/plan-port.js";
+import type {
+  TaskStatePort,
+} from "./task-state-port.js";
+
+export type {
+  TaskState,
+  TaskStateMutationCommand,
+  TaskStateMutationResult,
+  TodoBlocker,
+  TodoItem,
+  TodoStatus,
+} from "./task-state-port.js";
+export type { TaskStatePort } from "./task-state-port.js";
 
 export interface ApplicationEventSource {
   on<E extends HarnessEventType>(
@@ -37,7 +58,7 @@ export interface ApplicationEventSource {
   ): () => void;
 }
 
-export interface UserInteractionPort {
+export interface UserInteractionPort extends PlanInteractionPort {
   requestPermission(
     toolName: string,
     preview: string,
@@ -60,12 +81,17 @@ export interface ContextUsageSnapshot {
 }
 
 export interface ConversationApplicationPort {
-  prompt(text: string, images?: readonly ImageContent[]): Promise<void>;
+  prompt(
+    text: string,
+    images?: readonly ImageContent[],
+    mode?: PlanSubmissionMode,
+  ): Promise<PlanSubmissionResult>;
   promptWithImages(
     text: string,
     images: readonly ImageContent[],
     displayText?: string,
-  ): Promise<void>;
+    mode?: PlanSubmissionMode,
+  ): Promise<PlanSubmissionResult>;
   abort(): void;
   reset(): void;
   save(): void;
@@ -284,6 +310,8 @@ export interface ImageInputApplicationPort {
 
 export interface HarnessAPI {
   readonly events: ApplicationEventSource;
+  readonly plans: PlanApplicationPort;
+  readonly tasks: TaskStatePort;
   readonly conversation: ConversationApplicationPort;
   readonly sessions: SessionApplicationPort;
   readonly settings: SettingsApplicationPort;

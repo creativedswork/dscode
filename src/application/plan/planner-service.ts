@@ -1,0 +1,357 @@
+import { randomUUID } from "node:crypto";
+
+import { applyPlannerAction } from "./planner-actions.js";
+import {
+  assessHumanInteraction,
+  assertActivePlanner,
+  assertPlannerActionInteraction,
+} from "./planner-policy.js";
+import type { AgentExitResult } from "../../agents/process/types.js";
+import { assertCompiledPlan } from "./compiler.js";
+import type {
+  NewPlanInteraction,
+  NewPlanRecord,
+} from "./store-types.js";
+import { PlanStore } from "./store.js";
+import type {
+  PlanConstraint,
+  PlanRecord,
+} from "./types.js";
+import {
+  decisionById,
+  MAX_PLAN_CANDIDATES,
+  MAX_PLAN_DECISION_NODES,
+  PlanBudgetError,
+  type PlannerCommand,
+  type PlannerDecisionInput,
+  type PlannerFactInput,
+  type PlannerMutationResult,
+} from "./planner-types.js";
+
+export class PlannerService {
+  constructor(
+    readonly store: PlanStore,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  create(input: NewPlanRecord) {
+    return this.store.create(input);
+  }
+
+  load(planId: string) {
+    return this.store.load(planId);
+  }
+
+  initialize(
+    planId: string,
+    plannerAgentId: string,
+    expectedVersion: number,
+    goal: string,
+    constraints: PlanConstraint[],
+  ) {
+    return this.store.update(planId, expectedVersion, (draft) => {
+      assertActivePlanner(draft, plannerAgentId);
+      draft.goal = goal;
+      draft.constraints = structuredClone(constraints);
+    });
+  }
+
+  appendDecision(
+    planId: string,
+    plannerAgentId: string,
+    expectedVersion: number,
+    input: PlannerDecisionInput,
+  ) {
+    const resolvesRequirementIds = input.resolvesRequirementIds ?? [];
+    if (
+      input.candidates.length < 1
+      || input.candidates.length > MAX_PLAN_CANDIDATES
+    ) {
+      throw new PlanBudgetError(
+        "candidates",
+        "clarify",
+        `Decision ${input.decisionNodeId} has ${input.candidates.length} candidates; `
+          + `clarify the choice and provide between 1 and ${MAX_PLAN_CANDIDATES}`,
+      );
+    }
+    if (input.candidates.filter((candidate) => candidate.recommended).length !== 1) {
+      throw new Error(
+        `Decision ${input.decisionNodeId} must have exactly one recommended candidate`,
+      );
+    }
+    if (
+      resolvesRequirementIds.length > 1
+      || new Set(resolvesRequirementIds).size !== resolvesRequirementIds.length
+    ) {
+      throw new Error(
+        `Decision ${input.decisionNodeId} must resolve at most one alignment requirement`,
+      );
+    }
+    return this.store.update(planId, expectedVersion, (draft) => {
+      assertActivePlanner(draft, plannerAgentId);
+      for (const requirementId of resolvesRequirementIds) {
+        const requirement = draft.alignmentRequirements?.find((item) =>
+          item.requirementId === requirementId
+        );
+        if (!requirement || requirement.status !== "pending") {
+          throw new Error(
+            `Decision ${input.decisionNodeId} must reference a pending alignment requirement`,
+          );
+        }
+      }
+      if (draft.decisions.length >= MAX_PLAN_DECISION_NODES) {
+        const behavior = draft.decisions.some((decision) =>
+          decision.status === "open"
+        ) ? "clarify" : "commit";
+        throw new PlanBudgetError(
+          "decision_nodes",
+          behavior,
+          `Revision ${draft.revision} reached ${MAX_PLAN_DECISION_NODES} decision nodes; `
+            + `${behavior === "clarify" ? "request one user-value choice" : "select and authorize"}`,
+        );
+      }
+      if (decisionById(draft, input.decisionNodeId)) {
+        throw new Error(`Decision already exists: ${input.decisionNodeId}`);
+      }
+      const revision = draft.revision + 1;
+      draft.decisions.push({
+        decisionNodeId: input.decisionNodeId,
+        question: input.question,
+        candidates: structuredClone(input.candidates),
+        status: "open",
+        ...(resolvesRequirementIds.length > 0
+          ? { resolvesRequirementIds: [...resolvesRequirementIds] }
+          : {}),
+      });
+      for (const candidate of input.candidates) {
+        draft.trajectoryEvents.push({
+          eventId: randomUUID(),
+          revision,
+          recordedAt: this.now(),
+          kind: "candidate_summarized",
+          decisionNodeId: input.decisionNodeId,
+          optionId: candidate.optionId,
+          summary: candidate.rationale,
+        });
+      }
+    });
+  }
+
+  recordFact(
+    planId: string,
+    plannerAgentId: string,
+    expectedVersion: number,
+    input: PlannerFactInput,
+  ) {
+    return this.store.update(planId, expectedVersion, (draft) => {
+      assertActivePlanner(draft, plannerAgentId);
+      draft.trajectoryEvents.push({
+        eventId: randomUUID(),
+        revision: draft.revision,
+        recordedAt: this.now(),
+        kind: "fact_recorded",
+        summary: input.summary,
+        references: structuredClone(input.references),
+      });
+    });
+  }
+
+  async requestDecision(
+    planId: string,
+    plannerAgentId: string,
+    expectedVersion: number,
+    interactionId: string,
+    decisionNodeId: string,
+  ): Promise<Readonly<PlanRecord>> {
+    const plan = await this.requirePlan(planId);
+    assertActivePlanner(plan, plannerAgentId);
+    const decision = decisionById(plan, decisionNodeId);
+    if (!decision || decision.status !== "open") {
+      throw new Error(`Open decision not found: ${decisionNodeId}`);
+    }
+    const assessment = assessHumanInteraction(plan, decision);
+    if (!assessment.required) return plan;
+    return this.persistInteraction(plan, plannerAgentId, expectedVersion, {
+      interactionId,
+      createdAt: this.now(),
+      kind: "decision",
+      payload: {
+        decisionNodeId,
+        candidateIds: decision.candidates.map((candidate) => candidate.optionId),
+        prompt: decision.question,
+      },
+    }, "awaiting_decision");
+  }
+
+  async authorize(
+    planId: string,
+    plannerAgentId: string,
+    expectedVersion: number,
+  ): Promise<Readonly<PlanRecord>> {
+    const result = await this.store.update(planId, expectedVersion, (draft) => {
+      assertActivePlanner(draft, plannerAgentId);
+      if (draft.status !== "drafting" || draft.pendingInteraction) {
+        throw new Error(`Plan ${planId} is not ready for internal authorization`);
+      }
+      assertCompiledPlan(draft, this.store.projectPath);
+      const approvedEffects = [...new Set(draft.executionSteps.flatMap((step) =>
+        step.effectGrants.map((grant) => grant.effect)
+      ))].filter((effect) => effect !== "read").sort();
+      draft.approval = {
+        revision: draft.revision,
+        digest: draft.digest,
+        approvedEffects,
+        acknowledgedSideEffects: [],
+        interactionId: `internal:${plannerAgentId}`,
+        approvedAt: this.now(),
+      };
+      draft.status = "approved";
+    });
+    if (!result.ok) {
+      throw new Error(
+        `Plan version conflict: expected ${expectedVersion}, current ${result.conflict.currentVersion}`,
+      );
+    }
+    return result.plan;
+  }
+
+  async requestApproval(
+    planId: string,
+    plannerAgentId: string,
+    expectedVersion: number,
+    interactionId: string,
+  ): Promise<Readonly<PlanRecord>> {
+    const plan = await this.requirePlan(planId);
+    assertActivePlanner(plan, plannerAgentId);
+    if (plan.schemaVersion !== 2) {
+      throw new Error("Schema v1 Plan records are read-only");
+    }
+    assertCompiledPlan(plan, this.store.projectPath);
+    return this.persistInteraction(plan, plannerAgentId, expectedVersion, {
+      interactionId,
+      createdAt: this.now(),
+      kind: "approval",
+      payload: {
+        itemIds: plan.executionSteps.map((step) => step.stepId),
+        effectCategories: [...new Set(
+          plan.executionSteps.flatMap((step) =>
+            step.effectGrants.map((grant) => grant.effect)
+          ),
+        )].filter((effect) => effect !== "read"),
+        sideEffectSummary: plan.sideEffectSummary,
+      },
+    }, "awaiting_approval");
+  }
+
+  async applyDecision(command: PlannerCommand): Promise<PlannerMutationResult> {
+    const outcome = await this.store.applyCommand({
+      planId: command.planId,
+      expectedVersion: command.expectedVersion,
+      commandId: command.commandId,
+      payload: command.action,
+      operation: command.action.kind,
+      interactionId: command.interactionId,
+      interactionPayloadDigest: command.interactionPayloadDigest,
+    }, (draft) => {
+      assertActivePlanner(draft, command.plannerAgentId);
+      assertPlannerActionInteraction(draft, command);
+      applyPlannerAction(draft, command.action, this.now());
+    });
+    if (outcome.ok) {
+      return { ok: true, plan: outcome.plan, duplicate: outcome.duplicate };
+    }
+    return {
+      ok: false,
+      reason: outcome.reason,
+      ...(outcome.reason === "conflict"
+        ? { plan: outcome.conflict.current }
+        : { plan: outcome.plan, message: outcome.message }),
+    };
+  }
+  async finishPlannerExit(
+    planId: string,
+    plannerAgentId: string,
+    exit: Readonly<AgentExitResult>,
+  ): Promise<Readonly<PlanRecord> | undefined> {
+    const loaded = await this.load(planId);
+    if (!loaded.ok || !loaded.plan) return undefined;
+    if (loaded.plan.plannerAgentId !== plannerAgentId) return loaded.plan;
+    if (["approved", "completed", "cancelled", "failed"].includes(loaded.plan.status)) {
+      return loaded.plan;
+    }
+    const status = exit.state === "terminated" || exit.state === "killed"
+      ? "cancelled"
+      : "failed";
+    const result = await this.store.update(
+      planId,
+      loaded.plan.version,
+      (draft) => {
+        assertActivePlanner(draft, plannerAgentId);
+        const from = draft.status;
+        draft.status = status;
+        draft.pendingInteraction = undefined;
+        draft.trajectoryEvents.push({
+          eventId: randomUUID(),
+          revision: draft.revision,
+          recordedAt: this.now(),
+          kind: "status_changed",
+          from,
+          to: status,
+        });
+        if (status === "failed") {
+          draft.trajectoryEvents.push({
+            eventId: randomUUID(),
+            revision: draft.revision,
+            recordedAt: this.now(),
+            kind: "fact_recorded",
+            summary: exit.error ?? "Planner exited before approval",
+            references: [],
+          });
+        }
+      },
+    );
+    if (!result.ok) return this.finishPlannerExit(planId, plannerAgentId, exit);
+    return result.plan;
+  }
+  private async persistInteraction(
+    plan: Readonly<PlanRecord>,
+    plannerAgentId: string,
+    expectedVersion: number,
+    interaction: NewPlanInteraction,
+    status: "awaiting_decision" | "awaiting_approval",
+  ): Promise<Readonly<PlanRecord>> {
+    if (plan.pendingInteraction?.interactionId === interaction.interactionId
+      && plan.version === expectedVersion) return plan;
+    if (plan.pendingInteraction && plan.version === expectedVersion) {
+      throw new Error(`Interaction already pending: ${plan.pendingInteraction.interactionId}`);
+    }
+    const persisted = await this.store.persistInteraction(
+      plan.planId,
+      expectedVersion,
+      interaction,
+      (draft) => {
+        assertActivePlanner(draft, plannerAgentId);
+        draft.status = status;
+        draft.trajectoryEvents.push({
+          eventId: randomUUID(),
+          revision: draft.revision,
+          recordedAt: this.now(),
+          kind: "status_changed",
+          from: plan.status,
+          to: status,
+        });
+      },
+    );
+    if (!persisted.ok) {
+      throw new Error(
+        `Plan version conflict: expected ${expectedVersion}, current ${persisted.conflict.currentVersion}`,
+      );
+    }
+    return persisted.plan;
+  }
+  private async requirePlan(planId: string): Promise<Readonly<PlanRecord>> {
+    const loaded = await this.store.load(planId);
+    if (!loaded.ok || !loaded.plan) throw new Error(`Plan not found: ${planId}`);
+    return loaded.plan;
+  }
+}

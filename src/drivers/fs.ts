@@ -33,6 +33,7 @@ const readFileParams = Type.Object({
 export const readFileTool: AgentTool<typeof readFileParams> = {
   name: "read_file",
   label: "Read file",
+  effect: "read",
   description:
     "Read the contents of a file. Returns numbered lines. " +
     "When hashes:true, each line is prefixed with 'lineNum#hash [quality]|' where the hash is a content-based identity — " +
@@ -145,6 +146,7 @@ const listFilesParams = Type.Object({
 export const listFilesTool: AgentTool<typeof listFilesParams> = {
   name: "list_files",
   label: "List files",
+  effect: "read",
   description: "List files and directories at a given path.",
   parameters: listFilesParams,
   execute: async (_id, { path, recursive, maxDepth }) => {
@@ -190,6 +192,7 @@ const writeFileParams = Type.Object({
 export const writeFileTool: AgentTool<typeof writeFileParams> = {
   name: "write_file",
   label: "Write file",
+  effect: "workspace_write",
   description:
     "Write content to a file (creates or overwrites). " +
     "For existing files, you MUST provide expected_file_version (obtained from read_file(hashes: true)) " +
@@ -324,6 +327,7 @@ const overwriteFileParams = Type.Object({
 export const overwriteFileTool: AgentTool<typeof overwriteFileParams> = {
   name: "overwrite_file",
   label: "Overwrite file (full replace)",
+  effect: "workspace_write",
   description:
     "Explicitly overwrite an entire existing file with new content. " +
     "REQUIRES expected_file_version from read_file(hashes: true) — this is mandatory to prevent accidental data loss. " +

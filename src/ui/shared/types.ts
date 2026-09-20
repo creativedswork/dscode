@@ -2,6 +2,56 @@
 // Canonical types consumed by both TUI and Web UI.
 // MUST remain pure TypeScript — zero Node.js / server dependencies.
 
+import type { TraceTree } from "./trace-tree.js";
+import type {
+  PlanApprovalRequest,
+  PlanDecisionRequest,
+} from "../../application/plan/plan-port.js";
+import type {
+  PlanDecisionAction,
+} from "../../application/plan/planner-types.js";
+import type {
+  PlanEffectCategory,
+  PlanInteraction,
+  PlanRecord,
+} from "../../application/plan/types.js";
+import type {
+  PlanSubmissionMode,
+} from "../../application/plan/route.js";
+import type {
+  ExecutionEpisodeSnapshot,
+  ExecutionIncidentSummary,
+  ExecutionRecoveryResult,
+} from "../../application/plan/execution-episode-types.js";
+import type { TaskState } from "../../application/task-state-port.js";
+
+export type {
+  PlanApprovalRequest,
+  PlanDecisionRequest,
+} from "../../application/plan/plan-port.js";
+export type {
+  PlanDecisionAction,
+} from "../../application/plan/planner-types.js";
+export type {
+  PlanEffectCategory,
+  PlanInteraction,
+  PlanRecord,
+} from "../../application/plan/types.js";
+export type {
+  PlanSubmissionMode,
+} from "../../application/plan/route.js";
+export type {
+  ExecutionEpisodeSnapshot,
+  ExecutionIncidentSummary,
+  ExecutionRecoveryResult,
+} from "../../application/plan/execution-episode-types.js";
+export type {
+  TaskState,
+  TodoBlocker,
+  TodoItem,
+  TodoStatus,
+} from "../../application/task-state-port.js";
+
 // ── Image ──
 
 export interface ImageAttachment {
@@ -211,6 +261,7 @@ export interface AgentActivity {
   createdAt: number;
   startedAt?: number;
   endedAt?: number;
+  transcript?: readonly UIMessage[];
 }
 
 export interface ConversationMessage {
@@ -326,7 +377,57 @@ export type EvalDashboardServerEvent =
 // ── Wire protocol ──
 
 export type ClientCommand =
-  | { type: "chat"; text: string; images?: ImageAttachment[]; clipboardImages?: ImageAttachment[]; fileRefs?: string[]; uploadedFiles?: { name: string; content: string }[] }
+  | {
+      type: "chat";
+      text: string;
+      images?: ImageAttachment[];
+      clipboardImages?: ImageAttachment[];
+      fileRefs?: string[];
+      uploadedFiles?: { name: string; content: string }[];
+      planMode?: PlanSubmissionMode;
+    }
+  | {
+      type: "plan_decision";
+      sessionId: string;
+      planId: string;
+      expectedVersion: number;
+      commandId: string;
+      interactionId: string;
+      interactionPayloadDigest: string;
+      action: PlanDecisionAction;
+    }
+  | {
+      type: "plan_approve";
+      sessionId: string;
+      planId: string;
+      expectedVersion: number;
+      commandId: string;
+      interactionId: string;
+      interactionPayloadDigest: string;
+      revision: number;
+      digest: string;
+      acknowledgedEffects: PlanEffectCategory[];
+    }
+  | { type: "plan_replan"; sessionId: string; planId: string; expectedVersion: number; commandId: string; reason: string }
+  | { type: "plan_cancel"; sessionId: string; planId: string; expectedVersion: number; commandId: string }
+  | {
+      type: "plan_adjust";
+      sessionId: string;
+      planId: string;
+      expectedVersion: number;
+      commandId: string;
+      revision: number;
+      digest: string;
+    }
+  | {
+      type: "plan_continue";
+      sessionId: string;
+      planId: string;
+      expectedVersion: number;
+      commandId: string;
+      revision: number;
+      digest: string;
+    }
   | { type: "abort" }
   | { type: "permission"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; persistRule?: boolean; toolNamePattern?: string; fuzzyMode?: number; sessionGrantPattern?: string }
   | { type: "permission_response"; decision: "allow" | "always_allow" | "always_allow_save" | "deny"; denyReason?: string; toolNamePattern?: string }
@@ -352,7 +453,48 @@ export type ClientCommand =
 
 export type ServerEvent =
   | { type: "ready"; model: string; config: ConfigData; messages: ConversationMessage[] }
+  | { type: "plan_state"; plan: Readonly<PlanRecord> | null }
+  | {
+      type: "plan_episode";
+      planId: string;
+      episode: Readonly<ExecutionEpisodeSnapshot> | null;
+    }
+  | {
+      type: "plan_impasse";
+      planId: string;
+      episodeId: string;
+      incident: Readonly<ExecutionIncidentSummary>;
+    }
+  | {
+      type: "plan_recovery_result";
+      commandId: string;
+      result: Readonly<ExecutionRecoveryResult>;
+    }
+  | {
+      type: "task_state";
+      sessionId: string;
+      taskState: Readonly<TaskState> | null;
+    }
+  | {
+      type: "plan_interaction";
+      planId: string;
+      version: number;
+      revision: number;
+      interaction: Readonly<PlanInteraction>;
+      request?: Readonly<PlanDecisionRequest | PlanApprovalRequest>;
+    }
+  | {
+      type: "plan_conflict";
+      planId: string;
+      expectedVersion: number;
+      currentVersion: number;
+      revision: number;
+      plan: Readonly<PlanRecord>;
+    }
   | { type: "agent_activity"; activity: AgentActivity }
+  | { type: "planning_mode"; id: string; createdAt?: number }
+  | { type: "plan_ready"; id: string; text: string; createdAt?: number }
+  | { type: "plan_response"; id: string; text: string; createdAt?: number }
   | { type: "user_message"; text: string; images?: ImageAttachment[]; createdAt?: number }
   | { type: "assistant_start"; messageId?: string; createdAt?: number }
   | { type: "thinking_delta"; delta: string; createdAt?: number }
@@ -398,5 +540,6 @@ export type ServerEvent =
   | { type: "artifact_delta"; delta: string }
   | { type: "artifact_end" }
   | EvalDashboardServerEvent
+  | { type: "trace_tree"; tree: TraceTree }
   | { type: "cache_size"; totalBytes: number; fileCount: number; sessionCount: number }
   | { type: "mcp_open_browser" }

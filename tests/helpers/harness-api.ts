@@ -4,7 +4,7 @@ import { HarnessEventBus } from "../../src/application/events.js";
 export function createHarnessApiFixture(
   overrides: Partial<HarnessAPI> = {},
 ): HarnessAPI {
-  const events = new HarnessEventBus({ error: () => {} } as any);
+  const events = new HarnessEventBus({ error: () => {} } as never);
   const config = {
     provider: "test",
     modelId: "model",
@@ -25,6 +25,46 @@ export function createHarnessApiFixture(
   };
   const fixture: HarnessAPI = {
     events,
+    tasks: {
+      getTaskState: async () => undefined,
+      mutateTaskState: async () => ({
+        ok: false,
+        reason: "invalid_command",
+        message: "TaskState API is not configured",
+      }),
+    },
+    plans: {
+      getActivePlan: async () => undefined,
+      getLatestPlan: async () => undefined,
+      submitDecision: async () => ({
+        ok: false,
+        reason: "invalid_command",
+        message: "Plan API is not configured",
+      }),
+      approve: async () => ({
+        ok: false,
+        reason: "invalid_command",
+        message: "Plan API is not configured",
+      }),
+      verifyItem: async () => ({
+        ok: false,
+        reason: "invalid_command",
+        message: "Plan API is not configured",
+      }),
+      requestReplan: async () => ({
+        ok: false,
+        reason: "invalid_command",
+        message: "Plan API is not configured",
+      }),
+      cancel: async () => ({
+        ok: false,
+        reason: "invalid_command",
+        message: "Plan API is not configured",
+      }),
+      getEpisode: async () => undefined,
+      adjustPlan: async () => ({ ok: false, reason: "invalid_phase" }),
+      continueExecution: async () => ({ ok: false, reason: "invalid_phase" }),
+    },
     conversation: {
       prompt: async () => {},
       promptWithImages: async () => {},

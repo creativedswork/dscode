@@ -1,8 +1,19 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { Agent as PiAgentRuntime } from "@earendil-works/pi-agent-core";
-import type { AfterToolCallContext, AfterToolCallResult, AgentMessage, AgentTool, BeforeToolCallContext } from "@earendil-works/pi-agent-core";
-import { Type } from "@earendil-works/pi-ai";
+import type {
+  AfterToolCallContext,
+  AfterToolCallResult,
+  AgentContext as PiAgentContext,
+  AgentMessage,
+  AgentTool,
+  BeforeToolCallContext,
+  PrepareNextTurnContext,
+  ShouldStopAfterTurnContext,
+  StreamFn,
+} from "@earendil-works/pi-agent-core";
+import { createAssistantMessageEventStream, Type } from "@earendil-works/pi-ai";
 import type { Api, AssistantMessage, Context, ImageContent, Model, SimpleStreamOptions } from "@earendil-works/pi-ai";
 
 import {
@@ -69,13 +80,21 @@ import type {
   VisionMessage,
 } from "../session/types.js";
 import {
+  markInternalPlanExecutionMessage,
+  stripMessageVisibility,
+} from "../kernel/message-visibility.js";
+import {
   initCheckpointSystem,
   shutdownCheckpointSystem,
   type CheckpointSystem,
 } from "../checkpoint/index.js";
 import { recordInvalidation, consumePendingNotices } from "../context/anchor-invalidation.js";
-import { runWithExecutionContext } from "../kernel/execution-context.js";
+import {
+  getExecutionContext,
+  runWithExecutionContext,
+} from "../kernel/execution-context.js";
 import type { HostFacilities } from "../kernel/host-facilities.js";
+import { isSideEffectFreePlanOperation } from "../kernel/tool-effects.js";
 import { HarnessEventBus } from "./events.js";
 import type { Logger } from "../kernel/logger.js";
 import { AgentApplicationRegistry } from "../agents/definitions/registry.js";
@@ -97,9 +116,43 @@ import { formatSubagentLabel } from "../agents/process/label.js";
 import { extractAgentToolExecutions } from "../agents/process/transcript.js";
 import type { AgentExitResult } from "../agents/process/types.js";
 import {
-  AGENT_PROCESS_TOOL_NAMES,
+  AGENT_PROCESS_TOOL_CAPABILITIES,
   makeAgentProcessTools,
 } from "../agents/tools/process-tools.js";
+import {
+  makeTaskStateDriver,
+  TASK_STATE_TOOL_NAME,
+} from "../agents/tools/task-state-tools.js";
+import {
+  makePlanRouteDriver,
+  PlanExecutionGuard,
+} from "./plan/route-guard.js";
+import { PLAN_ROUTE_ASSESSMENT_TOOL_NAME } from "./plan/route.js";
+import { PLANNER_APPLICATION } from "./plan/planner-application.js";
+import { makePlanExecutionDriver } from "./plan/execution-tools.js";
+import { PlannerProcessCoordinator } from "./plan/planner-process.js";
+import { PlanService } from "./plan/plan-service.js";
+import type { PlanMutationResult } from "./plan/plan-port.js";
+import { PlanStore } from "./plan/store.js";
+import type { PlanRecord } from "./plan/types.js";
+import { planExecutionUnits } from "./plan/execution-model.js";
+import { captureExecutionProgress } from "./plan/execution-progress.js";
+import { ExecutiveMonitor } from "./plan/executive-monitor.js";
+import { fingerprintExecutionAction } from "./plan/execution-fingerprint.js";
+import {
+  publicEpisodeSnapshot,
+} from "./plan/execution-episode-service.js";
+import type {
+  ExecutionAdjustPlanCommand,
+  ExecutionContinueCommand,
+  ExecutionOutcomeClass,
+  ExecutionRecoveryResult,
+  PersistedExecutionEpisode,
+} from "./plan/execution-episode-types.js";
+import type {
+  PlanSubmissionMode,
+  PlanSubmissionResult,
+} from "./plan/route.js";
 
 const MAIN_PROCESS_APPLICATION: AgentApplicationSnapshot = Object.freeze({
   name: "main",
@@ -110,6 +163,24 @@ const MAIN_PROCESS_APPLICATION: AgentApplicationSnapshot = Object.freeze({
   digest: "0".repeat(64),
   registryGeneration: 0,
 });
+
+interface PendingRoutedImages {
+  requestId: string;
+  text: string;
+  displayText: string;
+  images: ImageContent[];
+  parentSessionId: string;
+  turnIndex: number;
+  result?: ProcessResult;
+}
+
+interface PlanContinuationTracker {
+  planId: string;
+  phase: "execution" | "report";
+  progress: string;
+  stalledFollowUps: number;
+  totalFollowUps: number;
+}
 
 export function shouldUseNativeMainImagePath(
   agentsEnabled: boolean,
@@ -185,6 +256,8 @@ export class Harness {
   private agentProcessDriverRegistered = false;
   private userInteraction: UserInteractionPort = {
     requestPermission: async () => ({ decision: "deny" }),
+    requestPlanDecision: async () => {},
+    requestPlanApproval: async () => {},
   };
   private baseSystemPrompt = "";
   private debug = false;
@@ -207,6 +280,15 @@ export class Harness {
   private readonly conversationCoordinator: ConversationCoordinator;
   private readonly sessionCoordinator: SessionCoordinator;
   private readonly permissionPromptQueue = new PermissionPromptQueue();
+  private readonly planExecutionGuard = new PlanExecutionGuard();
+  private planService: PlanService;
+  private plannerCoordinator!: PlannerProcessCoordinator;
+  private readonly terminalRouteBlocks = new Map<string, string>();
+  private pendingRoutedImages: PendingRoutedImages | undefined;
+  private planContinuation: PlanContinuationTracker | undefined;
+  private executionMonitor: ExecutiveMonitor | undefined;
+  private episodeObservationQueue: Promise<void> = Promise.resolve();
+  private episodeStopRequested = false;
 
   get agent(): PiAgentRuntime {
     return this.piAgentRuntime;
@@ -227,12 +309,17 @@ export class Harness {
     debug?: boolean,
   ) {
     this.hostId = dependencies.hostId;
+    this.events = dependencies.events;
+    this.planService = this.createPlanService(
+      _config.dataDir,
+      _config.projectPath,
+      _config.plan.terminalRecoveryTtlMs,
+    );
     this.facilities = dependencies.facilities;
     this.checkpointSystem = dependencies.checkpointSystem;
     this.permissionSuggestions = dependencies.permissionSuggestions;
     this.imageInput = dependencies.imageInput;
     this.logger = logger;
-    this.events = dependencies.events;
     this.configStore = dependencies.configStore;
     this.settings = dependencies.createSettings(
       (previous, next, reason) =>
@@ -250,6 +337,9 @@ export class Harness {
       agent: () => this.agent,
       projectPath: () => this.config.projectPath,
       abort: () => this.abort(),
+      settleForeground: () => this.plannerCoordinator
+        ? this.plannerCoordinator.shutdown()
+        : Promise.resolve(),
       conversation: this.conversationCoordinator,
       logger,
       isShuttingDown: () => this.shuttingDown,
@@ -282,7 +372,9 @@ export class Harness {
       environment: dependencies.environment,
       drivers: this.driverRegistry,
       supervisor: () => this.agentSupervisor,
+      planner: () => this.plannerCoordinator,
       skillTool: () => this.makeSkillTool(),
+      executionTools: () => this.toolRegistry.buildToolsForRequest(),
       skillManifest: (name) => this.skillManager.getManifest(name),
       requestPermission: (toolName, preview, args, context) =>
         this.permissionPromptQueue.enqueue(() =>
@@ -301,13 +393,10 @@ export class Harness {
       tools: this.toolRegistry,
       makeSkillTool: () => this.makeSkillTool(),
       processImages: (images, text, options) =>
-        this.processImagesWithVisionAgent(images, text, options),
-      applyTools: (tools, deferredHint) => {
-        this.agent.state.tools = [...tools];
-        this.agent.state.systemPrompt = this.baseSystemPrompt.replace(
-          "__DEFERRED_HINT__",
-          deferredHint,
-        );
+        this.processMcpImages(images, text, options),
+      applyTools: (_tools, deferredHint) => {
+        this.agent.state.tools = this.buildMainToolsForRequest();
+        this.agent.state.systemPrompt = this.activeSystemPrompt(deferredHint);
       },
       refreshCapabilities: () => this.refreshMainAgentCapabilities(),
       publish: (event) => this.events.emit(event),
@@ -336,18 +425,27 @@ export class Harness {
         this.sessionManager.updateProjectPath(dataDir, projectPath),
       updateMemoryProject: (dataDir, projectPath) =>
         this.memoryManager.updateProjectPath(dataDir, projectPath),
-      updateProcessProject: (projectPath) =>
-        this.processStore.updateProjectPath(projectPath),
+      updateProcessProject: async (
+        dataDir,
+        projectPath,
+        terminalPlanRecoveryTtlMs,
+      ) => {
+        const planService = this.createPlanService(
+          dataDir,
+          projectPath,
+          terminalPlanRecoveryTtlMs,
+        );
+        await planService.retention.pruneExpiredTerminalPlans();
+        await this.plannerCoordinator.rebindProject(planService);
+        this.planService = planService;
+        this.processStore.updateProjectPath(projectPath);
+      },
       updateApplications: (projectPath) =>
         this.applicationRegistry.updateProjectPath(projectPath),
       rebindMainSession: async (projectPath) => {
         const sessionId = this.sessionManager.getCurrentSessionId();
         if (sessionId) {
-          await this.agentSupervisor.updateParentSession(
-            this.mainAgentId,
-            sessionId,
-            projectPath,
-          );
+          await this.rebindMainSession(sessionId, projectPath);
         }
       },
       replaceRuntime: (next) => this.settings.replaceProjectRuntime(next)
@@ -358,8 +456,26 @@ export class Harness {
     this.api = this.createApplicationApi();
   }
 
+  private createPlanService(
+    dataDir: string,
+    projectPath: string,
+    terminalRecoveryTtlMs: number,
+  ): PlanService {
+    const store = new PlanStore({ dataDir, projectPath });
+    return new PlanService(store, {
+      publish: (event) => this.events.emit(event),
+      interactionPort: () => this.userInteraction,
+      onInteractionError: (error) =>
+        this.logger.error("PlanInteraction", String(error)),
+      onCoordinationFailure: ({ operation, error }) =>
+        this.logger.error("PlanCoordination", `${operation}: ${String(error)}`),
+      terminalRecoveryTtlMs,
+    });
+  }
+
   bindUserInteraction(port: UserInteractionPort): void {
     this.userInteraction = port;
+    void this.planService.reissuePendingInteractions();
   }
 
   private createApplicationApi(): HarnessAPI {
@@ -384,14 +500,51 @@ export class Harness {
       },
       spawn: (request) => this.agentSupervisor.spawn(request),
     });
+    const mutatePlan = async (
+      operation: () => Promise<PlanMutationResult>,
+    ): Promise<PlanMutationResult> => {
+      try {
+        return await operation();
+      } catch (error) {
+        return {
+          ok: false,
+          reason: "invalid_command",
+          message: error instanceof Error ? error.message : String(error),
+        };
+      }
+    };
 
     const api: HarnessAPI = {
       events,
+      plans: Object.freeze<HarnessAPI["plans"]>({
+        getActivePlan: (sessionId) => this.planService.getActivePlan(sessionId),
+        getLatestPlan: (sessionId) => this.planService.getLatestPlan(sessionId),
+        submitDecision: (command) =>
+          mutatePlan(() => this.plannerCoordinator.submitDecision(command)),
+        approve: (command) =>
+          mutatePlan(() => this.plannerCoordinator.submitApproval(command)),
+        verifyItem: (command) =>
+          mutatePlan(() => this.planService.verifyItem(command)),
+        requestReplan: (command) =>
+          mutatePlan(() => this.planService.requestReplan(command)),
+        cancel: (command) =>
+          mutatePlan(() => this.plannerCoordinator.cancel(command)),
+        getEpisode: (planId) => this.planService.episodes.get(planId),
+        adjustPlan: (command) => this.adjustPausedExecution(command),
+        continueExecution: (command) =>
+          this.continuePausedExecution(command),
+      }),
+      tasks: Object.freeze<HarnessAPI["tasks"]>({
+        getTaskState: async (sessionId) =>
+          this.agentSupervisor.getTaskState(sessionId),
+        mutateTaskState: (command) =>
+          this.agentSupervisor.mutateTaskState(command),
+      }),
       conversation: Object.freeze<HarnessAPI["conversation"]>({
-        prompt: (text, images) =>
-          this.promptAndSave(text, images ? [...images] : undefined),
-        promptWithImages: (text, images, displayText) =>
-          this.promptWithImages(text, [...images], displayText),
+        prompt: (text, images, mode) =>
+          this.promptAndSave(text, images ? [...images] : undefined, mode),
+        promptWithImages: (text, images, displayText, mode) =>
+          this.promptWithImages(text, [...images], displayText, mode),
         abort: () => this.abort(),
         reset: () => {
           this.sessionManager.trySaveSession(this.agent);
@@ -642,7 +795,7 @@ export class Harness {
           } else {
             this.skillManager.deactivate(name);
           }
-          this.agent.state.tools = this.toolRegistry.buildToolsForRequest();
+          this.agent.state.tools = this.buildMainToolsForRequest();
           return Object.freeze({ toolNames });
         },
       }),
@@ -788,6 +941,7 @@ export class Harness {
   }
 
   async initialize(): Promise<void> {
+    this.applicationRegistry.registerDefinition(PLANNER_APPLICATION);
     await this.applicationRegistry.load();
     for (const diagnostic of this.applicationRegistry.getDiagnostics()) {
       this.logger.warn("AgentApplication", `${diagnostic.source.path}: ${diagnostic.message}`);
@@ -810,7 +964,14 @@ export class Harness {
       }
     }
 
-    // Register discovery driver so search_tools is available
+    this.driverRegistry.register(makePlanRouteDriver(this.planExecutionGuard));
+    this.driverRegistry.register(makePlanExecutionDriver({
+      service: () => this.plannerCoordinator.execution,
+      supervisor: () => this.agentSupervisor,
+    }));
+    this.driverRegistry.register(makeTaskStateDriver(
+      () => this.agentSupervisor,
+    ));
 
     // 4.2: Initialize checkpoint system for baseline hygiene
     const sessionId = this.sessionManager.getCurrentSessionId?.() ?? `session-${Date.now()}`;
@@ -871,24 +1032,111 @@ export class Harness {
             } as AgentMessage);
           }
           // Update tools based on current discovery state
-          self.agent.state.tools = self.toolRegistry.buildToolsForRequest();
+          self.agent.state.tools = self.buildMainToolsForRequest();
           // Update system prompt with current deferred tools hint
           const deferredHint = self.toolRegistry.buildDeferredToolsHint();
-          self.agent.state.systemPrompt = self.baseSystemPrompt.replace("__DEFERRED_HINT__", deferredHint);
+          self.agent.state.systemPrompt = self.activeSystemPrompt(deferredHint);
           await self.dumpDebugPrompt();
-          return self.contextManager.transform(msgs, signal) as Promise<AgentMessage[]>;
+          const transformed = await self.contextManager.transform(msgs, signal);
+          return transformed.map((message) =>
+            stripMessageVisibility(message as AgentMessage)
+          );
         } catch (err) {
           this.logger.error("TransformContext", String(err));
           // Return original messages to keep the agent loop running
-          return msgs as unknown as Promise<AgentMessage[]>;
+          return msgs.map(stripMessageVisibility);
         }
       },
-      beforeToolCall: (ctx: BeforeToolCallContext, signal?: AbortSignal) =>
-        this.permissionManager.check(ctx, signal),
+      prepareNextTurnWithContext: (turn) =>
+        this.prepareMainNextTurn(turn),
+      shouldStopAfterTurn: (turn) =>
+        this.shouldStopExecutionEpisode(turn),
+      beforeToolCall: async (
+        ctx: BeforeToolCallContext,
+        signal?: AbortSignal,
+      ) => {
+        const batchToolNames = ctx.assistantMessage.content.flatMap((block) =>
+          block.type === "toolCall" ? [block.name] : []
+        );
+        this.planExecutionGuard.beginToolBatch(batchToolNames);
+        const tool = ctx.context.tools?.find(
+          (candidate) => candidate.name === ctx.toolCall.name,
+        );
+        if (
+          this.planContinuation?.phase === "report"
+          && tool?.name !== TASK_STATE_TOOL_NAME
+          && tool?.effect !== "read"
+        ) {
+          return {
+            block: true,
+            reason: "The Plan is completed; only TaskState updates and read-only tools are allowed before the final report",
+          };
+        }
+        const mainHasPlan = Boolean(
+          this.agentSupervisor.get(this.mainAgentId)?.context.activePlan,
+        );
+        if (mainHasPlan) {
+          const planBlock = await this.agentRuntimeCoordinator.beforePlanToolCall(
+            this.mainAgentId,
+            tool,
+            ctx.toolCall,
+            ctx.args,
+          );
+          if (planBlock) return planBlock;
+          if (isSideEffectFreePlanOperation(tool)) return undefined;
+          try {
+            const permissionBlock = await this.permissionManager.check(ctx, signal);
+            if (permissionBlock || signal?.aborted) {
+              await this.agentRuntimeCoordinator.releasePlanToolCall(
+                this.mainAgentId,
+                ctx.toolCall,
+              );
+            }
+            return permissionBlock;
+          } catch (error) {
+            await this.agentRuntimeCoordinator.releasePlanToolCall(
+              this.mainAgentId,
+              ctx.toolCall,
+            );
+            throw error;
+          }
+        }
+        const routeBlock = this.planExecutionGuard.checkToolCall({
+          tool,
+          batchToolNames,
+        });
+        if (routeBlock?.terminateBatch && tool) {
+          this.terminalRouteBlocks.set(
+            ctx.toolCall.id,
+            routeBlock.reason,
+          );
+          return undefined;
+        }
+        if (routeBlock) return routeBlock;
+        if (isSideEffectFreePlanOperation(tool)) return undefined;
+        return this.permissionManager.check(ctx, signal);
+      },
       afterToolCall: async (ctx: AfterToolCallContext, _signal?: AbortSignal) => {
+        const batchToolNames = ctx.assistantMessage.content.flatMap((block) =>
+          block.type === "toolCall" ? [block.name] : []
+        );
+        const routeBatchSibling = ctx.toolCall.name
+          !== PLAN_ROUTE_ASSESSMENT_TOOL_NAME
+          && batchToolNames.includes(PLAN_ROUTE_ASSESSMENT_TOOL_NAME);
+        const routeBlocked = Boolean(
+          (ctx.result.details as { routeBlocked?: unknown } | undefined)
+            ?.routeBlocked,
+        );
         try {
+          await this.agentRuntimeCoordinator.afterPlanToolCall(
+            this.mainAgentId,
+            ctx.toolCall,
+            ctx.result,
+            ctx.isError,
+          );
+          await this.observeExecutionAction(ctx);
           if (ctx.toolCall.name === "search_tools" && ctx.context.tools) {
-            ctx.context.tools = self.toolRegistry.buildToolsForRequest();
+            ctx.context.tools = self.buildMainToolsForRequest();
           }
             // S2b: Record anchor invalidation on write_file/overwrite_file success
             const toolName = ctx.toolCall.name;
@@ -911,8 +1159,17 @@ export class Harness {
         if (_signal?.aborted) {
           return { terminate: true };
         }
+        if (routeBatchSibling) {
+          return {
+            isError: routeBlocked || ctx.isError,
+            terminate: true,
+          };
+        }
         return undefined;
       },    });
+    const streamMain = this.piAgentRuntime.streamFunction;
+    this.piAgentRuntime.streamFunction = (model, context, options) =>
+      this.streamMainModel(streamMain, model, context, options);
 
     this.bindEvents();
     const session = this.sessionManager.createSession(this.config.provider, this.config.modelId);
@@ -925,24 +1182,63 @@ export class Harness {
       this.processStore,
       this.events,
       this.logger,
-      () => this.agentRuntimeCoordinator.availableToolNames(
-        AGENT_PROCESS_TOOL_NAMES,
+      () => this.agentRuntimeCoordinator.availableToolCapabilities(
+        AGENT_PROCESS_TOOL_CAPABILITIES,
       ),
       1,
       fallbackRegistry,
       this.hostId,
       this.facilities,
     );
+    this.plannerCoordinator = new PlannerProcessCoordinator(
+      this.agentSupervisor,
+      this.planService,
+      {
+        onApprovedPlan: (plan) => this.resumeApprovedPlan(plan),
+      },
+    );
+    this.agentSupervisor.bindTaskCompletionGuard(async (taskState) => {
+      if (!taskState.sourcePlan) return undefined;
+      const loaded = await this.planService.load(taskState.sourcePlan.planId);
+      const plan = loaded.ok ? loaded.plan : undefined;
+      if (
+        !plan
+        || plan.revision !== taskState.sourcePlan.revision
+        || plan.digest !== taskState.sourcePlan.digest
+        || plan.status !== "completed"
+      ) {
+        return "Required Plan verification is not complete; TaskState remains unchanged";
+      }
+      return undefined;
+    });
     this.events.on("agent:exit", (event) => {
+      const process = this.agentSupervisor.get(event.result.agentId);
+      if (process?.context.planBinding) {
+        void this.plannerCoordinator.execution.recordExit(
+          process.context.planBinding,
+          event.result,
+        ).catch((error) => this.logger.error("PlanEvidence", String(error)));
+      }
       this.recordSubagentExit(event.result.agentId);
       this.sessionCoordinator.scheduleBackgroundProcess(
         this.agentSupervisor.get(event.result.agentId),
       );
     });
+    this.events.on("agent:progress", (event) => {
+      const binding = this.agentSupervisor.get(event.agentId)?.context.planBinding;
+      if (!binding) return;
+      void this.plannerCoordinator.execution.recordProgress(
+        binding,
+        event.phase,
+        event.message ?? event.phase,
+      ).catch((error) => this.logger.error("PlanEvidence", String(error)));
+    });
     const mainContext = createMainAgentContext(
       this.config.projectPath,
       session.id,
-      this.agentRuntimeCoordinator.availableToolNames(AGENT_PROCESS_TOOL_NAMES),
+      this.agentRuntimeCoordinator.availableToolNames(
+        AGENT_PROCESS_TOOL_CAPABILITIES,
+      ),
       this.config.permissions.denyPatterns,
     );
     const mainProcess = this.agentSupervisor.registerMain(
@@ -952,13 +1248,13 @@ export class Harness {
     );
     this.mainAgentId = mainProcess.agentId;
     const updateMainSession = (sessionId: string) => {
-      void this.agentSupervisor.updateParentSession(
-        this.mainAgentId,
-        sessionId,
-        this.config.projectPath,
-      );
+      void this.rebindMainSession(sessionId, this.config.projectPath)
+        .catch((error) => this.logger.error("PlanRecovery", String(error)));
     };
     this.events.on("session:created", (event) => updateMainSession(event.id));
+    this.events.on("session:loaded", (event) => updateMainSession(event.id));
+    await this.planService.retention.pruneExpiredTerminalPlans();
+    await this.rebindMainSession(session.id, this.config.projectPath);
     await this.syncAgentProcessDriver(this.config.agents.enabled);
     await this.dumpDebugPrompt();
   }
@@ -968,16 +1264,584 @@ export class Harness {
    * On success, saves the session. On failure, retries up to maxRetries
    * with exponential backoff, then saves the failed state.
    */
-  async promptAndSave(text: string, images?: ImageContent[]): Promise<void> {
-    return this.conversationCoordinator.prompt(
-      this.conversationPromptOptions(text, images),
+  async promptAndSave(
+    text: string,
+    images?: ImageContent[],
+    mode: PlanSubmissionMode = "auto",
+  ): Promise<PlanSubmissionResult> {
+    return this.submitRoutedRequest(
+      text,
+      mode,
+      () => this.conversationCoordinator.prompt(
+        this.conversationPromptOptions(text, images),
+      ),
     );
   }
 
   private async promptAndSaveInternal(text: string, images?: ImageContent[]): Promise<void> {
-    return this.conversationCoordinator.executePrompt(
+    const prompt = () => this.conversationCoordinator.executePrompt(
       this.conversationPromptOptions(text, images),
     );
+    if (this.planExecutionGuard.hasActiveRequest) {
+      await prompt();
+      return;
+    }
+    await this.submitRoutedRequest(text, "auto", prompt);
+  }
+
+  private async resumeApprovedPlan(plan: Readonly<PlanRecord>): Promise<void> {
+    if (this.sessionManager.getCurrentSessionId() !== plan.sessionId) return;
+    const main = this.agentSupervisor.get(plan.mainAgentId);
+    if (main?.context.activePlan?.planId !== plan.planId) return;
+    const loaded = await this.planService.load(plan.planId);
+    const current = loaded.ok && loaded.plan ? loaded.plan : plan;
+    if (current.schemaVersion !== 2) return;
+    const taskState = this.agentSupervisor.getTaskState(current.sessionId);
+    if (
+      current.execution.episode?.phase === "paused_inconclusive"
+      || (current.status === "completed" && !taskState)
+    ) return;
+    const active = current.execution.episode
+      && current.execution.episode.planRevision === current.revision
+      && current.execution.episode.planDigest === current.digest
+      ? current
+      : await this.planService.episodes.start(current, taskState);
+    if (active.schemaVersion !== 2 || !active.execution.episode) return;
+    this.executionMonitor = new ExecutiveMonitor(active.execution.episode);
+    this.episodeObservationQueue = Promise.resolve();
+    this.episodeStopRequested = false;
+    this.publishEpisode(active.execution.episode);
+    const executionSteps = planExecutionUnits(active);
+    const executionPlan = {
+      planId: active.planId,
+      requestId: active.request.requestId,
+      sessionId: active.sessionId,
+      version: active.version,
+      revision: active.revision,
+      digest: active.digest,
+      goal: active.goal,
+      constraints: active.constraints,
+      selectedDecisions: active.decisions
+        .filter((decision) => decision.status === "selected")
+        .map((decision) => ({
+          decisionNodeId: decision.decisionNodeId,
+          optionId: decision.selectedOptionId,
+        })),
+      sideEffectSummary: active.sideEffectSummary,
+      executionSteps: executionSteps
+        .filter((step) => step.status === "pending")
+        .map((step) => ({
+        stepId: step.stepId,
+        title: step.title,
+        description: step.description,
+        dependsOn: step.dependsOn,
+        verifications: step.verifications,
+        effectGrants: step.effectGrants,
+      })),
+    };
+    this.planContinuation = {
+      planId: active.planId,
+      phase: "execution",
+      progress: this.planProgress(plan),
+      stalledFollowUps: 0,
+      totalFollowUps: 0,
+    };
+    this.events.emit({ type: "processing:start" });
+    try {
+      await this.conversationCoordinator.prompt(this.conversationPromptOptions([
+        "<plan_execution>",
+        "The internal Planner has completed and authorized the following Plan.",
+        "Before calling plan_start_item, use task_update initialize with the requestId and sessionId from this payload exactly as provided and with sourcePlan exactly matching this Plan; do not infer or replace these identity fields.",
+        "TaskState TodoItems must be user-visible observable outcomes. Never derive TodoItems from PlanExecutionSteps or create items for files, implementation phases, commands, tests, or manual acceptance.",
+        "Execute every pending PlanExecutionStep now in dependency order without routing or planning again.",
+        "Work on exactly one PlanExecutionStep at a time; do not start another until the current step is completed.",
+        "Before each step's side effects, call plan_start_item with the latest Plan version, revision, digest, and step ID as itemId.",
+        "Run each command verification separately and exactly as stored after binding its step; do not prefix, combine, or rewrite commands.",
+        "The Host completes the current PlanExecutionStep automatically when persisted evidence satisfies every verification; do not call verify_item.",
+        "Update TaskState only when an observable outcome changes. Tool or SubAgent completion does not directly complete a TodoItem.",
+        "After Host completion, continue to the next pending PlanExecutionStep in dependency order.",
+        "Use plan_report_conflict only when successful objective Tool evidence from the current step invalidates a listed hard constraint or selected decision. Tool failures, permission denials, unknown outcomes, and summaries are execution incidents, not material conflicts.",
+        "Do not stop after summarizing the Plan and do not wait for another user message.",
+        "Do not emit a user-facing completion response while TaskState is active.",
+        JSON.stringify(executionPlan),
+        "</plan_execution>",
+      ].join("\n")));
+      while (
+        this.executionMonitor?.snapshot().phase === "reflecting"
+        && this.episodeStopRequested
+      ) {
+        this.episodeStopRequested = false;
+        const incident = this.executionMonitor.snapshot().incident;
+        await this.conversationCoordinator.prompt(this.conversationPromptOptions([
+          "<execution_reflection>",
+          "The Host stopped the previous bounded execution episode.",
+          "Compare the unchanged persisted outcomes with these incident facts.",
+          "Choose a materially different tactic within the approved Plan.",
+          "Do not expose private reasoning and do not change Plan intent.",
+          JSON.stringify(incident),
+          "</execution_reflection>",
+        ].join("\n")));
+      }
+      if (
+        this.executionMonitor?.snapshot().phase === "paused_inconclusive"
+      ) {
+        this.events.emit({
+          type: "ui:warning",
+          text: "自动执行已暂停；未验证结果和 TODO 状态保持不变。",
+        });
+      }
+    } finally {
+      if (this.planContinuation?.planId === active.planId) {
+        this.planContinuation = undefined;
+      }
+      this.executionMonitor = undefined;
+      this.episodeStopRequested = false;
+      this.events.emit({ type: "processing:stop" });
+    }
+  }
+
+  private async observeExecutionAction(
+    context: AfterToolCallContext,
+  ): Promise<void> {
+    if (!this.executionMonitor) return;
+    const operation = this.episodeObservationQueue.then(async () => {
+      const monitor = this.executionMonitor;
+      if (!monitor) return;
+      const currentEpisode = monitor.snapshot();
+      const loaded = await this.planService.load(currentEpisode.planId);
+      const plan = loaded.ok ? loaded.plan : undefined;
+      if (
+        !plan
+        || plan.schemaVersion !== 2
+        || plan.revision !== currentEpisode.planRevision
+        || plan.digest !== currentEpisode.planDigest
+      ) {
+        this.episodeStopRequested = true;
+        return;
+      }
+      const details = context.result.details as Record<string, unknown> | undefined;
+      const outcomeClass: ExecutionOutcomeClass = details?.routeBlocked
+        || details?.blocked
+        || details?.denied
+        ? "rejected"
+        : context.isError
+        ? "failed"
+        : details?.structuredOutcome === "unknown"
+        ? "inconclusive"
+        : "succeeded";
+      const progress = captureExecutionProgress(
+        plan,
+        this.agentSupervisor.getTaskState(plan.sessionId),
+      );
+      const observation = monitor.recordAction(
+        fingerprintExecutionAction(
+          context.toolCall.name,
+          context.args,
+          outcomeClass,
+        ),
+        progress,
+      );
+      await this.persistEpisodeObservation(observation);
+    });
+    this.episodeObservationQueue = operation.catch((error) => {
+      this.episodeStopRequested = true;
+      this.logger.error("ExecutiveMonitor", String(error));
+    });
+    await operation;
+  }
+
+  private async shouldStopExecutionEpisode(
+    turn: ShouldStopAfterTurnContext,
+  ): Promise<boolean> {
+    await this.episodeObservationQueue;
+    const monitor = this.executionMonitor;
+    if (!monitor) return false;
+    if (this.episodeStopRequested) return true;
+    const episode = monitor.snapshot();
+    const loaded = await this.planService.load(episode.planId);
+    const plan = loaded.ok ? loaded.plan : undefined;
+    if (
+      !plan
+      || plan.schemaVersion !== 2
+      || plan.revision !== episode.planRevision
+      || plan.digest !== episode.planDigest
+    ) {
+      this.episodeStopRequested = true;
+      return true;
+    }
+    const taskState = this.agentSupervisor.getTaskState(plan.sessionId);
+    const progress = captureExecutionProgress(plan, taskState);
+    const hasToolCalls = turn.message.content.some((block) =>
+      block.type === "toolCall"
+    );
+    const observation = plan.status === "completed"
+      && taskState?.status === "completed"
+      && !hasToolCalls
+      ? monitor.markCompleted(progress)
+      : monitor.recordTurn(progress, turn.message.errorMessage);
+    await this.persistEpisodeObservation(observation);
+    if (!observation.stop && !hasToolCalls) {
+      const injected = await this.continueIncompletePlan(
+        plan.planId,
+        false,
+      );
+      if (injected) this.agent.followUp(injected);
+    }
+    return observation.stop;
+  }
+
+  private async persistEpisodeObservation(
+    observation: ReturnType<ExecutiveMonitor["recordTurn"]>,
+  ): Promise<void> {
+    const episode = observation.episode as Readonly<PersistedExecutionEpisode>;
+    await this.planService.episodes.persist(episode.planId, episode);
+    const snapshot = publicEpisodeSnapshot(episode);
+    if (!snapshot) return;
+    this.events.emit({
+      type: "plan:episode",
+      planId: episode.planId,
+      episode: snapshot,
+    });
+    if (observation.impasse && episode.incident) {
+      this.events.emit({
+        type: "plan:impasse",
+        planId: episode.planId,
+        episodeId: episode.episodeId,
+        incident: episode.incident,
+      });
+    }
+    if (observation.stop) this.episodeStopRequested = true;
+  }
+
+  private publishEpisode(episode: Readonly<PersistedExecutionEpisode>): void {
+    const snapshot = publicEpisodeSnapshot(episode);
+    if (!snapshot) return;
+    this.events.emit({
+      type: "plan:episode",
+      planId: episode.planId,
+      episode: snapshot,
+    });
+  }
+
+  private async adjustPausedExecution(
+    command: ExecutionAdjustPlanCommand,
+  ): Promise<ExecutionRecoveryResult> {
+    const loaded = await this.planService.load(command.planId);
+    const taskState = loaded.ok && loaded.plan
+      ? this.agentSupervisor.getTaskState(loaded.plan.sessionId)
+      : undefined;
+    const result = await this.planService.episodes.recover(command, taskState);
+    if (result.episode) {
+      this.events.emit({
+        type: "plan:episode",
+        planId: command.planId,
+        episode: result.episode,
+      });
+    }
+    if (result.ok && !result.duplicate) {
+      void this.plannerCoordinator.replan(
+        command.planId,
+        result.receipt.resultingVersion,
+      ).catch((error) => this.logger.error("EpisodeRecovery", String(error)));
+    }
+    return result;
+  }
+
+  private async continuePausedExecution(
+    command: ExecutionContinueCommand,
+  ): Promise<ExecutionRecoveryResult> {
+    const loaded = await this.planService.load(command.planId);
+    const taskState = loaded.ok && loaded.plan
+      ? this.agentSupervisor.getTaskState(loaded.plan.sessionId)
+      : undefined;
+    const result = await this.planService.episodes.recover(command, taskState);
+    if (result.episode) {
+      this.events.emit({
+        type: "plan:episode",
+        planId: command.planId,
+        episode: result.episode,
+      });
+    }
+    if (result.ok && !result.duplicate) {
+      const current = await this.planService.load(command.planId);
+      if (current.ok && current.plan) {
+        setTimeout(() => {
+          void this.resumeApprovedPlan(current.plan!)
+            .catch((error) => this.logger.error("EpisodeRecovery", String(error)));
+        }, 0);
+      }
+    }
+    return result;
+  }
+
+  private async rebindMainSession(
+    sessionId: string,
+    cwd: string,
+  ): Promise<void> {
+    await this.agentSupervisor.updateParentSession(
+      this.mainAgentId,
+      sessionId,
+      cwd,
+    );
+    await this.plannerCoordinator.reconcileSession(sessionId, this.mainAgentId);
+  }
+
+  private async submitRoutedRequest(
+    text: string,
+    mode: PlanSubmissionMode,
+    submit: (requestId: string) => Promise<void>,
+  ): Promise<PlanSubmissionResult> {
+    const requestId = randomUUID();
+    const initial = this.planExecutionGuard.beginRequest(requestId, text, mode);
+    this.syncMainRequestContext();
+    try {
+      if (initial.kind === "planner_requested") {
+        const result = this.planExecutionGuard.endRequest(requestId);
+        this.publishPlanRoute(result);
+        await this.plannerCoordinator.start(this.mainAgentId, initial.request);
+        return result;
+      }
+      await submit(requestId);
+      if (this.planExecutionGuard.activeRequestId !== requestId) {
+        return { kind: "main", requestId };
+      }
+      const result = this.planExecutionGuard.endRequest(requestId);
+      this.publishPlanRoute(result);
+      if (result.kind === "planner_requested") {
+        await this.plannerCoordinator.start(this.mainAgentId, result.request);
+      }
+      return result;
+    } finally {
+      this.planExecutionGuard.cancelRequest(requestId);
+      this.terminalRouteBlocks.clear();
+      this.syncMainRequestContext();
+    }
+  }
+
+  private publishPlanRoute(result: PlanSubmissionResult): void {
+    const decision = result.kind === "planner_requested"
+      ? result.request.decision
+      : result.decision;
+    if (!decision) return;
+    this.events.emit({
+      type: "plan:route",
+      requestId: decision.requestId,
+      decision,
+    });
+  }
+
+  private syncMainRequestContext(): void {
+    if (!this.piAgentRuntime) return;
+    this.agent.state.tools = this.buildMainToolsForRequest();
+    this.agent.state.systemPrompt = this.activeSystemPrompt(
+      this.toolRegistry.buildDeferredToolsHint(),
+    );
+  }
+
+  private buildMainToolsForRequest(): AgentTool<any>[] {
+    return this.toolRegistry.buildToolsForRequest().map((tool) => ({
+      ...tool,
+      execute: async (id, args, signal, onUpdate) => {
+        const routeBlock = this.terminalRouteBlocks.get(id);
+        if (routeBlock) {
+          this.terminalRouteBlocks.delete(id);
+          return {
+            content: [{ type: "text", text: routeBlock }],
+            details: { routeBlocked: true },
+            terminate: true,
+          };
+        }
+        return tool.execute(id, args, signal, onUpdate);
+      },
+    }));
+  }
+
+  private streamMainModel(
+    stream: StreamFn,
+    model: Model<Api>,
+    context: Context,
+    options?: SimpleStreamOptions,
+  ) {
+    const streamOptions = this.planContinuation
+      ? { ...options, reasoning: undefined }
+      : options;
+    if (this.planExecutionGuard.activeDecision?.route !== "plan") {
+      return stream(model, context, streamOptions);
+    }
+    const stopped = createAssistantMessageEventStream();
+    const message: AssistantMessage = {
+      role: "assistant",
+      content: [],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: {
+          input: 0,
+          output: 0,
+          cacheRead: 0,
+          cacheWrite: 0,
+          total: 0,
+        },
+      },
+      stopReason: "stop",
+      timestamp: Date.now(),
+    };
+    stopped.push({ type: "done", reason: "stop", message });
+    return stopped;
+  }
+
+  private planProgress(plan: Readonly<PlanRecord>): string {
+    return planExecutionUnits(plan)
+      .map((step) => `${step.stepId}:${step.status}`)
+      .join("|");
+  }
+
+  private async continueIncompletePlan(
+    planId: string,
+    hasToolCalls: boolean,
+  ): Promise<AgentMessage | undefined> {
+    const tracker = this.planContinuation;
+    if (!tracker || tracker.planId !== planId) return;
+    const loaded = await this.planService.load(planId);
+    if (!loaded.ok || !loaded.plan) {
+      this.planContinuation = undefined;
+      return;
+    }
+    const plan = loaded.plan;
+    const executionSteps = planExecutionUnits(plan);
+    if (plan.status === "completed") {
+      if (tracker.phase === "execution") {
+        tracker.phase = "report";
+        return {
+          role: "user",
+          content: [{
+            type: "text",
+            text: [
+              "<plan_completion>",
+              "The persisted Plan is completed. Do not execute any further Plan side effects.",
+              "Before reporting, use legal task_update transitions to move every actually delivered TaskState outcome to completed with a concise result; move pending outcomes through in_progress first.",
+              "If a real external blocker or failure remains, record it truthfully instead of claiming completion.",
+              "Then output exactly one user-visible final report covering: delivered results; verification actually run and its conclusions; and anything unverified or still missing.",
+              "</plan_completion>",
+            ].join("\n"),
+          }],
+          timestamp: Date.now(),
+        } as AgentMessage;
+      }
+      if (!hasToolCalls) this.planContinuation = undefined;
+      return;
+    }
+    if (!["approved", "executing"].includes(plan.status)) {
+      this.planContinuation = undefined;
+      return;
+    }
+    const progress = this.planProgress(plan);
+    if (progress !== tracker.progress) {
+      tracker.progress = progress;
+      tracker.stalledFollowUps = 0;
+    }
+    if (hasToolCalls) return;
+    if (executionSteps.some((step) => step.status === "blocked")) {
+      this.events.emit({
+        type: "ui:warning",
+        text: "执行已阻塞，未完成的 TODO 已保留。",
+      });
+      this.planContinuation = undefined;
+      return;
+    }
+    const unfinished = executionSteps.filter((step) =>
+      step.status === "pending" || step.status === "in_progress"
+    );
+    if (unfinished.length === 0) {
+      this.planContinuation = undefined;
+      return;
+    }
+    tracker.totalFollowUps++;
+    this.agent.followUp({
+      role: "user",
+      content: [{
+        type: "text",
+        text: [
+          "<plan_execution>",
+          "The persisted Plan is still incomplete. Continue execution now from Main TaskState.",
+          "Do not claim completion or stop while TaskState remains active.",
+          "Work on exactly one PlanExecutionStep at a time and collect evidence only for the currently bound step.",
+          "Run each command verification separately and exactly as stored; do not prefix, combine, or rewrite commands.",
+          "The Host completes the current PlanExecutionStep automatically when persisted evidence satisfies every verification; do not call verify_item.",
+          "Tool failures, permission denials, unknown outcomes, failed verification, and continuation exhaustion do not change TODO state or establish material conflicts.",
+          JSON.stringify({
+            planId: plan.planId,
+            version: plan.version,
+            revision: plan.revision,
+            digest: plan.digest,
+            executionSteps: unfinished.map((step) => ({
+              stepId: step.stepId,
+              status: step.status,
+              verifications: step.verifications,
+              evidenceIds: step.evidence.map((evidence) =>
+                evidence.evidenceId
+              ),
+            })),
+          }),
+          "</plan_execution>",
+        ].join("\n"),
+      }],
+      timestamp: Date.now(),
+    } as AgentMessage);
+  }
+
+  private async prepareMainNextTurn(
+    turn: PrepareNextTurnContext,
+  ): Promise<{ context: PiAgentContext }> {
+    const batchToolNames = turn.message.content.flatMap((block) =>
+      block.type === "toolCall" ? [block.name] : []
+    );
+    this.planExecutionGuard.completeToolBatch(batchToolNames);
+    const messages = [...turn.context.messages];
+    const pending = this.pendingRoutedImages;
+    if (
+      pending
+      && pending.requestId === this.planExecutionGuard.activeRequestId
+      && this.planExecutionGuard.canRunSideEffects()
+      && !pending.result
+    ) {
+      pending.result = await this.processPendingRoutedImages(pending);
+      messages.push({
+        role: "user",
+        content: [{
+          type: "text",
+          text: this.imageResultPrompt(pending.text, pending.result),
+        }],
+        timestamp: Date.now(),
+      } as AgentMessage);
+    }
+    const activePlanId = this.agentSupervisor
+      .get(this.mainAgentId)
+      ?.context.activePlan?.planId;
+    const continuationPlanId = activePlanId ?? this.planContinuation?.planId;
+    if (continuationPlanId) {
+      const injected = await this.continueIncompletePlan(
+        continuationPlanId,
+        batchToolNames.length > 0,
+      );
+      if (injected) messages.push(injected);
+    }
+    return {
+      context: {
+        ...turn.context,
+        systemPrompt: this.activeSystemPrompt(
+          this.toolRegistry.buildDeferredToolsHint(),
+        ),
+        messages,
+        tools: this.buildMainToolsForRequest(),
+      },
+    };
   }
 
   private conversationPromptOptions(text: string, images?: ImageContent[]) {
@@ -1229,8 +2093,29 @@ export class Harness {
   private async refreshMainAgentCapabilities(): Promise<void> {
     await this.agentRuntimeCoordinator.refreshMain(
       this.mainAgentId,
-      AGENT_PROCESS_TOOL_NAMES,
+      AGENT_PROCESS_TOOL_CAPABILITIES,
     );
+  }
+
+  private async processMcpImages(
+    images: ImageContent[],
+    text: string,
+    options?: ProcessOptions,
+  ): Promise<ProcessResult> {
+    const execution = getExecutionContext();
+    const process = execution
+      ? this.agentSupervisor?.get(execution.processId)
+      : undefined;
+    const blocked = !process
+      || process.application.permissionMode === "plan"
+      || (
+        process.role === "main"
+        && !this.planExecutionGuard.canRunSideEffects()
+      );
+    if (blocked) {
+      return { source: "none", enrichedText: text, cachedRefs: [] };
+    }
+    return this.processImagesWithVisionAgent(images, text, options);
   }
 
   private async processImagesWithVisionAgent(
@@ -1262,7 +2147,7 @@ export class Harness {
     }
     const sessionId = this.sessionManager.getCurrentSessionId();
     if (!sessionId) throw new Error("Cannot launch Vision Agent without an active session");
-    await this.agentSupervisor.updateParentSession(this.mainAgentId, sessionId);
+    await this.rebindMainSession(sessionId, this.config.projectPath);
     options?.onProgress?.({ phase: "compressing", cachedRefs: [] });
     const cachedRefs = await Promise.all(
       images.map((image) => this.imageStore.put(image)),
@@ -1343,9 +2228,14 @@ export class Harness {
     text: string,
     images: ImageContent[],
     displayText = text,
-  ): Promise<void> {
-    return this.conversationCoordinator.run(() =>
-      this.promptWithImagesInternal(text, images, displayText)
+    mode: PlanSubmissionMode = "auto",
+  ): Promise<PlanSubmissionResult> {
+    return this.submitRoutedRequest(
+      text,
+      mode,
+      (requestId) => this.conversationCoordinator.run(() =>
+        this.promptWithImagesInternal(text, images, displayText, requestId)
+      ),
     );
   }
 
@@ -1353,9 +2243,8 @@ export class Harness {
     text: string,
     images: ImageContent[],
     displayText: string,
+    requestId: string,
   ): Promise<void> {
-    const turnIdx = this.turnIndex++;
-
     const visionApplication = this.applicationRegistry.require("vision");
     const visionConfig = resolveVisionApplicationConfig(visionApplication, this.config);
     const hasVisionConfig = !!(visionConfig?.provider && visionConfig.model);
@@ -1369,72 +2258,130 @@ export class Harness {
       return;
     }
 
-    this.events.emit({ type: "processing:start" });
-    this.events.emit({ type: "ui:info", text: `Analyzing ${images.length} image(s)...` });
-
     const parentSessionId = this.sessionManager.getCurrentSessionId();
     if (!parentSessionId) throw new Error("Cannot launch Vision Agent without an active session");
+    const pending: PendingRoutedImages = {
+      requestId,
+      text,
+      displayText,
+      images,
+      parentSessionId,
+      turnIndex: this.turnIndex++,
+    };
+    this.pendingRoutedImages = pending;
     try {
-      const result = await this.processImagesWithVisionAgent(
-        images,
-        text,
-        { displayPrompt: displayText },
-        true,
+      await this.promptAndSaveInternal(
+        [
+          text,
+          "",
+          `<attached_images_pending count="${images.length}">`,
+          "Image analysis is pending. Submit the required route assessment before answering or processing these images.",
+          "</attached_images_pending>",
+        ].join("\n"),
       );
-      let mainPrompt = result.enrichedText;
-      if (result.source === "vision") {
-        this.events.emit({ type: "ui:info", text: `Image analysis complete, sending to main model...` });
-      } else if (result.source === "ocr") {
-        this.events.emit({ type: "ui:info", text: `OCR complete, sending to main model...` });
-      } else if (result.source === "none") {
-        mainPrompt = text
-          ? `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`
-          : "(用户附带了一张图片，但图片中没有可识别的文字内容)";
-      }
-      await this.promptAndSaveInternal(mainPrompt);
-
-      const messages = this.agent.state.messages as any[];
-      const messageIndex = this.findLastUserMessageIndex(messages);
-      const linked = this.linkVisionAgentMessage(
-        parentSessionId,
-        result,
-        displayText,
-        messageIndex,
-      );
-      if (!linked && result.source === "vision") {
-        const vMsg: VisionMessage = {
-          turnIndex: turnIdx,
-          messageIndex,
-          images: result.cachedRefs,
-          prompt: displayText,
-          description: result.enrichedText
-            .replace(text ? `${text}\n\n<image_description>\n` : `<image_description>\n`, "")
-            .replace("\n</image_description>", ""),
-          modelProvider: visionConfig?.provider ?? "",
-          modelId: visionConfig?.model ?? "",
-          timestamp: Date.now(),
-        };
-        this.sessionManager.appendVisionMessage(parentSessionId, vMsg);
-      }
-      if (linked || result.source === "vision") {
-        this.restoreUserMessageImages(displayText, result.cachedRefs);
-      }
+      if (pending.result) this.recordProcessedImages(pending, visionConfig);
+      else this.restoreUserMessageImages(displayText, []);
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") {
         this.events.emit({ type: "processing:stop" });
         return;
       }
       throw error;
+    } finally {
+      if (this.pendingRoutedImages === pending) {
+        this.pendingRoutedImages = undefined;
+      }
     }
+  }
+
+  private async processPendingRoutedImages(
+    pending: PendingRoutedImages,
+  ): Promise<ProcessResult> {
+    this.events.emit({ type: "processing:start" });
+    this.events.emit({
+      type: "ui:info",
+      text: `Analyzing ${pending.images.length} image(s)...`,
+    });
+    const result = await this.processImagesWithVisionAgent(
+      pending.images,
+      pending.text,
+      { displayPrompt: pending.displayText },
+      true,
+    );
+    if (result.source === "vision") {
+      this.events.emit({
+        type: "ui:info",
+        text: "Image analysis complete, sending to main model...",
+      });
+    } else if (result.source === "ocr") {
+      this.events.emit({
+        type: "ui:info",
+        text: "OCR complete, sending to main model...",
+      });
+    }
+    return result;
+  }
+
+  private imageResultPrompt(text: string, result: ProcessResult): string {
+    if (result.source !== "none") return result.enrichedText;
+    return text
+      ? `${text}\n\n(用户附带了一张图片，但图片中没有可识别的文字内容)`
+      : "(用户附带了一张图片，但图片中没有可识别的文字内容)";
+  }
+
+  private recordProcessedImages(
+    pending: PendingRoutedImages,
+    visionConfig: ReturnType<typeof resolveVisionApplicationConfig>,
+  ): void {
+    const result = pending.result;
+    if (!result) return;
+    const messageIndex = this.findLastUserMessageIndex(
+      this.agent.state.messages as any[],
+    );
+    const linked = this.linkVisionAgentMessage(
+      pending.parentSessionId,
+      result,
+      pending.displayText,
+      messageIndex,
+    );
+    if (!linked && result.source === "vision") {
+      const message: VisionMessage = {
+        turnIndex: pending.turnIndex,
+        messageIndex,
+        images: result.cachedRefs,
+        prompt: pending.displayText,
+        description: result.enrichedText
+          .replace(
+            pending.text
+              ? `${pending.text}\n\n<image_description>\n`
+              : "<image_description>\n",
+            "",
+          )
+          .replace("\n</image_description>", ""),
+        modelProvider: visionConfig?.provider ?? "",
+        modelId: visionConfig?.model ?? "",
+        timestamp: Date.now(),
+      };
+      this.sessionManager.appendVisionMessage(pending.parentSessionId, message);
+    }
+    this.restoreUserMessageImages(pending.displayText, result.cachedRefs);
   }
 
   /** Abort any in-progress vision/OCR processing AND the current agent run. */
   abort(): void {
+    this.planExecutionGuard.cancelActiveRequest();
+    this.terminalRouteBlocks.clear();
+    this.syncMainRequestContext();
     this.conversationCoordinator.abort(() => this.abortRuntime());
   }
 
   private abortRuntime(): void {
     this.activeVisionAbortController?.abort();
+    if (this.plannerCoordinator) {
+      void this.plannerCoordinator.shutdown().catch((error) => {
+        this.logger.error("PlannerAbort", String(error));
+      });
+    }
     if (this.activeVisionAgentId) {
       void this.agentSupervisor.terminate(this.activeVisionAgentId).catch((error) => {
         this.logger.error("VisionAgent", `Failed to terminate: ${String(error)}`);
@@ -1446,6 +2393,7 @@ export class Harness {
         || process.recording !== "process-only"
         || !["created", "running", "waiting", "stopped"].includes(process.state)
         || process.agentId === this.activeVisionAgentId
+        || process.application.name === PLANNER_APPLICATION.name
       ) continue;
       void this.agentSupervisor.terminate(process.agentId).catch((error) => {
         this.logger.error("AgentProcess", `Failed to terminate ${process.agentId}: ${String(error)}`);
@@ -1663,6 +2611,13 @@ export class Harness {
     } catch (err) {
       this.logger.error("McpShutdown", String(err));
     }
+    if (this.plannerCoordinator) {
+      try {
+        await this.plannerCoordinator.shutdown();
+      } catch (err) {
+        this.logger.error("PlannerShutdown", String(err));
+      }
+    }
     if (this.agentSupervisor) {
       try {
         await this.agentSupervisor.shutdown();
@@ -1692,7 +2647,18 @@ export class Harness {
     const memories = this.memoryManager.getRelevantMemories();
     const skillSection = this.skillManager.getSystemPromptSection();
     this.baseSystemPrompt = this.buildSystemPrompt(memories, skillSection, this.commandManager.getSystemPromptSection());
-    this.agent.state.systemPrompt = this.baseSystemPrompt.replace("__DEFERRED_HINT__", this.toolRegistry.buildDeferredToolsHint());
+    this.agent.state.systemPrompt = this.activeSystemPrompt(
+      this.toolRegistry.buildDeferredToolsHint(),
+    );
+  }
+
+  private activeSystemPrompt(deferredHint: string): string {
+    const prompt = this.baseSystemPrompt.replace(
+      "__DEFERRED_HINT__",
+      deferredHint,
+    );
+    const routeInstructions = this.planExecutionGuard.instructions();
+    return routeInstructions ? `${prompt}\n\n${routeInstructions}` : prompt;
   }
 
   private buildSystemPrompt(memories: string, skillSection: string, commandsSection: string): string {
@@ -1808,6 +2774,7 @@ __DEFERRED_HINT__`;
     return {
       name: "skill",
       label: "Load skill",
+      effect: "read",
       description: "Load and display the full SKILL.md content (frontmatter + instructions) for a given skill. Call this first before using a skill to understand its instructions and allowed tools.",
       parameters: skillParams,
       execute: async (_id, params) => {
@@ -1963,6 +2930,17 @@ __DEFERRED_HINT__`;
             this.logger.info("PreTurnSave", `Saving session pre-turn (${(this.agent.state.messages as any[]).length} messages)`);
             this.sessionManager.trySaveSession(this.agent);
             this.sessionCoordinator.noteSavedMessageCount();
+          } else if (
+            event.message.role === "assistant"
+            && this.planContinuation?.phase === "execution"
+          ) {
+            const messages = this.agent.state.messages;
+            const lastIndex = messages.length - 1;
+            if (messages[lastIndex] === event.message) {
+              messages[lastIndex] = markInternalPlanExecutionMessage(
+                event.message,
+              );
+            }
           }
           break;
         }
@@ -1971,10 +2949,17 @@ __DEFERRED_HINT__`;
           if (!ev) break;
           switch (ev.type) {
             case "thinking_delta":
-              this.events.emit({ type: "llm:thinking:delta", delta: ev.delta });
+              if (this.planContinuation?.phase !== "execution") {
+                this.events.emit({
+                  type: "llm:thinking:delta",
+                  delta: ev.delta,
+                });
+              }
               break;
             case "text_delta":
-              this.events.emit({ type: "llm:text:delta", delta: ev.delta });
+              if (this.planContinuation?.phase !== "execution") {
+                this.events.emit({ type: "llm:text:delta", delta: ev.delta });
+              }
               break;
           }
           break;

@@ -56,7 +56,10 @@ describe("Web path safety", () => {
     const project = mkdtempSync(join(tmpdir(), "dscode-web-project-"));
     mkdirSync(join(project, "web"));
     writeFileSync(join(project, "web", "index.html"), "index");
-    const prompt = vi.fn(async () => {});
+    const prompt = vi.fn(async () => ({
+      kind: "main" as const,
+      requestId: "upload-test",
+    }));
     const harness = createHarnessApiFixture({
       settings: {
         ...createHarnessApiFixture().settings,
@@ -95,6 +98,10 @@ describe("Web path safety", () => {
     expect(files).toHaveLength(1);
     expect(files[0]).toMatch(/-outside\.txt$/);
     expect(readFileSync(join(uploadDir, files[0]), "utf8")).toBe("content");
-    expect(prompt).toHaveBeenCalledWith(expect.stringContaining(uploadDir));
+    expect(prompt).toHaveBeenCalledWith(
+      expect.stringContaining(uploadDir),
+      undefined,
+      "auto",
+    );
   });
 });

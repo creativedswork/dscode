@@ -1,6 +1,6 @@
 {
   "name": "@creative-dswork/dscode",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "type": "module",
   "description": "DeepSeek-native terminal AI agent for digital work — DeepSeek model harness analogous to Claude Code for Claude models.",
@@ -49,12 +49,12 @@
   ],
   "license": "MIT",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.19.0"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "^0.80.10",
-    "@earendil-works/pi-ai": "^0.80.10",
-    "@earendil-works/pi-tui": "^0.80.10",
+    "@earendil-works/pi-agent-core": "0.84.4",
+    "@earendil-works/pi-ai": "0.84.4",
+    "@earendil-works/pi-tui": "0.84.4",
     "chalk": "^5.5.0",
     "jpeg-js": "^0.4.4",
     "pngjs": "^7.0.0",

@@ -1,7 +1,12 @@
 import type { AgentSessionMessage } from "../../session/types.js";
+import { isInternalPlanExecutionMessage } from "../../kernel/message-visibility.js";
 import { formatSubagentLabel } from "./agent-label.js";
 import { formatToolArgsForDisplay } from "./tool-args-formatter.js";
 import { createToolResultProjection } from "./tool-result-projection.js";
+import {
+  isConversationToolResultVisible,
+  isConversationToolVisible,
+} from "./tool-visibility.js";
 import type { ConversationMessage } from "./types.js";
 
 export interface SessionProjectionOptions {
@@ -48,9 +53,46 @@ function extractToolResultText(blocks: any[]): string {
     .join("\n");
 }
 
-function isInternalAgentNotification(message: any): boolean {
+function isPlanExecutionPrompt(message: any): boolean {
   return message?.role === "user"
-    && extractText(message.content).trimStart().startsWith("<agent_notifications>");
+    && extractText(message.content).trimStart().startsWith("<plan_execution>");
+}
+
+function isInternalAgentNotification(message: any): boolean {
+  if (message?.role !== "user") return false;
+  const text = extractText(message.content).trimStart();
+  return text.startsWith("<agent_notifications>")
+    || text.startsWith("<plan_execution>");
+}
+
+function legacyInternalPlanAssistants(messages: any[]): Set<number> {
+  const internal = new Set<number>();
+  let planExecutionActive = false;
+  let pendingNoToolAssistant: number | undefined;
+
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index];
+    if (message?.role === "user") {
+      if (isPlanExecutionPrompt(message)) {
+        if (pendingNoToolAssistant !== undefined) {
+          internal.add(pendingNoToolAssistant);
+        }
+        pendingNoToolAssistant = undefined;
+        planExecutionActive = true;
+      } else if (!isInternalAgentNotification(message)) {
+        planExecutionActive = false;
+        pendingNoToolAssistant = undefined;
+      }
+      continue;
+    }
+    if (!planExecutionActive || message?.role !== "assistant") continue;
+
+    const hasToolCall = Array.isArray(message.content)
+      && message.content.some((block: any) => block?.type === "toolCall");
+    if (hasToolCall) internal.add(index);
+    else pendingNoToolAssistant = index;
+  }
+  return internal;
 }
 
 function recoverSubagentDescriptions(messages: any[]): Map<string, string> {
@@ -105,6 +147,7 @@ export function rebuildDisplayMessages(
   options: SessionProjectionOptions = {},
 ): ConversationMessage[] {
   const recoveredDescriptions = recoverSubagentDescriptions(messages);
+  const legacyInternalMessages = legacyInternalPlanAssistants(messages);
   const agentMap = new Map<number, AgentSessionMessage>();
   for (const message of agentMessages) {
     if (message.messageIndex !== undefined) {
@@ -116,6 +159,7 @@ export function rebuildDisplayMessages(
   const output = new Set<number>(); // message indices to emit
   const pendingResults = new Map<number, Map<string, { rawResult: string; isError: boolean; toolName: string }>>();
   const parsedToolsByAssistant = new Map<number, { id: string; name: string; args: string }[]>();
+  const hiddenToolCallIds = new Set<string>();
   // pendingResults: assistantMsgIndex → (toolCallId → { result, isError, toolName })
 
   let lastAssistantIdx = -1;
@@ -134,7 +178,16 @@ export function rebuildDisplayMessages(
       const contentArr = Array.isArray(m.content) ? m.content : [];
       const toolCalls: { id: string; name: string; args: string }[] = [];
       for (const b of contentArr) {
-        if (b && b.type === "toolCall" && b.name && b.id) {
+        if (
+          b
+          && b.type === "toolCall"
+          && b.name
+          && b.id
+        ) {
+          if (!isConversationToolVisible(b.name)) {
+            hiddenToolCallIds.add(b.id);
+            continue;
+          }
           const args = formatToolArgsForDisplay(b.name, b.arguments);
           toolCalls.push({ id: b.id, name: b.name, args });
         }
@@ -149,6 +202,11 @@ export function rebuildDisplayMessages(
       } else {
         lastAssistantToolIds = null;
       }
+    } else if (
+      m.role === "toolResult"
+      && hiddenToolCallIds.has(m.toolCallId)
+    ) {
+      continue;
     } else if (m.role === "toolResult" && lastAssistantToolIds) {
       // Try to match to the last assistant's tool calls
       const toolCallId: string | undefined = m.toolCallId;
@@ -159,6 +217,10 @@ export function rebuildDisplayMessages(
         const toolName = parsedTools?.[toolIdx]?.name ?? "unknown";
         const rawResult = extractToolResultText(m.content);
         const isError = !!m.isError;
+        if (!isConversationToolResultVisible(toolName, rawResult, isError)) {
+          hiddenToolCallIds.add(toolCallId);
+          continue;
+        }
 
         let results = pendingResults.get(lastAssistantIdx);
         if (!results) {
@@ -185,9 +247,11 @@ export function rebuildDisplayMessages(
     if (!output.has(i)) continue;
     const m = messages[i];
     const agentMessage = agentMap.get(i);
+    const internalPlanExecution = isInternalPlanExecutionMessage(m)
+      || legacyInternalMessages.has(i);
 
     // Content
-    let content = extractText(m.content);
+    let content = internalPlanExecution ? "" : extractText(m.content);
 
     // Images
     let images: ConversationMessage["images"] = undefined;
@@ -231,34 +295,55 @@ export function rebuildDisplayMessages(
       const extracted = extractThinkingFromContent(m.content);
       if (extracted) thinking = extracted;
     }
+    if (internalPlanExecution) thinking = undefined;
 
     // Tools: extract from content blocks for assistant messages, merge with results
     let tools: ConversationMessage["tools"] = Array.isArray(m.tools)
-      ? m.tools.map((tool: NonNullable<ConversationMessage["tools"]>[number]) => ({ ...tool }))
+      ? m.tools
+          .filter((tool: NonNullable<ConversationMessage["tools"]>[number]) =>
+            isConversationToolResultVisible(
+              tool.name,
+              tool.resultDetail?.text ?? tool.result,
+              tool.isError,
+            )
+          )
+          .map((tool: NonNullable<ConversationMessage["tools"]>[number]) => ({ ...tool }))
       : undefined;
     if (m.role === "assistant" && Array.isArray(m.content)) {
       const parsedTools = parsedToolsByAssistant.get(i);
       if (parsedTools && parsedTools.length > 0) {
         const results = pendingResults.get(i);
-        tools = parsedTools.map((tc) => {
-          const r = results?.get(tc.id);
-          const resultDetail = r
-            ? createToolResultProjection(r.toolName, r.rawResult, {
-                owner: "session",
-                ownerId: parentSessionId,
-                toolCallId: tc.id,
-              })
-            : undefined;
-          return {
-            toolCallId: tc.id,
-            name: tc.name,
-            args: tc.args,
-            result: resultDetail?.summary ?? "",
-            resultDetail,
-            isError: r?.isError ?? false,
-          };
-        });
+        tools = parsedTools
+          .filter((tool) => !hiddenToolCallIds.has(tool.id))
+          .map((tc) => {
+            const r = results?.get(tc.id);
+            const resultDetail = r
+              ? createToolResultProjection(r.toolName, r.rawResult, {
+                  owner: "session",
+                  ownerId: parentSessionId,
+                  toolCallId: tc.id,
+                })
+              : undefined;
+            return {
+              toolCallId: tc.id,
+              name: tc.name,
+              args: tc.args,
+              result: resultDetail?.summary ?? "",
+              resultDetail,
+              isError: r?.isError ?? false,
+            };
+          });
       }
+    }
+
+    if (
+      internalPlanExecution
+      && !content
+      && !images?.length
+      && !thinking
+      && !tools?.length
+    ) {
+      continue;
     }
 
     // System messages with no content: preserve but with empty content

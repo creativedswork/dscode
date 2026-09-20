@@ -22,22 +22,27 @@ export function isCanonicalPathWithin(
     return false;
   }
 
+  const canonicalTarget = resolveCanonicalPath(candidate);
+  if (!canonicalTarget) return false;
+  return isPathWithin(canonicalRoot, canonicalTarget);
+}
+
+export function resolveCanonicalPath(candidate: string): string | undefined {
   const target = resolve(candidate);
   let existing = target;
   while (!existsSync(existing)) {
     const parent = dirname(existing);
-    if (parent === existing) return false;
+    if (parent === existing) return undefined;
     existing = parent;
   }
 
   try {
     const canonicalBase = realpathSync(existing);
-    const canonicalTarget = resolve(
+    return resolve(
       canonicalBase,
       relative(existing, target),
     );
-    return isPathWithin(canonicalRoot, canonicalTarget);
   } catch {
-    return false;
+    return undefined;
   }
 }

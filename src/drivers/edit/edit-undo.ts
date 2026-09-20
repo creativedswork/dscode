@@ -32,6 +32,7 @@ const editUndoParams = Type.Object({
 export const editUndoTool: AgentTool<typeof editUndoParams> = {
   name: "edit_undo",
   label: "Undo last edit on a file",
+  effect: "workspace_write",
   description:
     "Restores a file to its pre-edit state after an edit operation. " +
     "Only works for the most recent edit — calling edit again overwrites the undo snapshot. " +

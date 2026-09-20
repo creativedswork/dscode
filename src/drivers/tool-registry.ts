@@ -1,6 +1,5 @@
-import type { AgentTool } from "@earendil-works/pi-agent-core";
-
 import type { DriverRegistry } from "./registry.js";
+import type { RegisteredAgentTool } from "./types.js";
 
 import { isMcpToolName, extractMcpServerPrefix } from "../mcp/names.js";
 
@@ -8,7 +7,7 @@ export interface ToolSearchEntry {
   name: string;
   description: string;
   searchHint: string;
-  tool: AgentTool<any>;
+  tool: RegisteredAgentTool;
 }
 
 export class ToolRegistry {
@@ -25,7 +24,7 @@ export class ToolRegistry {
 
   /** Scan all drivers and classify tools as base/deferred. Supports re-entry. */
   initialize(
-    skillTool: AgentTool<any>,
+    skillTool: RegisteredAgentTool,
     alwaysLoadNames?: Set<string>,
     appOnlyNames?: Set<string>,
   ): void {
@@ -109,8 +108,8 @@ export class ToolRegistry {
   }
 
   /** Build the tools array for the next API request. */
-  buildToolsForRequest(): AgentTool<any>[] {
-    const tools: AgentTool<any>[] = [];
+  buildToolsForRequest(): RegisteredAgentTool[] {
+    const tools: RegisteredAgentTool[] = [];
     for (const [name, entry] of this.allTools) {
       if (this.baseToolNames.has(name)) {
         tools.push(entry.tool);
