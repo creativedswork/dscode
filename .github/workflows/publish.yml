@@ -76,6 +76,5 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-          registry-url: "https://registry.npmjs.org"
       - run: npm install --global npm@11
       - run: npm publish ./package/*.tgz --access public --provenance
