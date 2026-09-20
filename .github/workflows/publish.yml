@@ -73,8 +73,15 @@ jobs:
         with:
           name: npm-package
           path: package/
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v6
         with:
-          node-version: "22"
-      - run: npm install --global npm@11
-      - run: npm publish ./package/*.tgz --access public --provenance
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+      - run: npm install --global npm@^11.15.0
+      - name: Verify OIDC publishing prerequisites
+        run: |
+          npm --version
+          test -n "$ACTIONS_ID_TOKEN_REQUEST_URL"
+          test -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN"
+      - run: npm publish ./package/*.tgz --access public --loglevel verbose
