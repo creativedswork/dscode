@@ -79,5 +79,3 @@ jobs:
           registry-url: "https://registry.npmjs.org"
       - run: npm install --global npm@11
       - run: npm publish ./package/*.tgz --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
