@@ -1,0 +1,1755 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>dscode 技术架构深度分析</title>
+  <meta name="description" content="dscode 本地 AI Agent CLI 代码仓库技术架构深度分析报告。涵盖 Harness 编排层、延迟工具发现、文件编辑安全链、CHIFF 会话评估流水线与风险治理演进路线。">
+  <style>
+    /* --------------------------------------------------------------------------
+       Stripe Design System Tokens & Base Styles
+       -------------------------------------------------------------------------- */
+    :root {
+      --bg-primary: #f6f9fc;
+      --bg-surface: #ffffff;
+      --bg-surface-hover: #f8fafc;
+      --bg-surface-active: #f1f5f9;
+      --bg-subtle: #edf2f7;
+      --bg-header: rgba(255, 255, 255, 0.85);
+
+      --text-main: #0a2540;
+      --text-secondary: #425466;
+      --text-muted: #6b7c93;
+      --text-inverse: #ffffff;
+
+      --brand-primary: #635bff;
+      --brand-primary-hover: #0a2540;
+      --brand-light: #f0f3ff;
+      --brand-border: #c4c5f6;
+
+      --accent-teal: #00d4b1;
+      --accent-teal-light: #e6fbf7;
+      --accent-purple: #7a73ff;
+
+      --status-high-bg: #fff0f3;
+      --status-high-border: #f87171;
+      --status-high-text: #dc2626;
+
+      --status-med-bg: #fffbe6;
+      --status-med-border: #fbbf24;
+      --status-med-text: #b45309;
+
+      --status-low-bg: #f0fdf4;
+      --status-low-border: #4ade80;
+      --status-low-text: #15803d;
+
+      --border-light: #e6ebf1;
+      --border-medium: #d9e2ec;
+      --border-dark: #0a2540;
+
+      --shadow-sm: 0 1px 3px rgba(50, 50, 93, 0.05), 0 1px 0 rgba(0, 0, 0, 0.02);
+      --shadow-md: 0 4px 6px rgba(50, 50, 93, 0.08), 0 1px 3px rgba(0, 0, 0, 0.05);
+      --shadow-lg: 0 13px 27px -5px rgba(50, 50, 93, 0.12), 0 8px 16px -8px rgba(0, 0, 0, 0.08);
+
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Ubuntu, sans-serif;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 16px;
+      --radius-full: 9999px;
+
+      --transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+
+    [data-theme="dark"] {
+      --bg-primary: #0b0f19;
+      --bg-surface: #111827;
+      --bg-surface-hover: #1f2937;
+      --bg-surface-active: #374151;
+      --bg-subtle: #1a2234;
+      --bg-header: rgba(17, 24, 39, 0.85);
+
+      --text-main: #f3f4f6;
+      --text-secondary: #9ca3af;
+      --text-muted: #6b7280;
+      --text-inverse: #0b0f19;
+
+      --brand-primary: #818cf8;
+      --brand-primary-hover: #a5b4fc;
+      --brand-light: #1e1b4b;
+      --brand-border: #3730a3;
+
+      --accent-teal: #2dd4bf;
+      --accent-teal-light: #064e3b;
+
+      --status-high-bg: #450a0a;
+      --status-high-border: #991b1b;
+      --status-high-text: #fca5a5;
+
+      --status-med-bg: #451a03;
+      --status-med-border: #92400e;
+      --status-med-text: #fde68a;
+
+      --status-low-bg: #052e16;
+      --status-low-border: #166534;
+      --status-low-text: #86efac;
+
+      --border-light: #1f2937;
+      --border-medium: #374151;
+      --border-dark: #6b7280;
+
+      --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+      --shadow-md: 0 4px 6px rgba(0, 0, 0, 0.5);
+      --shadow-lg: 0 13px 27px -5px rgba(0, 0, 0, 0.6);
+    }
+
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    html {
+      scroll-behavior: smooth;
+      font-size: 16px;
+    }
+
+    body {
+      font-family: var(--font-sans);
+      background-color: var(--bg-primary);
+      color: var(--text-main);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      padding-bottom: 80px;
+    }
+
+    /* --------------------------------------------------------------------------
+       Typography & Utilities
+       -------------------------------------------------------------------------- */
+    h1, h2, h3, h4, h5, h6 {
+      color: var(--text-main);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    h1 { font-size: 2.25rem; line-height: 1.25; }
+    h2 { font-size: 1.5rem; line-height: 1.3; margin-bottom: 1rem; }
+    h3 { font-size: 1.2rem; line-height: 1.4; margin-bottom: 0.75rem; }
+    h4 { font-size: 1rem; line-height: 1.4; margin-bottom: 0.5rem; }
+
+    p { margin-bottom: 1rem; color: var(--text-secondary); }
+
+    a {
+      color: var(--brand-primary);
+      text-decoration: none;
+      transition: var(--transition);
+    }
+    a:hover { text-decoration: underline; }
+
+    code, pre {
+      font-family: var(--font-mono);
+      font-size: 0.875em;
+    }
+
+    :not(pre) > code {
+      background-color: var(--bg-subtle);
+      color: var(--brand-primary);
+      padding: 0.15em 0.4em;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-light);
+    }
+
+    pre {
+      background-color: #0d1117;
+      color: #e6edf3;
+      padding: 1.25rem;
+      border-radius: var(--radius-md);
+      overflow-x: auto;
+      margin-bottom: 1.25rem;
+      border: 1px solid var(--border-medium);
+      line-height: 1.5;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.25rem 0.65rem;
+      border-radius: var(--radius-full);
+      font-size: 0.75rem;
+      font-weight: 600;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }
+    .badge-brand { background: var(--brand-light); color: var(--brand-primary); border: 1px solid var(--brand-border); }
+    .badge-teal { background: var(--accent-teal-light); color: var(--accent-teal); border: 1px solid var(--accent-teal); }
+    .badge-high { background: var(--status-high-bg); color: var(--status-high-text); border: 1px solid var(--status-high-border); }
+    .badge-med { background: var(--status-med-bg); color: var(--status-med-text); border: 1px solid var(--status-med-border); }
+    .badge-low { background: var(--status-low-bg); color: var(--status-low-text); border: 1px solid var(--status-low-border); }
+
+    .container {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 0 1.5rem;
+    }
+
+    /* --------------------------------------------------------------------------
+       Top Navigation Bar
+       -------------------------------------------------------------------------- */
+    .navbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background-color: var(--bg-header);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border-light);
+      transition: var(--transition);
+    }
+    .navbar-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 64px;
+    }
+    .brand-logo {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-weight: 800;
+      font-size: 1.15rem;
+      color: var(--text-main);
+    }
+    .brand-icon {
+      width: 28px;
+      height: 28px;
+      background: linear-gradient(135deg, var(--brand-primary), var(--accent-teal));
+      border-radius: var(--radius-sm);
+      display: grid;
+      place-items: center;
+      color: #fff;
+      font-size: 0.85rem;
+      font-weight: 900;
+    }
+    .nav-actions {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .theme-toggle:focus-visible,
+    .filter-btn:focus-visible,
+    .toc-item a:focus-visible,
+    summary:focus-visible,
+    .search-input:focus-visible,
+    a:focus-visible {
+      outline: 2px solid var(--brand-primary);
+      outline-offset: 2px;
+      box-shadow: 0 0 0 4px rgba(99, 91, 255, 0.2);
+    }
+
+    .theme-toggle, .btn-secondary {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-medium);
+      color: var(--text-main);
+      padding: 0.4rem 0.85rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      transition: var(--transition);
+    }
+    .theme-toggle:hover, .btn-secondary:hover {
+      background: var(--bg-surface-hover);
+      border-color: var(--brand-primary);
+    }
+
+    /* --------------------------------------------------------------------------
+       Hero & Verdict Banner
+       -------------------------------------------------------------------------- */
+    .hero {
+      padding: 3.5rem 0 2.5rem 0;
+      background: radial-gradient(circle at 80% -20%, rgba(99, 91, 255, 0.08) 0%, transparent 50%),
+                  radial-gradient(circle at 10% 120%, rgba(0, 212, 177, 0.08) 0%, transparent 50%);
+      border-bottom: 1px solid var(--border-light);
+    }
+    .hero-header {
+      margin-bottom: 2rem;
+    }
+    .hero-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+    .hero-subtitle {
+      font-size: 1.1rem;
+      color: var(--text-secondary);
+      margin-top: 0.5rem;
+    }
+
+    .verdict-box {
+      background: var(--bg-surface);
+      border: 1px solid var(--brand-border);
+      border-left: 5px solid var(--brand-primary);
+      border-radius: var(--radius-md);
+      padding: 1.5rem;
+      box-shadow: var(--shadow-md);
+      margin-bottom: 2rem;
+    }
+    .verdict-title {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--brand-primary);
+      font-weight: 700;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .verdict-text {
+      font-size: 1.15rem;
+      color: var(--text-main);
+      font-weight: 600;
+      line-height: 1.5;
+      margin-bottom: 0;
+    }
+
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 1rem;
+    }
+    .metric-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-md);
+      padding: 1.25rem;
+      box-shadow: var(--shadow-sm);
+      transition: var(--transition);
+    }
+    .metric-card:hover {
+      transform: translateY(-2px);
+      box-shadow: var(--shadow-md);
+    }
+    .metric-value {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: var(--brand-primary);
+      line-height: 1.2;
+    }
+    .metric-label {
+      font-size: 0.825rem;
+      color: var(--text-muted);
+      margin-top: 0.25rem;
+      font-weight: 500;
+    }
+
+    /* --------------------------------------------------------------------------
+       Main Content Layout (Sidebar TOC + Article)
+       -------------------------------------------------------------------------- */
+    .layout-wrapper {
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      gap: 2.5rem;
+      padding-top: 2.5rem;
+      min-width: 0;
+    }
+
+    .article-content {
+      min-width: 0;
+      width: 100%;
+      max-width: 100%;
+    }
+
+    .content-section, .card, .diagram-container, .table-wrapper, .verdict-box, details, .details-content, .exec-grid, .exec-card, .timeline-body {
+      min-width: 0;
+      max-width: 100%;
+    }
+
+    .toc-sidebar {
+      position: sticky;
+      top: 88px;
+      height: calc(100vh - 108px);
+      overflow-y: auto;
+      padding-right: 0.5rem;
+    }
+    .toc-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--text-muted);
+      margin-bottom: 0.75rem;
+    }
+    .toc-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+    }
+    .toc-item a {
+      display: block;
+      padding: 0.4rem 0.65rem;
+      font-size: 0.85rem;
+      color: var(--text-secondary);
+      border-radius: var(--radius-sm);
+      transition: var(--transition);
+      border-left: 2px solid transparent;
+    }
+    .toc-item a:hover, .toc-item a.active {
+      color: var(--brand-primary);
+      background: var(--bg-surface);
+      border-left-color: var(--brand-primary);
+      text-decoration: none;
+      font-weight: 600;
+    }
+
+    .content-section {
+      margin-bottom: 3.5rem;
+      scroll-margin-top: 88px;
+    }
+
+    .card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-md);
+      padding: 1.75rem;
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 1.5rem;
+    }
+
+    /* Executive Summary Grid */
+    .exec-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1.25rem;
+    }
+    .exec-card {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-md);
+      padding: 1.25rem 1.5rem;
+      box-shadow: var(--shadow-sm);
+      display: flex;
+      gap: 1rem;
+      align-items: flex-start;
+      transition: var(--transition);
+    }
+    .exec-card:hover {
+      border-color: var(--brand-border);
+      box-shadow: var(--shadow-md);
+    }
+    .exec-num {
+      width: 32px;
+      height: 32px;
+      background: var(--brand-light);
+      color: var(--brand-primary);
+      border-radius: var(--radius-full);
+      display: grid;
+      place-items: center;
+      font-weight: 800;
+      font-size: 0.9rem;
+      flex-shrink: 0;
+    }
+    .exec-content h3 {
+      font-size: 1rem;
+      margin-bottom: 0.35rem;
+      color: var(--text-main);
+    }
+    .exec-content p {
+      font-size: 0.9rem;
+      margin-bottom: 0;
+    }
+
+    /* --------------------------------------------------------------------------
+       SVG Diagrams & Interactive Components
+       -------------------------------------------------------------------------- */
+    .diagram-container {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-md);
+      padding: 1.5rem;
+      overflow-x: auto;
+      box-shadow: var(--shadow-sm);
+      margin-bottom: 1.5rem;
+    }
+    .diagram-title {
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    svg.arch-svg {
+      width: 100%;
+      height: auto;
+      min-width: 750px;
+    }
+
+    .svg-node {
+      transition: var(--transition);
+      cursor: pointer;
+    }
+    .svg-node:hover rect {
+      filter: brightness(0.95);
+      stroke: var(--brand-primary);
+      stroke-width: 2px;
+    }
+
+    /* --------------------------------------------------------------------------
+       Tables & Code Blocks
+       -------------------------------------------------------------------------- */
+    .table-wrapper {
+      width: 100%;
+      overflow-x: auto;
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-md);
+      margin-bottom: 1.5rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 0.9rem;
+      background: var(--bg-surface);
+    }
+    th, td {
+      padding: 0.85rem 1.15rem;
+      border-bottom: 1px solid var(--border-light);
+    }
+    th {
+      background: var(--bg-subtle);
+      color: var(--text-main);
+      font-weight: 700;
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--bg-surface-hover); }
+
+    /* Filter Controls */
+    .filter-bar {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1.25rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .filter-btn {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-medium);
+      color: var(--text-secondary);
+      padding: 0.35rem 0.85rem;
+      border-radius: var(--radius-full);
+      font-size: 0.8rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: var(--transition);
+    }
+    .filter-btn:hover, .filter-btn.active {
+      background: var(--brand-primary);
+      color: #ffffff;
+      border-color: var(--brand-primary);
+    }
+
+    .search-input {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-medium);
+      color: var(--text-main);
+      padding: 0.4rem 0.85rem;
+      border-radius: var(--radius-sm);
+      font-size: 0.85rem;
+      outline: none;
+      transition: var(--transition);
+      width: 220px;
+    }
+    .search-input:focus {
+      border-color: var(--brand-primary);
+      box-shadow: 0 0 0 3px rgba(99, 91, 255, 0.15);
+    }
+
+    /* Details Accordion */
+    details {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-md);
+      margin-bottom: 0.75rem;
+      overflow: hidden;
+      transition: var(--transition);
+    }
+    details[open] {
+      border-color: var(--brand-border);
+      box-shadow: var(--shadow-sm);
+    }
+    summary {
+      padding: 1rem 1.25rem;
+      font-weight: 700;
+      font-size: 0.95rem;
+      color: var(--text-main);
+      cursor: pointer;
+      user-select: none;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      list-style: none;
+    }
+    summary::-webkit-details-marker { display: none; }
+    summary::after {
+      content: '→';
+      font-size: 1rem;
+      color: var(--text-muted);
+      transition: transform 0.2s ease;
+    }
+    details[open] summary::after {
+      transform: rotate(90deg);
+      color: var(--brand-primary);
+    }
+    .details-content {
+      padding: 0 1.25rem 1.25rem 1.25rem;
+      border-top: 1px solid var(--border-light);
+      margin-top: 0.5rem;
+      padding-top: 1rem;
+    }
+
+    /* Roadmap Timeline */
+    .timeline {
+      position: relative;
+      padding-left: 2rem;
+      margin-top: 1.5rem;
+    }
+    .timeline::before {
+      content: '';
+      position: absolute;
+      left: 7px;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      background: var(--border-medium);
+    }
+    .timeline-item {
+      position: relative;
+      margin-bottom: 2rem;
+    }
+    .timeline-item:last-child { margin-bottom: 0; }
+    .timeline-dot {
+      position: absolute;
+      left: -2rem;
+      top: 4px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: var(--brand-primary);
+      border: 3px solid var(--bg-surface);
+      box-shadow: 0 0 0 1px var(--brand-primary);
+    }
+    .timeline-title {
+      font-size: 1.1rem;
+      font-weight: 700;
+      color: var(--text-main);
+      margin-bottom: 0.35rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+    .timeline-body {
+      background: var(--bg-surface);
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-md);
+      padding: 1.25rem;
+      margin-top: 0.5rem;
+    }
+
+    /* --------------------------------------------------------------------------
+       Responsive & Accessibility
+       -------------------------------------------------------------------------- */
+    @media (max-width: 1024px) {
+      .layout-wrapper {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .toc-sidebar {
+        display: none; /* Collapsed on tablet/mobile */
+      }
+    }
+
+    @media (max-width: 640px) {
+      h1 { font-size: 1.6rem; }
+      h2 { font-size: 1.25rem; }
+      .navbar-inner {
+        height: auto;
+        padding: 0.6rem 0;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+      .brand-logo {
+        font-size: 1rem;
+      }
+      .nav-actions {
+        width: 100%;
+        gap: 0.5rem;
+      }
+      .search-input {
+        flex: 1;
+        width: 0;
+        min-width: 0;
+      }
+      .theme-toggle {
+        white-space: nowrap;
+        padding: 0.4rem 0.6rem;
+        font-size: 0.8rem;
+      }
+      .exec-grid { grid-template-columns: minmax(0, 1fr); }
+      .exec-card { padding: 1rem; min-width: 0; }
+      .metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0.75rem; }
+      .metric-card { padding: 1rem 0.75rem; min-width: 0; }
+      .metric-value { font-size: 1.35rem; }
+      .container { padding: 0 1rem; }
+      .card { padding: 1.25rem 1rem; }
+      .verdict-box { padding: 1.15rem 1rem; }
+      .diagram-container { padding: 1rem 0.75rem; }
+      .table-wrapper { margin-bottom: 1.25rem; }
+      summary { padding: 0.85rem 1rem; font-size: 0.9rem; }
+      .details-content { padding: 0 1rem 1rem 1rem; }
+      .timeline { padding-left: 1.5rem; }
+      .timeline-dot { left: -1.5rem; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
+    }
+
+    /* Print Stylesheet */
+    @media print {
+      body { background: #fff; color: #000; padding: 0; }
+      .navbar, .theme-toggle, .filter-bar, .toc-sidebar, .search-input { display: none !important; }
+      .layout-wrapper { grid-template-columns: 1fr; padding-top: 0; }
+      .card, .diagram-container, .table-wrapper { border: 1px solid #ccc; box-shadow: none; page-break-inside: avoid; }
+      details { border: 1px solid #ccc; display: block !important; page-break-inside: avoid; }
+      details summary { display: block !important; font-weight: bold; margin-bottom: 0.5rem; }
+      details summary::after { display: none; }
+      details .details-content {
+        display: block !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        content-visibility: visible !important;
+        height: auto !important;
+      }
+      a { text-decoration: underline; color: #000; }
+      a::after { content: " (" attr(href) ")"; font-size: 0.8em; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Top Navigation Bar -->
+  <header class="navbar">
+    <div class="container navbar-inner">
+      <div class="brand-logo">
+        <div class="brand-icon">ds</div>
+        <span>dscode 架构分析报告</span>
+      </div>
+      <div class="nav-actions">
+        <input type="text" id="globalSearch" class="search-input" placeholder="搜索源码、路径或风险..." aria-label="搜索报告内容">
+        <button type="button" class="theme-toggle" id="themeToggleBtn" aria-label="切换暗黑模式">
+          <span id="themeToggleIcon">🌙</span> <span id="themeToggleText">暗黑模式</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <div class="container">
+
+    <!-- Hero Section -->
+    <section class="hero">
+      <div class="hero-header">
+        <div class="hero-meta">
+          <span class="badge badge-brand">版本 v0.2.7</span>
+          <span class="badge badge-teal">分支 develop</span>
+          <span class="badge badge-brand">分析日期 2026-08-02</span>
+        </div>
+        <h1>dscode 技术架构深度分析</h1>
+        <p class="hero-subtitle">基于 develop 分支源码，版本 0.2.7，分析日期 2026-08-02</p>
+      </div>
+
+      <!-- One-Sentence Architecture Verdict -->
+      <div class="verdict-box">
+        <div class="verdict-title">
+          <span>⚡</span> 架构核心判定 (Architecture Verdict)
+        </div>
+        <p class="verdict-text">
+          dscode 是一个“单进程、模块化单体”的本地 Agent Runtime：<code>Harness</code> 是事实上的 composition root，把 pi-agent-core 的模型循环与工具、权限、MCP、上下文、会话、记忆和双 UI 适配器编排在一起；外围模块接口已经形成，但关键实现仍集中在少数超大文件，扩展速度快于边界治理。
+        </p>
+      </div>
+
+      <!-- Core Metrics Grid -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-value">26,847</div>
+          <div class="metric-label">Core TypeScript (src/) 行数</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-value">5,043</div>
+          <div class="metric-label">Web React (web/src/) 行数</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-value">32</div>
+          <div class="metric-label">Vitest 单元与集成测试套件</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-value">1,815</div>
+          <div class="metric-label">最大单文件 (web-backend.ts)</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-value">500+</div>
+          <div class="metric-label">CHIFF 评估触发 Step 阈值</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Layout Wrapper: Sidebar TOC + Main Content -->
+    <div class="layout-wrapper">
+
+      <!-- Sticky Sidebar Table of Contents -->
+      <aside class="toc-sidebar" aria-label="文档目录导航">
+        <div class="toc-title">目录结构</div>
+        <ul class="toc-list">
+          <li class="toc-item"><a href="#exec-summary">01. 执行摘要与结论</a></li>
+          <li class="toc-item"><a href="#layered-arch">02. 系统分层架构视图</a></li>
+          <li class="toc-item"><a href="#startup-flow">03. 启动流程 (CLI/TUI/Web)</a></li>
+          <li class="toc-item"><a href="#e2e-sequence">04. 端到端请求处理时序</a></li>
+          <li class="toc-item"><a href="#core-subsystems">05. 核心子系统深度分析</a></li>
+          <li class="toc-item"><a href="#arch-strengths">06. 架构优势与技术亮点</a></li>
+          <li class="toc-item"><a href="#risk-matrix">07. 风险矩阵与证据分级</a></li>
+          <li class="toc-item"><a href="#evolution-roadmap">08. 建议演进路线图</a></li>
+          <li class="toc-item"><a href="#source-index">09. 源码证据路径索引</a></li>
+        </ul>
+      </aside>
+
+      <!-- Main Article Content -->
+      <main class="article-content">
+
+        <!-- Section 1: Executive Summary -->
+        <section id="exec-summary" class="content-section">
+          <h2>01. 执行摘要与核心结论</h2>
+          <p>基于对 develop 分支 26,847 行 TypeScript 核心源码及 5,043 行 Web SPA 源码的核验，归纳出以下 5 个核心架构结论：</p>
+
+          <div class="exec-grid">
+            <div class="exec-card">
+              <div class="exec-num">1</div>
+              <div class="exec-content">
+                <h3>核心不是 UI，而是 Harness 编排层</h3>
+                <p>TUI 与 Web SPA 仅仅是同一事件总线 (<code>HarnessEventBus</code>) 的两个呈现适配器；模型循环、工具挂载、Session 生命周期与 MCP 跨进程调度均由 <code>Harness</code> 统一控制。</p>
+              </div>
+            </div>
+
+            <div class="exec-card">
+              <div class="exec-num">2</div>
+              <div class="exec-content">
+                <h3>工具规模通过 Deferred Discovery 控制</h3>
+                <p>内置工具恒定发送，MCP schema 默认延迟。模型先调用 <code>search_tools</code>，命中的工具 schema 才会从下一轮对话注入上下文，降低上下文膨胀。</p>
+              </div>
+            </div>
+
+            <div class="exec-card">
+              <div class="exec-num">3</div>
+              <div class="exec-content">
+                <h3>文件变更采用多层安全链保障</h3>
+                <p>内容哈希行锚点、文件版本控制、SnapshotStore 快照恢复、三方合并、语法/结构检查、Checkpoint 与单步 undo 共同降低误编辑风险。</p>
+              </div>
+            </div>
+
+            <div class="exec-card">
+              <div class="exec-num">4</div>
+              <div class="exec-content">
+                <h3>本地优先与可恢复性较强，但并不均匀</h3>
+                <p>Session 正文采用 <code>tmp → rename</code> 原子写入；但索引与 Memory 为直接 JSON 覆写。Context 的 <code>summarize-prefix</code> 尚未实现，Memory 也没有自动提取。</p>
+              </div>
+            </div>
+
+            <div class="exec-card">
+              <div class="exec-num">5</div>
+              <div class="exec-content">
+                <h3>主要风险在于复杂度集中与实现漂移</h3>
+                <p>Harness (1,259行)、Web backend (1,815行)、TUI (1,501行) 与 MCP client (1,003行) 已成为超大文件。旧文档仍描述不存在的自动记忆与旧 MCP 命名。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Section 2: Layered Architecture View -->
+        <section id="layered-arch" class="content-section">
+          <h2>02. 系统分层架构视图</h2>
+          <p>dscode 采用清晰的六层模块化单体分层结构。各层间依赖严格向下，同一层内通过事件与 Driver 接口解耦。</p>
+
+          <div class="diagram-container">
+            <div class="diagram-title">
+              <span>系统依赖方向架构图 (Layered Dependency View)</span>
+              <span class="badge badge-brand">SVG 渲染</span>
+            </div>
+
+            <svg class="arch-svg" viewBox="0 0 800 480" xmlns="http://www.w3.org/2000/svg">
+              <defs>
+                <linearGradient id="layerGrad" x1="0" y1="0" x2="1" y2="0">
+                  <stop offset="0%" stop-color="#635bff" stop-opacity="0.08"/>
+                  <stop offset="100%" stop-color="#00d4b1" stop-opacity="0.08"/>
+                </linearGradient>
+              </defs>
+
+              <!-- Layer 1: Interaction -->
+              <g class="svg-node" transform="translate(20, 20)">
+                <rect width="760" height="60" rx="8" fill="var(--bg-subtle)" stroke="var(--border-medium)" stroke-width="1"/>
+                <text x="35" y="38" fill="var(--text-main)" font-weight="700" font-size="13">1. Interaction Layer (交互适配层)</text>
+                <rect x="250" y="15" width="220" height="32" rx="4" fill="var(--bg-surface)" stroke="var(--border-light)"/>
+                <text x="260" y="36" fill="var(--brand-primary)" font-size="12" font-family="monospace">TuiBackend → TuiApp</text>
+                <rect x="490" y="15" width="260" height="32" rx="4" fill="var(--bg-surface)" stroke="var(--border-light)"/>
+                <text x="500" y="36" fill="var(--brand-primary)" font-size="12" font-family="monospace">WebUiBackend → WS → React SPA</text>
+              </g>
+
+              <!-- Layer 2: Orchestration -->
+              <g class="svg-node" transform="translate(20, 95)">
+                <rect width="760" height="60" rx="8" fill="url(#layerGrad)" stroke="var(--brand-primary)" stroke-width="1.5"/>
+                <text x="35" y="38" fill="var(--brand-primary)" font-weight="700" font-size="13">2. Orchestration Layer (编排中心)</text>
+                <rect x="250" y="15" width="220" height="32" rx="4" fill="var(--bg-surface)" stroke="var(--brand-border)"/>
+                <text x="260" y="36" fill="var(--text-main)" font-weight="600" font-size="12" font-family="monospace">core/main.ts (Entry & Signals)</text>
+                <rect x="490" y="15" width="260" height="32" rx="4" fill="var(--bg-surface)" stroke="var(--brand-border)"/>
+                <text x="500" y="36" fill="var(--text-main)" font-weight="600" font-size="12" font-family="monospace">core/harness.ts (Composition Root)</text>
+              </g>
+
+              <!-- Layer 3: Agent Runtime -->
+              <g class="svg-node" transform="translate(20, 170)">
+                <rect width="760" height="60" rx="8" fill="var(--bg-subtle)" stroke="var(--border-medium)" stroke-width="1"/>
+                <text x="35" y="38" fill="var(--text-main)" font-weight="700" font-size="13">3. Agent Runtime Layer (运行时)</text>
+                <rect x="250" y="15" width="150" height="32" rx="4" fill="var(--bg-surface)" stroke="var(--border-light)"/>
+                <text x="260" y="36" fill="var(--text-secondary)" font-size="11" font-family="monospace">pi-agent-core Agent</text>
+                <rect x="410" y="15" width="160" height="32" rx="4" fill="var(--bg-surface)" stroke="var(--border-light)"/>
+                <text x="420" y="36" fill="var(--text-secondary)" font-size="11" font-family="monospace">ContextManager</text>
+                <rect x="580" y="15" width="170" height="32" rx="4" fill="var(--bg-surface)" stroke="var(--border-light)"/>
+                <text x="590" y="36" fill="var(--text-secondary)" font-size="11" font-family="monospace">Prompt Assembler</text>
+              </g>
+
+              <!-- Layer 4: Capability -->
+              <g class="svg-node" transform="translate(20, 245)">
+                <rect width="760" height="65" rx="8" fill="var(--bg-subtle)" stroke="var(--border-medium)" stroke-width="1"/>
+                <text x="35" y="38" fill="var(--text-main)" font-weight="700" font-size="13">4. Capability Layer (工具与能力)</text>
+                <rect x="220" y="15" width="120" height="35" rx="4" fill="var(--bg-surface)" stroke="var(--border-light)"/>
+                <text x="230" y="37" fill="var(--text-secondary)" font-size="11" font-family="monospace">ToolRegistry</text>
+                <rect x="350" y="15" width="130" height="35" rx="4" fill="var(--bg-surface)" stroke="var(--border-light)"/>
+                <text x="360" y="37" fill="var(--text-secondary)" font-size="11" font-family="monospace">PermissionMgr</text>
+                <rect x="490" y="15" width="120" height="35" rx="4" fill="var(--bg-surface)" stroke="var(--border-light)"/>
+                <text x="500" y="37" fill="var(--text-secondary)" font-size="11" font-family="monospace">MCPManager</text>
+                <rect x="620" y="15" width="130" height="35" rx="4" fill="var(--bg-surface)" stroke="var(--border-light)"/>
+                <text x="630" y="37" fill="var(--text-secondary)" font-size="11" font-family="monospace">FS/Hash Edit</text>
+              </g>
+
+              <!-- Layer 5: State & Recovery -->
+              <g class="svg-node" transform="translate(20, 325)">
+                <rect width="760" height="60" rx="8" fill="var(--bg-subtle)" stroke="var(--border-medium)" stroke-width="1"/>
+                <text x="35" y="38" fill="var(--text-main)" font-weight="700" font-size="13">5. State & Recovery (状态与恢复)</text>
+                <rect x="230" y="15" width="120" height="32" rx="4" fill="var(--bg-surface)" stroke="var(--border-light)"/>
+                <text x="240" y="36" fill="var(--text-secondary)" font-size="11" font-family="monospace">SessionStore</text>
+                <rect x="360" y="15" width="120" height="32" rx="4" fill="var(--bg-surface)" stroke="var(--border-light)"/>
+                <text x="370" y="36" fill="var(--text-secondary)" font-size="11" font-family="monospace">MemoryStore</text>
+                <rect x="490" y="15" width="130" height="32" rx="4" fill="var(--bg-surface)" stroke="var(--border-light)"/>
+                <text x="500" y="36" fill="var(--text-secondary)" font-size="11" font-family="monospace">CheckpointMgr</text>
+                <rect x="630" y="15" width="120" height="32" rx="4" fill="var(--bg-surface)" stroke="var(--border-light)"/>
+                <text x="640" y="36" fill="var(--text-secondary)" font-size="11" font-family="monospace">CHIFF Eval</text>
+              </g>
+
+              <!-- Layer 6: External Boundaries -->
+              <g class="svg-node" transform="translate(20, 400)">
+                <rect width="760" height="60" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+                <text x="35" y="38" fill="#f8fafc" font-weight="700" font-size="13">6. External Boundaries (外部边界)</text>
+                <rect x="230" y="15" width="110" height="32" rx="4" fill="#334155"/>
+                <text x="240" y="36" fill="#94a3b8" font-size="11" font-family="monospace">LLM APIs</text>
+                <rect x="350" y="15" width="140" height="32" rx="4" fill="#334155"/>
+                <text x="360" y="36" fill="#94a3b8" font-size="11" font-family="monospace">MCP Servers</text>
+                <rect x="500" y="15" width="120" height="32" rx="4" fill="#334155"/>
+                <text x="510" y="36" fill="#94a3b8" font-size="11" font-family="monospace">Local Filesystem</text>
+                <rect x="630" y="15" width="120" height="32" rx="4" fill="#334155"/>
+                <text x="640" y="36" fill="#94a3b8" font-size="11" font-family="monospace">Browser Web</text>
+              </g>
+
+              <!-- Downward Connection Arrows -->
+              <path d="M 400 80 L 400 95" stroke="var(--brand-primary)" stroke-width="2"/>
+              <path d="M 400 155 L 400 170" stroke="var(--brand-primary)" stroke-width="2"/>
+              <path d="M 400 230 L 400 245" stroke="var(--border-medium)" stroke-width="2"/>
+              <path d="M 400 310 L 400 325" stroke="var(--border-medium)" stroke-width="2"/>
+              <path d="M 400 385 L 400 400" stroke="var(--border-medium)" stroke-width="2"/>
+            </svg>
+          </div>
+        </section>
+
+        <!-- Section 3: Startup Sequence -->
+        <section id="startup-flow" class="content-section">
+          <h2>03. 系统启动与生命周期流程</h2>
+          <p>源码依据：<code>src/core/main.ts</code>、<code>src/core/harness.ts</code>、<code>src/ui/tui-backend.ts</code>、<code>src/ui/web/web-backend.ts</code></p>
+
+          <div class="card">
+            <h3>标准启动与优雅退出七步曲</h3>
+            <ol style="padding-left: 1.25rem; color: var(--text-secondary);">
+              <li style="margin-bottom: 0.75rem;">
+                <strong>进程初始化与全局捕获：</strong> <code>main.ts</code> 生成 runtime ID，初始化文件 Logger，注册 <code>uncaughtException</code>、<code>unhandledRejection</code>、SIGINT/SIGTERM 紧急 Session 保存。
+              </li>
+              <li style="margin-bottom: 0.75rem;">
+                <strong>CLI 参数与 Daemon 守护：</strong> 解析 <code>--web</code>、<code>--web-port</code>、<code>--debug</code>、<code>--cwd</code>、<code>--with-od</code>；后者启动并守护 Open Design daemon。
+              </li>
+              <li style="margin-bottom: 0.75rem;">
+                <strong>配置加载与级联合并：</strong> 执行 <code>loadConfig()</code>，按优先级合并环境变量、用户配置、用户/项目 settings 与 MCP 配置。
+              </li>
+              <li style="margin-bottom: 0.75rem;">
+                <strong>Harness 编排对象构造：</strong> 构造 <code>Harness</code>，在 <code>initialize()</code> 中扫描 Skill、初始化 checkpoint/snapshot、注册 discovery driver、启动本地 MCP App Host、拼装 system prompt、解析模型并创建 pi-agent-core <code>Agent</code>。
+              </li>
+              <li style="margin-bottom: 0.75rem;">
+                <strong>UI Backend 适配器实例化：</strong> 默认实例化 <code>TuiBackend</code>；<code>--web</code> 实例化 <code>WebUiBackend</code>，启动 HTTP 静态资源服务与 <code>/ws</code> WebSocket。
+              </li>
+              <li style="margin-bottom: 0.75rem;">
+                <strong>运行时启动与定时持久化：</strong> <code>Harness.run()</code> 启动 UI，连接 MCP servers，把 MCP tools 注册为 drivers，初始化 ToolRegistry，启动 15 秒周期 autosave。
+              </li>
+              <li style="margin-bottom: 0.75rem;">
+                <strong>优雅停机 (Graceful Shutdown)：</strong> shutdown 顺序强调先保存 Session，再关闭 checkpoint、AppHost、MCP。
+              </li>
+            </ol>
+          </div>
+        </section>
+
+        <!-- Section 4: End-to-End Sequence -->
+        <section id="e2e-sequence" class="content-section">
+          <h2>04. 端到端请求处理与事件流</h2>
+          <p>无论是 TUI 还是 React SPA 界面，用户交互都会收敛至 <code>HarnessEventBus</code> 执行统一的 LLM 思考与 Tool 调用循环。</p>
+
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>阶段 (Phase)</th>
+                  <th>Web / TUI 差异点</th>
+                  <th>Harness 核心处理逻辑</th>
+                  <th>状态持久化与安全校验</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>1. 意图接收</strong></td>
+                  <td>React 通过 WebSocket 发 <code>ClientCommand.chat</code>；TUI 监听终端输入。</td>
+                  <td>Web backend 处理上传文件、<code>@file</code> 引用和附件；调用 <code>promptAndSave()</code> 或 <code>promptWithImages()</code>。</td>
+                  <td>记录 turn 起点并生成 Turn ID。</td>
+                </tr>
+                <tr>
+                  <td><strong>2. Turn 广播</strong></td>
+                  <td>WebSocket 广播 <code>processing:start</code> 与 <code>message:user</code>。</td>
+                  <td>Harness 广播 <code>processing:start</code> / <code>message:user</code>，进入 turn-level retry。</td>
+                  <td>内存基线预存消息数。</td>
+                </tr>
+                <tr>
+                  <td><strong>3. 上下文预处理</strong></td>
+                  <td>共享相同逻辑。</td>
+                  <td>Agent 请求前执行 <code>transformContext</code>：注入 anchor 失效提示、刷新动态工具列表与稳定 deferred catalog、调用 ContextManager 进行预算评估与压缩。</td>
+                  <td>ContextManager 执行 sliding-window 预算判断。</td>
+                </tr>
+                <tr>
+                  <td><strong>4. 流式生成</strong></td>
+                  <td>WebSocket 实时推送 <code>stream:thinking</code> 与 <code>stream:text</code>。</td>
+                  <td>pi-agent-core 流式请求模型；thinking、text、tool、retry 事件经 <code>HarnessEventBus</code> 转为 UI 无关事件。</td>
+                  <td>维护助手消息流。</td>
+                </tr>
+                <tr>
+                  <td><strong>5. 工具拦截</strong></td>
+                  <td>前端弹窗展示权限确认。</td>
+                  <td>若模型调用工具，<code>beforeToolCall</code> 先进入 PermissionManager。</td>
+                  <td>允许后由 ToolRegistry 中对应 driver 执行；拒绝则中断。</td>
+                </tr>
+                <tr>
+                  <td><strong>6. 工具执行</strong></td>
+                  <td>TUI/Web 渲染工具调用卡片与执行进度。</td>
+                  <td><code>afterToolCall</code> 处理工具发现刷新、全量写入后的 anchor 失效、Abort terminate 等副作用。</td>
+                  <td>自动保存 Checkpoint 快照与单步 undo。</td>
+                </tr>
+                <tr>
+                  <td><strong>7. Turn 完成</strong></td>
+                  <td>发送 <code>processing:end</code>，Web 更新 contentHash。</td>
+                  <td>assistant turn 完成后保存 Session、更新 content hash / 活跃时间。WebSocket/TUI 渲染同一事件语义。失败时退避重试。</td>
+                  <td><code>tmp → rename</code> 原子写入 Session 文件。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Section 5: Core Subsystems Deep Dive -->
+        <section id="core-subsystems" class="content-section">
+          <h2>05. 核心子系统与关键机制</h2>
+
+          <!-- Subsystem 1: Tool Discovery & MCP -->
+          <details open>
+            <summary>5.1 工具延迟发现 (Deferred Discovery) 与 MCP 架构</summary>
+            <div class="details-content">
+              <p>源码证据：<code>src/drivers/registry.ts</code>、<code>src/drivers/tool-registry.ts</code>、<code>src/drivers/discovery.ts</code>、<code>src/mcp/names.ts</code>、<code>src/mcp/manager.ts</code>、<code>src/mcp/client.ts</code>、<code>src/mcp/app/host.ts</code></p>
+
+              <h3>1. 延迟加载与模式匹配</h3>
+              <p>为解决加载大量工具导致 Prompt 上下文爆炸的问题，dscode 实现了动态发现机制：</p>
+              <ul>
+                <li><strong>DriverRegistry 注册 builtin：</strong> <code>fs</code>, <code>shell</code>, <code>search</code>, <code>edit</code>；<code>search_tools</code> 与 <code>skill</code> 是 base tools。</li>
+                <li><strong>ToolRegistry 初始化：</strong> builtin 永不 deferred；MCP 默认 deferred；<code>alwaysLoad</code> 和带 UI resource 的工具直接加载；visibility 只有 <code>app</code> 的工具不暴露给 Agent。</li>
+                <li><strong>按需调起：</strong> system prompt 放稳定 deferred catalog。<code>search_tools</code> 支持关键词打分与 <code>select:ToolA,ToolB</code> 精确选择；仅搜索尚未 discovered 的工具。discovered 集合随 Session 持久化与恢复，下一轮 transform 才把完整 schema 加入工具列表。</li>
+                <li><strong>MCP 名称规范：</strong> MCP 名称必须由工具函数生成：driver 为 <code>mcp__&lt;server&gt;</code>，tool 为 <code>mcp__&lt;server&gt;__&lt;tool&gt;</code>。</li>
+              </ul>
+
+              <h3>2. MCP 传输与 AppHost 宿主</h3>
+              <p>MCPClient 支持 stdio 子进程换行 JSON-RPC、legacy SSE、Streamable HTTP；默认请求超时 30 秒，tool call 120 秒；协议版本支持 <code>2024-11-05</code>、<code>2025-03-26</code>、<code>2025-11-25</code>。Streamable HTTP 保存 <code>MCP-Session-Id</code>，404/410 可重新 initialize 后重试一次；Manager 监听 list-changed 通知热刷新工具。断开时按错误分类和指数退避最多 10 次重连，带随机 jitter。MCP AppHost 在 <code>127.0.0.1</code> 随机端口托管 sandbox，校验 <code>text/html;profile=mcp-app</code>，注入 CSP/allow、用 SSE + POST bridge 转发 RPC。HTML 与 MDX/data 两种模式均支持。</p>
+            </div>
+          </details>
+
+          <!-- Subsystem 2: Vision Pipeline -->
+          <details>
+            <summary>5.2 多阶图像与 OCR 兜底处理链</summary>
+            <div class="details-content">
+              <p>源码证据：<code>src/core/harness.ts</code>、<code>src/drivers/vision/pipeline.ts</code>、<code>src/drivers/vision/client.ts</code>、<code>src/drivers/vision/ocr.ts</code>、<code>src/utils/image-cache.ts</code></p>
+
+              <ol style="padding-left: 1.25rem; color: var(--text-secondary);">
+                <li><strong>主模型原生支持：</strong> 若主模型原生支持 image，Harness 把图片内容直接交给主 Agent。</li>
+                <li><strong>图像规范与压缩：</strong> 否则统一 ImagePipeline：规范化 image block → <code>sharp</code> 可用时压缩到最大高度 480 并转 PNG → SHA-256 前缀内容寻址去重缓存。</li>
+                <li><strong>独立 Vision 模型调用：</strong> 配置了支持图片且存在 key 的 Vision model 时，独立调用描述模型（60 秒、4096 tokens、reasoning off）。</li>
+                <li><strong>Tesseract OCR 兜底：</strong> Vision 失败或返回空内容时，回退 Tesseract <code>eng+chi_sim</code> OCR；只有字符密度达到阈值才接受。</li>
+                <li><strong>最终占位符：</strong> 产出 <code>&lt;image_description&gt;</code>、<code>&lt;image_text&gt;</code>、原始文字或明确错误占位，同时保留缓存引用供 Session 恢复。Abort 会终止 Vision/OCR；MCP 返回图片也走相同管线。</li>
+              </ol>
+            </div>
+          </details>
+
+          <!-- Subsystem 3: Edit Safety Chain -->
+          <details>
+            <summary>5.3 文件定点编辑与恢复安全链 (Hash-Anchor Safety Chain)</summary>
+            <div class="details-content">
+              <p>源码证据：<code>src/drivers/fs.ts</code>、<code>src/drivers/edit/tool.ts</code>、<code>src/drivers/edit/hash.ts</code>、<code>src/drivers/edit/recovery.ts</code>、<code>src/drivers/edit/syntax-validate.ts</code>、<code>src/checkpoint/checkpoint-manager.ts</code></p>
+
+              <h3>1. 读取与身份标定</h3>
+              <p><code>read_file(hashes:true)</code> 为每行返回 <code>lineNum#hash [quality]|content</code>；行号只是位置提示，内容哈希才是身份。同时返回 <code>file_version</code>、<code>anchor_format_version=v3</code>、重复频率与 <code>recommended_anchors</code>。SnapshotStore 以 <code>(filePath, fileVersion)</code> 保存最多每文件 5 个、全局 500 个完整快照，LRU 淘汰。</p>
+
+              <h3>2. 写入与乐观并发</h3>
+              <p>覆写已有文件的 <code>write_file</code> 必须提供 <code>expected_file_version</code>；<code>overwrite_file</code> 强制要求版本。不匹配就拒绝并要求重读；成功后明确标记所有旧 anchor 失效，并把提醒注入下一轮 context。</p>
+
+              <h3>3. 定点编辑与三方合并</h3>
+              <p>支持 replace/insert/delete line 或 range；一批操作基于同一初始快照原子解析，任一 anchor 缺失、歧义、顺序错误则整批拒绝。低熵行降级，短哈希歧义可借助更长 resolution hash、上下文、occurrence 和 advisory line 解歧。<code>dry_run</code> 可仅做解析。文件版本已变化时：优先在原快照回放 operations，计算 snapshot→expected patch，再三方合并到 current；失败后尝试 content search；仍失败才要求重读。落盘前做 checkpoint 与单步内存 undo；落盘后检查新增重复行、定界符平衡与受支持语言语法 (TS/TSX/JS/JSX/JSON/CSS/HTML)。Checkpoint 保存修改前字节；rollback 可恢复或删除本次新建文件；FileWriteTracker 标记混合 writer 和 bash 导致的 anchor invalidation。</p>
+            </div>
+          </details>
+
+          <!-- Subsystem 4: Config, Session, Context, Memory -->
+          <details>
+            <summary>5.4 配置、Session、Context 与 Memory 数据流</summary>
+            <div class="details-content">
+              <p>源码依据：<code>src/core/config.ts</code>、<code>src/session/manager.ts</code>、<code>src/session/store.ts</code>、<code>src/context/manager.ts</code>、<code>src/memory/manager.ts</code>、<code>src/memory/store.ts</code></p>
+
+              <div class="table-wrapper">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>模块</th>
+                      <th>核心机制与优先级</th>
+                      <th>持久化与恢复保证</th>
+                      <th>当前实现局限 / 漂移</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><strong>Configuration</strong></td>
+                      <td>关键项优先级大体为：环境变量 → <code>~/.dscode/config.json</code> → 用户 settings → 项目 settings → 默认值。MCP 权威优先级：项目 <code>.mcp.json</code> 覆盖用户 <code>~/.mcp.json</code>。</td>
+                      <td>只读加载。permissions、skills、disabledSkills 在用户和项目层合并；项目 <code>AGENTS.md</code> 内容注入 system prompt。</td>
+                      <td>具体字段按实现读取，不要画成一个绝对适用于所有字段的单一公式。</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Session</strong></td>
+                      <td>26 位时间排序 ID；项目目录由路径 slug + SHA-256 前 8 位隔离。标题从最后一个有意义的用户输入提取。</td>
+                      <td>Session 正文先写 <code>.tmp</code> 再 <code>rename</code>，具备原子替换；索引最多 100 条，损坏时可从 Session 文件重建。15 秒 autosave + turn 结束保存 + 信号紧急保存。</td>
+                      <td>Session 索引文件为直接 JSON 覆写，缺乏原子落盘。</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Context</strong></td>
+                      <td>启发式 token 估算；预算 = model context window - max output - 2,000 system reserve - 3,000 tools reserve。</td>
+                      <td>超过目标利用率时支持 drop-oldest / sliding-window。</td>
+                      <td>配置名 <code>summarize-prefix</code> 目前只是回退 sliding-window，并没有额外 LLM 摘要。</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Memory</strong></td>
+                      <td>Global 与 project 两级 JSON；project 用项目路径 SHA-256 前 12 位隔离。</td>
+                      <td>Memory JSON 是直接 <code>writeFileSync</code> 覆写，不具备 Session 正文的 tmp/rename 原子保证。只支持手动 add/remove/clear 与 system prompt 注入。</td>
+                      <td><code>docs/ARCHITECTURE.md</code> 声称 Session 结束自动 LLM 提取 Memory，但当前没有 <code>extractAndStore()</code>，配置为 <code>autoExtract:false</code>。</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </details>
+
+          <!-- Subsystem 5: CHIFF Eval Pipeline -->
+          <details>
+            <summary>5.5 CHIFF 超长会话评估流水线 (Iterative Focusing Pipeline)</summary>
+            <div class="details-content">
+              <p>源码证据：<code>src/eval/index.ts</code>、<code>src/eval/focus/index.ts</code>、<code>skeleton.ts</code>、<code>scan.ts</code>、<code>zoom.ts</code>、<code>synthesize.ts</code>、<code>workspace.ts</code></p>
+
+              <p>当 Session 解析后达到 <code>FOCUS_PATH_THRESHOLD = 500</code> steps，走 Iterative Focusing Pipeline：</p>
+
+              <div class="timeline">
+                <div class="timeline-item">
+                  <div class="timeline-dot"></div>
+                  <div class="timeline-title">Phase 0: Skeleton 骨架化工作区构建</div>
+                  <div class="timeline-body">
+                    构建 skeleton，把 meta、phase map、signals、hot/cold zones、data-items 与按 150 steps 分块的 step library 写入 <code>~/.dscode/eval/&lt;sessionId&gt;/</code>。
+                  </div>
+                </div>
+
+                <div class="timeline-item">
+                  <div class="timeline-dot"></div>
+                  <div class="timeline-title">Phase 1: SCAN 阶段 (热点区域定位)</div>
+                  <div class="timeline-body">
+                    SCAN Agent 基于索引和信号定位 3–5 个 attention zones。
+                  </div>
+                </div>
+
+                <div class="timeline-item">
+                  <div class="timeline-dot"></div>
+                  <div class="timeline-title">Phase 2: ZOOM 阶段 (深度归因追踪)</div>
+                  <div class="timeline-body">
+                    ZOOM Agent 逐 zone 追踪 subtasks、agent nodes、data flows 与候选根因。
+                  </div>
+                </div>
+
+                <div class="timeline-item">
+                  <div class="timeline-dot"></div>
+                  <div class="timeline-title">Phase 3 & 4: SYNTHESIZE & 规则提取</div>
+                  <div class="timeline-body">
+                    SYNTHESIZE 合并 zone graph，归因 mistake agent / step，构造 cascade / recovery arcs。Phase 4 从归因结果抽取可复用 Harness rules。这是一种“把长历史投影成可检索文件工作区，再让 Agent 分阶段聚焦”的上下文工程。
+                  </div>
+                </div>
+              </div>
+            </div>
+          </details>
+
+          <!-- Subsystem 6: Dual UI -->
+          <details>
+            <summary>5.6 双 UI 架构实现与 WebSocket 状态同步</summary>
+            <div class="details-content">
+              <p>源码证据：<code>src/ui/backend.ts</code>、<code>src/ui/tui-backend.ts</code>、<code>src/ui/tui-app.ts</code>、<code>src/ui/web/web-backend.ts</code>、<code>src/ui/web/protocol.ts</code>、<code>src/ui/shared/reducer.ts</code>、<code>web/src/components/App.tsx</code>、<code>web/src/hooks/useWebSocket.ts</code></p>
+
+              <ul>
+                <li><strong>TuiBackend 与 TuiApp：</strong> <code>TuiBackend</code> 把 Harness 回调转发给 <code>TuiApp</code>；TUI 负责输入、permission prompt、MCP browser、Session 与流式消息展示。TUI 与模型循环不直接耦合，核心事件由 backend 适配。</li>
+                <li><strong>WebUiBackend 职责集中：</strong> 同时承担 HTTP 静态资源、WebSocket command routing、上传文件、Session/MCP/Skill 管理、permission promise、artifact dashboard 生成和缓存，是当前最大的职责集中点。</li>
+                <li><strong>共享 Reducer 语义：</strong> Vite 通过 alias 直接复用 <code>src/ui/shared/reducer.ts</code>，实现服务端与 Web 端一致的会话 reducer 语义。React <code>App.tsx</code> 用 <code>useWebSocket</code> 连接 <code>/ws</code>，断线 2 秒自动重连。</li>
+                <li><strong>Session Dashboard 缓存：</strong> Session Dashboard HTML 以 <code>contentHash</code> 为 cache key 存 localStorage，最多 20 条；生成过程通过 <code>artifact_start/delta/end</code> 流式传递。WebSocket protocol 是 discriminated union。</li>
+              </ul>
+            </div>
+          </details>
+
+        </section>
+
+        <!-- Section 6: Architecture Strengths -->
+        <section id="arch-strengths" class="content-section">
+          <h2>06. 架构优势与技术亮点</h2>
+
+          <div class="card">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1.25rem;">
+              <div>
+                <h3 style="color: var(--brand-primary); font-size: 1rem; margin-bottom: 0.25rem;">1. 共享核心，双 UI 适配</h3>
+                <p style="font-size: 0.9rem;">避免 TUI/Web 各自实现 Agent 生命周期，确保不同端拥有绝对一致的编排行为。</p>
+              </div>
+
+              <div>
+                <h3 style="color: var(--brand-primary); font-size: 1rem; margin-bottom: 0.25rem;">2. Schema 按需延迟加载</h3>
+                <p style="font-size: 0.9rem;">deferred catalog 直接解决 MCP 数量增长导致的上下文成本。</p>
+              </div>
+
+              <div>
+                <h3 style="color: var(--brand-primary); font-size: 1rem; margin-bottom: 0.25rem;">3. 编辑安全是系统能力</h3>
+                <p style="font-size: 0.9rem;">版本、锚点、快照、三方恢复、checkpoint 形成纵深防御，而不是依靠弱约束的 Prompt 约定。</p>
+              </div>
+
+              <div>
+                <h3 style="color: var(--brand-primary); font-size: 1rem; margin-bottom: 0.25rem;">4. 本地优先与全流程透明</h3>
+                <p style="font-size: 0.9rem;">配置、Session、Memory、eval workspace 都是透明文件格式，便于迁移、版本控制与排障。</p>
+              </div>
+
+              <div>
+                <h3 style="color: var(--brand-primary); font-size: 1rem; margin-bottom: 0.25rem;">5. 协议边界覆盖完整</h3>
+                <p style="font-size: 0.9rem;">MCP 多 transport、协议协商、热刷新、会话恢复、App UI 形成较完整生态面。</p>
+              </div>
+
+              <div>
+                <h3 style="color: var(--brand-primary); font-size: 1rem; margin-bottom: 0.25rem;">6. 图像路径统一管控</h3>
+                <p style="font-size: 0.9rem;">用户附件、主模型视觉、专用视觉、OCR、MCP 图片共用缓存与降级语义。</p>
+              </div>
+
+              <div>
+                <h3 style="color: var(--brand-primary); font-size: 1rem; margin-bottom: 0.25rem;">7. 事件总线解耦渲染</h3>
+                <p style="font-size: 0.9rem;">流式模型与工具事件不绑定 UI 框架，便于扩展新客户端适配器。</p>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Section 7: Risk Matrix & Evidence Grading -->
+        <section id="risk-matrix" class="content-section">
+          <h2>07. 风险评估与证据分级</h2>
+          <p>明确区分“已确认缺陷”、“需验证风险”与“治理建议”，提供源码证据支撑：</p>
+
+          <div class="filter-bar">
+            <span style="font-size: 0.85rem; font-weight: 700; color: var(--text-muted); margin-right: 0.5rem;">等级筛选:</span>
+            <button type="button" class="filter-btn active" data-filter="all" aria-pressed="true">全部 (8)</button>
+            <button type="button" class="filter-btn" data-filter="high" aria-pressed="false">高风险 (1)</button>
+            <button type="button" class="filter-btn" data-filter="med-high" aria-pressed="false">中高风险 (1)</button>
+            <button type="button" class="filter-btn" data-filter="med" aria-pressed="false">中风险 (5)</button>
+            <button type="button" class="filter-btn" data-filter="low" aria-pressed="false">低风险 (1)</button>
+          </div>
+
+          <div class="table-wrapper">
+            <table id="riskTable">
+              <thead>
+                <tr>
+                  <th>风险级别</th>
+                  <th>分类与源码位置</th>
+                  <th>问题描述与潜在后果</th>
+                  <th>治理建议 (Remediation)</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr class="risk-row risk-high">
+                  <td><span class="badge badge-high">高：已确认缺陷</span></td>
+                  <td>
+                    <strong>复杂度集中 / 变更半径大</strong><br>
+                    <code>web-backend.ts</code> (1,815行), <code>tui-app.ts</code> (1,501行), <code>harness.ts</code> (1,259行), <code>client.ts</code> (1,003行), <code>TransitionCanvas.tsx</code> (1,526行)
+                  </td>
+                  <td>Harness 同时掌握 composition、模型生命周期、prompt、retry、Session、MCP、UI events、eval。Web backend 同时是 transport、controller、session coordinator、upload manager、artifact service。违背单文件 ≤300 行规范，单元测试隔离困难，UI 与协议演进易发生遗漏。</td>
+                  <td>按职责拆分：从 Harness 提取 <code>TurnRunner</code>, <code>RuntimeLifecycle</code>, <code>PromptComposer</code>, <code>AgentToolCoordinator</code>。从 WebUiBackend 提取 <code>WsCommandRouter</code>, <code>SessionController</code>, <code>UploadStore</code>, <code>ArtifactService</code>。</td>
+                </tr>
+
+                <tr class="risk-row risk-med-high">
+                  <td><span class="badge badge-med">中高：需验证风险</span></td>
+                  <td>
+                    <strong>turn retry 回滚边界需验证</strong><br>
+                    <code>src/core/harness.ts</code> (<code>promptAndSave()</code>)
+                  </td>
+                  <td><code>promptAndSave()</code> 的 retry 循环内重新计算 <code>preTurnLength</code>。若第一次尝试已把部分消息写入 Agent state，后续循环的回滚基线可能不再是真正的 turn 前长度。</td>
+                  <td>增加失败注入测试，并将 turn snapshot / 消息基线移到 retry 循环外。</td>
+                </tr>
+
+                <tr class="risk-row risk-med">
+                  <td><span class="badge badge-med">中：已确认缺陷</span></td>
+                  <td>
+                    <strong>重试错误分类过宽</strong><br>
+                    <code>src/core/harness.ts</code>
+                  </td>
+                  <td><code>isRetryableError()</code> 使用 <code>lower.includes("5")</code> 判断服务端错误，任意包含字符 5 的错误消息（如 "invalid option 5"）都可能被当作 5xx。</td>
+                  <td>解析结构化 status/code，避免字符串模糊误判和无意义重试。</td>
+                </tr>
+
+                <tr class="risk-row risk-med">
+                  <td><span class="badge badge-med">中：已确认缺陷</span></td>
+                  <td>
+                    <strong>持久化耐久性不一致</strong><br>
+                    <code>src/memory/store.ts</code>, <code>src/session/store.ts</code>
+                  </td>
+                  <td>Session 正文原子写；Session index 与 Memory 直接 <code>writeFileSync</code> 覆写。Memory 解析失败直接回空数组，可能把损坏静默表现为“没有记忆”。</td>
+                  <td>统一 safe JSON store：tmp/rename、备份、schema version、corruption warning。</td>
+                </tr>
+
+                <tr class="risk-row risk-med">
+                  <td><span class="badge badge-med">中：已确认缺陷</span></td>
+                  <td>
+                    <strong>文档与实现漂移</strong><br>
+                    <code>docs/ARCHITECTURE.md</code>, <code>README.md</code>, <code>src/core/config.ts</code>
+                  </td>
+                  <td><code>docs/ARCHITECTURE.md</code> 声称 Session 结束自动 LLM 提取 Memory，当前没有 <code>extractAndStore()</code>，配置为 <code>autoExtract:false</code>。旧文档 MCP 示例仍使用单下划线，实际规范是 <code>mcp__server__tool</code>。<code>summarize-prefix</code> 名称暗示摘要，实现只是 sliding-window。roadmap 中“自动重连未完成”描述落后于代码。</td>
+                  <td>校准文档：修正 MCP 命名规则说明、Memory 自动提取现状、Context 策略与 roadmap 状态。</td>
+                </tr>
+
+                <tr class="risk-row risk-med">
+                  <td><span class="badge badge-med">中：需验证风险</span></td>
+                  <td>
+                    <strong>MCP AppHost 信任边界需专门审计</strong><br>
+                    <code>src/mcp/app/host.ts</code>
+                  </td>
+                  <td>优点：仅绑定 loopback、随机 app ID、CSP、resource MIME 校验、iframe permissions。需验证：bridge 的 <code>tools/call</code> 直接调用 MCPClient，不经过 Harness PermissionManager；未看到 Origin/token 校验。</td>
+                  <td>明确 threat model，加入 app capability allowlist、Origin/nonce 校验与审计日志。</td>
+                </tr>
+
+                <tr class="risk-row risk-med">
+                  <td><span class="badge badge-med">中：已确认缺陷</span></td>
+                  <td>
+                    <strong>构建可复现性与耗时</strong><br>
+                    <code>scripts/build.mjs</code>
+                  </td>
+                  <td>根构建脚本每次 Web build 都执行 <code>npm install</code>，会引入网络依赖、耗时与 lockfile 行为差异。</td>
+                  <td>CI/开发分离，在构建脚本中使用 <code>npm ci</code> 或避免自动安装。</td>
+                </tr>
+
+                <tr class="risk-row risk-low">
+                  <td><span class="badge badge-low">低至中：已确认缺陷</span></td>
+                  <td>
+                    <strong>可观测性与规范偏差</strong><br>
+                    Command loader, Vision client logger
+                  </td>
+                  <td>命令 loader 仍直接 <code>console.warn</code>，Vision client 的一个 Logger tag 是 kebab-case，与统一文件 Logger / PascalCase tag 规范不一致。关键大状态机缺少统一 trace/turn correlation schema。</td>
+                  <td>统一收缩到 Logger，纠正 Tag 命名，引入 Trace ID 与 Turn 关联。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Section 8: Recommended Evolution Roadmap -->
+        <section id="evolution-roadmap" class="content-section">
+          <h2>08. 建议演进路线图</h2>
+
+          <div class="timeline">
+            <div class="timeline-item">
+              <div class="timeline-dot"></div>
+              <div class="timeline-title">
+                <span>0–30 天：先锁住正确性</span>
+                <span class="badge badge-high">第一阶段</span>
+              </div>
+              <div class="timeline-body">
+                <ul>
+                  <li>retry baseline 移出循环并加失败注入测试；结构化解析 HTTP/provider 错误。</li>
+                  <li>建立文档 truth check：MCP naming、Memory auto extract、context strategy、roadmap status。</li>
+                  <li>为 AppHost bridge 写 threat model 与 permission integration test。</li>
+                  <li>Memory/index 改为统一原子 safe-write，损坏时显式告警。</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="timeline-item">
+              <div class="timeline-dot"></div>
+              <div class="timeline-title">
+                <span>30–60 天：拆状态机边界</span>
+                <span class="badge badge-med">第二阶段</span>
+              </div>
+              <div class="timeline-body">
+                <ul>
+                  <li>从 Harness 提取 <code>TurnRunner</code>、<code>RuntimeLifecycle</code>、<code>PromptComposer</code>、<code>AgentToolCoordinator</code>。</li>
+                  <li>从 WebUiBackend 提取 <code>WsCommandRouter</code>、<code>SessionController</code>、<code>UploadStore</code>、<code>ArtifactService</code>。</li>
+                  <li>从 MCPClient 分离 transport adapters (stdio / SSE / streamable-http) 与 protocol session。</li>
+                  <li>用同一套 contract tests 验证 TUI/Web 对 ServerEvent 的一致处理。</li>
+                </ul>
+              </div>
+            </div>
+
+            <div class="timeline-item">
+              <div class="timeline-dot"></div>
+              <div class="timeline-title">
+                <span>60–90 天：提升可演进性</span>
+                <span class="badge badge-low">第三阶段</span>
+              </div>
+              <div class="timeline-body">
+                <ul>
+                  <li>真正实现 summarize-prefix 或改名消除误导，并加入真实 tokenizer / provider usage 校准。</li>
+                  <li>把自动 Memory extraction 做成可审计、可撤回、默认保守的独立 pipeline；在完成前保持 <code>autoExtract:false</code>。</li>
+                  <li>建立 schema-versioned state store、trace ID、turn metrics 与重试/恢复指标。</li>
+                  <li>为 CHIFF 建基准集：根因定位准确率、LLM calls、预算、workspace 清理与失败回退。</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Section 9: Source Code Evidence Index -->
+        <section id="source-index" class="content-section">
+          <h2>09. 源码证据路径索引</h2>
+          <p>本报告所有分析结论均严格锚定以下 develop 分支源码路径：</p>
+
+          <div class="table-wrapper">
+            <table id="sourceIndexTable">
+              <thead>
+                <tr>
+                  <th>架构模块分类</th>
+                  <th>源码路径 (Source Path)</th>
+                  <th>关键职责与分析结论参考</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>启动与编排</strong></td>
+                  <td>
+                    <code>src/core/main.ts</code><br>
+                    <code>src/core/harness.ts</code><br>
+                    <code>src/core/harness-api.ts</code>
+                  </td>
+                  <td>入口、全局捕获、Open Design daemon 守护；Composition root、turn-level retry、autosave、shutdown 流程。</td>
+                </tr>
+                <tr>
+                  <td><strong>配置管理</strong></td>
+                  <td><code>src/core/config.ts</code></td>
+                  <td>环境变量、用户/项目 Settings、<code>.mcp.json</code> 权威优先级与 <code>AGENTS.md</code> 注入。</td>
+                </tr>
+                <tr>
+                  <td><strong>模型注册</strong></td>
+                  <td>
+                    <code>src/models/registry.ts</code><br>
+                    <code>src/models/qwen.ts</code><br>
+                    <code>src/models/kimi.ts</code>
+                  </td>
+                  <td>Model Registry、Provider 特性映射、Vision 能力解析。</td>
+                </tr>
+                <tr>
+                  <td><strong>Drivers & 工具 discovery</strong></td>
+                  <td>
+                    <code>src/drivers/registry.ts</code><br>
+                    <code>src/drivers/tool-registry.ts</code><br>
+                    <code>src/drivers/discovery.ts</code><br>
+                    <code>src/drivers/fs.ts</code><br>
+                    <code>src/drivers/shell.ts</code><br>
+                    <code>src/drivers/search.ts</code>
+                  </td>
+                  <td>DriverRegistry/ToolRegistry 初始化；builtin 永不 deferred；<code>search_tools</code> 打分与 select；FS/Shell/Search 驱动。</td>
+                </tr>
+                <tr>
+                  <td><strong>Edit & 恢复</strong></td>
+                  <td>
+                    <code>src/drivers/edit/tool.ts</code><br>
+                    <code>src/drivers/edit/hash.ts</code><br>
+                    <code>src/drivers/edit/recovery.ts</code><br>
+                    <code>src/drivers/edit/syntax-validate.ts</code><br>
+                    <code>src/drivers/edit/edit-undo.ts</code>
+                  </td>
+                  <td><code>lineNum#hash [quality]|content</code> 行锚点；三方合并与原快照回放；AST 语法校验与单步内存 undo。</td>
+                </tr>
+                <tr>
+                  <td><strong>Checkpoint 快照</strong></td>
+                  <td>
+                    <code>src/checkpoint/checkpoint-manager.ts</code><br>
+                    <code>src/checkpoint/snapshot-store.ts</code><br>
+                    <code>src/checkpoint/write-tracker.ts</code><br>
+                    <code>src/checkpoint/store/fs-store.ts</code>
+                  </td>
+                  <td>SnapshotStore LRU (单文件 5，全局 500)；修改前字节保存；FileWriteTracker anchor invalidation。</td>
+                </tr>
+                <tr>
+                  <td><strong>MCP 子系统</strong></td>
+                  <td>
+                    <code>src/mcp/client.ts</code><br>
+                    <code>src/mcp/manager.ts</code><br>
+                    <code>src/mcp/names.ts</code><br>
+                    <code>src/mcp/app/host.ts</code>
+                  </td>
+                  <td><code>mcp__&lt;server&gt;__&lt;tool&gt;</code> 双下划线命名；stdio/SSE/streamable HTTP 传输；指数退避重连；AppHost 本地 Loopback 动态沙盒与 CSP。</td>
+                </tr>
+                <tr>
+                  <td><strong>Vision 处理链</strong></td>
+                  <td>
+                    <code>src/drivers/vision/pipeline.ts</code><br>
+                    <code>src/drivers/vision/client.ts</code><br>
+                    <code>src/drivers/vision/ocr.ts</code><br>
+                    <code>src/utils/image-cache.ts</code>
+                  </td>
+                  <td>Sharp 480px PNG 压缩；SHA-256 去重缓存；独立 Vision 模型 fallback；Tesseract <code>eng+chi_sim</code> OCR 兜底。</td>
+                </tr>
+                <tr>
+                  <td><strong>Context / Session / Memory</strong></td>
+                  <td>
+                    <code>src/context/manager.ts</code><br>
+                    <code>src/session/manager.ts</code><br>
+                    <code>src/session/store.ts</code><br>
+                    <code>src/memory/manager.ts</code><br>
+                    <code>src/memory/store.ts</code>
+                  </td>
+                  <td>Context Token 预算与 <code>sliding-window</code>；Session 26位ID、<code>.tmp → rename</code> 原子写；Memory 两级 JSON 存取。</td>
+                </tr>
+                <tr>
+                  <td><strong>UI 层及协议</strong></td>
+                  <td>
+                    <code>src/ui/backend.ts</code><br>
+                    <code>src/ui/tui-backend.ts</code><br>
+                    <code>src/ui/tui-app.ts</code><br>
+                    <code>src/ui/web/web-backend.ts</code><br>
+                    <code>src/ui/web/protocol.ts</code><br>
+                    <code>src/ui/shared/reducer.ts</code>
+                  </td>
+                  <td><code>UiBackend</code> 接口与 <code>HarnessEventBus</code>；<code>WebUiBackend</code> 职责集中；共享 <code>conversationReducer</code> 语义；WebSocket discriminated union。</td>
+                </tr>
+                <tr>
+                  <td><strong>Web 前端应用</strong></td>
+                  <td>
+                    <code>web/src/components/App.tsx</code><br>
+                    <code>web/src/hooks/useWebSocket.ts</code><br>
+                    <code>web/src/index.css</code>
+                  </td>
+                  <td>React 18 SPA 主界面、<code>useWebSocket</code> 自动重连与 CSS Token 规范。</td>
+                </tr>
+                <tr>
+                  <td><strong>Eval / CHIFF 流水线</strong></td>
+                  <td>
+                    <code>src/eval/index.ts</code><br>
+                    <code>src/eval/focus/index.ts</code><br>
+                    <code>skeleton.ts</code>, <code>scan.ts</code>, <code>zoom.ts</code>, <code>synthesize.ts</code>, <code>workspace.ts</code>
+                  </td>
+                  <td>500+ steps FOCUS_PATH_THRESHOLD 触发；Phase 0 Skeleton 150-step 分块工作区；SCAN 热点、ZOOM 根因与 SYNTHESIZE 规则提取。</td>
+                </tr>
+                <tr>
+                  <td><strong>构建与测试套件</strong></td>
+                  <td>
+                    <code>package.json</code><br>
+                    <code>scripts/build.mjs</code><br>
+                    <code>web/package.json</code><br>
+                    <code>tests/</code>
+                  </td>
+                  <td>esbuild 构建脚本、Node 20 ESM 单入口打包、Vitest 32 个测试套件。</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+      </main>
+    </div>
+
+  </div>
+
+  <!-- JavaScript Controls (Inline, Standalone & Safe) -->
+  <script>
+    document.addEventListener('DOMContentLoaded', function() {
+      // 1. Theme Toggle (Light / Dark) with Try/Catch Safe localStorage
+      const themeToggleBtn = document.getElementById('themeToggleBtn');
+      const themeToggleIcon = document.getElementById('themeToggleIcon');
+      const themeToggleText = document.getElementById('themeToggleText');
+
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      let storedTheme = null;
+      try {
+        storedTheme = localStorage.getItem('dscode_doc_theme');
+      } catch (err) {
+        // Safe fallback if localStorage is disabled or in restricted file:// mode
+      }
+      let currentTheme = storedTheme || (prefersDark ? 'dark' : 'light');
+
+      function applyTheme(theme) {
+        document.documentElement.setAttribute('data-theme', theme);
+        if (theme === 'dark') {
+          themeToggleIcon.textContent = '☀️';
+          themeToggleText.textContent = '亮色模式';
+        } else {
+          themeToggleIcon.textContent = '🌙';
+          themeToggleText.textContent = '暗黑模式';
+        }
+        try {
+          localStorage.setItem('dscode_doc_theme', theme);
+        } catch (err) {
+          // Ignore localStorage write error
+        }
+      }
+      applyTheme(currentTheme);
+
+      themeToggleBtn.addEventListener('click', function() {
+        currentTheme = (currentTheme === 'dark') ? 'light' : 'dark';
+        applyTheme(currentTheme);
+      });
+
+      // 2. Table of Contents Scroll Active Link Highlight
+      const sections = document.querySelectorAll('section.content-section');
+      const tocLinks = document.querySelectorAll('.toc-item a');
+
+      window.addEventListener('scroll', function() {
+        let currentSectionId = '';
+        sections.forEach(section => {
+          const sectionTop = section.offsetTop - 110;
+          if (window.scrollY >= sectionTop) {
+            currentSectionId = section.getAttribute('id');
+          }
+        });
+
+        tocLinks.forEach(link => {
+          link.classList.remove('active');
+          if (link.getAttribute('href') === '#' + currentSectionId) {
+            link.classList.add('active');
+          }
+        });
+      });
+
+      // 3. Global Search & Filter
+      const searchInput = document.getElementById('globalSearch');
+      searchInput.addEventListener('input', function(e) {
+        const query = e.target.value.toLowerCase().trim();
+
+        // Filter Source Index Rows
+        const indexRows = document.querySelectorAll('#sourceIndexTable tbody tr');
+        indexRows.forEach(row => {
+          const text = row.textContent.toLowerCase();
+          row.style.display = text.includes(query) ? '' : 'none';
+        });
+
+        // Filter Risk Matrix Rows
+        const riskRows = document.querySelectorAll('#riskTable tbody tr');
+        riskRows.forEach(row => {
+          const text = row.textContent.toLowerCase();
+          row.style.display = text.includes(query) ? '' : 'none';
+        });
+      });
+
+      // 4. Risk Filter Buttons (EventListener + data-filter + aria-pressed)
+      const filterBtns = document.querySelectorAll('.filter-btn');
+      filterBtns.forEach(btn => {
+        btn.addEventListener('click', function() {
+          const level = this.getAttribute('data-filter');
+          filterBtns.forEach(b => {
+            b.classList.remove('active');
+            b.setAttribute('aria-pressed', 'false');
+          });
+          this.classList.add('active');
+          this.setAttribute('aria-pressed', 'true');
+
+          const rows = document.querySelectorAll('#riskTable tbody tr');
+          rows.forEach(row => {
+            if (level === 'all') {
+              row.style.display = '';
+            } else if (level === 'high' && row.classList.contains('risk-high')) {
+              row.style.display = '';
+            } else if (level === 'med-high' && row.classList.contains('risk-med-high')) {
+              row.style.display = '';
+            } else if (level === 'med' && row.classList.contains('risk-med')) {
+              row.style.display = '';
+            } else if (level === 'low' && row.classList.contains('risk-low')) {
+              row.style.display = '';
+            } else {
+              row.style.display = 'none';
+            }
+          });
+        });
+      });
+
+      // 5. Robust Print Details Handler
+      let printClosedDetails = [];
+      window.addEventListener('beforeprint', function() {
+        printClosedDetails = [];
+        const detailsEls = document.querySelectorAll('details');
+        detailsEls.forEach(dt => {
+          if (!dt.hasAttribute('open')) {
+            printClosedDetails.push(dt);
+            dt.setAttribute('open', '');
+          }
+        });
+      });
+
+      window.addEventListener('afterprint', function() {
+        printClosedDetails.forEach(dt => {
+          dt.removeAttribute('open');
+        });
+        printClosedDetails = [];
+      });
+    });
+  </script>
+</body>
+</html>
